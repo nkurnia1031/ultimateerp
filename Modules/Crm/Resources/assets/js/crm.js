@@ -453,8 +453,10 @@ $(document).ready(function(){
 	        ignoreReadonly: true,
 	        format: moment_date_format + ' ' + moment_time_format
 	    });
-
-	    $(".select2").select2();
+		
+	    $(".select2").select2({
+			dropdownParent: $(".schedule")
+	  	});
 
 	    $('input[type="checkbox"].input-icheck').iCheck({
 	        checkboxClass: 'icheckbox_square-blue',

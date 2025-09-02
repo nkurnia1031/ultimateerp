@@ -467,7 +467,7 @@ div.pos-tab-menu div.list-group>a.active .fa{
 div.pos-tab-menu div.list-group > a.active,
 div.pos-tab-menu div.list-group > a.active .glyphicon,
 div.pos-tab-menu div.list-group > a.active .fa {
-  background: linear-gradient(to right, #63e8f1, #3b82f6);
+  background: linear-gradient(to right, #6366f1, #3b82f6);
   color: #ffffff;
   border-color: transparent;
 }
@@ -909,7 +909,7 @@ table.table-text-center td, table.table-text-center th{
 }
 
 .bg-woocommerce{
-  background-color: #9feeea !important;
+  background-color: #9E458B !important;
 }
 
 /*.box, .info-box, .nav-tabs-custom, .external-event{

@@ -201,9 +201,11 @@ class ScheduleController extends Controller
                             <i class="fas fa-external-link-square-alt text-info"></i>
                         </a>
                     @else
+                    @if(!empty($contact_id))
                     <a href="{{action(\'App\Http\Controllers\ContactController@show\', [$contact_id])}}" target="_blank">
                             <i class="fas fa-external-link-square-alt text-info"></i>
                         </a>
+                    @endif
                     @endif
                 ')
                 ->addColumn('added_by', function ($row) {

@@ -40,8 +40,9 @@ class InvoiceLayoutController extends Controller
         $designs = $this->getDesigns();
         $common_settings = session()->get('business.common_settings');
         $is_warranty_enabled = ! empty($common_settings['enable_product_warranty']) ? true : false;
+        $has_number_formatter = class_exists(\NumberFormatter::class);
 
-        return view('invoice_layout.create')->with(compact('designs', 'is_warranty_enabled'));
+        return view('invoice_layout.create')->with(compact('designs', 'is_warranty_enabled', 'has_number_formatter'));
     }
 
     /**
@@ -155,9 +156,10 @@ class InvoiceLayoutController extends Controller
         $invoice_layout->table_tax_headings = ! empty($invoice_layout->table_tax_headings) ? json_decode($invoice_layout->table_tax_headings) : ['', '', '', ''];
 
         $designs = $this->getDesigns();
+        $has_number_formatter = class_exists(\NumberFormatter::class);
 
         return view('invoice_layout.edit')
-                ->with(compact('invoice_layout', 'designs'));
+                ->with(compact('invoice_layout', 'designs', 'has_number_formatter'));
     }
 
     /**

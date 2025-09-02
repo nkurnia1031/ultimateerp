@@ -14,9 +14,9 @@
     <div class="col-md-9">
       @foreach($value as $module_permission)
       @php
-if (empty($role_permissions) && ($module_permission['default'] ?? false)) {
-    $module_role_permissions[] = $module_permission['value'];
-}
+        if(empty($role_permissions) && $module_permission['default']) {
+          $module_role_permissions[] = $module_permission['value'];
+        }
       @endphp
       <div class="col-md-12">
         <div class="checkbox">

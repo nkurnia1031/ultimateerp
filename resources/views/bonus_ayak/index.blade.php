@@ -32,7 +32,7 @@
     <div class="card-body">
         <form class="row g-3" action="{{ route('bonus-ayak.store') }}" method="POST">
             @csrf
-            <div class="col-sm-6 col-md-2">
+            <div class="col-sm-3 col-md-2">
                 <label class="form-label">Tanggal</label>
                 <input type="date" name="tanggal" class="form-control" value="{{ date('Y-m-d') }}" required>
             </div>

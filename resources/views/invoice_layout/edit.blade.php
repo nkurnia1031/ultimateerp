@@ -38,11 +38,24 @@
         <div class="col-sm-6">
           <div class="form-group">
             {!! Form::label('design', __('lang_v1.design') . ':*') !!}
-              {!! Form::select('design', $designs, $invoice_layout->design, ['class' => 'form-control', 'id' => 'design_select']); !!}
+              <select name="design" id="design_select" class="form-control">
+                @foreach($designs as $key => $label)
+                  
+                  <option value="{{ $key }}" @if($key === $invoice_layout->design) selected @endif  @if(isset($has_number_formatter) && !$has_number_formatter && $key === 'english-arabic') disabled @endif>
+                    {{ $label }}
+                  </option>
+                @endforeach
+              </select>
               <span class="help-block">
                 @lang('lang_v1.used_for_browser_based_printing')
               </span>
-                             <small id="english_arabic_message" style="display: none; color: green; font-size: 12px;">
+              @if(isset($has_number_formatter) && !$has_number_formatter)
+                <p class="help-block" style="color:#a94442;">
+                  <i class="fa fa-info-circle"></i>
+                  @lang('lang_v1.english_arabic_requires_intl')
+                </p>
+              @endif
+              <small id="english_arabic_message" style="display: none; color: green; font-size: 12px;">
                  <i class="fa fa-info-circle"></i> @lang('lang_v1.english_arabic_design_help')
                </small>
           </div>

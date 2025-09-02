@@ -1710,7 +1710,7 @@ class ContactController extends Controller
 
         return [
             'is_tax_number_exists' => ! empty($contacts),
-            'msg' => __('lang_v1.tax_number_already_exists'),
+            'msg' => ! empty($contacts) ? __('lang_v1.tax_number_already_registered', ['contacts' => implode(', ', $contacts), 'tax_number' => $tax_number]) : '',
         ];
     }
 }

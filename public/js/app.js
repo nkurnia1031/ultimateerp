@@ -613,31 +613,7 @@ $(document).ready(function() {
                             },
                         },
                     },
-                    tax_number: {
-                        remote: {
-                            url: '/contacts/check-tax-number',
-                            type: 'post',
-                            data: {
-                                contact_id: function() {
-                                    return $('#hidden_id').val();
-                                },
-                                tax_number: function() {
-                                    return $('#tax_number').val();
-                                },
-                            },
-                            dataFilter: function(response) {
-                                try {
-                                    var taxResult = JSON.parse(response);
-                                    if (taxResult && taxResult.is_tax_number_exists === true) {
-                                        return '"' + (taxResult.msg || LANG.tax_number_already_exists) + '"';
-                                    }
-                                    return 'true';
-                                } catch (e) {
-                                    return 'true';
-                                }
-                            }
-                        }
-                    }
+                    // tax_number remote validation removed - now handled with sweet alert
                 },
                 messages: {
                     contact_id: {
@@ -650,13 +626,50 @@ $(document).ready(function() {
                 submitHandler: function(form) {
                     e.preventDefault();
                     __disable_submit_button($(form).find('button[type="submit"]'));
-                    // Tax number uniqueness is validated via remote rule; proceed to mobile check
-                    checkMobileAndSubmit(form);
+                    // Start with tax number validation, then proceed to mobile check
+                    checkTaxNumberAndSubmit(form);
                 },
             });
 
             $('#contact_add_form').trigger('contactFormvalidationAdded');
     });
+
+    function checkTaxNumberAndSubmit(form) {
+        // Check if tax_number field exists and has a value
+        if ($('#tax_number').length && $('#tax_number').val().trim() !== '') {
+            $.ajax({
+                method: 'POST',
+                url: base_path + '/contacts/check-tax-number',
+                dataType: 'json',
+                data: {
+                    contact_id: $('#hidden_id').val(),
+                    tax_number: $('#tax_number').val(),
+                },
+                success: function(result) {
+                    if (result.is_tax_number_exists == true) {
+                        swal({
+                            title: LANG.sure,
+                            text: result.msg,
+                            icon: 'warning',
+                            buttons: true,
+                            dangerMode: true
+                        }).then(willContinue => {
+                            if (willContinue) {
+                                checkMobileAndSubmit(form);
+                            } else {
+                                $('#tax_number').select();
+                            }
+                        });
+                    } else {
+                        checkMobileAndSubmit(form);
+                    }
+                },
+            });
+        } else {
+            // If no tax number, proceed to mobile check
+            checkMobileAndSubmit(form);
+        }
+    }
 
     function checkMobileAndSubmit(form) {
         $.ajax({

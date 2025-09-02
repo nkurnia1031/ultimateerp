@@ -63,6 +63,8 @@ use App\Http\Controllers\VariationTemplateController;
 use App\Http\Controllers\WarrantyController;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\BonusAyakController;
+use App\Http\Controllers\BanController;
+use App\Http\Controllers\SolarController;
 
 /*
 |--------------------------------------------------------------------------
@@ -483,7 +485,7 @@ Route::middleware(['setData', 'auth', 'SetSessionData', 'language', 'timezone', 
     Route::resource('warranties', WarrantyController::class);
 
     Route::resource('dashboard-configurator', DashboardConfiguratorController::class)
-        ->only(['edit', 'update']);
+    ->only(['edit', 'update']);
 
     Route::get('view-media/{model_id}', [SellController::class, 'viewMedia']);
 
@@ -536,4 +538,30 @@ Route::middleware(['setData', 'auth', 'SetSessionData', 'language', 'timezone'])
     Route::get('/sells/invoice-url/{id}', [SellPosController::class, 'showInvoiceUrl']);
     Route::get('/show-notification/{id}', [HomeController::class, 'showNotification']);
     Route::post('/sell/check-invoice-number', [SellController::class, 'checkInvoiceNumber']);
+});
+
+Route::resource('bonus-ayak', BonusAyakController::class);
+
+// Menampilkan list ban & form
+Route::get('/ban', [BanController::class, 'index'])->name('ban.index');
+// Simpan ban baru
+Route::post('/ban', [BanController::class, 'store'])->name('ban.store');
+// Hapus ban
+Route::delete('/ban/{ban}', [BanController::class, 'destroy'])->name('ban.destroy');
+// Simpan pemasangan ban (riwayat)
+Route::post('/ban/pasang', [BanController::class, 'storePemasangan'])->name('ban.pasang');
+
+Route::prefix('solar')->name('solar.')->group(function () {
+    Route::get('/', [SolarController::class, 'index'])->name('index');
+    Route::post('/stock/save', [SolarController::class, 'saveStock'])->name('stock.save');
+    Route::post('/pool/save', [SolarController::class, 'savePool'])->name('pool.save');
+    Route::post('/mess/save', [SolarController::class, 'saveMess'])->name('mess.save');
+
+    Route::delete('/stock/{id}', [SolarController::class, 'deleteStock'])->name('stock.delete');
+    Route::delete('/pool/{id}', [SolarController::class, 'deletePool'])->name('pool.delete');
+    Route::delete('/mess/{id}', [SolarController::class, 'deleteMess'])->name('mess.delete');
+
+    Route::put('/stock/{id}', [SolarController::class, 'updateStock'])->name('stock.update');
+    Route::put('/pool/{id}', [SolarController::class, 'updatePool'])->name('pool.update');
+    Route::put('/mess/{id}', [SolarController::class, 'updateMess'])->name('mess.update');
 });

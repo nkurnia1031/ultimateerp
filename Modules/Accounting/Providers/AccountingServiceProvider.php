@@ -2,22 +2,11 @@
 
 namespace Modules\Accounting\Providers;
 
-use App\Utils\ModuleUtil;
 use Illuminate\Database\Eloquent\Factory;
-
-use Illuminate\Support\Facades\View;
-
 use Illuminate\Support\ServiceProvider;
 
 class AccountingServiceProvider extends ServiceProvider
 {
-    /**
-     * Indicates if loading of the provider is deferred.
-     *
-     * @var bool
-     */
-    protected $defer = false;
-
     /**
      * Boot the application events.
      *
@@ -29,20 +18,25 @@ class AccountingServiceProvider extends ServiceProvider
         $this->registerConfig();
         $this->registerViews();
         $this->registerFactories();
-        $this->loadMigrationsFrom(__DIR__ . '/../Database/Migrations');
+        $this->loadMigrationsFrom(__DIR__.'/../Database/Migrations');
 
-        //TODO:Remove sidebar
-        view::composer(['accounting::layouts.partials.sidebar'], function ($view) {
-                if (auth()->user()->can('superadmin')) {
-                    $__is_accounting_enabled = true;
-                } else {
-                    $business_id = session()->get('user.business_id');
-                    $module_util = new ModuleUtil();
-                    $__is_accounting_enabled = (boolean)$module_util->hasThePermissionInSubscription($business_id, 'accounting_module');
-                }
+        $this->app['events']->listen(\App\Events\SellCreatedOrModified::class, 
+        \Modules\Accounting\Listeners\MapSellTransaction::class);
 
-                $view->with(compact('__is_accounting_enabled'));
-            });
+        $this->app['events']->listen(\App\Events\TransactionPaymentAdded::class, 
+        \Modules\Accounting\Listeners\MapPaymentTransaction::class);
+
+        $this->app['events']->listen(\App\Events\TransactionPaymentUpdated::class, 
+        \Modules\Accounting\Listeners\MapPaymentTransaction::class);
+
+        $this->app['events']->listen(\App\Events\TransactionPaymentDeleted::class, 
+        \Modules\Accounting\Listeners\MapPaymentTransaction::class);
+
+        $this->app['events']->listen(\App\Events\PurchaseCreatedOrModified::class, 
+        \Modules\Accounting\Listeners\MapPurchaseTransaction::class);
+
+        $this->app['events']->listen(\App\Events\ExpenseCreatedOrModified::class, 
+        \Modules\Accounting\Listeners\MapExpenseTransactions::class);
     }
 
     /**
@@ -52,7 +46,7 @@ class AccountingServiceProvider extends ServiceProvider
      */
     public function register()
     {
-        //
+        $this->app->register(RouteServiceProvider::class);
     }
 
     /**
@@ -66,8 +60,7 @@ class AccountingServiceProvider extends ServiceProvider
             __DIR__.'/../Config/config.php' => config_path('accounting.php'),
         ], 'config');
         $this->mergeConfigFrom(
-            __DIR__.'/../Config/config.php',
-            'accounting'
+            __DIR__.'/../Config/config.php', 'accounting'
         );
     }
 
@@ -83,12 +76,12 @@ class AccountingServiceProvider extends ServiceProvider
         $sourcePath = __DIR__.'/../Resources/views';
 
         $this->publishes([
-            $sourcePath => $viewPath
+            $sourcePath => $viewPath,
         ], 'views');
 
         $this->loadViewsFrom(array_merge(array_map(function ($path) {
-            return $path . '/modules/accounting';
-        }, \Config::get('view.paths')), [$sourcePath]), 'accounting');
+            return $path.'/modules/accounting';
+        }, config('view.paths')), [$sourcePath]), 'accounting');
     }
 
     /**
@@ -103,7 +96,7 @@ class AccountingServiceProvider extends ServiceProvider
         if (is_dir($langPath)) {
             $this->loadTranslationsFrom($langPath, 'accounting');
         } else {
-            $this->loadTranslationsFrom(__DIR__ .'/../Resources/lang', 'accounting');
+            $this->loadTranslationsFrom(__DIR__.'/../Resources/lang', 'accounting');
         }
     }
 
@@ -114,8 +107,8 @@ class AccountingServiceProvider extends ServiceProvider
      */
     public function registerFactories()
     {
-        if (! app()->environment('production')) {
-            app(Factory::class)->load(__DIR__ . '/../Database/factories');
+        if (! app()->environment('production') && $this->app->runningInConsole()) {
+            app(Factory::class)->load(__DIR__.'/../Database/factories');
         }
     }
 

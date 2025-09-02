@@ -221,9 +221,21 @@ class ImportProductsController extends Controller
                         if (! empty($unit)) {
                             $product_array['unit_id'] = $unit->id;
                         } else {
-                            $is_valid = false;
-                            $error_msg = "Unit with name $unit_name not found in row no. $row_no. You can add unit from Products > Units";
-                            break;
+                             $unit_name = trim($line_data['unit']);
+                    $unit = Unit::where('actual_name', $unit_name)
+                        ->orWhere('short_name', $unit_name)
+                        ->first();
+                    if (empty($unit)) {
+                        $unit = Unit::create([
+                            'actual_name' => $unit_name,
+                            'short_name' => $unit_name,
+                            'allow_decimal' => 1,
+                            'business_id' => $business_id,
+                            'created_by' => auth()->user()->id,
+                        ]);
+                    }
+                    $idUnit = $unit->id;
+                     $product_array['unit_id'] = $unit->id;
                         }
                     } else {
                         $is_valid = false;
