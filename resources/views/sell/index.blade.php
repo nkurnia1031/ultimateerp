@@ -5,7 +5,7 @@
 
     <!-- Content Header (Page header) -->
     <section class="content-header no-print">
-        <h1  class="tw-text-xl md:tw-text-3xl tw-font-bold tw-text-black">@lang('sale.sells')
+        <h1 class="tw-text-xl md:tw-text-3xl tw-font-bold tw-text-black">@lang('sale.sells')
         </h1>
     </section>
 
@@ -72,6 +72,8 @@
                             <th>@lang('sale.customer_name')</th>
                             <th>@lang('lang_v1.contact_no')</th>
                             <th>@lang('sale.location')</th>
+                            <th>@lang('Tags')</th>
+
                             <th>@lang('sale.payment_status')</th>
                             <th>@lang('lang_v1.payment_method')</th>
                             <th>@lang('sale.total_amount')</th>
@@ -98,7 +100,12 @@
                     <tbody></tbody>
                     <tfoot>
                         <tr class="bg-gray font-17 footer-total text-center">
-                            <td colspan="6"><strong>@lang('sale.total'):</strong></td>
+
+                            <td colspan="7"><strong>@lang('sale.total'):</strong></td>
+
+
+
+
                             <td class="footer_payment_status_count"></td>
                             <td class="payment_method_count"></td>
                             <td class="footer_sale_total"></td>
@@ -107,7 +114,16 @@
                             <td class="footer_total_sell_return_due"></td>
                             <td colspan="2"></td>
                             <td class="service_type_count"></td>
-                            <td colspan="7"></td>
+                            <th>{{ $custom_labels['types_of_service']['custom_field_1'] ?? __('lang_v1.service_custom_field_1') }}
+                            </th>
+                            <th>{{ $custom_labels['sell']['custom_field_1'] ?? '' }}</th>
+                            <th>{{ $custom_labels['sell']['custom_field_2'] ?? '' }}</th>
+                            <th>{{ $custom_labels['sell']['custom_field_3'] ?? '' }}</th>
+                            <th>{{ $custom_labels['sell']['custom_field_4'] ?? '' }}</th>
+                            <th colspan="4"></th>
+
+                            <th>@lang('restaurant.table')</th>
+                            <th>@lang('restaurant.service_staff')</th>
                         </tr>
                     </tfoot>
                 </table>
@@ -123,7 +139,7 @@
 
     <!-- This will be printed -->
     <section class="invoice print_section" id="receipt_section">
-        </section> 
+    </section>
 
 @stop
 
@@ -147,7 +163,7 @@
             sell_table = $('#sell_table').DataTable({
                 processing: true,
                 serverSide: true,
-                fixedHeader:false,
+                fixedHeader: false,
                 aaSorting: [
                     [1, 'desc']
                 ],
@@ -219,6 +235,11 @@
                         data: 'business_location',
                         name: 'bl.name'
                     },
+                    {
+                        data: 'tags',
+                        name: 'tags'
+                    },
+
                     {
                         data: 'payment_status',
                         name: 'payment_status'

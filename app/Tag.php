@@ -12,4 +12,8 @@ class Tag extends Model
      * @var array
      */
     protected $guarded = ['id'];
+    public function transactions()
+    {
+        return $this->belongsToMany(Transaction::class, 'transaction_tags', 'tag_id', 'transaction_id');
+    }
 }

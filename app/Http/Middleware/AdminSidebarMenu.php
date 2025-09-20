@@ -38,8 +38,8 @@ class AdminSidebarMenu
             //     <path d="M10 12h4v4h-4z"></path>
             //   </svg>', 'active' => request()->segment(1) == 'home'])->order(5);
 
-            
-                  
+
+
             $menu->url(action([\App\Http\Controllers\HomeController::class, 'index']), __('home.home'), ['icon' => '<svg xmlns="http://www.w3.org/2000/svg" class="tw-size-5 tw-shrink-0" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
             <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
             <path d="M5 12l-2 0l9 -9l9 9l-2 0" />
@@ -81,7 +81,7 @@ class AdminSidebarMenu
                     <path d="M3 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2"></path>
                     <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
                     <path d="M21 21v-2a4 4 0 0 0 -3 -3.85"></path>
-                  </svg>', ]
+                  </svg>',]
                 )->order(10);
             }
 
@@ -139,10 +139,12 @@ class AdminSidebarMenu
             }
 
             //Products dropdown
-            if (auth()->user()->can('product.view') || auth()->user()->can('product.create') ||
+            if (
+                auth()->user()->can('product.view') || auth()->user()->can('product.create') ||
                 auth()->user()->can('brand.view') || auth()->user()->can('unit.view') ||
                 auth()->user()->can('category.view') || auth()->user()->can('brand.create') ||
-                auth()->user()->can('unit.create') || auth()->user()->can('category.create')) {
+                auth()->user()->can('unit.create') || auth()->user()->can('category.create')
+            ) {
                 $menu->dropdown(
                     __('sale.products'),
                     function ($sub) {
@@ -297,6 +299,13 @@ class AdminSidebarMenu
                                 ['icon' => '', 'active' => request()->segment(1) == 'purchase-return']
                             );
                         }
+                        if (auth()->user()->can('purchase.create')) {
+                            $sub->url(
+                                action([\App\Http\Controllers\ImportSalesController::class, 'index']),
+                                __('Import Pembelian'),
+                                ['icon' => '', 'active' => request()->segment(1) == 'import-pembelian']
+                            );
+                        }
                     },
                     ['icon' => '<svg aria-hidden="true" class="tw-size-5 tw-shrink-0" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
                     <path stroke="none" d="M0 0h24v24H0z" fill="none"></path>
@@ -414,7 +423,7 @@ class AdminSidebarMenu
 
                         if (auth()->user()->can('sell.create')) {
                             $sub->url(
-                                action([\App\Http\Controllers\ImportSalesController::class, 'index']),
+                                'import-sales',
                                 __('lang_v1.import_sales'),
                                 ['icon' => '', 'active' => request()->segment(1) == 'import-sales']
                             );
@@ -517,6 +526,13 @@ class AdminSidebarMenu
                                 ['icon' => '', 'active' => request()->segment(1) == 'expense-categories']
                             );
                         }
+                        if (auth()->user()->can('expense.create')) {
+                            $sub->url(
+                                'import-expense',
+                                __('expense.import_expense'),
+                                ['icon' => '', 'active' => request()->segment(1) == 'import-expense']
+                            );
+                        }
                     },
                     ['icon' => ' <svg aria-hidden="true" class="tw-size-5 tw-shrink-0" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
                     <path stroke="none" d="M0 0h24v24H0z" fill="none"></path>
@@ -570,46 +586,46 @@ class AdminSidebarMenu
             }
 
             // Pool dropdown
-if (auth()->user()->can('pool.access')) {
-    $menu->dropdown(
-        __('Pool'),
-        function ($sub) {
-            if (auth()->user()->can('bonus_ayak.access')) {
-                $sub->url(
-                    action([\App\Http\Controllers\BonusAyakController::class, 'index']),
-                    __('Bonus Ayak'),
+            if (auth()->user()->can('pool.access')) {
+                $menu->dropdown(
+                    __('Pool'),
+                    function ($sub) {
+                        if (auth()->user()->can('bonus_ayak.access')) {
+                            $sub->url(
+                                action([\App\Http\Controllers\BonusAyakController::class, 'index']),
+                                __('Bonus Ayak'),
+                                [
+                                    'icon' => '',
+                                    'active' => request()->segment(1) == 'bonus-ayak'
+                                ]
+                            );
+                        }
+                        if (auth()->user()->can('ban.access')) {
+                            $sub->url(
+                                action([\App\Http\Controllers\BanController::class, 'index']),
+                                __('Manajemen Ban'),
+                                [
+                                    'icon' => '', // bisa diisi dengan icon lucide atau bootstrap, misal: 'ti ti-tire'
+                                    'active' => request()->segment(1) == 'ban'
+                                ]
+                            );
+                        }
+
+                        if (auth()->user()->can('solar.access')) {
+                            $sub->url(
+                                action([\App\Http\Controllers\SolarController::class, 'index']),
+                                __('Solar'),
+                                [
+                                    'icon' => '', // bisa diisi dengan icon lucide atau bootstrap, misal: 'ti ti-tire'
+                                    'active' => request()->segment(1) == 'solar'
+                                ]
+                            );
+                        }
+
+                        // Tambahkan submenu lain di sini bila perlu
+                    },
                     [
-                        'icon' => '',
-                        'active' => request()->segment(1) == 'bonus-ayak'
-                    ]
-                );
-            }
-            if (auth()->user()->can('ban.access')) {
-    $sub->url(
-        action([\App\Http\Controllers\BanController::class, 'index']),
-        __('Manajemen Ban'),
-        [
-            'icon' => '', // bisa diisi dengan icon lucide atau bootstrap, misal: 'ti ti-tire'
-            'active' => request()->segment(1) == 'ban'
-        ]
-    );
-}
-
-            if (auth()->user()->can('solar.access')) {
-    $sub->url(
-        action([\App\Http\Controllers\SolarController::class, 'index']),
-        __('Solar'),
-        [
-            'icon' => '', // bisa diisi dengan icon lucide atau bootstrap, misal: 'ti ti-tire'
-            'active' => request()->segment(1) == 'solar'
-        ]
-    );
-}
-
-            // Tambahkan submenu lain di sini bila perlu
-        },
-        [
-            'icon' => '<svg aria-hidden="true" class="tw-size-5 tw-shrink-0" xmlns="http://www.w3.org/2000/svg" 
+                        'icon' => '<svg aria-hidden="true" class="tw-size-5 tw-shrink-0" xmlns="http://www.w3.org/2000/svg" 
                 viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" fill="none" 
                 stroke-linecap="round" stroke-linejoin="round">
                 <path stroke="none" d="M0 0h24v24H0z" fill="none"></path>
@@ -617,15 +633,17 @@ if (auth()->user()->can('pool.access')) {
                 <path d="M4 9h16"></path>
                 <path d="M9 4v16"></path>
             </svg>'
-        ]
-    )->order(60);
-}
+                    ]
+                )->order(60);
+            }
 
             //Reports dropdown
-            if (auth()->user()->can('purchase_n_sell_report.view') || auth()->user()->can('contacts_report.view')
+            if (
+                auth()->user()->can('purchase_n_sell_report.view') || auth()->user()->can('contacts_report.view')
                 || auth()->user()->can('stock_report.view') || auth()->user()->can('tax_report.view')
                 || auth()->user()->can('trending_product_report.view') || auth()->user()->can('sales_representative.view') || auth()->user()->can('register_report.view')
-                || auth()->user()->can('expense_report.view')) {
+                || auth()->user()->can('expense_report.view')
+            ) {
                 $menu->dropdown(
                     __('report.reports'),
                     function ($sub) use ($enabled_modules, $is_admin) {
@@ -867,12 +885,14 @@ if (auth()->user()->can('pool.access')) {
             }
 
             //Settings Dropdown
-            if (auth()->user()->can('business_settings.access') ||
+            if (
+                auth()->user()->can('business_settings.access') ||
                 auth()->user()->can('barcode_settings.access') ||
                 auth()->user()->can('invoice_settings.access') ||
                 auth()->user()->can('tax_rate.view') ||
                 auth()->user()->can('tax_rate.create') ||
-                auth()->user()->can('access_package_subscriptions')) {
+                auth()->user()->can('access_package_subscriptions')
+            ) {
                 $menu->dropdown(
                     __('business.settings'),
                     function ($sub) use ($enabled_modules) {

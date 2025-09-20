@@ -265,6 +265,11 @@ Route::middleware(['setData', 'auth', 'SetSessionData', 'language', 'timezone', 
     Route::post('/import-sales', [ImportSalesController::class, 'import']);
     Route::get('/revert-sale-import/{batch}', [ImportSalesController::class, 'revertSaleImport']);
 
+    Route::get('/import-pembelian', [ImportSalesController::class, 'index']);
+    Route::post('/import-pembelian/preview', [ImportSalesController::class, 'preview']);
+    Route::post('/import-pembelian', [ImportSalesController::class, 'import']);
+    Route::get('/revert-pembelian-import/{batch}', [ImportSalesController::class, 'revertPembelianImport']);
+
     Route::get('/sells/pos/get_product_row/{variation_id}/{location_id}', [SellPosController::class, 'getProductRow']);
     Route::post('/sells/pos/get_payment_row', [SellPosController::class, 'getPaymentRow']);
     Route::post('/sells/pos/get-reward-details', [SellPosController::class, 'getRewardDetails']);
@@ -361,7 +366,11 @@ Route::middleware(['setData', 'auth', 'SetSessionData', 'language', 'timezone', 
 
     //Expenses...
     Route::resource('expenses', ExpenseController::class);
+    Route::get('expenses/{id}/duplicate', [ExpenseController::class, 'duplicate'])
+        ->name('expenses.duplicate');
     Route::get('import-expense', [ExpenseController::class, 'importExpense']);
+    Route::get('/revert-expense-import/{batch}', [ExpenseController::class, 'revertImport']);
+
     Route::post('store-import-expense', [ExpenseController::class, 'storeExpenseImport']);
 
     //Transaction payments...

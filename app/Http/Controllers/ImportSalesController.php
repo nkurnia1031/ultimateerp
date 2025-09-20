@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\BusinessLocation;
 use App\Contact;
 use App\Product;
+use App\Tag;
 use App\TaxRate;
 use App\Events\ProductsCreatedOrModified;
 
@@ -15,10 +16,13 @@ use App\Utils\BusinessUtil;
 use App\Utils\ModuleUtil;
 use App\Utils\ProductUtil;
 use App\Utils\TransactionUtil;
+use App\Utils\AccountTransactionUtil;
 use App\Variation;
 use DB;
 use Excel;
 use Illuminate\Http\Request;
+use App\Events\PurchaseCreatedOrModified;
+
 
 class ImportSalesController extends Controller
 {
@@ -32,6 +36,7 @@ class ImportSalesController extends Controller
     protected $transactionUtil;
 
     protected $moduleUtil;
+    protected $accountTransactionUtil;
 
     /**
      * Constructor
@@ -43,11 +48,13 @@ class ImportSalesController extends Controller
         ProductUtil $productUtil,
         BusinessUtil $businessUtil,
         TransactionUtil $transactionUtil,
+        AccountTransactionUtil $accountTransactionUtil,
         ModuleUtil $moduleUtil
     ) {
         $this->productUtil = $productUtil;
         $this->businessUtil = $businessUtil;
         $this->transactionUtil = $transactionUtil;
+        $this->accountTransactionUtil = $accountTransactionUtil;
         $this->moduleUtil = $moduleUtil;
     }
 
@@ -63,25 +70,38 @@ class ImportSalesController extends Controller
         }
 
         $business_id = request()->session()->get('user.business_id');
-
+        $judul = "Import Penjualan";
+        $type = 'sell';
+        $link = 'import-sales';
+        if (request()->is('import-pembelian')) {
+            $judul = "Import Pembelian";
+            $type = 'purchase';
+            $link = 'import-pembelian';
+        }
         $imported_sales = Transaction::where('business_id', $business_id)
-            ->where('type', 'sell')
+            ->where('type', $type)
             ->whereNotNull('import_batch')
             ->with(['sales_person'])
-            ->select('id', 'import_batch', 'import_time', 'invoice_no', 'created_by')
+            ->select('id', 'import_batch', 'import_time', 'import_file', 'invoice_no', 'ref_no', 'created_by')
             ->orderBy('import_batch', 'desc')
             ->get();
 
         $imported_sales_array = [];
         foreach ($imported_sales as $sale) {
             $imported_sales_array[$sale->import_batch]['import_time'] = $sale->import_time;
+            $imported_sales_array[$sale->import_batch]['import_file'] = $sale->import_file;
             $imported_sales_array[$sale->import_batch]['created_by'] = $sale->sales_person->user_full_name;
-            $imported_sales_array[$sale->import_batch]['invoices'][] = $sale->invoice_no;
+            if (request()->is('import-pembelian')) {
+                $imported_sales_array[$sale->import_batch]['invoices'][] = $sale->ref_no;
+            } else {
+                $imported_sales_array[$sale->import_batch]['invoices'][] = $sale->invoice_no;
+            }
         }
 
         $import_fields = $this->__importFields();
 
-        return view('import_sales.index')->with(compact('imported_sales_array', 'import_fields'));
+
+        return view('import_sales.index')->with(compact('link', 'imported_sales_array', 'import_fields', 'judul'));
     }
 
     /**
@@ -91,6 +111,13 @@ class ImportSalesController extends Controller
      */
     public function preview(Request $request)
     {
+        $judul = "Preview Imported Sales";
+        $link = 'import-sales';
+
+        if (request()->is('import-pembelian/preview')) {
+            $judul = "Preview Import Purchases";
+            $link = 'import-pembelian';
+        }
         if (! auth()->user()->can('sell.create')) {
             abort(403, 'Unauthorized action.');
         }
@@ -130,7 +157,7 @@ class ImportSalesController extends Controller
 
             $business_locations = BusinessLocation::forDropdown($business_id);
 
-            return view('import_sales.preview')->with(compact('parsed_array', 'import_fields', 'file_name', 'business_locations', 'match_array'));
+            return view('import_sales.preview')->with(compact('link', 'judul', 'parsed_array', 'import_fields', 'file_name', 'business_locations', 'match_array'));
         }
     }
 
@@ -167,9 +194,14 @@ class ImportSalesController extends Controller
         if (! auth()->user()->can('sell.create')) {
             abort(403, 'Unauthorized action.');
         }
+        $link = 'import-sales';
+        if (request()->is('import-pembelian')) {
+            $link = 'import-pembelian';
+        }
 
         try {
             DB::beginTransaction();
+            // DB::enableQueryLog();
 
             $file_name = $request->input('file_name');
             $import_fields = $request->input('import_fields');
@@ -186,7 +218,8 @@ class ImportSalesController extends Controller
             ini_set('max_execution_time', 0);
             ini_set('memory_limit', -1);
 
-            $this->__importSales($formatted_sales_data, $business_id, $location_id);
+            $this->__importSales($formatted_sales_data, $business_id, $location_id, $file_name);
+            // dd(collect(DB::getQueryLog())->take(100));
 
             DB::commit();
 
@@ -197,7 +230,7 @@ class ImportSalesController extends Controller
         } catch (\Exception $e) {
             DB::rollBack();
             \Log::emergency('File:' . $e->getFile() . 'Line:' . $e->getLine() . 'Message:' . $e->getMessage());
-
+            dd($e);
             $output = [
                 'success' => 0,
                 'msg' => $e->getMessage(),
@@ -205,15 +238,15 @@ class ImportSalesController extends Controller
 
             @unlink($file_path);
 
-            return redirect('import-sales')->with('notification', $output);
+            return redirect($link)->with('notification', $output);
         }
 
         @unlink($file_path);
 
-        return redirect('import-sales')->with('status', $output);
+        return redirect($link)->with('status', $output);
     }
 
-    private function __importSales($formated_data, $business_id, $location_id)
+    private function __importSales($formated_data, $business_id, $location_id, $filename)
     {
         $import_batch = Transaction::where('business_id', $business_id)->max('import_batch');
 
@@ -250,8 +283,11 @@ class ImportSalesController extends Controller
                 if (empty($variation)) {
                     // throw new \Exception(__('lang_v1.import_sale_product_not_found', ['row' => $row_index, 'product_name' => $line_data['product'], 'sku' => $line_data['sku']]));
                     $unit_name = trim($line_data['unit']);
-                    $unit = Unit::where('actual_name', $unit_name)
-                        ->orWhere('short_name', $unit_name)
+                    $unit = Unit::where('business_id', $business_id)
+                        ->where(function ($query) use ($unit_name) {
+                            $query->where('actual_name', $unit_name)
+                                ->orWhere('short_name', $unit_name);
+                        })
                         ->first();
                     if (empty($unit)) {
                         $unit = Unit::create([
@@ -271,8 +307,12 @@ class ImportSalesController extends Controller
                         'created_by' => auth()->user()->id,
                         'tax_type' => 'inclusive',
                         'barcode_type' => 'C128',
+
                         'sku' => $line_data['sku'] ?? ' ',
                     ];
+                    if (request()->is('import-pembelian')) {
+                        $product_details['enable_stock'] = 1;
+                    }
 
                     $product = Product::create($product_details);
                     event(new ProductsCreatedOrModified($product_details, 'added'));
@@ -298,14 +338,16 @@ class ImportSalesController extends Controller
                 $tax_id = null;
                 $item_tax = 0;
                 $line_discount = ! empty($line_data['item_discount']) ? $line_data['item_discount'] : 0;
-
+                // $line_discount = $line_discount / 100;
+                // $line_discount = $line_data['unit_price'] *  $line_discount;
+                // $line_discount = $line_data['unit_price'] *  $line_discount;
                 $unit_price = $line_data['unit_price'];
 
-                $price_before_tax = $line_data['unit_price'] - $line_discount;
+                $price_before_tax = $line_data['unit_price'] - ($line_discount);
                 $price_inc_tax = $price_before_tax;
                 if (! empty($line_data['item_tax'])) {
                     $tax = TaxRate::where('business_id', $business_id)
-                        ->where('name', $line_data['item_tax'])
+                        ->where('name', 'like', '%' . $line_data['item_tax'] . '%')
                         ->first();
 
                     if (empty($tax)) {
@@ -345,8 +387,11 @@ class ImportSalesController extends Controller
                 $line_quantity = $line_data['quantity'];
                 if (! empty($line_data['unit'])) {
                     $unit_name = trim($line_data['unit']);
-                    $unit = Unit::where('actual_name', $unit_name)
-                        ->orWhere('short_name', $unit_name)
+                    $unit = Unit::where('business_id', $business_id)
+                        ->where(function ($query) use ($unit_name) {
+                            $query->where('actual_name', $unit_name)
+                                ->orWhere('short_name', $unit_name);
+                        })
                         ->first();
 
                     if (empty($unit)) {
@@ -362,6 +407,7 @@ class ImportSalesController extends Controller
                 }
                 $order_total += ($temp['unit_price_inc_tax'] * $line_quantity);
 
+
                 $sell_lines[] = $temp;
 
                 $row_index++;
@@ -369,26 +415,25 @@ class ImportSalesController extends Controller
 
             $first_sell_line = $data[0];
             //get contact
-            if (! empty($first_sell_line['customer_phone_number'])) {
+            if (!empty($first_sell_line['customer_name'])) {
                 $contact = Contact::where('business_id', $business_id)
-                    ->where('mobile', $first_sell_line['customer_phone_number'])
-                    ->first();
-            } elseif (! empty($first_sell_line['customer_email'])) {
-                $contact = Contact::where('business_id', $business_id)
-                    ->where('email', $first_sell_line['customer_email'])
-                    ->first();
-            } elseif (! empty($first_sell_line['customer_name'])) {
-                $contact = Contact::where('business_id', $business_id)
-                    ->where('supplier_business_name', $first_sell_line['customer_name'])
-                    ->orWhere('name', $first_sell_line['customer_name'])
+                    ->where(function ($query) use ($first_sell_line) {
+                        $query->where('supplier_business_name', $first_sell_line['customer_name'])
+                            ->orWhere('name', $first_sell_line['customer_name']);
+                    })
                     ->first();
             }
             if (empty($contact)) {
                 $customer_name = ! empty($first_sell_line['customer_name']) ? $first_sell_line['customer_name'] : $first_sell_line['customer_phone_number'];
+                $type = 'customer';
+                if (request()->is('import-pembelian')) {
+                    $type = 'supplier';
+                }
                 $contact = Contact::create([
                     'business_id' => $business_id,
-                    'type' => 'customer',
+                    'type' => $type,
                     'name' => $customer_name,
+                    'supplier_business_name' => $customer_name,
                     'email' => $first_sell_line['customer_email'],
                     'mobile' => $first_sell_line['customer_phone_number'],
                     'created_by' => auth()->user()->id,
@@ -405,7 +450,9 @@ class ImportSalesController extends Controller
                 'discount_amount' => 0,
                 'import_batch' => $import_batch,
                 'import_time' => $now,
+                'import_file' => $filename,
                 'commission_agent' => null,
+                'document' => $first_sell_line['lampiran'] ?? null,
             ];
 
             $is_types_service_enabled = $this->moduleUtil->isModuleEnabled('types_of_service');
@@ -430,54 +477,187 @@ class ImportSalesController extends Controller
                 'tax' => 0,
             ];
 
-            $transaction = $this->transactionUtil->createSellTransaction($business_id, $sale_data, $invoice_total, auth()->user()->id, false);
+            if (request()->is('import-pembelian')) {
+                $sale_data['type'] = 'purchase';
+                $purchases = array_map(function ($line) {
+                    $line['purchase_line_tax_id'] = $line['tax_id'] ?? null;
+                    unset($line['tax_id']);
 
-            $this->transactionUtil->createOrUpdateSellLines($transaction, $sell_lines, $location_id, false, null, [], false);
+                    $unit_price   = $line['unit_price'] ?? 0;
+                    $quantity     = $line['quantity'] ?? 0;
+                    $discount_total = $line['line_discount_amount'] ?? 0;
 
-            foreach ($sell_lines as $line) {
-                if ($line['enable_stock']) {
-                    $this->productUtil->decreaseProductQuantity(
-                        $line['product_id'],
-                        $line['variation_id'],
-                        $location_id,
-                        $line['quantity']
-                    );
-                }
+                    $line['pp_without_discount'] = $unit_price;
 
-                if ($line['type'] == 'combo') {
-                    $line_total_quantity = $line['quantity'];
-                    if (! empty($line['base_unit_multiplier'])) {
-                        $line_total_quantity = $line_total_quantity * $line['base_unit_multiplier'];
+                    if ($unit_price > 0 && $quantity > 0) {
+                        $total_price = $unit_price * $quantity;
+
+                        if ($discount_total > 0 && $total_price > 0) {
+                            $line['discount_percent'] = ($discount_total / $total_price) * 100;
+                            $discount_per_unit = $discount_total / $quantity;
+                            $line['purchase_price'] = $unit_price - $discount_per_unit;
+                        } else {
+                            $line['discount_percent'] = 0;
+                            $line['purchase_price']   = $unit_price;
+                        }
+                    } else {
+                        $line['discount_percent'] = 0;
+                        $line['purchase_price']   = $unit_price;
                     }
 
-                    //Decrease quantity of combo as well.
-                    $combo_details = [];
-                    foreach ($line['combo_variations'] as $combo_variation) {
-                        $combo_variation_obj = Variation::find($combo_variation['variation_id']);
+                    $line['purchase_price_inc_tax'] = $line['unit_price_inc_tax'] ?? 0;
+                    unset($line['unit_price_inc_tax']);
 
-                        //Multiply both subunit multiplier of child product and parent product to the quantity
-                        $combo_variation_quantity = $combo_variation['quantity'];
-                        if (! empty($combo_variation['unit_id'])) {
-                            $combo_variation_unit = Unit::find($combo_variation['unit_id']);
-                            if (! empty($combo_variation_unit->base_unit_multiplier)) {
-                                $combo_variation_quantity = $combo_variation_quantity * $combo_variation_unit->base_unit_multiplier;
-                            }
+                    $line['profit_percent'] = 25;
+                    $line['default_sell_price'] = $unit_price * 1.25;
+
+                    unset(
+                        $line['line_discount_type'],
+                        $line['line_discount_amount'],
+                        $line['sell_line_note'],
+                        $line['enable_stock'],
+                        $line['type'],
+                        $line['combo_variations'],
+                        $line['unit_price']
+                    );
+
+                    return $line;
+                }, $sell_lines);
+                $currency_details = $this->transactionUtil->purchaseCurrencyDetails($business_id);
+
+
+                $enable_product_editing = request()->session()->get('business.enable_editing_product_from_purchase');
+                // $sale_data['total_before_tax']= $invoice_total['total_before_tax'];
+                $transaction = $this->transactionUtil->createSellTransaction($business_id, $sale_data, $invoice_total, auth()->user()->id, false);
+                $this->productUtil->createOrUpdatePurchaseLines($transaction, $purchases, $currency_details, $enable_product_editing);
+                $this->productUtil->adjustStockOverSelling($transaction);
+
+                $this->transactionUtil->activityLog($transaction, 'added');
+
+                PurchaseCreatedOrModified::dispatch($transaction);
+            } else {
+                $sale_data['type'] = 'sell';
+
+                $transaction = $this->transactionUtil->createSellTransaction($business_id, $sale_data, $invoice_total, auth()->user()->id, false);
+                $this->transactionUtil->createOrUpdateSellLines($transaction, $sell_lines, $location_id, false, null, [], false);
+                foreach ($sell_lines as $line) {
+                    if ($line['enable_stock']) {
+                        $this->productUtil->decreaseProductQuantity(
+                            $line['product_id'],
+                            $line['variation_id'],
+                            $location_id,
+                            $line['quantity']
+                        );
+                    }
+
+                    if ($line['type'] == 'combo') {
+                        $line_total_quantity = $line['quantity'];
+                        if (! empty($line['base_unit_multiplier'])) {
+                            $line_total_quantity = $line_total_quantity * $line['base_unit_multiplier'];
                         }
 
-                        $combo_details[] = [
-                            'product_id' => $combo_variation_obj->product_id,
-                            'variation_id' => $combo_variation['variation_id'],
-                            'quantity' => $combo_variation_quantity * $line_total_quantity,
-                        ];
-                    }
+                        //Decrease quantity of combo as well.
+                        $combo_details = [];
+                        foreach ($line['combo_variations'] as $combo_variation) {
+                            $combo_variation_obj = Variation::find($combo_variation['variation_id']);
 
-                    $this->productUtil
-                        ->decreaseProductQuantityCombo(
-                            $combo_details,
-                            $location_id
-                        );
+                            //Multiply both subunit multiplier of child product and parent product to the quantity
+                            $combo_variation_quantity = $combo_variation['quantity'];
+                            if (! empty($combo_variation['unit_id'])) {
+                                $combo_variation_unit = Unit::find($combo_variation['unit_id']);
+                                if (! empty($combo_variation_unit->base_unit_multiplier)) {
+                                    $combo_variation_quantity = $combo_variation_quantity * $combo_variation_unit->base_unit_multiplier;
+                                }
+                            }
+
+                            $combo_details[] = [
+                                'product_id' => $combo_variation_obj->product_id,
+                                'variation_id' => $combo_variation['variation_id'],
+                                'quantity' => $combo_variation_quantity * $line_total_quantity,
+                            ];
+                        }
+
+                        $this->productUtil
+                            ->decreaseProductQuantityCombo(
+                                $combo_details,
+                                $location_id
+                            );
+                    }
                 }
             }
+
+
+
+            $payment_types = $this->transactionUtil->payment_types($transaction->location);
+
+            $paid_on_raw = $first_sell_line['paid_on'] ?? null;
+
+            if (!empty($paid_on_raw)) {
+                try {
+                    // coba parse dengan format DB (Y-m-d H:i:s)
+                    $paid_on = \Carbon::createFromFormat('Y-m-d H:i:s', $paid_on_raw);
+                } catch (\Exception $e) {
+                    // gagal parse → fallback ke now
+                    $paid_on = $now;
+                }
+            } else {
+                // kosong → fallback ke now
+                $paid_on = $now;
+            }
+
+            $paid_on = $paid_on->format('d/m/Y H:i');
+            $payment = [
+                "amount" =>  $transaction->final_total,
+                "paid_on" => $paid_on,
+                "method" => empty($first_sell_line['method']) ? null : $this->getPaymentKey($first_sell_line['method'], $payment_types),
+                "account_id" => $this->accountTransactionUtil->getPaymentAccount($first_sell_line['account_id'], $business_id),
+                "card_number" => null,
+                "card_holder_name" => null,
+                "card_transaction_number" => null,
+                "card_type" => "credit",
+                "card_month" => null,
+                "card_year" => null,
+                "card_security" => null,
+                "cheque_number" => null,
+                "bank_account_number" => null,
+                "transaction_no_1" => null,
+                "transaction_no_2" => null,
+                "transaction_no_3" => null,
+                "transaction_no_4" => null,
+                "transaction_no_5" => null,
+                "transaction_no_6" => null,
+                "transaction_no_7" => null,
+                "note" => $first_sell_line['note']
+            ];
+            $this->transactionUtil->createOrUpdatePaymentLines($transaction, [$payment]);
+            if (!empty($first_sell_line['tags'])) {
+                $tags = collect(explode(',', $first_sell_line['tags']))
+                    ->map(fn($tag) => trim($tag))
+                    ->filter()
+                    ->map(function ($tag) use ($business_id) {
+                        try {
+                            return Tag::firstOrCreate([
+                                'business_id' => $business_id,
+                                'name'        => $tag,
+                            ])->id;
+                        } catch (\Throwable $e) {
+                            \Log::error("Gagal membuat/menemukan tag: {$tag}", [
+                                'business_id' => $business_id,
+                                'error'       => $e->getMessage(),
+                            ]);
+                            return null; // skip kalau gagal
+                        }
+                    })
+                    ->filter() // buang null hasil gagal
+                    ->unique() // pastikan ID tidak dobel
+                    ->values()
+                    ->toArray();
+
+                if (!empty($tags)) {
+                    $this->transactionUtil->updateTagTransaction($transaction->id, $tags);
+                }
+            }
+
 
             //Update payment status
             $this->transactionUtil->updatePaymentStatus($transaction->id, $transaction->final_total);
@@ -518,6 +698,13 @@ class ImportSalesController extends Controller
         $service_custom_field3_key = array_search('service_custom_field3', $import_fields);
         $service_custom_field4_key = array_search('service_custom_field4', $import_fields);
 
+        $paid_on = array_search('paid_on', $import_fields);
+        $method = array_search('method', $import_fields);
+        $account_id = array_search('account_id', $import_fields);
+        $note = array_search('note', $import_fields);
+        $tags = array_search('tags', $import_fields);
+        $lampiran = array_search('lampiran', $import_fields);
+
         $row_index = 2;
         foreach ($imported_data as $key => $value) {
             $formatted_array[$key]['invoice_no'] = $invoice_number_key !== false ? $value[$invoice_number_key] : null;
@@ -539,12 +726,19 @@ class ImportSalesController extends Controller
             $formatted_array[$key]['service_custom_field2'] = $service_custom_field2_key !== false ? $value[$service_custom_field2_key] : null;
             $formatted_array[$key]['service_custom_field3'] = $service_custom_field3_key !== false ? $value[$service_custom_field3_key] : null;
             $formatted_array[$key]['service_custom_field4'] = $service_custom_field4_key !== false ? $value[$service_custom_field4_key] : null;
+            $formatted_array[$key]['paid_on'] = $paid_on !== false ? $value[$paid_on] : null;
+            $formatted_array[$key]['method'] = $method !== false ? $value[$method] : null;
+            $formatted_array[$key]['account_id'] = $account_id !== false ? $value[$account_id] : null;
+            $formatted_array[$key]['note'] = $note !== false ? $value[$note] : null;
+            $formatted_array[$key]['tags'] = $tags !== false ? $value[$tags] : null;
+            $formatted_array[$key]['lampiran'] = $lampiran !== false ? $value[$lampiran] : null;
+
             $formatted_array[$key]['group_by'] = $value[$group_by];
 
             //check empty
-            if (empty($formatted_array[$key]['customer_phone_number']) && empty($formatted_array[$key]['customer_email'])) {
-                throw new \Exception(__('lang_v1.email_or_phone_cannot_be_empty_in_row', ['row' => $row_index]));
-            }
+            // if (empty($formatted_array[$key]['customer_phone_number']) && empty($formatted_array[$key]['customer_email'])) {
+            //     throw new \Exception(__('lang_v1.email_or_phone_cannot_be_empty_in_row', ['row' => $row_index]));
+            // }
             if (empty($formatted_array[$key]['product']) && empty($formatted_array[$key]['sku'])) {
                 throw new \Exception(__('lang_v1.product_cannot_be_empty_in_row', ['row' => $row_index]));
             }
@@ -552,7 +746,7 @@ class ImportSalesController extends Controller
                 throw new \Exception(__('lang_v1.quantity_cannot_be_empty_in_row', ['row' => $row_index]));
             }
             if (empty($formatted_array[$key]['unit_price'])) {
-                throw new \Exception(__('lang_v1.unit_price_cannot_be_empty_in_row', ['row' => $row_index]));
+                // throw new \Exception(__('lang_v1.unit_price_cannot_be_empty_in_row', ['row' => $row_index]));
             }
 
             $row_index++;
@@ -565,14 +759,19 @@ class ImportSalesController extends Controller
 
         return $formatted_data;
     }
+    private function getPaymentKey(string $value, array $payments): string
+    {
+        $key = array_search($value, $payments, true);
+        return $key !== false ? $key : "cash";
+    }
 
     private function __importFields()
     {
         $fields = [
             'invoice_no' => ['label' => __('sale.invoice_no')],
-            'customer_name' => ['label' => __('sale.customer_name')],
-            'customer_phone_number' => ['label' => __('lang_v1.customer_phone_number'), 'instruction' => __('lang_v1.either_cust_email_or_phone_required')],
-            'customer_email' => ['label' => __('lang_v1.customer_email'), 'instruction' => __('lang_v1.either_cust_email_or_phone_required')],
+            'customer_name' => ['label' => 'Customer Name'],
+            'customer_phone_number' => ['label' => 'Customer Phone Number', 'instruction' => __('lang_v1.either_cust_email_or_phone_required')],
+            'customer_email' => ['label' => 'Customer Email', 'instruction' => __('lang_v1.either_cust_email_or_phone_required')],
             'date' => ['label' => __('sale.sale_date'), 'instruction' => __('lang_v1.date_format_instruction')],
             'product' => ['label' => __('product.product_name'), 'instruction' => __('lang_v1.either_product_name_or_sku_required')],
             'sku' => ['label' => __('lang_v1.product_sku'), 'instruction' => __('lang_v1.either_product_name_or_sku_required')],
@@ -583,7 +782,25 @@ class ImportSalesController extends Controller
             'item_discount' => ['label' => __('lang_v1.item_discount')],
             'item_description' => ['label' => __('lang_v1.item_description')],
             'order_total' => ['label' => __('lang_v1.order_total')],
+            "paid_on" => ['label' => 'Paid on', 'instruction' => 'date time format should be "Y-m-d H:i:s" (2020-07-15 17:45:32)'],
+            "method" => ['label' => 'Payment method'],
+            "account_id" => ['label' => 'Payment Account'],
+            "note" => ['label' => 'Payment Note'],
+            "tags" => ['label' => 'Tags', 'instruction' => 'Pisahkan dengan koma(,) untuk multiple tags. Contoh: Operasional,BM 9174 LP'],
+            "lampiran" => ['label' => 'lampiran', 'instruction' => 'input filename.extensi cth:invoice 123.pdf'],
         ];
+        if (request()->is('import-pembelian') || request()->is('import-pembelian/*')) {
+            $fields = array_map(function ($item) {
+                $item['label'] = str_replace('Sale', 'Purchase', str_replace('Customer', 'Suplier', $item['label']));
+                if (!empty($item['instruction'])) {
+
+                    $item['instruction'] = str_replace('Sale', 'Purchase', str_replace('customer', 'Suplier', $item['instruction']));
+                }
+
+                return $item;
+            }, $fields);
+        }
+
 
         $is_types_service_enabled = $this->moduleUtil->isModuleEnabled('types_of_service');
 
@@ -603,23 +820,50 @@ class ImportSalesController extends Controller
      *
      * @return \Illuminate\Http\Response
      */
+
+    public function revertPembelianImport($batch)
+    {
+        return $this->revertSaleImport($batch);
+    }
     public function revertSaleImport($batch)
     {
         if (! auth()->user()->can('sell.delete')) {
             abort(403, 'Unauthorized action.');
         }
+        $type = 'sell';
+        if (request()->is('revert-pembelian-import/*')) {
+            $type = 'purchase';
+        }
+        if (request()->is('revert-expense-import/*')) {
+            $type = 'expense';
+        }
+
+
+        $notAllowed = $this->businessUtil->notAllowedInDemo();
 
         try {
             $business_id = request()->session()->get('user.business_id');
 
-            $sales = Transaction::where('business_id', $business_id)
-                ->where('type', 'sell')
-                ->where('import_batch', $batch)
-                ->get();
+
             //Begin transaction
             DB::beginTransaction();
-            foreach ($sales as $sale) {
-                $this->transactionUtil->deleteSale($business_id, $sale->id);
+            if ($type == 'expense') {
+                $sales = Transaction::where('business_id', $business_id)
+                    ->where('type', $type)
+                    ->where('import_batch', $batch)
+                    ->delete();
+            } else {
+                $sales = Transaction::where('business_id', $business_id)
+                    ->where('type', $type)
+                    ->where('import_batch', $batch)
+                    ->get();
+                foreach ($sales as $sale) {
+                    if (request()->is('revert-pembelian-import/*')) {
+                        $this->transactionUtil->deletePurchase($business_id, $sale->id);
+                    } else {
+                        $this->transactionUtil->deleteSale($business_id, $sale->id);
+                    }
+                }
             }
 
             DB::commit();
@@ -635,6 +879,6 @@ class ImportSalesController extends Controller
             ];
         }
 
-        return redirect('import-sales')->with('status', $output);
+        return back()->with('status', $output);
     }
 }

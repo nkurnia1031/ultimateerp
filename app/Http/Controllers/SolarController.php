@@ -11,7 +11,6 @@ class SolarController extends Controller
     {
         $date1 = $request->get('date1', date('Y-m-01'));
         $date2 = $request->get('date2', date('Y-m-d'));
-
         $solar_stock = DB::table('solar_stock')
             ->whereBetween('tanggal', [$date1, $date2])
             ->orderBy('tanggal', 'ASC')
