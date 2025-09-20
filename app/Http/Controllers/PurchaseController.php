@@ -1064,7 +1064,9 @@ class PurchaseController extends Controller
                 ->groupBy('variation_id');
 
             if ($check_enable_stock) {
-                $q->where('enable_stock', 1);
+                if (! request()->is('purchases*')) {
+                    $q->where('enable_stock', 1);
+                }
             }
             if (! empty(request()->location_id)) {
                 $q->ForLocation(request()->location_id);

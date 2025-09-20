@@ -584,7 +584,7 @@
                                 {!! Form::select(
                                     'discount_type',
                                     ['fixed' => __('lang_v1.fixed'), 'percentage' => __('lang_v1.percentage')],
-                                    'percentage',
+                                    'fixed',
                                     [
                                         'class' => 'form-control',
                                         'placeholder' => __('messages.please_select'),

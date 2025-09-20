@@ -16,6 +16,7 @@
         </section>
     @else
         @php
+          $is_duplicate = false;
             $url = action([\App\Http\Controllers\ExpenseController::class, 'update'], [$expense->id]);
             $save = 'updates';
             $method = 'PUT';

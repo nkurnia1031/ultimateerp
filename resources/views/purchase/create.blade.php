@@ -113,7 +113,7 @@
                     @endphp
                 @else
                     @php
-                        $default_location = null;
+                    $default_location = null;
                         $search_disable = true;
                     @endphp
                 @endif
@@ -441,7 +441,7 @@
                                     {!! Form::select(
                                         'discount_type',
                                         ['' => __('lang_v1.none'), 'fixed' => __('lang_v1.fixed'), 'percentage' => __('lang_v1.percentage')],
-                                        '',
+                                        'fixed',
                                         ['class' => 'form-control select2'],
                                     ) !!}
                                 </div>

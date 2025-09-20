@@ -4,8 +4,6 @@ namespace App\Http\Controllers;
 
 use App\BonusAyak;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
-
 use Maatwebsite\Excel\Facades\Excel;
 use App\Exports\BonusAyakExport;
 use App\Imports\TripImport;
@@ -13,47 +11,54 @@ use Barryvdh\DomPDF\Facade\Pdf;
 
 class BonusAyakController extends Controller
 {
-   public function index(Request $request)
-{
-    // Handle import Excel
-    if ($request->isMethod('post') && $request->import === 'excel' && $request->hasFile('file')) {
-        $request->validate(['file' => 'required|file|mimes:xlsx,csv,xls']);
-        Excel::import(new \App\Imports\TripImport, $request->file('file'));
-        return back()->with('success', 'Import trip berhasil');
+    public function index(Request $request)
+    {
+        // Handle import Excel
+        if ($request->isMethod('post') && $request->import === 'excel' && $request->hasFile('file')) {
+            $request->validate(['file' => 'required|file|mimes:xlsx,csv,xls']);
+            Excel::import(new TripImport, $request->file('file'));
+            return back()->with('success', 'Import trip berhasil');
+        }
+
+        // Filter
+        $from = $request->input('from');
+        $to   = $request->input('to');
+        $nama = $request->input('nama');
+
+        $q = BonusAyak::query();
+
+        if ($from) $q->whereDate('tanggal', '>=', $from);
+        if ($to)   $q->whereDate('tanggal', '<=', $to);
+        if ($nama) $q->where('nama_operator', 'like', "%$nama%");
+        if (!$from && !$to) {
+            $q->whereMonth('tanggal', now()->month)
+              ->whereYear('tanggal', now()->year);
+        }
+
+        $data = $q->orderBy('tanggal')->get();
+        $totalBulanIni = $data->sum('bonus');
+
+        // ✅ Ambil hanya user dengan role Driver / Operator
+        $users = \App\User::whereHas('roles', function($q) {
+    $q->where('name', 'like', 'Driver%')
+      ->orWhere('name', 'like', 'Operator%');
+})->with('roles')->get();
+
+        // Handle export Excel
+        if ($request->export === 'excel') {
+            return Excel::download(new BonusAyakExport($from, $to), 'bonus_ayak.xlsx');
+        }
+
+        // Handle export PDF
+        if ($request->export === 'pdf') {
+            $total = $totalBulanIni;
+            return Pdf::loadView('bonus_ayak.pdf', compact('data','total'))
+                      ->setPaper('a4','portrait')
+                      ->download('rekap_bonus_ayak.pdf');
+        }
+
+        return view('bonus_ayak.index', compact('data','totalBulanIni','from','to','nama','users'));
     }
-
-    // Filter
-    $from = $request->input('from');
-    $to   = $request->input('to');
-    $nama = $request->input('nama');
-
-    $q = \App\BonusAyak::query();
-    if ($from) $q->whereDate('tanggal', '>=', $from);
-    if ($to)   $q->whereDate('tanggal', '<=', $to);
-    if ($nama) $q->where('nama_operator', 'like', "%$nama%");
-    if (!$from && !$to) {
-        $q->whereMonth('tanggal', now()->month)
-          ->whereYear('tanggal', now()->year);
-    }
-
-    $data = $q->orderBy('tanggal')->get();
-    $totalBulanIni = $data->sum('bonus');
-
-    // Handle export Excel
-    if ($request->export === 'excel') {
-        return Excel::download(new \App\Exports\BonusAyakExport($from, $to), 'bonus_ayak.xlsx');
-    }
-
-    // Handle export PDF
-    if ($request->export === 'pdf') {
-        $total = $totalBulanIni;
-        return \Barryvdh\DomPDF\Facade\Pdf::loadView('bonus_ayak.pdf', compact('data','total'))
-                  ->setPaper('a4','portrait')
-                  ->download('rekap_bonus_ayak.pdf');
-    }
-
-    return view('bonus_ayak.index', compact('data','totalBulanIni','from','to','nama'));
-}
 
     public function store(Request $request)
     {
@@ -68,7 +73,7 @@ class BonusAyakController extends Controller
 
         BonusAyak::create([
             'tanggal'       => $validated['tanggal'],
-            'nama_operator' => $validated['nama_operator'],
+            'nama_operator' => $validated['nama_operator'], // tetap string (nama user)
             'unit'          => $validated['unit'],
             'trip'          => $validated['trip'],
             'bonus'         => $bonus,
@@ -111,6 +116,7 @@ class BonusAyakController extends Controller
             $q->whereMonth('tanggal', now()->month)
               ->whereYear('tanggal', now()->year);
         }
+
         $data = $q->orderBy('tanggal')->get();
         $total = $data->sum('bonus');
 
