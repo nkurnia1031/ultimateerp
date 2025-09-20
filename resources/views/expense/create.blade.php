@@ -15,7 +15,7 @@
 		<div class="box-body">
 			<div class="row">
 
-				@if(count($business_locations) == 1)
+				@if(count($business_locations) == 2)
 					@php 
 						$default_location = current(array_keys($business_locations->toArray())) 
 					@endphp

@@ -100,8 +100,8 @@
 
         @php
         $default_location = null;
-        if(count($business_locations) == 1){
-        $default_location = array_key_first($business_locations->toArray());
+        if(count($business_locations) == 2){
+            $default_location = array_key_first($business_locations->toArray());
         }
         @endphp
         <div class="col-sm-4">

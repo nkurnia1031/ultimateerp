@@ -106,7 +106,7 @@
                         ]) !!}
                     </div>
                 </div>
-                @if (count($business_locations) == 1)
+                @if (count($business_locations) == 2)
                     @php
                         $default_location = current(array_keys($business_locations->toArray()));
                         $search_disable = false;

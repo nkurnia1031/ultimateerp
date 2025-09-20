@@ -26,7 +26,7 @@
                 <div class="col-sm-3">
                     <div class="form-group">
                         {!! Form::label('location_id', __('purchase.business_location') . ':*') !!}
-                        {!! Form::select('location_id', $business_locations, null, [
+                        {!! Form::select('location_id', $business_locations, array_key_first($business_locations->toArray()), [
                             'class' => 'form-control select2',
                             'placeholder' => __('messages.please_select'),
                             'required',
