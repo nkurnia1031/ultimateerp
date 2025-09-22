@@ -204,8 +204,10 @@ class SellPosController extends Controller
 
         $business_details = $this->businessUtil->getDetails($business_id);
         $taxes = TaxRate::forBusinessDropdown($business_id, true, true);
+        $this->dummyPaymentLine['account_id'] = auth()->user()->account_id;
 
         $payment_lines[] = $this->dummyPaymentLine;
+
 
         $default_location = !empty($register_details->location_id) ? BusinessLocation::findOrFail($register_details->location_id) : null;
 
@@ -239,6 +241,8 @@ class SellPosController extends Controller
         $categories = (request()->session()->get('business.enable_category') == 1) ? Category::catAndSubCategories($business_id) : false;
         $brands = (request()->session()->get('business.enable_brand') == 1) ? Brands::forDropdown($business_id)
             ->prepend(__('lang_v1.all_brands'), 'all') : false;
+
+        $this->dummyPaymentLine['account_id'] = auth()->user()->account_id;
 
         $change_return = $this->dummyPaymentLine;
 
@@ -367,6 +371,8 @@ class SellPosController extends Controller
             }
 
             //Add change return
+            $this->dummyPaymentLine['account_id'] = auth()->user()->account_id;
+
             $change_return = $this->dummyPaymentLine;
             if (!empty($input['payment']['change_return'])) {
                 $change_return = $input['payment']['change_return'];
@@ -1061,7 +1067,10 @@ class SellPosController extends Controller
 
         $payment_lines = $this->transactionUtil->getPaymentDetails($id);
         //If no payment lines found then add dummy payment line.
+        $this->dummyPaymentLine['account_id'] = auth()->user()->account_id;
+
         if (empty($payment_lines)) {
+
             $payment_lines[] = $this->dummyPaymentLine;
         }
 
@@ -1081,8 +1090,11 @@ class SellPosController extends Controller
         $categories = (request()->session()->get('business.enable_category') == 1) ? Category::catAndSubCategories($business_id) : false;
         $brands = (request()->session()->get('business.enable_brand') == 1) ? Brands::forDropdown($business_id)
             ->prepend(__('lang_v1.all_brands'), 'all') : false;
+        $this->dummyPaymentLine['account_id'] = auth()->user()->account_id;
 
         $change_return = $this->dummyPaymentLine;
+        // $change_return['account_id'] = auth()->user()->account_id;
+
 
         $types = [];
         if (auth()->user()->can('supplier.create')) {
@@ -1244,7 +1256,10 @@ class SellPosController extends Controller
                 $sales_order_ids = $transaction_before->sales_order_ids ?? [];
 
                 //Add change return
+                $this->dummyPaymentLine['account_id'] = auth()->user()->account_id;
+
                 $change_return = $this->dummyPaymentLine;
+                // $change_return['account_id'] = auth()->user()->account_id;
                 if (!empty($input['payment']['change_return'])) {
                     $change_return = $input['payment']['change_return'];
                     unset($input['payment']['change_return']);
@@ -1619,7 +1634,10 @@ class SellPosController extends Controller
     private function onlyUpdatePayment($transaction, $input)
     {
         //Add change return
+        $this->dummyPaymentLine['account_id'] = auth()->user()->account_id;
+
         $change_return = $this->dummyPaymentLine;
+
         if (!empty($input['payment']['change_return'])) {
             $change_return = $input['payment']['change_return'];
             unset($input['payment']['change_return']);
@@ -1918,8 +1936,11 @@ class SellPosController extends Controller
         $location_id = $request->input('location_id');
         $removable = true;
         $payment_types = $this->productUtil->payment_types($location_id, true);
+        $this->dummyPaymentLine['account_id'] = auth()->user()->account_id;
 
         $payment_line = $this->dummyPaymentLine;
+        // $payment_line['account_id'] = auth()->user()->account_id;
+
 
         //Accounts
         $accounts = [];

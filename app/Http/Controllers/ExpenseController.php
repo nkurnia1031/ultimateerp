@@ -47,6 +47,7 @@ class ExpenseController extends Controller
         $this->moduleUtil = $moduleUtil;
         $this->dummyPaymentLine = [
             'method' => 'cash',
+            // 'account_id' => auth()->user()->account_id,
             'amount' => 0,
             'note' => '',
             'card_transaction_number' => '',
@@ -222,15 +223,15 @@ class ExpenseController extends Controller
             }
 
             return Datatables::of($expenses)
-                ->addColumn(
-                    'action',
-                    '<div class="btn-group">
+                ->addColumn('action', '<div class="btn-group">
                         <button type="button" class="tw-dw-btn tw-dw-btn-xs tw-dw-btn-outline  tw-dw-btn-info tw-w-max dropdown-toggle" 
                             data-toggle="dropdown" aria-expanded="false"> @lang("messages.actions")<span class="caret"></span><span class="sr-only">Toggle Dropdown
                                 </span>
                         </button>
                     <ul class="dropdown-menu dropdown-menu-left" role="menu">
-                     @if(auth()->user()->can("expense.create"))
+                    
+                    <li><a href="#" data-href="{{action(\'App\Http\Controllers\ExpenseController@show\', [$id])}} " class="btn-modal" data-container=".view_modal"><i class="fas fa-eye" aria-hidden="true"></i> @lang("messages.view")</a></li>
+                    @if(auth()->user()->can("expense.create"))
                         <li><a href="{{action(\'App\Http\Controllers\ExpenseController@duplicate\', [$id])}}"><i class="glyphicon glyphicon-copy"></i> @lang("Duplicate")</a></li>
                     @endif
                     @if(auth()->user()->can("expense.edit"))
@@ -252,8 +253,7 @@ class ExpenseController extends Controller
                         <li><a href="{{action([\App\Http\Controllers\TransactionPaymentController::class, \'addPayment\'], [$id])}}" class="add_payment_modal"><i class="fas fa-money-bill-alt" aria-hidden="true"></i> @lang("purchase.add_payment")</a></li>
                     @endif
                     <li><a href="{{action([\App\Http\Controllers\TransactionPaymentController::class, \'show\'], [$id])}}" class="view_payment_modal"><i class="fas fa-money-bill-alt" aria-hidden="true" ></i> @lang("purchase.view_payments")</a></li>
-                    </ul></div>'
-                )
+                    </ul></div>')
                 ->removeColumn('id')
                 ->editColumn(
                     'final_total',
@@ -377,6 +377,7 @@ class ExpenseController extends Controller
         $users = User::forDropdown($business_id, true, true);
 
         $taxes = TaxRate::forBusinessDropdown($business_id, true, true);
+        $this->dummyPaymentLine['account_id'] = auth()->user()->account_id;
 
         $payment_line = $this->dummyPaymentLine;
 
@@ -471,7 +472,81 @@ class ExpenseController extends Controller
      */
     public function show($id)
     {
-        //
+        $business_id = request()->session()->get('user.business_id');
+
+        //Check if subscribed or not
+        if (! $this->moduleUtil->isSubscribed($business_id)) {
+            return $this->moduleUtil->expiredResponse(action([\App\Http\Controllers\ExpenseController::class, 'index']));
+        }
+
+        $business_locations = BusinessLocation::forDropdown($business_id);
+
+        $expense_categories = ExpenseCategory::where('business_id', $business_id)
+            ->whereNull('parent_id')
+            ->pluck('name', 'id');
+        $expense = Transaction::where('business_id', $business_id)
+            ->where('id', $id)
+            ->first();
+
+        $users = User::forDropdown($business_id, true, true);
+
+        $taxes = TaxRate::forBusinessDropdown($business_id, true, true);
+
+        $contacts = Contact::contactDropdown($business_id, false, false);
+        $payment_line = null;
+        $payment_types = $this->transactionUtil->payment_types($expense->location_id, true);
+
+
+        //Sub-category
+        $sub_categories = [];
+
+        if (!empty($expense->expense_category_id)) {
+            $sub_categories = ExpenseCategory::where('business_id', $business_id)
+                ->where('parent_id', $expense->expense_category_id)
+                ->pluck('name', 'id')
+                ->toArray();
+        }
+
+        //Accounts
+        $accounts = [];
+        if ($this->moduleUtil->isModuleEnabled('account')) {
+            $accounts = Account::forDropdown($business_id, true, false, true);
+        }
+        $details = '<small>';
+        $row = $expense;
+        if ($row->is_recurring == 1) {
+            $type = $row->recur_interval == 1 ? Str::singular(__('lang_v1.' . $row->recur_interval_type)) : __('lang_v1.' . $row->recur_interval_type);
+            $recur_interval = $row->recur_interval . $type;
+
+            $details .= __('lang_v1.recur_interval') . ': ' . $recur_interval;
+            if (! empty($row->recur_repetitions)) {
+                $details .= ', ' . __('lang_v1.no_of_repetitions') . ': ' . $row->recur_repetitions;
+            }
+            if ($row->recur_interval_type == 'months' && ! empty($row->subscription_repeat_on)) {
+                $details .= '<br><small class="text-muted">' .
+                    __('lang_v1.repeat_on') . ': ' . str_ordinal($row->subscription_repeat_on);
+            }
+        } elseif (! empty($row->recur_parent_id)) {
+            $details .= __('lang_v1.recurred_from') . ': ' . $row->recurring_parent->ref_no;
+        }
+        $details .= '</small>';
+
+        $expense->recur_details = $details;
+        $ref_no = $row->ref_no;
+        if (! empty($row->is_recurring)) {
+            $ref_no .= ' &nbsp;<small class="label bg-red label-round no-print" title="' . __('lang_v1.recurring_expense') . '"><i class="fas fa-recycle"></i></small>';
+        }
+
+        if (! empty($row->recur_parent_id)) {
+            $ref_no .= ' &nbsp;<small class="label bg-info label-round no-print" title="' . __('lang_v1.generated_recurring_expense') . '"><i class="fas fa-recycle"></i></small>';
+        }
+
+        if ($row->type == 'expense_refund') {
+            $ref_no .= ' &nbsp;<small class="label bg-gray">' . __('lang_v1.refund') . '</small>';
+        }
+        $expense->ref_no = $ref_no;
+        return view('expense.show')
+            ->with(compact('accounts', 'payment_line', 'payment_types', 'expense', 'expense_categories', 'business_locations', 'users', 'taxes', 'contacts', 'sub_categories'));
     }
     public function duplicate($id)
     {
@@ -514,7 +589,10 @@ class ExpenseController extends Controller
         $contacts = Contact::contactDropdown($business_id, false, false);
         $payment_line = null;
         $payment_types = null;
+        $this->dummyPaymentLine['account_id'] = auth()->user()->account_id;
+
         if (request()->route()->getName() == 'expenses.duplicate') {
+
             $payment_line = $this->dummyPaymentLine;
             $payment_types = $this->transactionUtil->payment_types(null, false, $business_id);
         }

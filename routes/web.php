@@ -365,7 +365,7 @@ Route::middleware(['setData', 'auth', 'SetSessionData', 'language', 'timezone', 
     Route::resource('expense-categories', ExpenseCategoryController::class);
 
     //Expenses...
-    Route::resource('expenses', ExpenseController::class);
+    Route::resource('expenses', ExpenseController::class)->except(['show']);
     Route::get('expenses/{id}/duplicate', [ExpenseController::class, 'duplicate'])
         ->name('expenses.duplicate');
     Route::get('import-expense', [ExpenseController::class, 'importExpense']);
@@ -561,6 +561,7 @@ Route::middleware(['setData', 'auth', 'SetSessionData', 'language', 'timezone'])
     Route::get('/get-total-unread', [HomeController::class, 'getTotalUnreadNotifications']);
     Route::get('/purchases/print/{id}', [PurchaseController::class, 'printInvoice']);
     Route::get('/purchases/{id}', [PurchaseController::class, 'show']);
+    Route::get('/expense/{id}', [ExpenseController::class, 'show']);
     Route::get('/download-purchase-order/{id}/pdf', [PurchaseOrderController::class, 'downloadPdf'])->name('purchaseOrder.downloadPdf');
     Route::get('/sells/{id}', [SellController::class, 'show']);
     Route::get('/sells/{transaction_id}/print', [SellPosController::class, 'printInvoice'])->name('sell.printInvoice');

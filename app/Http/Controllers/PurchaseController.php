@@ -306,8 +306,10 @@ class PurchaseController extends Controller
 
         $business_details = $this->businessUtil->getDetails($business_id);
         $shortcuts = json_decode($business_details->keyboard_shortcuts, true);
+        $this->dummyPaymentLine['account_id'] = auth()->user()->account_id;
 
         $payment_line = $this->dummyPaymentLine;
+        // $payment_line['account_id'] = auth()->user()->account_id;
         $payment_types = $this->productUtil->payment_types(null, true, $business_id);
 
         //Accounts

@@ -173,7 +173,7 @@
                         $accounts,
                         !empty($payment_line['account_id']) ? $payment_line['account_id'] : '',
                         [
-                            'class' => 'form-control select2 account-dropdown',
+                            'class' => 'form-control  ',
                             'id' => !$readonly ? "account_$row_index" : "account_advance_$row_index",
                             'style' => 'width:100%;',
                             'disabled' => $readonly,

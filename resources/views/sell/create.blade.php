@@ -62,7 +62,7 @@
         {!! Form::open([
             'url' => action([\App\Http\Controllers\SellPosController::class, 'store']),
             'method' => 'post',
-            'id' => 'add_sell_form',
+            'id' => 'add_pos_sell_form',
             'files' => true,
         ]) !!}
         @if (!empty($sale_type))

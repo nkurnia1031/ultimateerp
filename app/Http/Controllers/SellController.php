@@ -59,6 +59,7 @@ class SellController extends Controller
 
         $this->dummyPaymentLine = [
             'method' => '',
+            // 'account_id' => auth()->user()->account_id ?? null,
             'amount' => 0,
             'note' => '',
             'card_transaction_number' => '',
@@ -801,8 +802,11 @@ class SellController extends Controller
             $types['both'] = __('lang_v1.both_supplier_customer');
         }
         $customer_groups = CustomerGroup::forDropdown($business_id);
+        $this->dummyPaymentLine['account_id'] = auth()->user()->account_id;
 
         $payment_line = $this->dummyPaymentLine;
+        // $payment_line['account_id'] = auth()->user()->account_id;
+
         $payment_types = $this->transactionUtil->payment_types(null, true, $business_id);
 
         //Selling Price Group Dropdown
@@ -856,8 +860,12 @@ class SellController extends Controller
 
         //Added check because $users is of no use if enable_contact_assign if false
         $users = config('constants.enable_contact_assign') ? User::forDropdown($business_id, false, false, false, true) : [];
+        $this->dummyPaymentLine['account_id'] = auth()->user()->account_id;
 
         $change_return = $this->dummyPaymentLine;
+        // dd($change_return);
+        // $change_return['account_id'] = auth()->user()->account_id;
+
 
         return view('sell.create')
             ->with(compact(
@@ -1297,11 +1305,16 @@ class SellController extends Controller
 
         $payment_lines = $this->transactionUtil->getPaymentDetails($id);
         //If no payment lines found then add dummy payment line.
+        $this->dummyPaymentLine['account_id'] = auth()->user()->account_id;
+
         if (empty($payment_lines)) {
             $payment_lines[] = $this->dummyPaymentLine;
+            // $payment_line['account_id'] = auth()->user()->account_id;
         }
 
         $change_return = $this->dummyPaymentLine;
+        // $change_return['account_id'] = auth()->user()->account_id;
+
 
         $customer_due = $this->transactionUtil->getContactDue($transaction->contact_id, $transaction->business_id);
 
