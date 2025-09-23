@@ -89,7 +89,7 @@ class ExpenseController extends Controller
      */
     public function normalizeOldOne($query)
     {
-        return;
+        // return;
         $data = $query->get();
 
         DB::beginTransaction();
