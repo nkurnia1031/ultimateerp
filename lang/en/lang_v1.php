@@ -1149,6 +1149,7 @@ return [
     'classic' => 'Classic',
     'elegant' => 'Elegant',
     'slim' => 'Slim',
+    'indonesian'=> 'indonesian',
     'detailed' => 'Detailed',
     'columnize_taxes' => 'Columnize Taxes',
     'access_sell_return' => 'Access sell return',

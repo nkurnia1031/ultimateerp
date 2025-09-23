@@ -1420,6 +1420,7 @@ return [
     'data_parameter_type' => 'Jenis Parameter Data',
     'format_4' => 'Format 4',
     'aging_report' => 'Laporan Penuaan',
+    'indonesian' => 'Indonesia',
     'partner_ledger' => 'Buku Besar Mitra',
     'partner_ledger_summary' => 'Ringkasan Buku Besar Mitra',
     'tax_number_already_exists' => 'Nomor pajak ini sudah ada',
