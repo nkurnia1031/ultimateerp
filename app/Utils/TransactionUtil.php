@@ -5,6 +5,7 @@ namespace App\Utils;
 use App\AccountTransaction;
 use App\Business;
 use App\BusinessLocation;
+use App\ExpenseLine;
 use App\CashDenomination;
 use App\Contact;
 use App\Currency;
@@ -6031,6 +6032,9 @@ class TransactionUtil extends Util
             'transaction_date',
             'location_id',
             'final_total',
+            'discount_type',
+            'discount_amount',
+
             'expense_for',
             'additional_notes',
             'expense_category_id',
@@ -6091,11 +6095,48 @@ class TransactionUtil extends Util
 
         $payments = $this->uploadPayment($payments, $request);
         $this->createOrUpdatePaymentLines($transaction, $payments, $business_id);
+        $expenseLine = ! empty($request->input('expense_lines')) ? $request->input('expense_lines') : [];
+
+
+        $this->createOrUpdateExpenseLine($transaction, $expenseLine, $business_id, $request);
+
 
         //update payment status
         $this->updatePaymentStatus($transaction->id, $transaction->final_total);
 
         return $transaction;
+    }
+    public function createOrUpdateExpenseLine($transaction, $expenseLine, $business_id, $request)
+    {
+        $expense_lines = [];
+        foreach ($expenseLine as $key => $line) {
+            if (empty($line['amount'])) {
+                continue;
+            }
+            $amount = $this->num_uf($line['amount']);
+            $document = null;
+            if ($request->hasFile('expense_lines.' . $key . '.document')) {
+                $document = $this->uploadFile($request, 'expense_lines.' . $key . '.document', 'documents');
+            } else {
+                if (!empty($line['document'])) {
+                    $document = $line['document'];
+                }
+            }
+
+            $expense_lines[] = new ExpenseLine([
+                'category_id' => $line['category_id'] ?? null,
+                'sub_category_id' => $line['sub_category_id'] ?? null,
+                'description' => $line['description'] ?? null,
+                'business_id' => $business_id,
+                'transaction_id' => $transaction->id,
+                'amount' => $amount,
+                'document' => $document,
+            ]);
+        }
+        if (! empty($expense_lines)) {
+            ExpenseLine::where('transaction_id', $transaction->id)->delete();
+            $transaction->expense_lines()->saveMany($expense_lines);
+        }
     }
     public function uploadPayment($payments, $Request)
     {
@@ -6135,9 +6176,13 @@ class TransactionUtil extends Util
             $transaction_data['expense_sub_category_id'] = $request->input('expense_sub_category_id');
         }
 
-        if ($request->has('expense_category_id')) {
-            $transaction_data['expense_category_id'] = $request->input('expense_category_id');
+        if ($request->has('discount_type')) {
+            $transaction_data['discount_type'] = $request->input('discount_type');
         }
+        if ($request->has('discount_amount')) {
+            $transaction_data['discount_amount'] = $request->input('discount_amount');
+        }
+
         $final_total = $request->has('final_total') ? $request->input('final_total') : $transaction->final_total;
         if ($request->has('final_total')) {
             $transaction_data['final_total'] = $format_data ? $this->num_uf(
@@ -6172,6 +6217,16 @@ class TransactionUtil extends Util
 
         $transaction->update($transaction_data);
         $transaction->save();
+
+        $payments = ! empty($request->input('payment')) ? $request->input('payment') : [];
+        //add expense payment
+
+        $payments = $this->uploadPayment($payments, $request);
+        $this->createOrUpdatePaymentLines($transaction, $payments, $business_id);
+        $expenseLine = ! empty($request->input('expense_lines')) ? $request->input('expense_lines') : [];
+
+
+        $this->createOrUpdateExpenseLine($transaction, $expenseLine, $business_id, $request);
 
         //update payment status
         $this->updatePaymentStatus($transaction->id, $transaction->final_total);

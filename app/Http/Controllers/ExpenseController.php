@@ -87,8 +87,29 @@ class ExpenseController extends Controller
      *
      * @return \Illuminate\Http\Response
      */
+    public function normalizeOldOne($query)
+    {
+        return;
+        $data = $query->get();
+
+        DB::beginTransaction();
+        foreach ($data as $d) {
+            if (empty($d->expense_lines) || count($d->expense_lines) == 0) {
+                $line = \App\ExpenseLine::create([
+                    'transaction_id' => $d->id,
+                    'category_id' => $d->expense_category_id,
+                    'sub_category_id' => $d->expense_sub_category_id,
+                    'description' => $d->additional_notes,
+                    'document' => $d->document,
+                    'amount' => $d->final_total,
+                ]);
+            }
+        }
+        DB::commit();
+    }
     public function index()
     {
+
         if (! auth()->user()->can('all_expense.access') && ! auth()->user()->can('view_own_expense')) {
             abort(403, 'Unauthorized action.');
         }
@@ -122,6 +143,8 @@ class ExpenseController extends Controller
                     'transactions.document',
                     'transaction_date',
                     'ref_no',
+                    'expense_category_id',
+                    'expense_sub_category_id',
                     'ec.name as category',
                     'esc.name as sub_category',
                     'payment_status',
@@ -143,8 +166,14 @@ class ExpenseController extends Controller
                     'c.supplier_business_name as supplier_business_name',
                     'transactions.type'
                 )
-                ->with(['recurring_parent'])
+                ->with([
+                    'recurring_parent',
+                    'expense_lines' => function ($q) {
+                        $q->with(['category', 'subCategory']);
+                    }
+                ])
                 ->groupBy('transactions.id');
+            $this->normalizeOldOne($expenses);
 
             //Add condition for expense for,used in sales representative expense report & list of expense
             if (request()->has('expense_for')) {
@@ -230,7 +259,7 @@ class ExpenseController extends Controller
                         </button>
                     <ul class="dropdown-menu dropdown-menu-left" role="menu">
                     
-                    <li><a href="#" data-href="{{action(\'App\Http\Controllers\ExpenseController@show\', [$id])}} " class="btn-modal" data-container=".view_modal"><i class="fas fa-eye" aria-hidden="true"></i> @lang("messages.view")</a></li>
+                    <li><a href="#" data-href="{{action(\'App\Http\Controllers\ExpenseController@show\', [$id])}} " class="btn-modal" data-container=".payment_modal"><i class="fas fa-eye" aria-hidden="true"></i> @lang("messages.view")</a></li>
                     @if(auth()->user()->can("expense.create"))
                         <li><a href="{{action(\'App\Http\Controllers\ExpenseController@duplicate\', [$id])}}"><i class="glyphicon glyphicon-copy"></i> @lang("Duplicate")</a></li>
                     @endif
@@ -258,6 +287,24 @@ class ExpenseController extends Controller
                 ->editColumn(
                     'final_total',
                     '<span class="display_currency final-total" data-currency_symbol="true" data-orig-value="@if($type=="expense_refund"){{-1 * $final_total}}@else{{$final_total}}@endif">@if($type=="expense_refund") - @endif @format_currency($final_total)</span>'
+                )
+                ->editColumn(
+                    'category',
+                    function ($row) {
+                        // $category = $row->category;
+                        $category_line = $row->expense_lines->pluck('category.name');
+                        // $category_line = $category_line->merge([$category]);
+                        return $category_line->unique()->filter()->implode(', ');
+                    }
+                )
+                ->editColumn(
+                    'sub_category',
+                    function ($row) {
+                        // $category = $row->category;
+                        $category_line = $row->expense_lines->pluck('subCategory.name');
+                        // $category_line = $category_line->merge([$category]);
+                        return $category_line->unique()->filter()->implode(', ');
+                    }
                 )
                 ->editColumn(
                     'contact_name',
@@ -377,6 +424,7 @@ class ExpenseController extends Controller
         $users = User::forDropdown($business_id, true, true);
 
         $taxes = TaxRate::forBusinessDropdown($business_id, true, true);
+
         $this->dummyPaymentLine['account_id'] = auth()->user()->account_id;
 
         $payment_line = $this->dummyPaymentLine;
@@ -426,6 +474,10 @@ class ExpenseController extends Controller
             ]);
 
             $user_id = $request->session()->get('user.id');
+            // $request->merge([
+            //     'final_total' => $expenseLine->sum('amount'),
+            // ]);
+
 
             DB::beginTransaction();
 
@@ -486,6 +538,9 @@ class ExpenseController extends Controller
             ->pluck('name', 'id');
         $expense = Transaction::where('business_id', $business_id)
             ->where('id', $id)
+            ->with(['expense_lines' => function ($q) {
+                $q->with(['category', 'subCategory']);
+            }])
             ->first();
 
         $users = User::forDropdown($business_id, true, true);
@@ -545,6 +600,8 @@ class ExpenseController extends Controller
             $ref_no .= ' &nbsp;<small class="label bg-gray">' . __('lang_v1.refund') . '</small>';
         }
         $expense->ref_no = $ref_no;
+
+
         return view('expense.show')
             ->with(compact('accounts', 'payment_line', 'payment_types', 'expense', 'expense_categories', 'business_locations', 'users', 'taxes', 'contacts', 'sub_categories'));
     }
@@ -573,13 +630,20 @@ class ExpenseController extends Controller
             return $this->moduleUtil->expiredResponse(action([\App\Http\Controllers\ExpenseController::class, 'index']));
         }
 
-        $business_locations = BusinessLocation::forDropdown($business_id);
+        $business_locations = BusinessLocation::forDropdown($business_id, false, true);
+        $bl_attributes = $business_locations['attributes'];
+        $business_locations = $business_locations['locations'];
+
 
         $expense_categories = ExpenseCategory::where('business_id', $business_id)
             ->whereNull('parent_id')
             ->pluck('name', 'id');
+        $expense_subcategories = ExpenseCategory::where('business_id', $business_id)
+            ->whereNotNull('parent_id')
+            ->pluck('name', 'id');
         $expense = Transaction::where('business_id', $business_id)
             ->where('id', $id)
+            ->with(['expense_lines'])
             ->first();
 
         $users = User::forDropdown($business_id, true, true);
@@ -587,15 +651,26 @@ class ExpenseController extends Controller
         $taxes = TaxRate::forBusinessDropdown($business_id, true, true);
 
         $contacts = Contact::contactDropdown($business_id, false, false);
-        $payment_line = null;
+        $payment_line =   $expense;
         $payment_types = null;
         $this->dummyPaymentLine['account_id'] = auth()->user()->account_id;
 
-        if (request()->route()->getName() == 'expenses.duplicate') {
+        // if (request()->route()->getName() == 'expenses.duplicate') {
 
+        $payment_types = $this->transactionUtil->payment_types($expense->location_id, false, $business_id);
+
+        $payment_line = $this->transactionUtil->getPaymentDetails($id);
+        //If no payment lines found then add dummy payment line.
+        $this->dummyPaymentLine['account_id'] = auth()->user()->account_id;
+
+        if (empty($payment_line)) {
             $payment_line = $this->dummyPaymentLine;
-            $payment_types = $this->transactionUtil->payment_types(null, false, $business_id);
+            // $payment_line['account_id'] = auth()->user()->account_id;
+        } else {
+            $payment_line = $payment_line[0];
         }
+
+        // }
         //Sub-category
         $sub_categories = [];
 
@@ -612,7 +687,7 @@ class ExpenseController extends Controller
             $accounts = Account::forDropdown($business_id, true, false, true);
         }
         return view('expense.edit')
-            ->with(compact('accounts', 'payment_line', 'payment_types', 'expense', 'expense_categories', 'business_locations', 'users', 'taxes', 'contacts', 'sub_categories'));
+            ->with(compact('expense_subcategories', 'bl_attributes', 'accounts', 'payment_line', 'payment_types', 'expense', 'expense_categories', 'business_locations', 'users', 'taxes', 'contacts', 'sub_categories'));
     }
 
     /**

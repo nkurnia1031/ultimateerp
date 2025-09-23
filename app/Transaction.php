@@ -63,6 +63,10 @@ class Transaction extends Model
     {
         return $this->hasMany(\App\TransactionPayment::class, 'transaction_id');
     }
+    public function expense_lines()
+    {
+        return $this->hasMany(\App\ExpenseLine::class, 'transaction_id');
+    }
 
     public function location()
     {

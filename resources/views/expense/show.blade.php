@@ -18,27 +18,19 @@
 
                                 </div>
                             </div>
-                            <div class="col-sm-4 col-xs-6">
-                                <div class="form-group">
-                                    {!! Form::label('expense_category_id', __('expense.expense_category') . ':') !!}
-                                    <br>
-                                    {{ $expense_categories[$expense->expense_category_id] ?? '' }}
 
-                                </div>
-                            </div>
-                            <div class="col-sm-4 col-xs-6">
-                                <div class="form-group">
-                                    {!! Form::label('expense_sub_category_id', __('product.sub_category') . ':') !!}
-                                    <br>
-                                    {{ $sub_categories[$expense->expense_sub_category_id] ?? '' }}
-
-                                </div>
-                            </div>
                             <div class="col-sm-4 col-xs-6">
                                 <div class="form-group">
                                     {!! Form::label('ref_no', __('purchase.ref_no') . ':*') !!}
                                     <br>
                                     {!! $expense->ref_no !!}
+                                </div>
+                            </div>
+                            <div class="col-sm-4 col-xs-6">
+                                <div class="form-group">
+                                    {!! Form::label('recur_details', __('lang_v1.recur_details') . ':') !!}
+                                    <br>
+                                    {!! $expense->recur_details !!}
                                 </div>
                             </div>
                             <div class="clearfix"></div>
@@ -67,23 +59,7 @@
                                 </div>
                             </div>
                             <div class="clearfix"></div>
-                            <div class="col-sm-4 col-xs-6">
-                                <div class="form-group">
-                                    {!! Form::label('document', __('purchase.attach_document') . ':') !!}
-                                    <br>
-                                    @if ($expense->document_path)
-                                        <a href="{{ $expense->document_path }}" download="{{ $expense->document_name }}"
-                                            class="tw-dw-btn tw-dw-btn-success tw-text-white tw-dw-btn-sm pull-left no-print">
-                                            <i class="fa fa-download"></i>
-                                            &nbsp;{{ __('purchase.download_document') }}
-                                        </a>
-                                        <button data-href="{{ $expense->document_path }}"
-                                            class="tw-dw-btn tw-dw-btn-xs tw-dw-btn-outline  tw-dw-btn-info view_uploaded_document"
-                                            data-toggle="tooltip" title="{{ __('lang_v1.view_document') }}"><i
-                                                class="fa fa-eye"></i></button>
-                                    @endif
-                                </div>
-                            </div>
+
                             <div class="col-sm-4 col-xs-6">
                                 <div class="form-group">
                                     {!! Form::label('tax_id', __('product.applicable_tax') . ':') !!}
@@ -113,87 +89,132 @@
                                 </div>
                             </div>
                             <div class="clearfix"></div>
-                            <div class="col-sm-4 col-xs-6">
-                                <div class="form-group">
-                                    {!! Form::label('additional_notes', __('expense.expense_note') . ':') !!}
-                                    <br>
-                                    {{ str_replace("\n", '<br>', $expense->additional_notes) }}
-                                </div>
-                            </div>
-                            <div class="col-sm-4 col-xs-6">
-                                <div class="form-group">
-                                    {!! Form::label('recur_details', __('lang_v1.recur_details') . ':') !!}
-                                    <br>
-                                    {!! $expense->recur_details !!}
+
+
+                        </div>
+                    </div>
+                </div> <!--box end-->
+                <div class="box box-solid">
+                    <div class="box-body">
+                        <div class="row">
+                            <div class="col-sm-12">
+                                {!! Form::label('judul', __('expense.all_expenses') . ':*') !!}
+
+                                <table class="table table-bordered w-100">
+                                    <thead>
+                                        <tr>
+                                            <th>Category</th>
+                                            <th>Sub Category</th>
+                                            <th>Description</th>
+                                            <th>Amount</th>
+                                            <th>Attach Document</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach ($expense->expense_lines as $item)
+                                            <tr class="expense_row">
+                                                <td>{{ $item->category?->name }}</td>
+                                                <td>{{ $item->subCategory?->name }}</td>
+                                                <td>{{ $item->description }}</td>
+                                                <td><span class="display_currency"
+                                                        data-currency_symbol="true">{{ $item->amount }}</span></td>
+                                                <td>
+                                                    @if ($item->document_path)
+                                                        <button data-href="{{ $item->document_path }}"
+                                                            class="tw-dw-btn tw-dw-btn-xs tw-dw-btn-outline  tw-dw-btn-info view_uploaded_document"
+                                                            data-toggle="tooltip"
+                                                            title="{{ __('lang_v1.view_document') }}"><i
+                                                                class="fa fa-eye"></i></button>
+                                                    @endif
+                                                </td>
+
+                                            </tr>
+                                        @endforeach
+
+                                    </tbody>
+                                </table>
+                                <div class="text-right mt-3">
+                                    <p><b>Subtotal:</b> <span id="subtotal_display"><span class="display_currency"
+                                                data-currency_symbol="true">{{ $expense->expense_lines->sum('amount') }}</span>
+                                        </span>
+                                    </p>
+                                    <p><b>Discount:</b> <span id="discount_display"><span class="display_currency"
+                                                data-currency_symbol="true">{{ $expense->expense_lines->sum('amount') - $expense->total_before_tax }}</span></span>
+                                    </p>
+                                    <p><b>Tax:</b> <span id="tax_display"><span class="display_currency"
+                                                data-currency_symbol="true">{{ $expense->tax_amount }}</span></span>
+                                    </p>
+                                    <h3><b>Total Amount:</b> <span id="grand_total_display"><span
+                                                class="display_currency"
+                                                data-currency_symbol="true">{{ $expense->final_total }}</span></span>
+                                    </h3>
                                 </div>
                             </div>
                         </div>
                     </div>
-                </div> <!--box end-->
+                </div>
 
                 <div class="box box-solid ">
                     <div class="box-body">
+
                         <div class="row">
-                            <div class="col-md-12">
-                                <div class="col-sm-12 col-xs-12">
-                                    <h4>{{ __('sale.payment_info') }}:</h4>
-                                </div>
-                                <div class="col-md-12 col-sm-12 col-xs-12">
-                                    <div class="table-responsive">
-                                        <table class="table">
-                                            <tr class="bg-green">
-                                                <th>#</th>
-                                                <th>{{ __('messages.date') }}</th>
-                                                <th>{{ __('purchase.ref_no') }}</th>
-                                                <th>{{ __('sale.amount') }}</th>
-                                                <th>{{ __('sale.payment_mode') }}</th>
-                                                <th>{{ __('sale.payment_note') }}</th>
-                                                <th>{{ __('Lampiran') }}</th>
-                                            </tr>
-                                            @php
-                                                $total_paid = 0;
-                                            @endphp
-                                            @forelse($expense->payment_lines as $payment_line)
-                                                @php
-                                                    $total_paid += $payment_line->amount;
-                                                @endphp
-                                                <tr>
-                                                    <td>{{ $loop->iteration }}</td>
-                                                    <td>{{ @format_date($payment_line->paid_on) }}</td>
-                                                    <td>{{ $payment_line->payment_ref_no }}</td>
-                                                    <td><span class="display_currency"
-                                                            data-currency_symbol="true">{{ $payment_line->amount }}</span>
-                                                    </td>
-                                                    <td>{{ $payment_methods[$payment_line->method] ?? '' }}</td>
-                                                    <td>
-                                                        @if ($payment_line->note)
-                                                            {{ ucfirst($payment_line->note) }}
-                                                        @else
-                                                            --
-                                                        @endif
-                                                    </td>
-                                                    <td>
-                                                        @if ($payment_line->document_path)
-                                                            <button data-href="{{ $payment_line->document_path }}"
-                                                                class="tw-dw-btn tw-dw-btn-xs tw-dw-btn-outline  tw-dw-btn-info view_uploaded_document"
-                                                                data-toggle="tooltip"
-                                                                title="{{ __('lang_v1.view_document') }}"><i
-                                                                    class="fa fa-eye"></i></button>
-                                                        @endif
 
-                                                    </td>
+                            <div class="col-sm-12 col-xs-12">
+                                <h4>{{ __('sale.payment_info') }}:</h4>
+                            </div>
+                            <div class="col-md-12 col-sm-12 col-xs-12">
+                                <table class="table table-bordered w-100">
+                                    <tr class="bg-green">
+                                        <th>#</th>
+                                        <th>{{ __('messages.date') }}</th>
+                                        <th>{{ __('purchase.ref_no') }}</th>
+                                        <th>{{ __('sale.amount') }}</th>
+                                        <th>{{ __('sale.payment_mode') }}</th>
+                                        <th>{{ __('sale.payment_note') }}</th>
+                                        <th>{{ __('Lampiran') }}</th>
+                                    </tr>
+                                    @php
+                                        $total_paid = 0;
+                                    @endphp
+                                    @forelse($expense->payment_lines as $payment_line)
+                                        @php
+                                            $total_paid += $payment_line->amount;
+                                        @endphp
+                                        <tr>
+                                            <td>{{ $loop->iteration }}</td>
+                                            <td>{{ @format_date($payment_line->paid_on) }}</td>
+                                            <td>{{ $payment_line->payment_ref_no }}</td>
+                                            <td><span class="display_currency"
+                                                    data-currency_symbol="true">{{ $payment_line->amount }}</span>
+                                            </td>
+                                            <td>{{ $payment_methods[$payment_line->method] ?? '' }}</td>
+                                            <td>
+                                                @if ($payment_line->note)
+                                                    {{ ucfirst($payment_line->note) }}
+                                                @else
+                                                    --
+                                                @endif
+                                            </td>
+                                            <td>
+                                                @if ($payment_line->document_path)
+                                                    <button data-href="{{ $payment_line->document_path }}"
+                                                        class="tw-dw-btn tw-dw-btn-xs tw-dw-btn-outline  tw-dw-btn-info view_uploaded_document"
+                                                        data-toggle="tooltip"
+                                                        title="{{ __('lang_v1.view_document') }}"><i
+                                                            class="fa fa-eye"></i></button>
+                                                @endif
 
-                                                </tr>
-                                            @empty
-                                                <tr>
-                                                    <td colspan="5" class="text-center">
-                                                        @lang('purchase.no_payments')
-                                                    </td>
-                                                </tr>
-                                            @endforelse
-                                        </table>
-                                    </div>
-                                </div>
+                                            </td>
+
+                                        </tr>
+                                    @empty
+                                        <tr>
+                                            <td colspan="5" class="text-center">
+                                                @lang('purchase.no_payments')
+                                            </td>
+                                        </tr>
+                                    @endforelse
+                                </table>
                             </div>
                         </div>
                     </div>
