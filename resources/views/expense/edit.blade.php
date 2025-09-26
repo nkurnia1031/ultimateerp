@@ -278,8 +278,26 @@
     <script type="text/javascript">
         $(document).ready(function() {
             $('.select2').select2();
+               $('.paid_on').datetimepicker({
+                    format: moment_date_format + ' ' + moment_time_format,
+                    ignoreReadonly: true,
+                });
             get_expense_sub_categories(`category_id0`, `sub_category_id0`);
             calculateTotals();
+                   let lastDate = $('#expense_transaction_date').val();
+
+setInterval(function() {
+    let currentDate = $('#expense_transaction_date').val();
+
+    // cek perubahan
+    if (currentDate !== lastDate) {
+        lastDate = currentDate;
+
+        if (!$('#is_pay_later').is(':checked')) {
+            $('.paid_on').val(currentDate);
+        }
+    }
+}, 300);
 
             let line_index = 1;
 
