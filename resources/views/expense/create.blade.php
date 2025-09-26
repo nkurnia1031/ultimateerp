@@ -232,27 +232,46 @@
         $(document).ready(function() {
             $('.select2').select2();
             get_expense_sub_categories(`category_id0`, `sub_category_id0`);
+            calculateTotals();
+            $('.paid_on').datetimepicker({
+                format: moment_date_format + ' ' + moment_time_format,
+                ignoreReadonly: true,
+            });
 
+            let lastDate = $('#expense_transaction_date').val();
+
+            setInterval(function() {
+                let currentDate = $('#expense_transaction_date').val();
+
+                // cek perubahan
+                if (currentDate !== lastDate) {
+                    lastDate = currentDate;
+
+                    if (!$('#is_pay_later').is(':checked')) {
+                        $('.paid_on').val(currentDate);
+                    }
+                }
+            }, 300);
 
             let line_index = 1;
 
             // Add row
             $('#add_row').click(function() {
                 let row = `<tr class="expense_row">
-            <td>{!! Form::select('expense_lines[IDX][category_id]', $expense_categories, null, [
-                'class' => 'form-control select2',
-                'id' => 'category_id${line_index}',
-                'onchange' => 'get_expense_sub_categories("category_id${line_index}","sub_category_id${line_index}")',
-            ]) !!}</td>
-            <td>{!! Form::select('expense_lines[IDX][sub_category_id]', [], null, [
-                'class' => 'form-control select2',
-                'id' => 'sub_category_id${line_index}',
-            ]) !!}</td>
-            <td>{!! Form::text('expense_lines[IDX][description]', null, ['class' => 'form-control']) !!}</td>
-            <td>{!! Form::text('expense_lines[IDX][amount]', null, ['class' => 'form-control input_number expense-amount']) !!}</td>
-            <td>{!! Form::file('expense_lines[IDX][document]', ['class' => 'form-control']) !!}</td>
-            <td><button type="button" class="btn btn-danger remove_row">x</button></td>
-        </tr>`;
+                    <td>{!! Form::select('expense_lines[IDX][category_id]', $expense_categories, null, [
+                        'class' => 'form-control select2',
+                        'id' => 'category_id${line_index}',
+                        'onchange' => 'get_expense_sub_categories("category_id${line_index}","sub_category_id${line_index}")',
+                    ]) !!}</td>
+                    <td>{!! Form::select('expense_lines[IDX][sub_category_id]', [], null, [
+                        'class' => 'form-control select2',
+                        'id' => 'sub_category_id${line_index}',
+                    ]) !!}</td>
+                    <td>{!! Form::text('expense_lines[IDX][description]', null, ['class' => 'form-control']) !!}</td>
+                    <td>{!! Form::text('expense_lines[IDX][amount]', null, ['class' => 'form-control input_number expense-amount']) !!}</td>
+                    <td>{!! Form::file('expense_lines[IDX][document]', ['class' => 'form-control']) !!}</td>
+                    <td><button type="button" class="btn btn-danger remove_row">x</button></td>
+                </tr>`;
                 $('#expensea_table tbody').append(row.replace(/IDX/g, line_index));
                 line_index++;
                 get_expense_sub_categories(`category_id${line_index}`, `sub_category_id${line_index}`);
