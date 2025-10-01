@@ -27,10 +27,10 @@
                                 @lang('assetmanagement::lang.assets')
                             </a>
                         </li>
-                        <li @if (request()->segment(2) == 'de') class="active" @endif>
+                        <li @if (request()->segment(2) == 'depreciation') class="active" @endif>
                             <a
-                                href="{{ action([\Modules\AssetManagement\Http\Controllers\AssetController::class, 'index']) }}">
-                                @lang('assetmanagement::lang.assets')
+                                href="{{ action([\Modules\AssetManagement\Http\Controllers\AssetDepreciationController::class, 'index']) }}">
+                                @lang('Asset Depreciation')
                             </a>
                         </li>
                         <li @if (request()->segment(2) == 'allocation') class="active" @endif>

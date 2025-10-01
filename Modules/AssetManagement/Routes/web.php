@@ -7,6 +7,7 @@ Route::middleware('web', 'authh', 'auth', 'SetSessionData', 'language', 'timezon
     Route::get('install/update', [Modules\AssetManagement\Http\Controllers\InstallController::class, 'update']);
 
     Route::resource('assets', Modules\AssetManagement\Http\Controllers\AssetController::class);
+    Route::resource('depreciation', Modules\AssetManagement\Http\Controllers\AssetDepreciationController::class);
     Route::resource('allocation', Modules\AssetManagement\Http\Controllers\AssetAllocationController::class);
     Route::resource('revocation', Modules\AssetManagement\Http\Controllers\RevokeAllocatedAssetController::class);
     Route::resource('settings', Modules\AssetManagement\Http\Controllers\AssetSettingsController::class);
