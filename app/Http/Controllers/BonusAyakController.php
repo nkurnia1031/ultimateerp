@@ -4,10 +4,12 @@ namespace App\Http\Controllers;
 
 use App\BonusAyak;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Maatwebsite\Excel\Facades\Excel;
 use App\Exports\BonusAyakExport;
 use App\Imports\TripImport;
 use Barryvdh\DomPDF\Facade\Pdf;
+use Carbon\Carbon; 
 
 class BonusAyakController extends Controller
 {
@@ -37,27 +39,34 @@ class BonusAyakController extends Controller
 
         $data = $q->orderBy('tanggal')->get();
         $totalBulanIni = $data->sum('bonus');
+        $total_trip  = $data->sum('trip');   // total semua trip
+        $grand_total = $data->sum('bonus');  // total semua bonus
 
         // ✅ Ambil hanya user dengan role Driver / Operator
         $users = \App\User::whereHas('roles', function($q) {
-    $q->where('name', 'like', 'Driver%')
-      ->orWhere('name', 'like', 'Operator%');
-})->with('roles')->get();
+            $q->where('name', 'like', 'Driver%')
+              ->orWhere('name', 'like', 'Operator%');
+        })->with('roles')->get();
+
+        // ✅ Ambil unit langsung dari tabel assets
+        $assets = DB::table('assets')->get();
 
         // Handle export Excel
         if ($request->export === 'excel') {
             return Excel::download(new BonusAyakExport($from, $to), 'bonus_ayak.xlsx');
         }
 
-        // Handle export PDF
-        if ($request->export === 'pdf') {
-            $total = $totalBulanIni;
-            return Pdf::loadView('bonus_ayak.pdf', compact('data','total'))
-                      ->setPaper('a4','portrait')
-                      ->download('rekap_bonus_ayak.pdf');
-        }
-
-        return view('bonus_ayak.index', compact('data','totalBulanIni','from','to','nama','users'));
+        return view('bonus_ayak.index', compact(
+            'data',
+            'totalBulanIni',
+            'from',
+            'to',
+            'nama',
+            'users',
+            'assets', // 👈 kirim ke view
+            'total_trip',    // tambahan
+            'grand_total'    // tambahan
+        ));
     }
 
     public function store(Request $request)
@@ -65,7 +74,7 @@ class BonusAyakController extends Controller
         $validated = $request->validate([
             'tanggal'       => ['required','date'],
             'nama_operator' => ['required','string','max:100'],
-            'unit'          => ['required','string','max:50'],
+            'unit'          => ['required','string','max:100'], // langsung string (name dari assets)
             'trip'          => ['required','integer','min:0'],
         ]);
 
@@ -73,8 +82,8 @@ class BonusAyakController extends Controller
 
         BonusAyak::create([
             'tanggal'       => $validated['tanggal'],
-            'nama_operator' => $validated['nama_operator'], // tetap string (nama user)
-            'unit'          => $validated['unit'],
+            'nama_operator' => $validated['nama_operator'],
+            'unit'          => $validated['unit'], // langsung simpan nama unit
             'trip'          => $validated['trip'],
             'bonus'         => $bonus,
         ]);
@@ -104,31 +113,143 @@ class BonusAyakController extends Controller
         return Excel::download(new BonusAyakExport($from,$to), 'bonus_ayak.xlsx');
     }
 
-    public function exportPdf(Request $request)
-    {
-        $from = $request->input('from');
-        $to   = $request->input('to');
+public function exportPdf(Request $request)
+{
+    $from = $request->input('from') ?? $request->input('export_from');
+    $to   = $request->input('to')   ?? $request->input('export_to');
 
-        $q = BonusAyak::query();
-        if ($from) $q->whereDate('tanggal','>=',$from);
-        if ($to)   $q->whereDate('tanggal','<=',$to);
-        if (!$from && !$to) {
-            $q->whereMonth('tanggal', now()->month)
-              ->whereYear('tanggal', now()->year);
-        }
-
-        $data = $q->orderBy('tanggal')->get();
-        $total = $data->sum('bonus');
-
-        $pdf = Pdf::loadView('bonus_ayak.pdf', compact('data','total'))
-                  ->setPaper('a4','portrait');
-
-        return $pdf->download('rekap_bonus_ayak.pdf');
+    if (!$from && !$to) {
+        $from = now()->startOfMonth()->toDateString();
+        $to   = now()->endOfMonth()->toDateString();
+    } elseif ($from && !$to) {
+        $to = $from;
+    } elseif (!$from && $to) {
+        $from = $to;
     }
+
+    $q = DB::table('bonus_ayak')
+        ->select(
+            'nama_operator',
+            DB::raw('SUM(trip) as total_trip'),
+            DB::raw('SUM(bonus) as total_bonus')
+        )
+        ->whereDate('tanggal', '>=', $from)
+        ->whereDate('tanggal', '<=', $to);
+
+    $data = $q->groupBy('nama_operator')
+              ->orderBy('nama_operator')
+              ->get();
+
+    // total keseluruhan
+    $total_trip  = $data->sum('total_trip');
+    $grand_total = $data->sum('total_bonus');
+
+    // ✅ Tambahkan di sini (ambil total kasbon per operator)
+    $kasbonData = DB::table('bonus_ayak_kasbon')
+        ->select('nama_operator', DB::raw('SUM(jumlah_kasbon) as total_kasbon'))
+        ->whereBetween('tanggal', [$from, $to])
+        ->groupBy('nama_operator')
+        ->pluck('total_kasbon', 'nama_operator')
+        ->toArray();
+
+    // format tanggal untuk header PDF
+    $displayFrom = Carbon::parse($from)->format('d/m/Y');
+    $displayTo   = Carbon::parse($to)->format('d/m/Y');
+
+    // ✅ Load view + kirim variabel tambahan kasbonData
+    $pdf = Pdf::loadView('bonus_ayak.pdf', [
+        'data' => $data,
+        'displayFrom' => $displayFrom,
+        'displayTo' => $displayTo,
+        'total_trip' => $total_trip,
+        'grand_total' => $grand_total,
+        'kasbonData' => $kasbonData,
+        'from' => $from,
+        'to' => $to
+    ]);
+
+    return $pdf->setPaper('a4','portrait')->download('rekap_bonus_ayak.pdf');
+}
 
     private function hitungBonus(int $trip): int
     {
         if ($trip < 50) return 0;
         return 50000 + max(0, $trip - 50) * 2000;
     }
+    
+    public function edit(BonusAyak $bonusAyak)
+{
+    // ✅ Ambil hanya user dengan role Driver / Operator
+    $users = \App\User::whereHas('roles', function($q) {
+        $q->where('name', 'like', 'Driver%')
+          ->orWhere('name', 'like', 'Operator%');
+    })->with('roles')->get();
+
+    // ✅ Ambil unit langsung dari tabel assets
+    $assets = DB::table('assets')->get();
+
+    return view('bonus_ayak.edit', [
+        'bonus'  => $bonusAyak,
+        'users'  => $users,
+        'assets' => $assets,
+    ]);
 }
+
+public function update(Request $request, BonusAyak $bonusAyak)
+{
+    $validated = $request->validate([
+        'tanggal'       => ['required','date'],
+        'nama_operator' => ['required','string','max:100'],
+        'unit'          => ['required','string','max:100'],
+        'trip'          => ['required','integer','min:0'],
+    ]);
+
+    $bonus = $this->hitungBonus($validated['trip']);
+
+    $bonusAyak->update([
+        'tanggal'       => $validated['tanggal'],
+        'nama_operator' => $validated['nama_operator'],
+        'unit'          => $validated['unit'],
+        'trip'          => $validated['trip'],
+        'bonus'         => $bonus,
+    ]);
+
+    return redirect()->route('bonus-ayak.index')->with('success', 'Data berhasil diupdate');
+}
+
+public function kasbonForm()
+{
+    $users = \App\User::all();
+    $kasbon = \DB::table('bonus_ayak_kasbon')->orderBy('tanggal', 'desc')->get();
+
+    return view('bonus_ayak.kasbon_form', compact('users', 'kasbon'));
+}
+
+public function kasbonStore(Request $request)
+{
+    $request->validate([
+        'tanggal' => 'required|date',
+        'nama_operator' => 'required|string',
+        'jumlah_kasbon' => 'required|numeric|min:0',
+    ]);
+
+    \DB::table('bonus_ayak_kasbon')->insert([
+        'tanggal' => $request->tanggal,
+        'nama_operator' => $request->nama_operator,
+        'jumlah_kasbon' => $request->jumlah_kasbon,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    return redirect()->route('bonus-ayak.kasbon-form')->with('success', 'Kasbon berhasil disimpan!');
+}
+
+public function kasbonDelete($id)
+{
+    \DB::table('bonus_ayak_kasbon')->where('id', $id)->delete();
+    return redirect()->route('bonus-ayak.kasbon-form')->with('success', 'Kasbon berhasil dihapus!');
+}
+
+
+}
+

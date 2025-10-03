@@ -29,42 +29,7 @@ class DuplikatController extends Controller
         // }
         // return $this->indexPenjualan();
         // return $this->indexPembelian();
-        return $this->indexTdl();
-    }
-    public function indexTdl()
-    {
-        // $tdl1 = file_get_contents('tdl-udah.json');
-        // $tdl1 = json_decode($tdl1)->messages;
-        // $tdl1 = collect($tdl1)->pluck('text')->unique();
-        // $tdl1 =  $tdl1->map(function ($item) {
-        //     return explode(' ', $item)[0] ?? $item;
-        // })->unique();;
-        $tdl2 = file_get_contents('tdl-export.json');
-        $tdl2 = json_decode($tdl2)->messages;
-        $endOf2023 = strtotime("2025-09-27 23:59:59");
-        $endOf20232 = strtotime("2025-09-27 00:00:00");
-
-        $tdl2 = collect($tdl2)->map(function ($item) {
-            $value = $item->text;
-            preg_match_all('/oklink.cfd[^\s"]+/', $value, $matches);
-            if (!empty($matches[0])) {
-                foreach ($matches[0] as $bot) {
-                    // Bersihkan spasi, newline, non-breaking space, dsb.
-                    $clean = trim(preg_replace('/\s+/u', '', $bot));
-
-                    // Masukkan hanya kalau tidak kosong
-                    if ($clean !== '') {
-                        $item->text = 'https://' . $clean;;
-                        return  $item;
-                    }
-                }
-            }
-        })->unique('text')->whereBetween('date',   [$endOf20232, $endOf2023]);
-        dd($tdl2);
-        foreach ($tdl2 as $key => $value) {
-            $link = $value->text;
-            echo "<a href='$link'>$link</a><br>";
-        }
+        return $this->indexbiaya();
     }
     public function indexbiaya()
     {
