@@ -107,7 +107,16 @@ Route::middleware(['setData'])->group(function () {
 //Routes for authenticated users only
 Route::middleware(['setData', 'auth', 'SetSessionData', 'language', 'timezone', 'AdminSidebarMenu', 'CheckUserLogin'])->group(function () {
     Route::resource('tags', TagController::class);
+    
+    Route::get('bonus-ayak/export-pdf', [BonusAyakController::class, 'exportPdf'])
+    ->name('bonus-ayak.export-pdf');
+    // Kasbon Bonus Ayak
+    Route::get('/bonus-ayak/kasbon', [BonusAyakController::class, 'kasbonForm'])->name('bonus-ayak.kasbon-form');
+    Route::post('/bonus-ayak/kasbon', [BonusAyakController::class, 'kasbonStore'])->name('bonus-ayak.kasbon-store');
+    Route::delete('/bonus-ayak/kasbon/{id}', [BonusAyakController::class, 'kasbonDelete'])->name('bonus-ayak.kasbon-delete');
+
     Route::resource('bonus-ayak', BonusAyakController::class);
+  
 
     // Menampilkan list ban & form
     Route::get('/ban', [BanController::class, 'index'])->name('ban.index');
@@ -132,6 +141,11 @@ Route::middleware(['setData', 'auth', 'SetSessionData', 'language', 'timezone', 
         Route::put('/pool/{id}', [SolarController::class, 'updatePool'])->name('pool.update');
         Route::put('/mess/{id}', [SolarController::class, 'updateMess'])->name('mess.update');
     });
+Route::post('solar/stock/import', [App\Http\Controllers\SolarController::class, 'importStock'])
+    ->name('solar.stock.import');
+// ROUTE UNTUK STOCK AWAL SOLAR
+Route::post('/solar/stock-awal/save', [SolarController::class, 'saveStockAwal'])->name('solar.stock.awal.save');
+
 
 
 

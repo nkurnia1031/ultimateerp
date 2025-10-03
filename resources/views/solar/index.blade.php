@@ -50,9 +50,26 @@
                 {{-- STOCK TAB --}}
                 <div id="stock" class="tab-pane fade in active">
                     <h4>Stock Solar</h4>
-                    <input type="text" class="form-control input-sm search-stock"
-                        placeholder="Cari Tanggal / Keterangan ..." style="margin-bottom:10px; width: 300px;">
-                    <form method="post" action="{{ route('solar.stock.save') }}">
+<form method="POST" action="{{ route('solar.stock.awal.save') }}" class="form-inline">
+    @csrf
+    <div class="col-md-3">
+        <label>Stok Awal (Stock ACT / Aktual):</label>
+        <input type="number" step="0.01" name="stock_awal_actual" id="stok-awal-act"
+               class="form-control" value="{{ $stok_awal_act }}">
+    </div>
+    <div class="col-md-3">
+        <label>Stok Awal (Stock Meteran):</label>
+        <input type="number" step="0.01" name="stock_awal_meteran" id="stok-awal-meteran"
+               class="form-control" value="{{ $stok_awal_meteran }}">
+    </div>
+    <div class="col-md-3 align-self-end">
+        <button type="submit" class="btn btn-success">Simpan Stok Awal</button>
+    </div>
+</form>
+                
+                <input type="text" class="form-control input-sm search-stock"
+                    placeholder="Cari Tanggal / Keterangan ..." style="margin-bottom:10px; width: 300px;">
+                <form method="post" action="{{ route('solar.stock.save') }}">
                         @csrf
                         <table class="table table-bordered" id="table-stock">
                             <thead>
@@ -212,6 +229,40 @@
             </div>
         </div>
     </div>
+    <!-- MODAL UPLOAD CSV/EXCEL -->
+<div class="modal fade" id="uploadCSV" tabindex="-1" role="dialog" aria-labelledby="uploadCSVLabel">
+  <div class="modal-dialog" role="document">
+    <div class="modal-content">
+      <form action="{{ route('solar.stock.import') }}" method="POST" enctype="multipart/form-data">
+        @csrf
+        <div class="modal-header">
+          <h4 class="modal-title" id="uploadCSVLabel">
+            <i class="fa fa-upload"></i> Import Data Solar Stock
+          </h4>
+          <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+            <span aria-hidden="true">&times;</span>
+          </button>
+        </div>
+
+        <div class="modal-body">
+          <div class="form-group">
+            <label>Pilih File Excel / CSV</label>
+            <input type="file" name="file" class="form-control" required>
+            <small class="text-muted">Format yang didukung: .xlsx, .xls, .csv</small>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-default" data-dismiss="modal">Batal</button>
+          <button type="submit" class="btn btn-success">
+            <i class="fa fa-check"></i> Import Sekarang
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
 @endsection
 @section('javascript')
     <script>
@@ -273,28 +324,31 @@
             calculateAll();
         });
 
-        function calculateAll() {
-            calculateStock('#table-stock', '.stock-in', '.out-actual', '.stock-actual');
-            calculateStock('#table-stock', '.stock-in', '.out-meteran', '.stock-meteran');
-            calculateStock('#table-pool', '.pool-in', '.pool-out', '.pool-current');
-            calculateStock('#table-mess', '.mess-in', '.mess-out', '.mess-current');
-        }
+            function calculateAll() {
+                calculateStock('#table-stock', '.stock-in', '.out-actual', '.stock-actual', 'stok-awal-act');
+                calculateStock('#table-stock', '.stock-in', '.out-meteran', '.stock-meteran', 'stok-awal-meteran');
+                calculateStock('#table-pool', '.pool-in', '.pool-out', '.pool-current', null);
+                calculateStock('#table-mess', '.mess-in', '.mess-out', '.mess-current', null);
+            }
+            
+            function calculateStock(tableId, inSelector, outSelector, resultSelector, stokAwalId) {
+                // Jika stokAwalId disediakan, ambil nilainya, kalau tidak, mulai dari 0
+                let total = stokAwalId ? parseFloat(document.getElementById(stokAwalId)?.value || 0) : 0;
+            
+                const rows = document.querySelectorAll(`${tableId} tbody tr`);
+                rows.forEach(row => {
+                    const inputIn = row.querySelector(inSelector);
+                    const inputOut = row.querySelector(outSelector);
+                    const result = row.querySelector(resultSelector);
+            
+                    const masuk = parseFloat(inputIn?.value || 0);
+                    const keluar = parseFloat(inputOut?.value || 0);
+            
+                    total = total + masuk - keluar;
+                    if (result) result.value = total;
+                });
+            }
 
-        function calculateStock(tableId, inSelector, outSelector, resultSelector) {
-            let total = 0;
-            const rows = document.querySelectorAll(`${tableId} tbody tr`);
-            rows.forEach(row => {
-                const inputIn = row.querySelector(inSelector);
-                const inputOut = row.querySelector(outSelector);
-                const result = row.querySelector(resultSelector);
-
-                const masuk = parseFloat(inputIn?.value || 0);
-                const keluar = parseFloat(inputOut?.value || 0);
-
-                total = total + masuk - keluar;
-                if (result) result.value = total;
-            });
-        }
 
         function filterTable(inputClass, tableId) {
             $(inputClass).on("keyup", function() {

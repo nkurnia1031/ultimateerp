@@ -2,19 +2,53 @@
 
 @section('content')
 <div class="container">
-
     {{-- HEADER --}}
-    <div class="d-flex justify-content-between align-items-center mb-4">
+    <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap">
         <h3 class="mb-0"><i class="bi bi-cash-coin me-2"></i> Input Bonus Ayak</h3>
-        <div>
-            <a href="{{ route('bonus-ayak.index',['export'=>'excel']) }}" class="btn btn-success btn-sm me-2">
-                <i class="bi bi-file-earmark-excel"></i> Export Excel
+
+        <div class="d-flex flex-wrap gap-2 align-items-end">
+            {{-- Tombol ke Form Kasbon Bonus Ayak --}}
+            <a href="{{ route('bonus-ayak.kasbon-form') }}" class="btn btn-info">
+                <i class="bi bi-wallet2 me-1"></i> Form Kasbon Bonus Ayak
             </a>
-            <a href="{{ route('bonus-ayak.index',['export'=>'pdf']) }}" class="btn btn-danger btn-sm">
-                <i class="bi bi-file-earmark-pdf"></i> Export PDF
-            </a>
-        </div>
+
+{{-- CARD EXPORT BONUS AYAK --}}
+<div class="card shadow-sm mb-0" style="min-width: 420px;">
+    <div class="card-header bg-light fw-bold py-2 px-3">
+        <i class="bi bi-download me-2"></i> Export Bonus Ayak
     </div>
+    <div class="card-body py-2 px-3">
+        <form class="row g-2 align-items-end" method="GET" action="{{ route('bonus-ayak.index') }}">
+            {{-- Dari --}}
+            <div class="col-md-4">
+                <label class="form-label mb-1">Dari</label>
+                <input type="date" name="export_from" class="form-control form-control-sm"
+                       value="{{ request('export_from', date('Y-m-01')) }}">
+            </div>
+
+            {{-- Sampai --}}
+            <div class="col-md-4">
+                <label class="form-label mb-1">Sampai</label>
+                <input type="date" name="export_to" class="form-control form-control-sm"
+                       value="{{ request('export_to', date('Y-m-t')) }}">
+            </div>
+
+            {{-- Tombol Export --}}
+            <div class="col-md-4 d-flex justify-content-between align-items-end mt-3 mt-md-0">
+                <button type="submit" name="export" value="excel" class="btn btn-success btn-sm w-50 me-1">
+                    <i class="bi bi-file-earmark-excel"></i> Excel
+                </button>
+                <a href="{{ route('bonus-ayak.export-pdf', ['from' => $from, 'to' => $to]) }}" 
+                   class="btn btn-danger btn-sm w-50">
+                    <i class="bi bi-file-earmark-pdf"></i> PDF
+                </a>
+            </div>
+        </form>
+    </div>
+</div>
+</div>
+</div>
+
 
     {{-- NOTIFIKASI --}}
     @if(session('success'))
@@ -32,12 +66,12 @@
                 <div class="card-body">
                     <form class="row g-3" action="{{ route('bonus-ayak.store') }}" method="POST">
                         @csrf
-                        <div class="col-sm-3 col-md-2">
+                        <div class="col-sm-2 col-md-2">
                             <label class="form-label">Tanggal</label>
                             <input type="date" id="tanggal" name="tanggal" class="form-control"
                                    value="{{ date('Y-m-d') }}" required>
                         </div>
-                       <div class="col-sm-3 col-md-2">
+                       <div class="col-sm-2 col-md-2">
             <label for="nama_operator">Nama Operator/Supir</label>
             <select id="nama_operator" name="nama_operator" class="form-select select2" required>
                 <option value="">-- Pilih --</option>
@@ -55,10 +89,14 @@
                 @endforeach
             </select>
         </div>
-                <div class="col-sm-3 col-md-2">
+                <div class="col-sm-2 col-md-2">
                     <label class="form-label">Unit</label>
-                    <input type="text" id="unit" name="unit" class="form-control"
-                           placeholder="Unit" required>
+                    <select id="unit" name="unit" class="form-select select2" required>
+                        <option value="">-- Pilih --</option>
+                        @foreach($assets as $asset)
+                            <option value="{{ $asset->name }}">{{ $asset->name }}</option>
+                        @endforeach
+                    </select>
                 </div>
                 <div class="col-sm-2 col-md-2">
                     <label class="form-label">Trip</label>
@@ -72,7 +110,7 @@
                            value="Rp 0" readonly style="background-color:#f8f9fa;">
                     <input type="hidden" name="bonus" id="bonus_hidden" value="0">
                 </div>
-                <div class="col-sm-2 col-md-1 d-grid align-items-end">
+                <div class="col-sm-1 col-md-1 d-grid align-items-end">
                     <button type="submit" class="btn btn-success mt-4" id="btn-simpan">
                         <i class="bi bi-save"></i> Simpan
                     </button>
@@ -80,6 +118,7 @@
             </form>
         </div>
     </div>
+    </br>
 
     {{-- UPLOAD EXCEL --}}
     <div class="card shadow-sm mb-3">
@@ -145,15 +184,22 @@
                             <td class="text-center">{{ $row->trip }}</td>
                             <td class="text-end">{{ number_format($row->bonus, 0, ',', '.') }}</td>
                             <td class="text-center">
-                                <form onsubmit="return confirm('Hapus data ini?')" method="POST"
-                                      action="{{ route('bonus-ayak.destroy', $row) }}">
-                                    @csrf
-                                    @method('DELETE')
-                                    <button type="submit" class="btn btn-sm btn-danger">
-                                        <i class="bi bi-trash"></i> Hapus
-                                    </button>
-                                </form>
-                            </td>
+                            <form onsubmit="return confirm('Hapus data ini?')" method="POST"
+                                  action="{{ route('bonus-ayak.destroy', $row) }}">
+                                @csrf
+                                @method('DELETE')
+                        
+                                {{-- Tombol Edit --}}
+                                <a href="{{ route('bonus-ayak.edit', $row->id) }}" class="btn btn-sm btn-warning me-1">
+                                    <i class="bi bi-pencil-square"></i> Edit
+                                </a>
+                        
+                                {{-- Tombol Hapus --}}
+                                <button type="submit" class="btn btn-sm btn-danger">
+                                    <i class="bi bi-trash"></i> Hapus
+                                </button>
+                            </form>
+                        </td>
                         </tr>
                     @empty
                         <tr>
@@ -163,10 +209,10 @@
                 </tbody>
                 <tfoot>
                     <tr class="table-secondary">
-                        <th colspan="4" class="text-end">Total Bonus Bulan Ini:</th>
-                        <th colspan="2" class="text-start ps-3">
-                            {{ number_format($totalBulanIni, 0, ',', '.') }}
-                        </th>
+                        <th colspan="3" class="text-end">TOTAL:</th>
+                        <th class="text-center">{{ $total_trip }}</th>
+                        <th class="text-end">{{ number_format($grand_total, 0, ',', '.') }}</th>
+                        <th></th>
                     </tr>
                 </tfoot>
             </table>

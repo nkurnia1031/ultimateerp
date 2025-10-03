@@ -237,21 +237,22 @@
                 format: moment_date_format + ' ' + moment_time_format,
                 ignoreReadonly: true,
             });
+                   let lastDate = $('#expense_transaction_date').val();
 
-            let lastDate = $('#expense_transaction_date').val();
+setInterval(function() {
+    let currentDate = $('#expense_transaction_date').val();
 
-            setInterval(function() {
-                let currentDate = $('#expense_transaction_date').val();
+    // cek perubahan
+    if (currentDate !== lastDate) {
+        lastDate = currentDate;
 
-                // cek perubahan
-                if (currentDate !== lastDate) {
-                    lastDate = currentDate;
+        if (!$('#is_pay_later').is(':checked')) {
+            $('.paid_on').val(currentDate);
+        }
+    }
+}, 300);
+  
 
-                    if (!$('#is_pay_later').is(':checked')) {
-                        $('.paid_on').val(currentDate);
-                    }
-                }
-            }, 300);
 
             let line_index = 1;
 
