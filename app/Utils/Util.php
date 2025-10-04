@@ -1407,58 +1407,83 @@ class Util
     public function numToIndianFormat(float $number)
     {
         $decimal = round($number - ($no = floor($number)), 2) * 100;
-        $hundred = null;
-        $digits_length = strlen($no);
-        $i = 0;
         $str = [];
         $words = [
             0 => '',
-            1 => 'one',
-            2 => 'two',
-            3 => 'three',
-            4 => 'four',
-            5 => 'five',
-            6 => 'six',
-            7 => 'seven',
-            8 => 'eight',
-            9 => 'nine',
-            10 => 'ten',
-            11 => 'eleven',
-            12 => 'twelve',
-            13 => 'thirteen',
-            14 => 'fourteen',
-            15 => 'fifteen',
-            16 => 'sixteen',
-            17 => 'seventeen',
-            18 => 'eighteen',
-            19 => 'nineteen',
-            20 => 'twenty',
-            30 => 'thirty',
-            40 => 'forty',
-            50 => 'fifty',
-            60 => 'sixty',
-            70 => 'seventy',
-            80 => 'eighty',
-            90 => 'ninety',
+            1 => 'satu',
+            2 => 'dua',
+            3 => 'tiga',
+            4 => 'empat',
+            5 => 'lima',
+            6 => 'enam',
+            7 => 'tujuh',
+            8 => 'delapan',
+            9 => 'sembilan',
+            10 => 'sepuluh',
+            11 => 'sebelas',
+            12 => 'dua belas',
+            13 => 'tiga belas',
+            14 => 'empat belas',
+            15 => 'lima belas',
+            16 => 'enam belas',
+            17 => 'tujuh belas',
+            18 => 'delapan belas',
+            19 => 'sembilan belas',
+            20 => 'dua puluh',
+            30 => 'tiga puluh',
+            40 => 'empat puluh',
+            50 => 'lima puluh',
+            60 => 'enam puluh',
+            70 => 'tujuh puluh',
+            80 => 'delapan puluh',
+            90 => 'sembilan puluh',
         ];
-        $digits = ['', 'hundred', 'thousand', 'lakh', 'crore'];
-        while ($i < $digits_length) {
-            $divider = ($i == 2) ? 10 : 100;
-            $number = floor($no % $divider);
-            $no = floor($no / $divider);
-            $i += $divider == 10 ? 1 : 2;
-            if ($number) {
-                $plural = (($counter = count($str)) && $number > 9) ? 's' : null;
-                $hundred = ($counter == 1 && $str[0]) ? ' and ' : null;
-                $str[] = ($number < 21) ? $words[$number] . ' ' . $digits[$counter] . $plural . ' ' . $hundred : $words[floor($number / 10) * 10] . ' ' . $words[$number % 10] . ' ' . $digits[$counter] . $plural . ' ' . $hundred;
-            } else {
-                $str[] = null;
-            }
-        }
-        $whole_number_part = implode('', array_reverse($str));
-        $decimal_part = ($decimal > 0) ? ' point ' . ($words[$decimal / 10] . ' ' . $words[$decimal % 10]) : '';
 
-        return ($whole_number_part ? $whole_number_part : '') . $decimal_part;
+        // Format Indonesia: ribu, juta, milyar, triliun
+        $digits = ['', 'ribu', 'juta', 'milyar', 'triliun'];
+
+        $i = 0;
+        while ($no > 0) {
+            $number = $no % 1000;
+            $no = floor($no / 1000);
+
+            if ($number) {
+                $part = '';
+                $hundreds = floor($number / 100);
+                $tens_units = $number % 100;
+
+                if ($hundreds > 0) {
+                    $part .= ($hundreds == 1 ? 'seratus' : $words[$hundreds] . ' ratus') . ' ';
+                }
+
+                if ($tens_units > 0) {
+                    if ($tens_units < 20) {
+                        $part .= $words[$tens_units] . ' ';
+                    } else {
+                        $part .= $words[floor($tens_units / 10) * 10] . ' ' . $words[$tens_units % 10] . ' ';
+                    }
+                }
+
+                if ($i > 0) {
+                    // khusus "seribu" bukan "satu ribu"
+                    if (trim($part) == 'satu' && $i == 1) {
+                        $part = 'seribu ';
+                    }
+                    $part .= $digits[$i] . ' ';
+                }
+
+                array_unshift($str, $part);
+            }
+
+            $i++;
+        }
+
+        $whole_number_part = implode('', $str);
+        $decimal_part = ($decimal > 0)
+            ? ' koma ' . trim($words[floor($decimal / 10)] . ' ' . $words[$decimal % 10])
+            : '';
+
+        return trim($whole_number_part . $decimal_part);
     }
 
     public function getCustomLabels($business, $type = null)
