@@ -20,11 +20,11 @@
         <div class="panel-body">
             {{-- Filter Form --}}
             <form class="form-inline" method="get">
-                <label>Dari:
-                    <input type="date" name="date1" value="{{ $date1 }}" class="form-control">
+               <label>Dari:
+                    <input type="date" name="date1" value="{{ $date1 instanceof \DateTime ? $date1->format('Y-m-d') : $date1 }}" class="form-control">
                 </label>
                 <label>Sampai:
-                    <input type="date" name="date2" value="{{ $date2 }}" class="form-control">
+                    <input type="date" name="date2" value="{{ $date2 instanceof \DateTime ? $date2->format('Y-m-d') : $date2 }}" class="form-control">
                 </label>
                 <button type="submit" class="btn btn-primary">Filter</button>
             </form>
@@ -50,26 +50,15 @@
                 {{-- STOCK TAB --}}
                 <div id="stock" class="tab-pane fade in active">
                     <h4>Stock Solar</h4>
-<form method="POST" action="{{ route('solar.stock.awal.save') }}" class="form-inline">
-    @csrf
-    <div class="col-md-3">
-        <label>Stok Awal (Stock ACT / Aktual):</label>
-        <input type="number" step="0.01" name="stock_awal_actual" id="stok-awal-act"
-               class="form-control" value="{{ $stok_awal_act }}">
-    </div>
-    <div class="col-md-3">
-        <label>Stok Awal (Stock Meteran):</label>
-        <input type="number" step="0.01" name="stock_awal_meteran" id="stok-awal-meteran"
-               class="form-control" value="{{ $stok_awal_meteran }}">
-    </div>
-    <div class="col-md-3 align-self-end">
-        <button type="submit" class="btn btn-success">Simpan Stok Awal</button>
-    </div>
-</form>
-                
-                <input type="text" class="form-control input-sm search-stock"
-                    placeholder="Cari Tanggal / Keterangan ..." style="margin-bottom:10px; width: 300px;">
-                <form method="post" action="{{ route('solar.stock.save') }}">
+                    <div class="alert alert-info" style="padding:8px; margin-bottom:10px;">
+    <strong>Stok Awal Bulan Ini:</strong>
+    {{ number_format($stok_awal_actual ?? 0, 0, ',', '.') }} L (Actual)
+    &nbsp;/&nbsp;
+    {{ number_format($stok_awal_meteran ?? 0, 0, ',', '.') }} L (Meteran)
+</div>
+                    <input type="text" class="form-control input-sm search-stock"
+                        placeholder="Cari Tanggal / Keterangan ..." style="margin-bottom:10px; width: 300px;">
+                    <form method="post" action="{{ route('solar.stock.save') }}">
                         @csrf
                         <table class="table table-bordered" id="table-stock">
                             <thead>
@@ -121,6 +110,14 @@
                 {{-- POOL TAB --}}
                 <div id="pool" class="tab-pane fade">
                     <h4>Solar Pool</h4>
+                <button class="btn btn-sm btn-success" data-toggle="modal" data-target="#uploadCSVPool">
+                    <i class="fa fa-upload"></i> Upload CSV
+                </button>
+                <div class="alert alert-info" style="padding:8px; margin-bottom:10px;">
+                  <strong>Stok Awal Bulan Ini:</strong>
+                  {{ number_format($stok_awal_pool ?? 0, 0, ',', '.') }} GL
+                </div>
+
                     <form method="post" action="{{ route('solar.pool.save') }}#pool">
                         @csrf
                         <table class="table table-bordered" id="table-pool">
@@ -133,6 +130,7 @@
                                     <th>Keterangan</th>
                                     <th>Unit</th>
                                     <th>Operator</th>
+                                    <th>Customer</th>
                                     <th>Aksi</th>
                                 </tr>
                             </thead>
@@ -155,6 +153,18 @@
                                                 value="{{ $row->unit }}"></td>
                                         <td><input type="text" name="operator[]" class="form-control"
                                                 value="{{ $row->operator }}"></td>
+                                        {{-- ✅ Dropdown Customer --}}
+                                        <td>
+                                             <select name="customer_id[]" class="form-control select2">
+                                                <option value="">-- Pilih Customer --</option>
+                                                @foreach($customers as $cust)
+                                                    <option value="{{ $cust->id }}" 
+                                                        {{ isset($row->customer_id) && $row->customer_id == $cust->id ? 'selected' : '' }}>
+                                                        {{ $cust->display_name }}
+                                                    </option>
+                                                @endforeach
+                                            </select>
+                                        </td>
                                         <td>
                                             <button type="button" onclick="deletePool({{ $row->id }})"
                                                 class="btn btn-danger btn-sm">
@@ -170,11 +180,39 @@
                             Tambah Baris</button>
                         <button type="submit" class="btn btn-primary">Simpan</button>
                     </form>
+            <div class="d-flex justify-content-between align-items-center mt-3">
+                <div>
+                    <strong>Bulan ditampilkan:</strong>
+                    {{ \Carbon\Carbon::parse($currentMonth . '-01')->translatedFormat('F Y') }}
+                </div>
+            
+                <div>
+                    @if($page > 1)
+                        <a href="{{ route('solar.index', ['date1' => $date1->format('Y-m-d'), 'date2' => $date2->format('Y-m-d'), 'page' => $page - 1]) }}" class="btn btn-outline-primary btn-sm">
+                            &laquo; Sebelumnya
+                        </a>
+                    @endif
+            
+                    @if($page < $totalPages)
+                        <a href="{{ route('solar.index', ['date1' => $date1->format('Y-m-d'), 'date2' => $date2->format('Y-m-d'), 'page' => $page + 1]) }}" class="btn btn-outline-primary btn-sm">
+                            Berikutnya &raquo;
+                        </a>
+                    @endif
+                </div>
+            </div>
                 </div>
 
                 {{-- MESS TAB --}}
                 <div id="mess" class="tab-pane fade">
                     <h4>Solar Mess</h4>
+                    <button class="btn btn-sm btn-success" data-toggle="modal" data-target="#uploadCSVMess">
+                    <i class="fa fa-upload"></i> Upload CSV
+                    </button>
+                <div class="alert alert-info" style="padding:8px; margin-bottom:10px;">
+                  <strong>Stok Awal Bulan Ini:</strong>
+                  {{ number_format($stok_awal_mess ?? 0, 0, ',', '.') }} GL
+                </div>
+
                     <form method="post" action="{{ route('solar.mess.save') }}#mess">
                         @csrf
                         <table class="table table-bordered" id="table-mess">
@@ -187,6 +225,8 @@
                                     <th>Keterangan</th>
                                     <th>Unit</th>
                                     <th>Operator</th>
+                                    <th>Customer</th>
+                                    <th>Lokasi</th>
                                     <th>Aksi</th>
                                 </tr>
                             </thead>
@@ -209,6 +249,24 @@
                                                 value="{{ $row->unit }}"></td>
                                         <td><input type="text" name="operator[]" class="form-control"
                                                 value="{{ $row->operator }}"></td>
+                                        <td>
+                                            <select name="customer_id[]" class="form-control select2">
+                                                <option value="">-- Pilih Customer --</option>
+                                                @foreach($customers as $cust)
+                                                    <option value="{{ $cust->id }}" 
+                                                        {{ isset($row->customer_id) && $row->customer_id == $cust->id ? 'selected' : '' }}>
+                                                        {{ $cust->display_name }}
+                                                    </option>
+                                                @endforeach
+                                            </select>
+                                        </td>     
+                                    <td>
+                                        <select name="lokasi[]" class="form-control">
+                                            <option value="">-- Pilih Lokasi --</option>
+                                            <option value="Stockpile Jatim" {{ isset($row->lokasi) && $row->lokasi == 'Stockpile Jatim' ? 'selected' : '' }}>Stockpile Jatim</option>
+                                            <option value="Telly Dermaga C" {{ isset($row->lokasi) && $row->lokasi == 'Telly Dermaga C' ? 'selected' : '' }}>Telly Dermaga C</option>
+                                        </select>
+                                    </td>
                                         <td>
                                             <button type="button" onclick="deleteMess({{ $row->id }})"
                                                 class="btn btn-danger btn-sm">
@@ -263,6 +321,73 @@
   </div>
 </div>
 
+<!-- MODAL UPLOAD CSV POOL -->
+<div class="modal fade" id="uploadCSVPool" tabindex="-1" role="dialog" aria-labelledby="uploadCSVPoolLabel">
+  <div class="modal-dialog" role="document">
+    <div class="modal-content">
+      <form action="{{ route('solar.pool.import') }}" method="POST" enctype="multipart/form-data">
+        @csrf
+        <div class="modal-header">
+          <h4 class="modal-title" id="uploadCSVPoolLabel">
+            <i class="fa fa-upload"></i> Import Data Solar Pool
+          </h4>
+          <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+            <span aria-hidden="true">&times;</span>
+          </button>
+        </div>
+
+        <div class="modal-body">
+          <div class="form-group">
+            <label>Pilih File Excel / CSV</label>
+            <input type="file" name="file" class="form-control" required>
+            <small class="text-muted">Format yang didukung: .xlsx, .xls, .csv</small>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-default" data-dismiss="modal">Batal</button>
+          <button type="submit" class="btn btn-success">
+            <i class="fa fa-check"></i> Import Sekarang
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL UPLOAD CSV MESS -->
+<div class="modal fade" id="uploadCSVMess" tabindex="-1" role="dialog" aria-labelledby="uploadCSVMessLabel">
+  <div class="modal-dialog" role="document">
+    <div class="modal-content">
+      <form action="{{ route('solar.mess.import') }}" method="POST" enctype="multipart/form-data">
+        @csrf
+        <div class="modal-header">
+          <h4 class="modal-title" id="uploadCSVMessLabel">
+            <i class="fa fa-upload"></i> Import Data Solar Mess
+          </h4>
+          <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+            <span aria-hidden="true">&times;</span>
+          </button>
+        </div>
+
+        <div class="modal-body">
+          <div class="form-group">
+            <label>Pilih File Excel / CSV</label>
+            <input type="file" name="file" class="form-control" required>
+            <small class="text-muted">Format yang didukung: .xlsx, .xls, .csv</small>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-default" data-dismiss="modal">Batal</button>
+          <button type="submit" class="btn btn-success">
+            <i class="fa fa-check"></i> Import Sekarang
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
 @endsection
 @section('javascript')
     <script>
@@ -282,21 +407,44 @@
             tableBody.appendChild(newRow);
         }
 
-        function addRowPool() {
-            const tableBody = document.getElementById('table-pool-body');
-            const newRow = document.createElement('tr');
-            newRow.innerHTML = `
-            <td><input type="date" name="tanggal[]" class="form-control"></td>
-            <td><input type="number" name="qty_in[]" class="form-control pool-in"></td>
-            <td><input type="number" name="qty_out[]" class="form-control pool-out"></td>
-            <td><input type="number" name="current_stock[]" class="form-control pool-current" readonly></td>
-            <td><input type="text" name="keterangan[]" class="form-control"></td>
-            <td><input type="text" name="unit[]" class="form-control"></td>
-            <td><input type="text" name="operator[]" class="form-control"></td>
-            <td><button type="button" class="btn btn-danger btn-sm" onclick="deleteRow(this)"><i class="fa fa-trash"></i></button></td>
-        `;
-            tableBody.appendChild(newRow);
-        }
+      function addRowPool() {
+    const tableBody = document.getElementById('table-pool-body');
+    const newRow = document.createElement('tr');
+    newRow.innerHTML = `
+        <td><input type="date" name="tanggal[]" class="form-control"></td>
+        <td><input type="number" name="qty_in[]" class="form-control pool-in"></td>
+        <td><input type="number" name="qty_out[]" class="form-control pool-out"></td>
+        <td><input type="number" name="current_stock[]" class="form-control pool-current" readonly></td>
+        <td><input type="text" name="keterangan[]" class="form-control"></td>
+        <td><input type="text" name="unit[]" class="form-control"></td>
+        <td><input type="text" name="operator[]" class="form-control"></td>
+        <td>
+            <select name="customer_id[]" class="form-control select2-customer">
+                <option value="">-- Pilih Customer --</option>
+                @foreach($customers as $cust)
+                    <option value="{{ $cust->id }}">{{ $cust->display_name }}</option>
+                @endforeach
+            </select>
+        </td>
+        <td><button type="button" class="btn btn-danger btn-sm" onclick="deleteRow(this)"><i class="fa fa-trash"></i></button></td>
+    `;
+    tableBody.appendChild(newRow);
+
+    // Aktifkan Select2 untuk semua dropdown customer baru
+    $('.select2-customer').select2({
+        placeholder: "-- Pilih Customer --",
+        allowClear: true,
+        width: '100%'
+    });
+}
+
+$(document).ready(function() {
+    $('.select2-customer').select2({
+        placeholder: "-- Pilih Customer --",
+        allowClear: true,
+        width: '100%'
+    });
+});
 
         function addRowMess() {
             const tableBody = document.getElementById('table-mess-body');
@@ -309,10 +457,32 @@
             <td><input type="text" name="keterangan[]" class="form-control"></td>
             <td><input type="text" name="unit[]" class="form-control"></td>
             <td><input type="text" name="operator[]" class="form-control"></td>
+            <td>
+                <select name="customer_id" id="customer_id" class="form-control">
+                <option value="">-- Pilih Customer --</option>
+                @foreach($customers as $cust)
+                <option value="{{ $cust->id }}">{{ $cust->display_name }}</option>
+                @endforeach
+                </select>
+            </td>     
+            <td>
+                <select name="lokasi[]" class="form-control select2">
+                <option value="">-- Pilih Lokasi --</option>
+                <option value="Stockpile Jatim">Stockpile Jatim</option>
+                <option value="Telly Dermaga C">Telly Dermaga C</option>
+                </select>
+                                    </td>
             <td><button type="button" class="btn btn-danger btn-sm" onclick="deleteRow(this)"><i class="fa fa-trash"></i></button></td>
         `;
             tableBody.appendChild(newRow);
-        }
+            
+                // Aktifkan Select2 untuk semua dropdown customer baru
+    $('.select2-customer').select2({
+        placeholder: "-- Pilih Customer --",
+        allowClear: true,
+        width: '100%'
+    });
+}
 
         function deleteRow(btn) {
             const row = btn.closest('tr');
@@ -323,31 +493,66 @@
         document.addEventListener('input', function() {
             calculateAll();
         });
+        // inject stok awal dari server ke JS (safe)
+        const START_STOCK_ACTUAL = @json($stok_awal_actual ?? 0);
+        const START_STOCK_METERAN = @json($stok_awal_meteran ?? 0);
+        const START_STOCK_POOL = @json($stok_awal_pool ?? 0);
+        const START_STOCK_MESS = @json($stok_awal_mess ?? 0);
 
-            function calculateAll() {
-                calculateStock('#table-stock', '.stock-in', '.out-actual', '.stock-actual', 'stok-awal-act');
-                calculateStock('#table-stock', '.stock-in', '.out-meteran', '.stock-meteran', 'stok-awal-meteran');
-                calculateStock('#table-pool', '.pool-in', '.pool-out', '.pool-current', null);
-                calculateStock('#table-mess', '.mess-in', '.mess-out', '.mess-current', null);
-            }
-            
-            function calculateStock(tableId, inSelector, outSelector, resultSelector, stokAwalId) {
-                // Jika stokAwalId disediakan, ambil nilainya, kalau tidak, mulai dari 0
-                let total = stokAwalId ? parseFloat(document.getElementById(stokAwalId)?.value || 0) : 0;
-            
-                const rows = document.querySelectorAll(`${tableId} tbody tr`);
-                rows.forEach(row => {
-                    const inputIn = row.querySelector(inSelector);
-                    const inputOut = row.querySelector(outSelector);
-                    const result = row.querySelector(resultSelector);
-            
-                    const masuk = parseFloat(inputIn?.value || 0);
-                    const keluar = parseFloat(inputOut?.value || 0);
-            
-                    total = total + masuk - keluar;
-                    if (result) result.value = total;
-                });
-            }
+function calculateAll() {
+    // Stock tetap pakai fungsi lama
+    calculateStock('#table-stock', '.stock-in', '.out-actual', '.stock-actual');
+    calculateStock('#table-stock', '.stock-in', '.out-meteran', '.stock-meteran');
+
+    // Pool & Mess pakai fungsi baru akumulatif
+    calculateStockCumulative('#table-pool', '.pool-in', '.pool-out', '.pool-current', START_STOCK_POOL);
+    calculateStockCumulative('#table-mess', '.mess-in', '.mess-out', '.mess-current', START_STOCK_MESS);
+}
+
+// Fungsi stock lama tetap untuk #table-stock
+function calculateStock(tableId, inSelector, outSelector, resultSelector, startStock = 0) {
+    let total = 0;
+
+    if (tableId === '#table-stock' && resultSelector === '.stock-actual') {
+        total = parseFloat(START_STOCK_ACTUAL) || 0;
+    } else if (tableId === '#table-stock' && resultSelector === '.stock-meteran') {
+        total = parseFloat(START_STOCK_METERAN) || 0;
+    } else {
+        total = parseFloat(startStock) || 0;
+    }
+
+    const rows = document.querySelectorAll(`${tableId} tbody tr`);
+    rows.forEach(row => {
+        const inputIn = row.querySelector(inSelector);
+        const inputOut = row.querySelector(outSelector);
+        const result = row.querySelector(resultSelector);
+
+        const masuk = parseFloat(inputIn?.value || 0);
+        const keluar = parseFloat(inputOut?.value || 0);
+
+        total = total + masuk - keluar;
+        if (result) result.value = total;
+    });
+}
+
+// Fungsi baru khusus Pool & Mess (akumulatif dari baris pertama)
+function calculateStockCumulative(tableId, inSelector, outSelector, resultSelector, startStock = 0) {
+    const rows = document.querySelectorAll(`${tableId} tbody tr`);
+    let total = parseFloat(startStock) || 0;
+
+    rows.forEach(row => {
+        const inputIn = row.querySelector(inSelector);
+        const inputOut = row.querySelector(outSelector);
+        const result = row.querySelector(resultSelector);
+
+        const masuk = parseFloat(inputIn?.value || 0);
+        const keluar = parseFloat(inputOut?.value || 0);
+
+        total = total + masuk - keluar;
+        if (result) result.value = total;
+    });
+}
+
 
 
         function filterTable(inputClass, tableId) {
@@ -434,5 +639,32 @@
                     alert(error.message);
                 });
         }
+        
+        $(document).ready(function() {
+    var hash = window.location.hash;
+    if (hash) {
+        $('.nav-tabs a[href="' + hash + '"]').tab('show');
+    }
+
+    // ✅ aktifkan pencarian tabel
+    filterTable(".search-stock", "#table-stock");
+    filterTable(".search-pool", "#table-pool");
+    filterTable(".search-mess", "#table-mess");
+
+    // ✅ tetap biarkan tab aktif mengikuti URL
+    if (hash) {
+        $('.nav-tabs a[href="' + hash + '"]').tab('show');
+    }
+
+    // ✅ langsung hitung semua stok saat halaman pertama kali dibuka
+    calculateAll();
+
+    // ✅ setiap kali ada perubahan input, perhitungan diupdate otomatis
+    document.addEventListener('input', function() {
+        calculateAll();
+    });
+});
+
     </script>
 @endsection
+

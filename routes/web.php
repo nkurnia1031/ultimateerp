@@ -145,6 +145,8 @@ Route::post('solar/stock/import', [App\Http\Controllers\SolarController::class, 
     ->name('solar.stock.import');
 // ROUTE UNTUK STOCK AWAL SOLAR
 Route::post('/solar/stock-awal/save', [SolarController::class, 'saveStockAwal'])->name('solar.stock.awal.save');
+Route::post('/solar/pool/import', [SolarController::class, 'importPool'])->name('solar.pool.import');
+Route::post('/solar/mess/import', [SolarController::class, 'importMess'])->name('solar.mess.import');
 
 
 
