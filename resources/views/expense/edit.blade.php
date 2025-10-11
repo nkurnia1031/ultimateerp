@@ -106,13 +106,34 @@
                     </div>
 
                     {{-- Expense For Contact --}}
-                    <div class="col-md-4 col-md-6  ">
+                    <div class="col-md-4   ">
                         <div class="form-group">
                             {!! Form::label('contact_id', __('lang_v1.expense_for_contact') . ':') !!}
                             {!! Form::select('contact_id', $contacts, $expense->contact_id, [
                                 'class' => 'form-control select2',
                                 'placeholder' => __('messages.please_select'),
                             ]) !!}
+                        </div>
+                    </div>
+                    <div class="col-md-4 ">
+                        <div class="form-group">
+                            {!! Form::label('tag_id', __('Tags') . ':') !!}
+                            <div class="input-group">
+                                <span class="input-group-addon">
+                                    <i class="fa fa-tag"></i>
+                                </span>
+                                {!! Form::select('tag[]', $expense->tags, $expense->tagsids, [
+                                    'class' => 'form-control',
+                                    'multiple' => 'true',
+                                    'id' => 'tag_id',
+                                ]) !!}
+                                <span class="input-group-btn">
+                                    <a target="_blank"
+                                        href="{{ action([\App\Http\Controllers\TagController::class, 'create']) }}"
+                                        class="btn btn-default bg-white btn-flat" data-name=""><i
+                                            class="fa fa-plus-circle text-primary fa-lg"></i></a>
+                                </span>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -278,26 +299,26 @@
     <script type="text/javascript">
         $(document).ready(function() {
             $('.select2').select2();
-               $('.paid_on').datetimepicker({
-                    format: moment_date_format + ' ' + moment_time_format,
-                    ignoreReadonly: true,
-                });
+            $('.paid_on').datetimepicker({
+                format: moment_date_format + ' ' + moment_time_format,
+                ignoreReadonly: true,
+            });
             get_expense_sub_categories(`category_id0`, `sub_category_id0`);
             calculateTotals();
-                   let lastDate = $('#expense_transaction_date').val();
+            let lastDate = $('#expense_transaction_date').val();
 
-setInterval(function() {
-    let currentDate = $('#expense_transaction_date').val();
+            setInterval(function() {
+                let currentDate = $('#expense_transaction_date').val();
 
-    // cek perubahan
-    if (currentDate !== lastDate) {
-        lastDate = currentDate;
+                // cek perubahan
+                if (currentDate !== lastDate) {
+                    lastDate = currentDate;
 
-        if (!$('#is_pay_later').is(':checked')) {
-            $('.paid_on').val(currentDate);
-        }
-    }
-}, 300);
+                    if (!$('#is_pay_later').is(':checked')) {
+                        $('.paid_on').val(currentDate);
+                    }
+                }
+            }, 300);
 
             let line_index = 1;
 

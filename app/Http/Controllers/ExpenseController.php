@@ -14,6 +14,8 @@ use App\User;
 use App\Utils\CashRegisterUtil;
 use App\Utils\ModuleUtil;
 use App\Utils\TransactionUtil;
+use App\Utils\TagTransactionUtil;
+
 use DB;
 use Excel;
 use App\Utils\AccountTransactionUtil;
@@ -33,6 +35,8 @@ class ExpenseController extends Controller
     protected $moduleUtil;
     protected $dummyPaymentLine;
     protected $cashRegisterUtil;
+    protected $TagTransactionUtil;
+
 
     /**
      * Constructor
@@ -40,9 +44,10 @@ class ExpenseController extends Controller
      * @param  TransactionUtil  $transactionUtil
      * @return void
      */
-    public function __construct(AccountTransactionUtil $AccountTransactionUtil, TransactionUtil $transactionUtil, ModuleUtil $moduleUtil, CashRegisterUtil $cashRegisterUtil)
+    public function __construct(TagTransactionUtil $TagTransactionUtil, AccountTransactionUtil $AccountTransactionUtil, TransactionUtil $transactionUtil, ModuleUtil $moduleUtil, CashRegisterUtil $cashRegisterUtil)
     {
         $this->transactionUtil = $transactionUtil;
+        $this->TagTransactionUtil = $TagTransactionUtil;
         $this->AccountTransactionUtil = $AccountTransactionUtil;
         $this->moduleUtil = $moduleUtil;
         $this->dummyPaymentLine = [
@@ -306,6 +311,21 @@ class ExpenseController extends Controller
                         return $category_line->unique()->filter()->implode(', ');
                     }
                 )
+                ->editColumn('tags', function ($row) {
+
+                    return (string) view('purchase.partials.tags', ['tags' => $row->tags]);
+                })
+                ->filterColumn('tags', function ($query, $keyword) {
+                    $query->whereHas('tags', function ($q) use ($keyword) {
+                        $q->where('name', 'like', "%{$keyword}%");
+                    });
+                })
+                ->orderColumn('tags', function ($query, $order) {
+                    $query->leftJoin('transaction_tags', 'transactions.id', '=', 'transaction_tags.transaction_id')
+                        ->leftJoin('tags', 'tags.id', '=', 'transaction_tags.tag_id')
+                        ->groupBy('transactions.id') // penting biar nggak duplikat row
+                        ->orderByRaw("GROUP_CONCAT(tags.name ORDER BY tags.name ASC SEPARATOR ', ') {$order}");
+                })
                 ->editColumn(
                     'contact_name',
                     function ($row) {
@@ -369,7 +389,7 @@ class ExpenseController extends Controller
 
                     return $ref_no;
                 })
-                ->rawColumns(['final_total', 'action', 'payment_status', 'contact_name', 'payment_due', 'ref_no', 'recur_details'])
+                ->rawColumns(['tags', 'final_total', 'action', 'payment_status', 'contact_name', 'payment_due', 'ref_no', 'recur_details'])
                 ->make(true);
         }
 
@@ -487,6 +507,8 @@ class ExpenseController extends Controller
                 $payments = ! empty($request->input('payment')) ? $request->input('payment') : [];
                 $this->cashRegisterUtil->addSellPayments($expense, $payments);
             }
+            $tag_ids = $request->get('tag');
+            $this->TagTransactionUtil->updateTagTransaction($expense->id, $tag_ids);
 
             $this->transactionUtil->activityLog($expense, 'added');
 
@@ -643,7 +665,7 @@ class ExpenseController extends Controller
             ->pluck('name', 'id');
         $expense = Transaction::where('business_id', $business_id)
             ->where('id', $id)
-            ->with(['expense_lines'])
+            ->with(['expense_lines', 'tags'])
             ->first();
 
         $users = User::forDropdown($business_id, true, true);
@@ -686,6 +708,8 @@ class ExpenseController extends Controller
         if ($this->moduleUtil->isModuleEnabled('account')) {
             $accounts = Account::forDropdown($business_id, true, false, true);
         }
+        $expense->tags = $expense->tags->pluck('name', 'id')->toArray();
+        $expense->tagsids = array_keys($expense->tags);
         return view('expense.edit')
             ->with(compact('expense_subcategories', 'bl_attributes', 'accounts', 'payment_line', 'payment_types', 'expense', 'expense_categories', 'business_locations', 'users', 'taxes', 'contacts', 'sub_categories'));
     }
@@ -717,6 +741,8 @@ class ExpenseController extends Controller
             }
 
             $expense = $this->transactionUtil->updateExpense($request, $id, $business_id);
+            $tag_ids = $request->get('tag');
+            $this->TagTransactionUtil->updateTagTransaction($id, $tag_ids);
 
             $this->transactionUtil->activityLog($expense, 'edited');
 

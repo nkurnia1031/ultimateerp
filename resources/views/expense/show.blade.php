@@ -87,6 +87,22 @@
                                     </span>
 
                                 </div>
+
+
+                            </div>
+                            <div class="col-sm-4 col-xs-6">
+                                <div class="form-group">
+                                    @if (!empty($expense->tags))
+                                        <b>@lang('Tags'):</b>
+                                        <div class="tw-flex tw-flex-wrap">
+                                            @foreach ($expense->tags as $item)
+                                                <div class="label bg-light-green tw-m-1">{{ $item->name }}</div>
+                                            @endforeach
+
+                                        </div>
+                                    @endif
+
+                                </div>
                             </div>
                             <div class="clearfix"></div>
 

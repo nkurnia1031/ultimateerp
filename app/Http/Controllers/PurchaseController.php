@@ -732,7 +732,7 @@ class PurchaseController extends Controller
                 'pay_term_type',
                 'purchase_order_ids',
             ]);
-            $tag_ids = $request->get('tag');
+
 
             $exchange_rate = $update_data['exchange_rate'];
 
@@ -802,6 +802,7 @@ class PurchaseController extends Controller
             $delete_purchase_lines = $this->productUtil->createOrUpdatePurchaseLines($transaction, $purchases, $currency_details, $enable_product_editing, $before_status);
 
             //Update Tags
+            $tag_ids = $request->get('tag');
             $this->TagTransactionUtil->updateTagTransaction($transaction->id, $tag_ids);
             //Update mapping of purchase & Sell.
             $this->transactionUtil->adjustMappingPurchaseSellAfterEditingPurchase($before_status, $transaction, $delete_purchase_lines);
