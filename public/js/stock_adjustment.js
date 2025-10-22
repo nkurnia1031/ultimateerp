@@ -1,10 +1,10 @@
-$(document).ready(function() {
+$(document).ready(function () {
     //Add products
     if ($('#search_product_for_srock_adjustment').length > 0) {
         //Add Product
         $('#search_product_for_srock_adjustment')
             .autocomplete({
-                source: function(request, response) {
+                source: function (request, response) {
                     $.getJSON(
                         '/products/list',
                         { location_id: $('#location_id').val(), term: request.term },
@@ -12,7 +12,7 @@ $(document).ready(function() {
                     );
                 },
                 minLength: 2,
-                response: function(event, ui) {
+                response: function (event, ui) {
                     if (ui.content.length == 1) {
                         ui.item = ui.content[0];
                         if (ui.item.qty_available > 0 && ui.item.enable_stock == 1) {
@@ -25,12 +25,12 @@ $(document).ready(function() {
                         swal(LANG.no_products_found);
                     }
                 },
-                focus: function(event, ui) {
+                focus: function (event, ui) {
                     if (ui.item.qty_available <= 0) {
                         return false;
                     }
                 },
-                select: function(event, ui) {
+                select: function (event, ui) {
                     if (ui.item.qty_available > 0) {
                         $(this).val(null);
                         stock_adjustment_product_row(ui.item.variation_id);
@@ -39,30 +39,30 @@ $(document).ready(function() {
                     }
                 },
             })
-            .autocomplete('instance')._renderItem = function(ul, item) {
-            if (item.qty_available <= 0) {
-                var string = '<li class="ui-state-disabled">' + item.name;
-                if (item.type == 'variable') {
-                    string += '-' + item.variation;
+            .autocomplete('instance')._renderItem = function (ul, item) {
+                if (item.qty_available <= 0) {
+                    var string = '<li class="ui-state-disabled">' + item.name;
+                    if (item.type == 'variable') {
+                        string += '-' + item.variation;
+                    }
+                    string += ' (' + item.sub_sku + ') (Out of stock) </li>';
+                    return $(string).appendTo(ul);
+                } else if (item.enable_stock != 1) {
+                    return ul;
+                } else {
+                    var string = '<div>' + item.name;
+                    if (item.type == 'variable') {
+                        string += '-' + item.variation;
+                    }
+                    string += ' (' + item.sub_sku + ') </div>';
+                    return $('<li>')
+                        .append(string)
+                        .appendTo(ul);
                 }
-                string += ' (' + item.sub_sku + ') (Out of stock) </li>';
-                return $(string).appendTo(ul);
-            } else if (item.enable_stock != 1) {
-                return ul;
-            } else {
-                var string = '<div>' + item.name;
-                if (item.type == 'variable') {
-                    string += '-' + item.variation;
-                }
-                string += ' (' + item.sub_sku + ') </div>';
-                return $('<li>')
-                    .append(string)
-                    .appendTo(ul);
-            }
-        };
+            };
     }
 
-    $('select#location_id').change(function() {
+    $('select#location_id').change(function () {
         if ($(this).val()) {
             $('#search_product_for_srock_adjustment').removeAttr('disabled');
         } else {
@@ -73,14 +73,14 @@ $(document).ready(function() {
         update_table_total();
     });
 
-    $(document).on('change', 'input.product_quantity', function() {
+    $(document).on('change', 'input.product_quantity', function () {
         update_table_row($(this).closest('tr'));
     });
-    $(document).on('change', 'input.product_unit_price', function() {
+    $(document).on('change', 'input.product_unit_price', function () {
         update_table_row($(this).closest('tr'));
     });
 
-    $(document).on('click', '.remove_product_row', function() {
+    $(document).on('click', '.remove_product_row', function () {
         swal({
             title: LANG.sure,
             icon: 'warning',
@@ -104,37 +104,10 @@ $(document).ready(function() {
 
     $('form#stock_adjustment_form').validate();
 
-    stock_adjustment_table = $('#stock_adjustment_table').DataTable({
-        processing: true,
-        serverSide: true,
-        fixedHeader:false,
-        ajax: '/stock-adjustments',
-        columnDefs: [
-            {
-                targets: 0,
-                orderable: false,
-                searchable: false,
-            },
-        ],
-        aaSorting: [[1, 'desc']],
-        columns: [
-            { data: 'action', name: 'action' },
-            { data: 'transaction_date', name: 'transaction_date' },
-            { data: 'ref_no', name: 'ref_no' },
-            { data: 'location_name', name: 'BL.name' },
-            { data: 'adjustment_type', name: 'adjustment_type' },
-            { data: 'final_total', name: 'final_total' },
-            { data: 'total_amount_recovered', name: 'total_amount_recovered' },
-            { data: 'additional_notes', name: 'additional_notes' },
-            { data: 'added_by', name: 'u.first_name' },
-        ],
-        fnDrawCallback: function(oSettings) {
-            __currency_convert_recursively($('#stock_adjustment_table'));
-        },
-    });
+
     var detailRows = [];
 
-    $(document).on('click', 'button.delete_stock_adjustment', function() {
+    $(document).on('click', 'button.delete_stock_adjustment', function () {
         swal({
             title: LANG.sure,
             icon: 'warning',
@@ -147,7 +120,7 @@ $(document).ready(function() {
                     method: 'DELETE',
                     url: href,
                     dataType: 'json',
-                    success: function(result) {
+                    success: function (result) {
                         if (result.success) {
                             toastr.success(result.msg);
                             stock_adjustment_table.ajax.reload();
@@ -169,7 +142,7 @@ function stock_adjustment_product_row(variation_id) {
         url: '/stock-adjustments/get_product_row',
         data: { row_index: row_index, variation_id: variation_id, location_id: location_id },
         dataType: 'html',
-        success: function(result) {
+        success: function (result) {
             $('table#stock_adjustment_product_table tbody').append(result);
             update_table_total();
             $('#product_row_index').val(row_index + 1);
@@ -179,7 +152,7 @@ function stock_adjustment_product_row(variation_id) {
 
 function update_table_total() {
     var table_total = 0;
-    $('table#stock_adjustment_product_table tbody tr').each(function() {
+    $('table#stock_adjustment_product_table tbody tr').each(function () {
         var this_total = parseFloat(__read_number($(this).find('input.product_line_total')));
         if (this_total) {
             table_total += this_total;
@@ -200,6 +173,6 @@ function update_table_row(tr) {
     update_table_total();
 }
 
-$(document).on('shown.bs.modal', '.view_modal', function() {
+$(document).on('shown.bs.modal', '.view_modal', function () {
     __currency_convert_recursively($('.view_modal'));
 });

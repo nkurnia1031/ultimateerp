@@ -8,9 +8,9 @@
         <br>
         <h1 class="tw-text-xl md:tw-text-3xl tw-font-bold tw-text-black">@lang('stock_adjustment.add')</h1>
         <!-- <ol class="breadcrumb">
-            <li><a href="#"><i class="fa fa-dashboard"></i> Level</a></li>
-            <li class="active">Here</li>
-        </ol> -->
+                                                            <li><a href="#"><i class="fa fa-dashboard"></i> Level</a></li>
+                                                            <li class="active">Here</li>
+                                                        </ol> -->
     </section>
 
     <!-- Main content -->
@@ -59,6 +59,27 @@
                             null,
                             ['class' => 'form-control select2', 'placeholder' => __('messages.please_select'), 'required'],
                         ) !!}
+                    </div>
+                </div>
+                <div class="col-sm-3">
+                    <div class="form-group">
+                        {!! Form::label('asset_id', __('Untuk Penggunaan') . ':') !!}
+                        <div class="input-group">
+                            <span class="input-group-addon">
+                                <i class="fa fa-truck"></i>
+                            </span>
+                            {!! Form::select('asset_id', [['id' => '', 'text' => 'Tidak Ada']], null, [
+                                'class' => 'form-control',
+                                'id' => 'asset_id',
+                            ]) !!}
+                            <span class="input-group-btn">
+                                <a target="_blank"
+                                    href="{{ action([Modules\AssetManagement\Http\Controllers\AssetController::class, 'index']) }}"
+                                    class="btn
+                            btn-default bg-white btn-flat" data-name=""><i
+                                        class="fa fa-plus-circle text-primary fa-lg"></i></a>
+                            </span>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -146,7 +167,8 @@
             </div>
             <div class="row">
                 <div class="col-sm-12 text-center">
-                    <button type="submit" class="tw-dw-btn tw-dw-btn-primary tw-dw-btn-lg tw-text-white">@lang('messages.save')</button>
+                    <button type="submit"
+                        class="tw-dw-btn tw-dw-btn-primary tw-dw-btn-lg tw-text-white">@lang('messages.save')</button>
                 </div>
             </div>
         @endcomponent
@@ -158,6 +180,61 @@
     <script type="text/javascript">
         __page_leave_confirmation('#stock_adjustment_form');
     </script>
+    <script>
+        $(document).ready(function() {
+            const location_id = $('#location_id').val()
+            if (location_id) {
+                $('#search_product_for_srock_adjustment').removeAttr('disabled');
+            } else {
+                $('#search_product_for_srock_adjustment').attr('disabled', 'disabled');
+            }
+            $('#asset_id').select2({
+                ajax: {
+                    url: '/asset/list',
+                    dataType: 'json',
+                    delay: 250,
+                    data: function(params) {
+                        return {
+                            q: params.term, // search term
+                            page: params.page,
+                        };
+                    },
+                    processResults: function(data) {
+                        return {
+                            results: data,
+                        };
+                    },
+                },
+                minimumInputLength: 1,
+                escapeMarkup: function(m) {
+                    return m;
+                },
+                templateResult: function(data) {
+                    if (!data.id) {
+                        return data.text;
+                    }
+                    var html = data.text;
+                    return html;
+                },
+                templateSelection: function(data) {
+                    return data.text; // tampil di input setelah dipilih
+                },
+                language: {
+                    noResults: function() {
+                        return 'Tag tidak ditemukan, silakan klik tombol + untuk menambahkan';
+                    },
+                },
+            }).on('select2:select', function(e) {
+                var data = e.params.data;
+                // $('#pay_term_number').val(data.pay_term_number);
+                // $('#pay_term_type').val(data.pay_term_type);
+                // $('#advance_balance_text').text(__currency_trans_from_en(data.balance), true);
+                // $('#advance_balance').val(data.balance);
+                // set_supplier_address(data);
+            });
+        });
+    </script>
+    <script></script>
 @endsection
 
 

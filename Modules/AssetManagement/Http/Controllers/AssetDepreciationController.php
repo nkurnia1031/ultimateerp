@@ -178,8 +178,11 @@ class AssetDepreciationController extends Controller
             if (! empty(request()->input('location_id'))) {
                 $assets->where('assets.location_id', request()->input('location_id'));
             }
-            if (! empty(request()->input('category_id'))) {
-                $assets->where('assets.category_id', request()->input('category_id'));
+            if (! empty(request()->input('location_id'))) {
+                $assets->where('assets.location_id', request()->input('location_id'));
+            }
+            if (! empty(request()->input('asset_id'))) {
+                $assets->where('assets.id', request()->input('asset_id'));
             }
             if (! empty(request()->input('purchase_type'))) {
                 $assets->where('assets.purchase_type', request()->input('purchase_type'));
@@ -244,9 +247,10 @@ class AssetDepreciationController extends Controller
 
         $business_locations = BusinessLocation::forDropdown($business_id);
         $asset_category = Category::forDropdown($business_id, 'asset');
+        $assets = Asset::forDropdown($business_id);
 
         return view('assetmanagement::asset_depreciation.index')
-            ->with(compact('purchase_types', 'business_locations', 'asset_category'));
+            ->with(compact('assets', 'purchase_types', 'business_locations', 'asset_category'));
     }
 
     /**

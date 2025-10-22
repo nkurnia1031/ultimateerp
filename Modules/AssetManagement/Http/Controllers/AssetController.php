@@ -46,6 +46,37 @@ class AssetController extends Controller
             'leased' => __('assetmanagement::lang.leased'),
         ];
     }
+    public function getAssets()
+    {
+        if (request()->ajax()) {
+            $term = request()->q;
+            if (empty($term)) {
+                return json_encode([]);
+            }
+
+            $business_id = request()->session()->get('user.business_id');
+            $user_id = request()->session()->get('user.id');
+
+            $query = Asset::where('business_id', $business_id)->select(
+                'asset_code',
+                'id',
+                'name',
+            );
+
+            $suppliers = $query->where(function ($query) use ($term) {
+                $query->where('name', 'like', '%' . $term . '%')
+                    ->orWhere('asset_code', 'like', '%' . $term . '%');
+            })
+                ->get();
+            $suppliers = $suppliers->map(function ($item) {
+                return ['id' => $item->id, 'text' => $item->name . ' (' . $item->asset_code . ')'];
+            });
+            // $suppliers->prepend(['id' => '', 'text' => __('Tidak ada')]);
+
+
+            return json_encode($suppliers);
+        }
+    }
     public function importDataLama()
     {
         $array = array(
@@ -354,8 +385,8 @@ class AssetController extends Controller
     }
 
     /**
-     * Show the form for creating a new resource.
-     *
+     * Show the form for crating a new resource.
+     *e
      * @return Response
      */
     public function create(Request $request)

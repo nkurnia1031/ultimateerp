@@ -7,9 +7,9 @@
     <section class="content-header">
         <h1 class="tw-text-xl md:tw-text-3xl tw-font-bold tw-text-black">@lang('product.add_new_product')</h1>
         <!-- <ol class="breadcrumb">
-                <li><a href="#"><i class="fa fa-dashboard"></i> Level</a></li>
-                <li class="active">Here</li>
-            </ol> -->
+                        <li><a href="#"><i class="fa fa-dashboard"></i> Level</a></li>
+                        <li class="active">Here</li>
+                    </ol> -->
     </section>
 
     <!-- Main content -->
@@ -365,12 +365,15 @@
                     @endforeach
                 @endif
 
-                {{-- <div class="col-sm-4">
-            <div class="form-group">
-                {!! Form::label('weight', __('lang_v1.weight') . ':') !!}
-                {!! Form::text('weight', !empty($duplicate_product->weight) ? $duplicate_product->weight : null, ['class' => 'form-control', 'placeholder' => __('lang_v1.weight')]); !!}
-            </div>
-        </div> --}}
+                <div class="col-sm-4" style="display: none">
+                    <div class="form-group">
+                        {!! Form::label('weight', __('lang_v1.weight') . ':') !!}
+                        {!! Form::text('weight', !empty($duplicate_product->weight) ? $duplicate_product->weight : null, [
+                            'class' => 'form-control',
+                            'placeholder' => __('lang_v1.weight'),
+                        ]) !!}
+                    </div>
+                </div>
                 @php
                     $custom_labels = json_decode(session('business.custom_labels'), true);
                     $product_custom_fields = !empty($custom_labels['product']) ? $custom_labels['product'] : [];
@@ -424,7 +427,7 @@
                     @endif
                 @endforeach
 
-                {{-- <div class="col-sm-3">
+                <div class="col-sm-3" style="display: none">
                     <div class="form-group">
                         {!! Form::label('preparation_time_in_minutes', __('lang_v1.preparation_time_in_minutes') . ':') !!}
                         {!! Form::number(
@@ -433,7 +436,7 @@
                             ['class' => 'form-control', 'placeholder' => __('lang_v1.preparation_time_in_minutes')],
                         ) !!}
                     </div>
-                </div> --}}
+                </div>
                 <!--custom fields-->
                 <div class="clearfix"></div>
                 @include('layouts.partials.module_form_part')

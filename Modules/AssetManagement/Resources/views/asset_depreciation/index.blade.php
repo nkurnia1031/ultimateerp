@@ -38,6 +38,14 @@
                 ]) !!}
             </div>
             <div class="col-md-3">
+                {!! Form::label('asset_list_filter_asset_id', 'Assets' . ':') !!}
+                {!! Form::select('asset_list_filter_asset_id', $assets, null, [
+                    'class' => 'form-control select2',
+                    'placeholder' => __('lang_v1.all'),
+                    'style' => 'width: 100%;',
+                ]) !!}
+            </div>
+            <div class="col-md-3">
                 <div class="form-group">
                     <div class="checkbox">
                         <label>
@@ -118,6 +126,8 @@
                         d.location_id = $('#asset_list_filter_location_id').val();
                         d.category_id = $('#asset_list_filter_category_id').val();
                         d.purchase_type = $('#asset_list_filter_purchase_type').val();
+                        d.asset_id = $('#asset_list_filter_asset_id').val();
+
                         if ($('#asset_list_filter_allocatable').is(':checked')) {
                             d.is_allocatable = 1;
                         }
@@ -183,7 +193,7 @@
             });
 
             $(document).on('change',
-                '#asset_list_filter_location_id, #asset_list_filter_category_id, #asset_list_filter_purchase_type',
+                '#asset_list_filter_location_id, #asset_list_filter_category_id, #asset_list_filter_purchase_type,#asset_list_filter_asset_id',
                 function() {
                     assest_datatable.ajax.reload();
                 });
@@ -304,20 +314,20 @@
         $(document).on('click', '#add_more_warranty', function() {
             var html =
                 '<tr>\
-                                                                                                                                			    <td>\
-                                                                                                                                			        <input type="text" name="start_dates[]" class="form-control datepicker" readonly placeholder="{{ __('business.start_date') }}" required>\
-                                                                                                                                			    </td>\
-                                                                                                                                			    <td>\
-                                                                                                                                			        <input type="text" name="months[]" class="form-control input_number" placeholder="{{ __('assetmanagement::lang.warranty_months') }}" required>\
-                                                                                                                                			    </td>\
-                                                                                                                                			    <td>\
-                                                                                                                                			        <input type="text" name="additional_cost[]" class="form-control input_number" placeholder="{{ __('assetmanagement::lang.additional_cost') }}" value="0">\
-                                                                                                                                			    </td>\
-                                                                                                                                			    <td>\
-                                                                                                                                			    	<textarea name="additional_note[]" class="form-control" rows="3" placeholder="{{ __('purchase.additional_notes') }}"></textarea>\
-                                                                                                                                			    </td>\
-                                                                                                                                			    <td><button type="button" class="btn btn-danger btn-sm remove-warranty"><i class="fas fa-times"></i></button></td>\
-                                                                                                                                			</tr>';
+                                                                                                                                                    			    <td>\
+                                                                                                                                                    			        <input type="text" name="start_dates[]" class="form-control datepicker" readonly placeholder="{{ __('business.start_date') }}" required>\
+                                                                                                                                                    			    </td>\
+                                                                                                                                                    			    <td>\
+                                                                                                                                                    			        <input type="text" name="months[]" class="form-control input_number" placeholder="{{ __('assetmanagement::lang.warranty_months') }}" required>\
+                                                                                                                                                    			    </td>\
+                                                                                                                                                    			    <td>\
+                                                                                                                                                    			        <input type="text" name="additional_cost[]" class="form-control input_number" placeholder="{{ __('assetmanagement::lang.additional_cost') }}" value="0">\
+                                                                                                                                                    			    </td>\
+                                                                                                                                                    			    <td>\
+                                                                                                                                                    			    	<textarea name="additional_note[]" class="form-control" rows="3" placeholder="{{ __('purchase.additional_notes') }}"></textarea>\
+                                                                                                                                                    			    </td>\
+                                                                                                                                                    			    <td><button type="button" class="btn btn-danger btn-sm remove-warranty"><i class="fas fa-times"></i></button></td>\
+                                                                                                                                                    			</tr>';
 
             $('#asset_warranty_table tbody').append(html);
             var tr = $('#asset_warranty_table tbody').find('tr:last');

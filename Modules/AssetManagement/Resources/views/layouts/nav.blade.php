@@ -33,6 +33,11 @@
                                 @lang('Asset Depreciation')
                             </a>
                         </li>
+                        <li @if (request()->segment(2) == 'consumptions') class="active" @endif>
+                            <a href="{{ action([\App\Http\Controllers\StockAdjustmentController::class, 'index']) }}">
+                                @lang('Asset Consumptions')
+                            </a>
+                        </li>
                         <li @if (request()->segment(2) == 'allocation') class="active" @endif>
                             <a
                                 href="{{ action([\Modules\AssetManagement\Http\Controllers\AssetAllocationController::class, 'index']) }}">
