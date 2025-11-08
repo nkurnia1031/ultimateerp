@@ -15,50 +15,50 @@ $(document).ready(function () {
                 response: function (event, ui) {
                     if (ui.content.length == 1) {
                         ui.item = ui.content[0];
-                        if (ui.item.qty_available > 0 && ui.item.enable_stock == 1) {
-                            $(this)
-                                .data('ui-autocomplete')
-                                ._trigger('select', 'autocompleteselect', ui);
-                            $(this).autocomplete('close');
-                        }
+                        // if (ui.item.qty_available > 0 && ui.item.enable_stock == 1) {
+                        $(this)
+                            .data('ui-autocomplete')
+                            ._trigger('select', 'autocompleteselect', ui);
+                        $(this).autocomplete('close');
+                        // }
                     } else if (ui.content.length == 0) {
                         swal(LANG.no_products_found);
                     }
                 },
                 focus: function (event, ui) {
-                    if (ui.item.qty_available <= 0) {
-                        return false;
-                    }
+                    // if (ui.item.qty_available <= 0) {
+                    //     return false;
+                    // }
                 },
                 select: function (event, ui) {
-                    if (ui.item.qty_available > 0) {
-                        $(this).val(null);
-                        stock_adjustment_product_row(ui.item.variation_id);
-                    } else {
-                        alert(LANG.out_of_stock);
-                    }
+                    // if (ui.item.qty_available > 0) {
+                    $(this).val(null);
+                    stock_adjustment_product_row(ui.item.variation_id);
+                    // } else {
+                    //     alert(LANG.out_of_stock);
+                    // }
                 },
             })
             .autocomplete('instance')._renderItem = function (ul, item) {
-                if (item.qty_available <= 0) {
-                    var string = '<li class="ui-state-disabled">' + item.name;
-                    if (item.type == 'variable') {
-                        string += '-' + item.variation;
-                    }
-                    string += ' (' + item.sub_sku + ') (Out of stock) </li>';
-                    return $(string).appendTo(ul);
-                } else if (item.enable_stock != 1) {
-                    return ul;
-                } else {
-                    var string = '<div>' + item.name;
-                    if (item.type == 'variable') {
-                        string += '-' + item.variation;
-                    }
-                    string += ' (' + item.sub_sku + ') </div>';
-                    return $('<li>')
-                        .append(string)
-                        .appendTo(ul);
+                // if (item.qty_available <= 0) {
+                //     var string = '<li class="ui-state-disabled">' + item.name;
+                //     if (item.type == 'variable') {
+                //         string += '-' + item.variation;
+                //     }
+                //     string += ' (' + item.sub_sku + ') (Out of stock) </li>';
+                //     return $(string).appendTo(ul);
+                // } else if (item.enable_stock != 1) {
+                //     return ul;
+                // } else {
+                var string = '<div>' + item.name;
+                if (item.type == 'variable') {
+                    string += '-' + item.variation;
                 }
+                string += ' (' + item.sub_sku + ') </div>';
+                return $('<li>')
+                    .append(string)
+                    .appendTo(ul);
+                // }
             };
     }
 

@@ -1521,6 +1521,7 @@ $(document).ready(function () {
             { data: 'recur_details', name: 'recur_details', orderable: false, searchable: false },
             { data: 'category', name: 'ec.name' },
             { data: 'sub_category', name: 'esc.name' },
+            { data: 'deskripsi', name: 'deskripsi' },
             { data: 'location_name', name: 'bl.name' },
             { data: 'payment_status', name: 'payment_status', orderable: false },
             { data: 'tags', name: 'tags', orderable: false },

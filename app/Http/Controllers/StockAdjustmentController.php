@@ -55,17 +55,12 @@ class StockAdjustmentController extends Controller
 
         if (request()->ajax()) {
 
-            $stock_adjustments = Transaction::join(
-                'business_locations AS BL',
-                'transactions.location_id',
-                '=',
-                'BL.id'
-            )
+            $stock_adjustments = Transaction::join('business_locations AS BL', 'transactions.location_id', '=', 'BL.id')
                 ->leftJoin('users as u', 'transactions.created_by', '=', 'u.id')
                 ->leftJoin('asset_consumptions as ac', 'transactions.id', '=', 'ac.transaction_id')
                 ->leftJoin('assets as a', 'ac.asset_id', '=', 'a.id')
                 ->where('transactions.business_id', $business_id)
-                ->where('transactions.type', 'stock_adjustment')
+                ->whereIn('transactions.type', ['stock_adjustment', 'opening_stock'])
                 ->select(
                     'transactions.id',
                     'transaction_date',
@@ -75,12 +70,32 @@ class StockAdjustmentController extends Controller
                     'ref_no',
                     'BL.name as location_name',
                     'adjustment_type',
+                    'transactions.type',
                     'final_total',
                     'total_amount_recovered',
                     'additional_notes',
                     'transactions.id as DT_RowId',
-                    DB::raw("CONCAT(COALESCE(u.surname, ''),' ',COALESCE(u.first_name, ''),' ',COALESCE(u.last_name,'')) as added_by")
-                );
+                    DB::raw("CONCAT(COALESCE(u.surname, ''),' ',COALESCE(u.first_name, ''),' ',COALESCE(u.last_name,'')) as added_by"),
+
+                    DB::raw("CONCAT_WS(', ',
+                    (
+                        SELECT GROUP_CONCAT(CONCAT(p.name, ';', sal.quantity) SEPARATOR ', ')
+                        FROM stock_adjustment_lines sal
+                        JOIN variations v ON v.id = sal.variation_id
+                        JOIN products p ON p.id = v.product_id
+                        WHERE sal.transaction_id = transactions.id
+                    ),
+                    (
+                        SELECT GROUP_CONCAT(CONCAT(p.name, ';', pl.quantity) SEPARATOR ', ')
+                        FROM purchase_lines pl
+                        JOIN variations v ON v.id = pl.variation_id
+                        JOIN products p ON p.id = v.product_id
+                        WHERE pl.transaction_id = transactions.id
+                    )
+                ) as product")
+                )
+                ->groupBy('transactions.id');
+
 
             $permitted_locations = auth()->user()->permitted_locations();
             if ($permitted_locations != 'all') {
@@ -111,15 +126,25 @@ class StockAdjustmentController extends Controller
             }
 
             return Datatables::of($stock_adjustments)
-                ->addColumn('action', '<button type="button" data-href="{{action([\App\Http\Controllers\StockAdjustmentController::class, \'show\'], [$id]) }}" class="tw-dw-btn tw-dw-btn-xs tw-dw-btn-outline  tw-dw-btn-primary btn-modal" data-container=".view_modal"><i class="fa fa-eye" aria-hidden="true"></i> @lang("messages.view")</button>
-                 &nbsp;
-                    <button type="button" data-href="{{  action([\App\Http\Controllers\StockAdjustmentController::class, \'destroy\'], [$id]) }}" class="tw-dw-btn tw-dw-btn-xs tw-dw-btn-outline  tw-dw-btn-error delete_stock_adjustment ' . $hide . '"><i class="fa fa-trash" aria-hidden="true"></i> @lang("messages.delete")</button>')
+                ->addColumn(
+                    'action',
+                    function ($row) use ($hide) {
+
+                        return (string) view('stock_adjustment.partials.action_buttons')
+                            ->with(compact('row', 'hide'));
+                    }
+                )
+
                 ->removeColumn('id')
 
                 ->editColumn(
                     'final_total',
                     function ($row) {
+
                         if (auth()->user()->can('view_purchase_price')) {
+                            if ($row->type == 'opening_stock') {
+                                return '<span class="display_currency total-discount" data-currency_symbol="true" data-orig-value="' . $row->total_amount_recovered . '">' . $this->transactionUtil->num_f($row->total_amount_recovered, true) . '</span>';
+                            }
                             return '<span class="display_currency total-discount" data-currency_symbol="true" data-orig-value="' . $row->final_total . '">' . $this->transactionUtil->num_f($row->final_total, true) . '</span>';
                         } else {
                             return '<span>-</span>';
@@ -131,19 +156,60 @@ class StockAdjustmentController extends Controller
                     'total_amount_recovered',
                     function ($row) {
                         if (auth()->user()->can('view_purchase_price')) {
+                            if ($row->type == 'opening_stock') {
+                                return '<span class="display_currency total-discount" data-currency_symbol="true" data-orig-value="' . $row->final_total . '">' . $this->transactionUtil->num_f($row->final_total, true) . '</span>';
+                            }
                             return '<span class="display_currency total-discount" data-currency_symbol="true" data-orig-value="' . $row->total_amount_recovered . '">' . $this->transactionUtil->num_f($row->total_amount_recovered, true) . '</span>';
                         } else {
                             return '<span>-</span>';
                         }
                     }
                 )
+                // ->editColumn(
+                //     'product',
+                //     function ($row) {
+                //         if ($row->type == 'opening_stock') {
+                //             $row->stock_adjustment_lines = $row->purchase_lines;
+                //         }
+                //         return (string) view('stock_adjustment.partials.product_line', ['stock_adjustment_lines' => $row->stock_adjustment_lines]);
+                //     }
+                // )
                 ->editColumn('transaction_date', '{{@format_datetime($transaction_date)}}')
                 ->editColumn('adjustment_type', function ($row) {
+                    if ($row->type == 'opening_stock') {
+                        return __('Opening Stock / Pengembalian ke gudang');
+                    }
                     return __('stock_adjustment.' . $row->adjustment_type);
                 })
                 ->editColumn('additional_notes', function ($row) {
 
                     return (string) view('stock_adjustment.partials.additional_notes', ['row' => $row]);
+                })
+                ->editColumn('product', function ($row) {
+                    $row->product = explode(', ', $row->product);
+                    $row->product = array_map(function ($item) {
+                        return explode(';', $item);
+                    }, $row->product);
+
+                    return (string) view('stock_adjustment.partials.products', ['row' => $row]);
+                })
+                ->filterColumn('product', function ($query, $keyword) {
+                    $query->where(function ($q) use ($keyword) {
+                        $q->whereIn('transactions.id', function ($sub) use ($keyword) {
+                            $sub->select('sal.transaction_id')
+                                ->from('stock_adjustment_lines as sal')
+                                ->join('variations as v', 'v.id', '=', 'sal.variation_id')
+                                ->join('products as p', 'p.id', '=', 'v.product_id')
+                                ->where('p.name', 'like', "%{$keyword}%");
+                        })
+                            ->orWhereIn('transactions.id', function ($sub) use ($keyword) {
+                                $sub->select('pl.transaction_id')
+                                    ->from('purchase_lines as pl')
+                                    ->join('variations as v', 'v.id', '=', 'pl.variation_id')
+                                    ->join('products as p', 'p.id', '=', 'v.product_id')
+                                    ->where('p.name', 'like', "%{$keyword}%");
+                            });
+                    });
                 })
                 ->filterColumn('additional_notes', function ($query, $keyword) {
                     $query->where('a.name', 'like', "%{$keyword}%")
@@ -156,7 +222,7 @@ class StockAdjustmentController extends Controller
                         return  action([\App\Http\Controllers\StockAdjustmentController::class, 'show'], [$row->id]);
                     },
                 ])
-                ->rawColumns(['final_total', 'action', 'total_amount_recovered', 'additional_notes'])
+                ->rawColumns(['final_total', 'product', 'type', 'action', 'total_amount_recovered', 'additional_notes'])
                 ->make(true);
         }
         $assets = Asset::forDropdown($business_id);
@@ -257,7 +323,7 @@ class StockAdjustmentController extends Controller
 
                 $stock_adjustment = Transaction::create($input_data);
                 $stock_adjustment->stock_adjustment_lines()->createMany($product_data);
-                if (!empty($request->input('asset_id'))) {
+                if (!empty($request->input('asset_id')) && $request->input('asset_id') != 'id') {
                     $asset_id = $request->input('asset_id');
                     DB::table('asset_consumptions')->insert([
                         'asset_id' => $asset_id,
@@ -319,15 +385,28 @@ class StockAdjustmentController extends Controller
         $business_id = request()->session()->get('user.business_id');
         $stock_adjustment = Transaction::where('transactions.business_id', $business_id)
             ->where('transactions.id', $id)
-            ->where('transactions.type', 'stock_adjustment')
+            ->whereIn('transactions.type', ['stock_adjustment', 'opening_stock'])
 
-            ->with(['stock_adjustment_lines', 'location', 'business', 'stock_adjustment_lines.variation', 'stock_adjustment_lines.variation.product', 'stock_adjustment_lines.variation.product_variation', 'stock_adjustment_lines.lot_details'])
+            ->with(['purchase_lines',  'purchase_lines.variation', 'purchase_lines.variation.product', 'purchase_lines.variation.product_variation', 'location', 'business', 'stock_adjustment_lines',  'stock_adjustment_lines.variation', 'stock_adjustment_lines.variation.product', 'stock_adjustment_lines.variation.product_variation', 'stock_adjustment_lines.lot_details'])
             ->first();
         $stock_adjustment->assets = DB::table('asset_consumptions as ac')
             ->leftJoin('assets as a', 'ac.asset_id', '=', 'a.id')
             ->where('ac.transaction_id', $stock_adjustment->id)
             ->select('a.id', 'a.name as asset_name', 'a.asset_code')
             ->first();
+        if ($stock_adjustment->stock_adjustment_lines->isEmpty()) {
+            $stock_adjustment->stock_adjustment_lines = $stock_adjustment->purchase_lines;
+            $stock_adjustment->stock_adjustment_lines->transform(function ($line) {
+                $line->unit_price = $line->purchase_price_inc_tax;
+
+                return $line;
+            });
+            $stock_adjustment->total_amount_recovered = $stock_adjustment->final_total;
+            $stock_adjustment->final_total = 0;
+            $stock_adjustment->adjustment_type = 'Opening Stock / Pengembalian ke gudang';
+            // dd($stock_adjustment->stock_adjustment_lines);
+        }
+
         $lot_n_exp_enabled = false;
         if (request()->session()->get('business.enable_lot_number') == 1 || request()->session()->get('business.enable_product_expiry') == 1) {
             $lot_n_exp_enabled = true;
@@ -442,7 +521,7 @@ class StockAdjustmentController extends Controller
             $location_id = $request->input('location_id');
 
             $business_id = $request->session()->get('user.business_id');
-            $product = $this->productUtil->getDetailsFromVariation($variation_id, $business_id, $location_id);
+            $product = $this->productUtil->getDetailsFromVariation($variation_id, $business_id, $location_id, false);
             $product->formatted_qty_available = $this->productUtil->num_f($product->qty_available);
             $type = ! empty($request->input('type')) ? $request->input('type') : 'stock_adjustment';
 
@@ -456,7 +535,7 @@ class StockAdjustmentController extends Controller
                 }
             }
             $product->lot_numbers = $lot_numbers;
-
+            // dd($product);
             $sub_units = $this->productUtil->getSubUnits($business_id, $product->unit_id, false, $product->id);
             if ($product->last_purchased_price == 0) {
                 $product->last_purchased_price = $product->default_purchase_price;

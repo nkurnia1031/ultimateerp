@@ -152,6 +152,7 @@ class ExpenseController extends Controller
                     'expense_sub_category_id',
                     'ec.name as category',
                     'esc.name as sub_category',
+                    DB::raw("(SELECT GROUP_CONCAT(el.description SEPARATOR '\n') FROM expense_lines el WHERE el.transaction_id = transactions.id ) AS deskripsi"),
                     'payment_status',
                     'additional_notes',
                     'final_total',
@@ -311,6 +312,25 @@ class ExpenseController extends Controller
                         return $category_line->unique()->filter()->implode(', ');
                     }
                 )
+                ->editColumn(
+                    'deskripsi',
+                    function ($row) {
+                        if (empty($row->deskripsi)) {
+                            return '-';
+                        }
+                        $desc = explode("\n", $row->deskripsi);
+                        $desc = '<ul style="padding-left: 15px; margin:0;list-style:outside"> <li class="text-nowrap">' . implode('</li><li>', $desc) . '</li></ul>';
+                        return $desc;
+                    }
+                )
+                ->filterColumn('deskripsi', function ($query, $keyword) {
+                    $query->whereRaw(
+                        "(SELECT GROUP_CONCAT(el.description SEPARATOR ' ') 
+                          FROM expense_lines el 
+                          WHERE el.transaction_id = transactions.id) LIKE ?",
+                        ["%{$keyword}%"]
+                    );
+                })
                 ->editColumn('tags', function ($row) {
 
                     return (string) view('purchase.partials.tags', ['tags' => $row->tags]);
@@ -389,7 +409,7 @@ class ExpenseController extends Controller
 
                     return $ref_no;
                 })
-                ->rawColumns(['tags', 'final_total', 'action', 'payment_status', 'contact_name', 'payment_due', 'ref_no', 'recur_details'])
+                ->rawColumns(['deskripsi', 'tags', 'final_total', 'action', 'payment_status', 'contact_name', 'payment_due', 'ref_no', 'recur_details'])
                 ->make(true);
         }
 

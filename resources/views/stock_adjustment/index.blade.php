@@ -44,7 +44,7 @@
                 </div>
             @endslot
             <div class="table-responsive">
-                <table class="table table-bordered table-striped ajax_view" id="stock_adjustment_table">
+                <table class="table table-bordered table-striped  ajax_view" id="stock_adjustment_table">
                     <thead>
                         <tr>
                             <th>@lang('messages.action')</th>
@@ -52,6 +52,7 @@
                             <th>@lang('purchase.ref_no')</th>
                             <th>@lang('business.location')</th>
                             <th>@lang('stock_adjustment.adjustment_type')</th>
+                            <th>Product</th>
                             <th>@lang('stock_adjustment.total_amount')</th>
                             <th>@lang('stock_adjustment.total_amount_recovered')</th>
                             <th>@lang('stock_adjustment.reason_for_stock_adjustment')</th>
@@ -115,6 +116,10 @@
                     {
                         data: 'adjustment_type',
                         name: 'adjustment_type'
+                    },
+                    {
+                        data: 'product',
+                        name: 'product'
                     },
                     {
                         data: 'final_total',

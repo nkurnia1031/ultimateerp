@@ -10,6 +10,7 @@ use App\Utils\ProductUtil;
 use App\Utils\TransactionUtil;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Modules\AssetManagement\Entities\Asset;
 
 class OpeningStockController extends Controller
 {
@@ -48,21 +49,22 @@ class OpeningStockController extends Controller
 
         //Get the product
         $product = Product::where('business_id', $business_id)
-                            ->where('id', $product_id)
-                            ->with(['variations',
-                                'variations.product_variation',
-                                'unit',
-                                'product_locations',
-                                'second_unit',
-                            ])
-                            ->first();
+            ->where('id', $product_id)
+            ->with([
+                'variations',
+                'variations.product_variation',
+                'unit',
+                'product_locations',
+                'second_unit',
+            ])
+            ->first();
         if (! empty($product) && $product->enable_stock == 1) {
             //Get Opening Stock Transactions for the product if exists
             $transactions = Transaction::where('business_id', $business_id)
-                                ->where('opening_stock_product_id', $product_id)
-                                ->where('type', 'opening_stock')
-                                ->with(['purchase_lines'])
-                                ->get();
+                ->where('opening_stock_product_id', $product_id)
+                ->where('type', 'opening_stock')
+                ->with(['purchase_lines'])
+                ->get();
 
             $purchases = [];
             $purchase_lines = [];
@@ -84,6 +86,7 @@ class OpeningStockController extends Controller
                     $purchase_lines[$purchase_line->variation_id][$k]['transaction_date'] = $this->productUtil->format_date($transaction->transaction_date, true);
 
                     $purchase_lines[$purchase_line->variation_id][$k]['purchase_line_note'] = $transaction->additional_notes;
+                    $purchase_lines[$purchase_line->variation_id][$k]['asset_id'] = $transaction->asset_id ?? null;
                     $purchase_lines[$purchase_line->variation_id][$k]['location_id'] = $transaction->location_id;
                     $purchase_lines[$purchase_line->variation_id][$k]['secondary_unit_quantity'] = $purchase_line->secondary_unit_quantity;
                 }
@@ -107,12 +110,27 @@ class OpeningStockController extends Controller
 
             $enable_expiry = request()->session()->get('business.enable_product_expiry');
             $enable_lot = request()->session()->get('business.enable_lot_number');
+            $business_id = request()->session()->get('user.business_id');
+            $user_id = request()->session()->get('user.id');
+
+            $query = Asset::where('business_id', $business_id)->select(
+                'asset_code',
+                'id',
+                'name',
+            );
+
+            $suppliers = $query->get();
+            $suppliers = $suppliers->map(function ($item) {
+                return ['id' => $item->id, 'text' => $item->name . ' (' . $item->asset_code . ')'];
+            })->pluck('text', 'id')->toArray();
+            $suppliers = ['' => __('lang_v1.none')] + $suppliers;
 
             if (request()->ajax()) {
                 return view('opening_stock.ajax_add')
                     ->with(compact(
                         'product',
                         'locations',
+                        'suppliers',
                         'purchases',
                         'enable_expiry',
                         'enable_lot'
@@ -120,13 +138,14 @@ class OpeningStockController extends Controller
             }
 
             return view('opening_stock.add')
-                    ->with(compact(
-                        'product',
-                        'locations',
-                        'purchases',
-                        'enable_expiry',
-                        'enable_lot'
-                    ));
+                ->with(compact(
+                    'product',
+                    'locations',
+                    'purchases',
+                    'suppliers',
+                    'enable_expiry',
+                    'enable_lot'
+                ));
         }
     }
 
@@ -151,9 +170,9 @@ class OpeningStockController extends Controller
             $user_id = $request->session()->get('user.id');
 
             $product = Product::where('business_id', $business_id)
-                                ->where('id', $product_id)
-                                ->with(['variations', 'product_tax'])
-                                ->first();
+                ->where('id', $product_id)
+                ->with(['variations', 'product_tax'])
+                ->first();
 
             $locations = BusinessLocation::forDropdown($business_id)->toArray();
 
@@ -242,12 +261,16 @@ class OpeningStockController extends Controller
                                     $edit_transaction_data[$purchase_line->transaction_id] = [
                                         'transaction_date' => $transaction_date,
                                         'additional_notes' => $purchase_line_note,
+                                        'asset_id' => isset($pl['asset_id']) ? $pl['asset_id'] : null,
+
                                     ];
                                 } else {
                                     $new_purchase_lines[] = $purchase_line;
                                     $new_transaction_data[] = [
                                         'transaction_date' => $transaction_date,
                                         'additional_notes' => $purchase_line_note,
+                                        'asset_id' => isset($pl['asset_id']) ? $pl['asset_id'] : null,
+
                                     ];
                                 }
                             }
@@ -274,15 +297,26 @@ class OpeningStockController extends Controller
 
                                 $transaction->transaction_date = $edit_transaction_data[$transaction->id]['transaction_date'];
                                 $transaction->additional_notes = $edit_transaction_data[$transaction->id]['additional_notes'];
+
                                 $transaction->update();
+                                if (!empty($edit_transaction_data[$transaction->id]['asset_id'])) {
+                                    $asset_id = $edit_transaction_data[$transaction->id]['asset_id'];
+                                    DB::table('asset_consumptions')->delete(['transaction_id' => $transaction->id]);
+                                    DB::table('asset_consumptions')->insert([
+                                        'asset_id' => $asset_id,
+                                        'transaction_id' => $transaction->id,
+                                        'created_at' => \Carbon::now(),
+                                        'updated_at' => \Carbon::now(),
+                                    ]);
+                                }
 
                                 $updated_transaction_ids[] = $transaction->id;
                                 //unset deleted purchase lines
                                 $delete_purchase_line_ids = [];
                                 $delete_purchase_lines = null;
                                 $delete_purchase_lines = PurchaseLine::where('transaction_id', $transaction->id)
-                                            ->whereNotIn('id', $updated_purchase_line_ids)
-                                            ->get();
+                                    ->whereNotIn('id', $updated_purchase_line_ids)
+                                    ->get();
 
                                 if ($delete_purchase_lines->count()) {
                                     foreach ($delete_purchase_lines as $delete_purchase_line) {
@@ -298,8 +332,8 @@ class OpeningStockController extends Controller
                                     }
                                     //Delete deleted purchase lines
                                     PurchaseLine::where('transaction_id', $transaction->id)
-                                                ->whereIn('id', $delete_purchase_line_ids)
-                                                ->delete();
+                                        ->whereIn('id', $delete_purchase_line_ids)
+                                        ->delete();
                                 }
 
                                 $this->transactionUtil->adjustMappingPurchaseSellAfterEditingPurchase('received', $transaction, $delete_purchase_lines);
@@ -355,6 +389,15 @@ class OpeningStockController extends Controller
                                         'created_by' => $user_id,
                                     ]
                                 );
+                                if (!empty($new_transaction_data[$key]['asset_id'])) {
+                                    $asset_id = $new_transaction_data[$key]['asset_id'];
+                                    DB::table('asset_consumptions')->insert([
+                                        'asset_id' => $asset_id,
+                                        'transaction_id' => $transaction->id,
+                                        'created_at' => \Carbon::now(),
+                                        'updated_at' => \Carbon::now(),
+                                    ]);
+                                }
 
                                 $transaction->purchase_lines()->saveMany([$new_purchase_line]);
 
@@ -368,14 +411,16 @@ class OpeningStockController extends Controller
                 DB::commit();
             }
 
-            $output = ['success' => 1,
+            $output = [
+                'success' => 1,
                 'msg' => __('lang_v1.opening_stock_added_successfully'),
             ];
         } catch (\Exception $e) {
             DB::rollBack();
-            \Log::emergency('File:'.$e->getFile().'Line:'.$e->getLine().'Message:'.$e->getMessage());
+            \Log::emergency('File:' . $e->getFile() . 'Line:' . $e->getLine() . 'Message:' . $e->getMessage());
 
-            $output = ['success' => 0,
+            $output = [
+                'success' => 0,
                 'msg' => $e->getMessage(),
             ];
 

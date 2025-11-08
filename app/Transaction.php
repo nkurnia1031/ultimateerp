@@ -2,6 +2,8 @@
 
 namespace App;
 
+use Illuminate\Support\Facades\DB;
+
 use Illuminate\Database\Eloquent\Model;
 
 class Transaction extends Model
@@ -123,6 +125,11 @@ class Transaction extends Model
         return $this->hasMany(\App\Transaction::class, 'recur_parent_id');
     }
 
+    public function asset_consumptions()
+    {
+        return $this->hasOne(\App\Transaction::class, 'recur_parent_id');
+    }
+
     public function recurring_parent()
     {
         return $this->hasOne(\App\Transaction::class, 'id', 'recur_parent_id');
@@ -136,6 +143,12 @@ class Transaction extends Model
     public function types_of_service()
     {
         return $this->belongsTo(\App\TypesOfService::class, 'types_of_service_id');
+    }
+    public function getAssetIdAttribute()
+    {
+        return DB::table('asset_consumptions')
+            ->where('transaction_id', $this->id)
+            ->value('asset_id');
     }
 
     /**
