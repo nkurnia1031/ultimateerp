@@ -1,3 +1,11 @@
+@php
+    $foto_array = scandir(public_path('foto'));
+    unset($foto_array[0]);
+    unset($foto_array[1]);
+    $randomized_foto = array_rand(array_values($foto_array));
+    $randomized_foto = $foto_array[$randomized_foto];
+
+@endphp
 <link href="{{ asset('css/tailwind/app.css?v=' . $asset_v) }}" rel="stylesheet">
 
 <link rel="stylesheet" href="{{ asset('css/vendor.css?v=' . $asset_v) }}">
@@ -82,6 +90,16 @@
     .patt-circ.n-e {
         -webkit-transform: rotate(315deg);
         transform: rotate(315deg);
+    }
+
+    .bg-awal {
+        min-height: 100vh;
+        background: url('foto/{{ $randomized_foto }}') no-repeat center center fixed;
+        -webkit-background-size: cover;
+        -moz-background-size: cover;
+        -o-background-size: cover;
+        background-size: cover;
+
     }
 </style>
 @if (!empty($__system_settings['additional_css']))
