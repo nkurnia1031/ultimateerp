@@ -1025,6 +1025,9 @@ class ExpenseController extends Controller
                         ]);
                     }
                     $contact_id =  $contact->id;
+                    // if ($expense_array['ref_no'] == '17619') {
+                    //     dd();
+                    // }
 
 
 
@@ -1086,8 +1089,17 @@ class ExpenseController extends Controller
                     $expense_array['import_batch'] = $import_batch;
                     $expense_array['import_time'] = $now;
                     $expense_array['import_file'] = $filename;
+                    $expense_array['contact_id'] = $contact_id;
 
                     $transaction = Transaction::create($expense_array);
+                    \App\ExpenseLine::create([
+                        'transaction_id' =>  $transaction->id,
+                        'category_id' =>  $transaction->expense_category_id,
+                        'sub_category_id' =>  $transaction->expense_sub_category_id,
+                        'description' => $transaction->additional_notes,
+                        'document' =>  $transaction->document,
+                        'amount' => $transaction->final_total,
+                    ]);
 
                     $paid_amount = trim($value[11]);
 

@@ -7,7 +7,7 @@ $(document).ready(function () {
                 source: function (request, response) {
                     $.getJSON(
                         '/products/list',
-                        { location_id: $('#location_id').val(), term: request.term },
+                        { location_id: $('#location_id').val(), enable_stock: 1, term: request.term },
                         response
                     );
                 },

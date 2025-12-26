@@ -6,7 +6,9 @@ namespace App\Http\Controllers;
 use DB;
 use Illuminate\Support\Collection;
 use App\TaxRate;
-
+use App\Contact;
+use App\User;
+use App\Transaction;
 use Excel;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -29,7 +31,68 @@ class DuplikatController extends Controller
         // }
         // return $this->indexPenjualan();
         // return $this->indexPembelian();
-        return $this->indexbiaya();
+        return $this->cekSuplier();
+    }
+    public function cekSuplier()
+    {
+        $getFiles = scandir(public_path('import'));
+        unset($getFiles[0]);
+        unset($getFiles[1]);
+        try {
+            ini_set('max_execution_time', 0);
+            ini_set('memory_limit', -1);
+            DB::beginTransaction();
+            foreach ($getFiles as $namafile) {
+
+                $namafile = 'import/' . $namafile;
+
+                $data = Excel::toArray([], public_path($namafile))[0];
+                $business_id = auth()->user()->business_id;
+                $header = array_shift($data);
+                foreach ($data as $datas) {
+                    $id = Transaction::where('ref_no', $datas[3])->where('business_id', $business_id)->first();
+                    if ($id) {
+                        $contact_id = $datas[6];
+                        $contact_id = Contact::where('business_id', $business_id)->where(function ($query) use ($contact_id) {
+                            $query->where('supplier_business_name',  $contact_id)
+                                ->orWhere('name',  $contact_id);
+                        })
+                            ->first();
+                        if ($contact_id) {
+                            Transaction::where('ref_no', $datas[3])->update(['contact_id' => $contact_id->id]);
+                        } else {
+                            $user = User::whereRaw("CONCAT(surname, ' ', first_name, ' ', last_name) LIKE ?", ["%{$datas[6]}%"])
+                                ->first();
+                            if ($user) {
+                                Transaction::where('ref_no', $datas[3])->update(['expense_for' => $user->id]);
+                            } else {
+                                $contact = Contact::create([
+                                    'business_id' => $business_id,
+                                    'type' => 'both',
+                                    'name' =>  $contact_id,
+                                    'supplier_business_name' =>  $contact_id,
+                                    'email' => ' ',
+                                    'mobile' => ' ',
+                                    'created_by' => auth()->user()->id,
+                                ]);
+                                Transaction::where('ref_no', $datas[3])->update(['contact_id' => $contact->id]);
+                            }
+                        }
+                    }
+                }
+            }
+            DB::commit();
+        } catch (\Exception $e) {
+            DB::rollBack();
+            \Log::emergency('File:' . $e->getFile() . 'Line:' . $e->getLine() . 'Message:' . $e->getMessage());
+
+            $output = [
+                'success' => 0,
+                'msg' => $e->getMessage(),
+            ];
+
+            return redirect('expenses')->with('notification', $output);
+        }
     }
     public function indexbiaya()
     {

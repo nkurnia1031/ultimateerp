@@ -2,7 +2,8 @@
     $foto_array = scandir(public_path('foto'));
     unset($foto_array[0]);
     unset($foto_array[1]);
-    $randomized_foto = array_rand(array_values($foto_array));
+    $foto_array = array_values($foto_array);
+    $randomized_foto = array_rand($foto_array);
     $randomized_foto = $foto_array[$randomized_foto];
 
 @endphp

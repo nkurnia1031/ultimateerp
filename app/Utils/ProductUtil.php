@@ -1643,6 +1643,8 @@ class ProductUtil extends Util
 
         $this->setProductLocation();
 
+        $enable_stock = request()->input('enable_stock', '');
+
         $query = Product::join('variations', 'products.id', '=', 'variations.product_id')
             ->active()
             ->whereNull('variations.deleted_at')
@@ -1663,6 +1665,10 @@ class ProductUtil extends Util
                     }
                 }
             );
+        if ($enable_stock !== '') {
+
+            $query->where('products.enable_stock', $enable_stock);
+        }
 
         if (! is_null($not_for_selling)) {
             $query->where('products.not_for_selling', $not_for_selling);
