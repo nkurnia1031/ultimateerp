@@ -206,31 +206,31 @@
                                                                     'value' =>
                                                                         $payroll['allowances'][
                                                                             'allowance_amounts'
-                                                                        ][$key],
+                                                                        ][$key] ?? '',
                                                                     'amount_type' =>
                                                                         $payroll['allowances']['allowance_types'][
                                                                             $key
-                                                                        ],
+                                                                        ] ?? '',
                                                                     'percent' =>
                                                                         $payroll['allowances'][
                                                                             'allowance_percents'
-                                                                        ][$key],
+                                                                        ][$key] ?? '',
                                                                     'tgl' =>
                                                                         $payroll['allowances']['allowance_tgls'][
                                                                             $key
-                                                                        ],
+                                                                        ] ?? '',
                                                                     'qty' =>
                                                                         $payroll['allowances']['allowance_qtys'][
                                                                             $key
-                                                                        ],
+                                                                        ] ?? '',
                                                                     'amountper' =>
                                                                         $payroll['allowances'][
                                                                             'allowance_amountpers'
-                                                                        ][$key],
+                                                                        ][$key] ?? '',
                                                                     'unit' =>
                                                                         $payroll['allowances']['allowance_units'][
                                                                             $key
-                                                                        ],
+                                                                        ] ?? '',
                                                                 ]
                                                             )
 
@@ -298,31 +298,31 @@
                                                                     'value' =>
                                                                         $payroll['deductions'][
                                                                             'deduction_amounts'
-                                                                        ][$key],
+                                                                        ][$key] ?? '',
                                                                     'amount_type' =>
                                                                         $payroll['deductions']['deduction_types'][
                                                                             $key
-                                                                        ],
+                                                                        ] ?? '',
                                                                     'percent' =>
                                                                         $payroll['deductions'][
                                                                             'deduction_percents'
-                                                                        ][$key],
+                                                                        ][$key] ?? '',
                                                                     'tgl' =>
                                                                         $payroll['deductions']['deduction_tgls'][
                                                                             $key
-                                                                        ],
+                                                                        ] ?? '',
                                                                     'qty' =>
                                                                         $payroll['deductions']['deduction_qtys'][
                                                                             $key
-                                                                        ],
+                                                                        ] ?? '',
                                                                     'amountper' =>
                                                                         $payroll['deductions'][
                                                                             'deduction_amountpers'
-                                                                        ][$key],
+                                                                        ][$key] ?? '',
                                                                     'unit' =>
                                                                         $payroll['deductions']['deduction_units'][
                                                                             $key
-                                                                        ],
+                                                                        ] ?? '',
                                                                 ]
                                                             )
 

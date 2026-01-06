@@ -950,7 +950,6 @@ class PayrollController extends Controller
 
             $payrolls[$transaction->expense_for]['deductions'] = $deductions;
         }
-
         $action = 'edit';
 
         return view('essentials::payroll.create')
