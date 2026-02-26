@@ -40,6 +40,14 @@ Route::middleware('web', 'authh', 'auth', 'SetSessionData', 'language', 'timezon
     Route::get('lead/{id}/convert', [Modules\Crm\Http\Controllers\LeadController::class, 'convertToCustomer']);
     Route::get('lead/{id}/post-life-stage', [Modules\Crm\Http\Controllers\LeadController::class, 'postLifeStage']);
 
+    Route::get('surat-kontrak/import', [Modules\Crm\Http\Controllers\SuratKontrakController::class, 'import']);
+    Route::post('surat-kontrak/importproses', [Modules\Crm\Http\Controllers\SuratKontrakController::class, 'importproses']);
+    Route::get('surat-kontrak/download-sample', [Modules\Crm\Http\Controllers\SuratKontrakController::class, 'downloadSample']);
+
+    Route::resource('surat-kontrak', 'Modules\Crm\Http\Controllers\SuratKontrakController');
+
+
+
     Route::get('{id}/send-campaign-notification', [Modules\Crm\Http\Controllers\CampaignController::class, 'sendNotification']);
     Route::resource('campaigns', 'Modules\Crm\Http\Controllers\CampaignController');
     Route::get('dashboard', [Modules\Crm\Http\Controllers\CrmDashboardController::class, 'index']);
