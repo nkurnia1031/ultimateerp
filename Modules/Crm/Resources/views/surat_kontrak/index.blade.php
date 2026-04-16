@@ -22,6 +22,74 @@
             margin-top: 10px
         }
     </style>
+    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=Roboto:wght@400;700&display=swap"
+        rel="stylesheet">
+
+    <style>
+        .kop-container {
+            background-color: #fff;
+        }
+
+        .logo-section {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* Simulasi Logo Bintang */
+        .star-logo {
+            font-weight: bold;
+            font-size: 24px;
+            color: #666;
+            border: 2px solid #ccc;
+            padding: 10px;
+            position: relative;
+            /* Jika Anda punya file gambar logo, ganti bagian ini dengan tag <img> */
+        }
+
+        .company-name {
+            font-family: 'Playfair Display', serif;
+            color: #af263d !important;
+            /* Warna merah pudar sesuai gambar */
+            font-size: 3.5rem;
+            letter-spacing: 2px;
+            line-height: 1;
+        }
+
+        .services {
+            font-family: 'Roboto', sans-serif;
+            color: #005892 !important;
+            /* Warna biru pudar */
+            font-size: 1.8rem;
+            font-weight: 400;
+            letter-spacing: 5px;
+            text-transform: uppercase;
+        }
+
+        .footer-line {
+            border-top: 3px double #333;
+            margin-top: 5px;
+            padding-top: 5px;
+        }
+
+        .address-bar {
+            background-color: #fff;
+            font-family: 'Roboto', sans-serif;
+            font-weight: bold;
+            font-size: 0.9rem;
+            color: #000000 !important;
+        }
+
+        @media (max-width: 768px) {
+            .company-name {
+                font-size: 2.6rem;
+            }
+
+            .services {
+                font-size: 1.4rem;
+            }
+        }
+    </style>
 @endsection
 @section('content')
     @include('crm::layouts.nav')
@@ -83,6 +151,7 @@
                             <th>Pihak Kedua</th>
                             <th>Pekerjaan</th>
                             <th>Kapal MV</th>
+                            <th>Tonase</th>
                             <th>Lokasi Muat</th>
                             <th>Lokasi Bongkar</th>
                             <th>Mulai Kerja</th>
@@ -116,7 +185,7 @@
                     searchable: false,
                 }],
                 aaSorting: [
-                    [7, 'desc'] // sort berdasarkan mulai_kerja
+                    [8, 'desc'] // sort berdasarkan mulai_kerja
                 ],
                 columns: [{
                         data: 'action',
@@ -137,6 +206,10 @@
                     {
                         data: 'kapal_mv',
                         name: 'surat_kontrak.kapal_mv'
+                    },
+                    {
+                        data: 'tonase',
+                        name: 'surat_kontrak.tonase'
                     },
                     {
                         data: 'lokasi_muat',

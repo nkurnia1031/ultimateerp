@@ -10,9 +10,31 @@
 
         <div class="modal-body ">
             <div class="p-4" id="print_area" style="font-family: Arial, sans-serif;">
+                <div class="kop-container">
+                    <div class="row align-items-bottom">
+                        <div class="col-xs-3 text-center">
+                            <img src="{{ asset('img/logo.png') }}" alt="Logo BMT" class="img-fluid">
+                        </div>
+
+                        <div class="col-xs-9 text-center" style="margin-left: -4rem">
+                            <h1 class="company-name mb-0">CV. BM TRANSPORT</h1>
+                            <h2 class="services mb-0">JASA ANGKUTAN & CONTRACTOR</h2>
+                        </div>
+                    </div>
+
+                    <div class="row mt-2">
+                        <div class="col-12 text-center">
+                            <div class="footer-line"></div>
+                            <div class="address-bar py-1">
+                                JL. JERUK No. 48 A TELP. (0765) 38552 E-mail: cv.bmtransport@ymail.com – DUMAI
+                            </div>
+                            <hr style="border-top: 1px solid #333; margin-top: 0;">
+                        </div>
+                    </div>
+                </div>
 
                 <center>
-                    <h4><b>SURAT PERJANJIAN KERJA (SPK)</b></h4>
+                    <h4><b style="color: black">SURAT PERJANJIAN KERJA (SPK)</b></h4>
                     <p>
                         Nomor: {{ $surat_kontrak->nomor }}
                     </p>
@@ -40,7 +62,7 @@
                     <tr>
                         <td colspan="2">
                             Pekerjaan:<br>
-                            {{ $surat_kontrak->pekerjaan }}
+                            <b> {{ $surat_kontrak->pekerjaan }}</b>
                         </td>
                     </tr>
                 </table>
@@ -55,9 +77,14 @@
                         <td>{{ $surat_kontrak->kapal_mv }}</td>
                     </tr>
                     <tr>
+                        <td>Tonase</td>
+                        <td>{{ $surat_kontrak->tonase }}</td>
+                    </tr>
+                    <tr>
                         <td>Lokasi Muat</td>
                         <td>{{ $surat_kontrak->lokasi_muat }}</td>
                     </tr>
+
                     <tr>
                         <td>Lokasi Bongkar</td>
                         <td>{{ $surat_kontrak->lokasi_bongkar }}</td>
@@ -76,21 +103,21 @@
                     </tr>
                 </table>
 
-                <br><br>
+                <br>
 
                 <b class="">KETENTUAN PELAKSANAAN</b>
                 <ol class="listnya" style="list-style: decimal;padding-left:5%">
                     <li>Pihak Kedua wajib melaksanakan pekerjaan sesuai standar operasional.</li>
                     <li>Pihak Kedua bertanggung jawab atas kelancaran pelaksanaan pekerjaan.</li>
                     <li>Segala hal teknis akan dikoordinasikan antara kedua belah pihak.</li>
-                    <li>Perselisihan diselesaikan secara musyawarah.</li>
+                    <li>Setiap pembayaran atas pekerjaan yang dilaksanakan oleh Pihak Kedua akan dikenakan potongan Pajak Penghasilan (PPh) Pasal 23 sesuai dengan ketentuan perpajakan yang berlaku.</li>
                 </ol>
 
-                <br>
 
                 Demikian SPK ini dibuat dan disepakati bersama.
 
-                <br><br><br>
+                <br>
+                <br>
 
                 <table width="100%">
                     <tr>

@@ -188,6 +188,7 @@ class AssetController extends Controller
                     'stnk',
                     'purchase_date',
                     'stnk_expired_at',
+                    'assets.tbpkp_expired_at',
                     'unit_price',
                     'is_allocatable',
                     'CAT.name as category',
@@ -446,7 +447,9 @@ class AssetController extends Controller
                 'description',
                 'purchase_type',
                 'stnk',
-                'stnk_expired_at'
+                'stnk_expired_at',
+                'tbpkp',
+                'tbpkp_expired_at'
             );
 
             $input['business_id'] = $business_id;
@@ -488,6 +491,10 @@ class AssetController extends Controller
             if (! empty($input['stnk_expired_at'])) {
                 $input['stnk_expired_at'] = $this->commonUtil->uf_date($input['stnk_expired_at']);
             }
+            if (! empty($input['tbpkp_expired_at'])) {
+                $input['tbpkp_expired_at'] = $this->commonUtil->uf_date($input['tbpkp_expired_at']);
+            }
+
             $asset = Asset::create($input);
 
             //upload media
@@ -615,7 +622,9 @@ class AssetController extends Controller
                 'purchase_type',
                 'serial_no',
                 'stnk',
-                'stnk_expired_at'
+                'stnk_expired_at',
+                'tbpkp',
+                'tbpkp_expired_at'
             );
             $input['is_allocatable'] = ! empty($input['is_allocatable']) ? 1 : 0;
 
@@ -645,6 +654,9 @@ class AssetController extends Controller
             }
             if (! empty($input['stnk_expired_at'])) {
                 $input['stnk_expired_at'] = $this->commonUtil->uf_date($input['stnk_expired_at']);
+            }
+            if (! empty($input['tbpkp_expired_at'])) {
+                $input['tbpkp_expired_at'] = $this->commonUtil->uf_date($input['tbpkp_expired_at']);
             }
 
             $asset = Asset::where('business_id', $business_id)

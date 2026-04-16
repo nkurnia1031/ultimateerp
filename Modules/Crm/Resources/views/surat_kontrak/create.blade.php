@@ -73,6 +73,58 @@
                     'required',
                 ]) !!}
             </div>
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="form-group">
+                        {!! Form::label('kapal_mv', 'Kapal MV:*') !!}
+                        {!! Form::text('kapal_mv', $is_edit && $surat_kontrak->kapal_mv ? $surat_kontrak->kapal_mv : null, [
+                            'class' => 'form-control',
+                            'required',
+                            'id' => 'kapal_mv',
+                        ]) !!}
+                    </div>
+                </div>
+
+                <div class="col-md-6">
+                    <div class="form-group">
+                        {!! Form::label('tonase', 'Tonase:*') !!}
+                        {!! Form::number('tonase', $is_edit && $surat_kontrak->tonase ? $surat_kontrak->tonase : null, [
+                            'class' => 'form-control',
+                            'required',
+                            'min' => 0,
+                            'step' => 'any',
+                            'id' => 'tonase',
+                        ]) !!}
+                    </div>
+                </div>
+            </div>
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="form-group">
+                        {!! Form::label('lokasi_muat', 'Lokasi Muat:*') !!}
+                        {!! Form::text('lokasi_muat', $is_edit && $surat_kontrak->lokasi_muat ? $surat_kontrak->lokasi_muat : null, [
+                            'class' => 'form-control',
+                            'required',
+                            'id' => 'lokasi_muat',
+                        ]) !!}
+                    </div>
+                </div>
+
+                <div class="col-md-6">
+                    <div class="form-group">
+                        {!! Form::label('lokasi_bongkar', 'Lokasi Bongkar:*') !!}
+                        {!! Form::text(
+                            'lokasi_bongkar',
+                            $is_edit && $surat_kontrak->lokasi_bongkar ? $surat_kontrak->lokasi_bongkar : null,
+                            [
+                                'class' => 'form-control',
+                                'required',
+                                'id' => 'lokasi_bongkar',
+                            ],
+                        ) !!}
+                    </div>
+                </div>
+            </div>
 
             <div class="row">
                 <div class="col-md-6">

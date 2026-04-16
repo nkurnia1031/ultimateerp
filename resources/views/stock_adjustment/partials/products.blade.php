@@ -1,8 +1,12 @@
-<ul class="list-group">
+<table class="table-bordered table table-condensed">
     @foreach ($row->product as $item)
-        <li class="list-group-item d-flex justify-content-between text-nowrap"><span>{{ $item[0] }} </span><span
-                class="badge badge-dark">{{ number_format($item[1], 0) }}</span></li>
+        <tr>
+            <td><span>{{ $item[0] }}</span></td>
+            <td>
+                <strong>{{ number_format($item[1], 0) }}
+                </strong>
+            </td>
+        </tr>
     @endforeach
 
-
-</ul>
+</table>

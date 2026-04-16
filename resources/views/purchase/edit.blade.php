@@ -484,7 +484,8 @@
             </div>
         @endcomponent
         @component('components.widget', ['class' => 'box-primary'])
-            <div class="row">
+       
+            <div  class="row">
                 <div class="col-md-4">
                     <div class="form-group">
                         {!! Form::label('shipping_details', __('purchase.shipping_details') . ':') !!}
@@ -507,7 +508,7 @@
                     </div>
                 </div>
             </div>
-            <div class="row">
+            <div  class="row">
                 @php
                     $shipping_custom_label_1 = !empty($custom_labels['purchase_shipping']['custom_field_1'])
                         ? $custom_labels['purchase_shipping']['custom_field_1']
@@ -657,7 +658,7 @@
                 @endif
             </div>
 
-            <div class="row">
+            <div  class="row">
                 <div class="col-md-12 text-center">
                     <button type="button" class="tw-dw-btn tw-dw-btn-primary tw-text-white tw-dw-btn-sm"
                         id="toggle_additional_expense"> <i class="fas fa-plus"></i> @lang('lang_v1.add_additional_expenses') <i
@@ -756,6 +757,7 @@
                     </table>
                 </div>
             </div>
+          
             <div class="row">
                 <div class="col-md-12 text-right">
                     {!! Form::hidden('final_total', $purchase->final_total, ['id' => 'grand_total_hidden']) !!}

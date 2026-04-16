@@ -18,32 +18,32 @@
         <i class="bi bi-download me-2"></i> Export Bonus Ayak
     </div>
     <div class="card-body py-2 px-3">
-        <form class="row g-2 align-items-end" method="GET" action="{{ route('bonus-ayak.index') }}">
-            {{-- Dari --}}
-            <div class="col-md-4">
-                <label class="form-label mb-1">Dari</label>
-                <input type="date" name="export_from" class="form-control form-control-sm"
-                       value="{{ request('export_from', date('Y-m-01')) }}">
-            </div>
+<form class="row g-2 align-items-end" method="GET" action="{{ route('bonus-ayak.export-excel') }}">
+    <div class="col-md-4">
+        <label class="form-label mb-1">Dari</label>
+        <input type="date" name="from" class="form-control form-control-sm"
+               value="{{ request('from', date('Y-m-01')) }}">
+    </div>
 
-            {{-- Sampai --}}
-            <div class="col-md-4">
-                <label class="form-label mb-1">Sampai</label>
-                <input type="date" name="export_to" class="form-control form-control-sm"
-                       value="{{ request('export_to', date('Y-m-t')) }}">
-            </div>
+    <div class="col-md-4">
+        <label class="form-label mb-1">Sampai</label>
+        <input type="date" name="to" class="form-control form-control-sm"
+               value="{{ request('to', date('Y-m-t')) }}">
+    </div>
 
-            {{-- Tombol Export --}}
-            <div class="col-md-4 d-flex justify-content-between align-items-end mt-3 mt-md-0">
-                <button type="submit" name="export" value="excel" class="btn btn-success btn-sm w-50 me-1">
-                    <i class="bi bi-file-earmark-excel"></i> Excel
-                </button>
-                <a href="{{ route('bonus-ayak.export-pdf', ['from' => $from, 'to' => $to]) }}" 
-                   class="btn btn-danger btn-sm w-50">
-                    <i class="bi bi-file-earmark-pdf"></i> PDF
-                </a>
-            </div>
-        </form>
+    <div class="col-md-4 d-flex justify-content-between align-items-end mt-3 mt-md-0">
+        <button type="submit" class="btn btn-success btn-sm w-50 me-1">
+            <i class="bi bi-file-earmark-excel"></i> Excel
+        </button>
+
+        <button type="submit"
+                formaction="{{ route('bonus-ayak.export-pdf') }}"
+                formmethod="GET"
+                class="btn btn-danger btn-sm w-50">
+            <i class="bi bi-file-earmark-pdf"></i> PDF
+        </button>
+    </div>
+</form>
     </div>
 </div>
 </div>

@@ -190,6 +190,16 @@
                         ]) !!}
                     </div>
                 </div>
+            <div class="col-md-6">
+                <div class="form-group">
+                    {!! Form::label('tbpkp_expired_at', __('Tanggal TBPKP') . ':') !!}
+                    {!! Form::text('tbpkp_expired_at', null, [
+                        'class' => 'form-control datepicker',
+                        'placeholder' => __('Masa TBPKP sampai dengan'),
+                        'readonly',
+                    ]) !!}
+                </div>
+            </div>
             </div>
             <hr>
             <div class="row">

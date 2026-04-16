@@ -78,6 +78,7 @@
                                 <th>@lang('assetmanagement::lang.is_allocatable')</th>
                                 <th>@lang('purchase.purchase_date')</th>
                                 <th>@lang('Tanggal STNK')</th>
+                                <th>@lang('Tanggal TBPKP')</th>
                                 <th>@lang('assetmanagement::lang.allocated_qty')</th>
                                 <th>@lang('sale.unit_price')</th>
                                 <th>@lang('assetmanagement::lang.series_model')</th>
@@ -159,6 +160,10 @@
                     {
                         data: 'stnk_expired_at',
                         name: 'stnk_expired_at'
+                    },
+                    {
+                        data: 'tbpkp_expired_at',
+                        name: 'tbpkp_expired_at'
                     },
                     {
                         data: 'allocated_qty',

@@ -230,7 +230,6 @@ class ImportSalesController extends Controller
         } catch (\Exception $e) {
             DB::rollBack();
             \Log::emergency('File:' . $e->getFile() . 'Line:' . $e->getLine() . 'Message:' . $e->getMessage());
-            dd($e);
             $output = [
                 'success' => 0,
                 'msg' => $e->getMessage(),
@@ -605,7 +604,7 @@ class ImportSalesController extends Controller
                 $paid_on = $now;
             }
 
-            $paid_on = $paid_on->format('d/m/Y H:i');
+            $paid_on = $paid_on->format('d-m-Y H:i');
             $payment = [
                 "amount" =>  $transaction->final_total,
                 "paid_on" => $paid_on,

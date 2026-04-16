@@ -267,10 +267,10 @@ class ExpenseController extends Controller
                     
                     <li><a href="#" data-href="{{action(\'App\Http\Controllers\ExpenseController@show\', [$id])}} " class="btn-modal" data-container=".payment_modal"><i class="fas fa-eye" aria-hidden="true"></i> @lang("messages.view")</a></li>
                     @if(auth()->user()->can("expense.create"))
-                        <li><a href="{{action(\'App\Http\Controllers\ExpenseController@duplicate\', [$id])}}"><i class="glyphicon glyphicon-copy"></i> @lang("Duplicate")</a></li>
+                        <li><a target="_blank" href="{{action(\'App\Http\Controllers\ExpenseController@duplicate\', [$id])}}"><i class="glyphicon glyphicon-copy"></i> @lang("Duplicate")</a></li>
                     @endif
                     @if(auth()->user()->can("expense.edit"))
-                        <li><a href="{{action(\'App\Http\Controllers\ExpenseController@edit\', [$id])}}"><i class="glyphicon glyphicon-edit"></i> @lang("messages.edit")</a></li>
+                        <li><a target="_blank" href="{{action(\'App\Http\Controllers\ExpenseController@edit\', [$id])}}"><i class="glyphicon glyphicon-edit"></i> @lang("messages.edit")</a></li>
                     @endif
                     @if($document)
                         <li><a href="{{ url(\'uploads/documents/\' . $document)}}" 
@@ -1063,7 +1063,6 @@ class ExpenseController extends Controller
                         }
 
                         //image name
-                        $image_name = $value[7];
 
                         // if (!empty($image_name)) {
                         //     if (filter_var($image_name, FILTER_VALIDATE_URL)) {
@@ -1080,8 +1079,11 @@ class ExpenseController extends Controller
                         // } else {
                         //     $expense_array['document'] = '';
                         // }
-                        $expense_array['document'] = $image_name;
+
                     }
+                    $image_name = $value[7];
+
+                    $expense_array['document'] = $image_name;
 
                     $expense_array['status'] = 'final';
                     $expense_array['payment_status'] = 'due';

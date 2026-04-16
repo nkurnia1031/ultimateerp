@@ -19,6 +19,7 @@ return new class extends Migration
             $table->unsignedBigInteger('business_id'); // relasi ke contacts.id
 
             $table->string('kapal_mv')->nullable(); // nama kapal
+            $table->float('tonase')->nullable();
 
             $table->string('lokasi_muat')->nullable();
             $table->string('lokasi_bongkar')->nullable();

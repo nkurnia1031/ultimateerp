@@ -115,8 +115,17 @@ class BonusAyakController extends Controller
 
 public function exportPdf(Request $request)
 {
-    $from = $request->input('from') ?? $request->input('export_from');
-    $to   = $request->input('to')   ?? $request->input('export_to');
+    // FIX UTAMA ADA DI SINI ↓↓↓
+    $from = $request->input('from')
+         ?: $request->input('export_from')
+         ?: $request->input('filter_from')
+         ?: null;
+
+    $to   = $request->input('to')
+         ?: $request->input('export_to')
+         ?: $request->input('filter_to')
+         ?: null;
+    // FIX UTAMA ADA DI ATAS ↑↑↑
 
     if (!$from && !$to) {
         $from = now()->startOfMonth()->toDateString();
@@ -133,18 +142,15 @@ public function exportPdf(Request $request)
             DB::raw('SUM(trip) as total_trip'),
             DB::raw('SUM(bonus) as total_bonus')
         )
-        ->whereDate('tanggal', '>=', $from)
-        ->whereDate('tanggal', '<=', $to);
+        ->whereBetween('tanggal', [$from, $to]);
 
     $data = $q->groupBy('nama_operator')
               ->orderBy('nama_operator')
               ->get();
 
-    // total keseluruhan
     $total_trip  = $data->sum('total_trip');
     $grand_total = $data->sum('total_bonus');
 
-    // ✅ Tambahkan di sini (ambil total kasbon per operator)
     $kasbonData = DB::table('bonus_ayak_kasbon')
         ->select('nama_operator', DB::raw('SUM(jumlah_kasbon) as total_kasbon'))
         ->whereBetween('tanggal', [$from, $to])
@@ -152,11 +158,9 @@ public function exportPdf(Request $request)
         ->pluck('total_kasbon', 'nama_operator')
         ->toArray();
 
-    // format tanggal untuk header PDF
     $displayFrom = Carbon::parse($from)->format('d/m/Y');
     $displayTo   = Carbon::parse($to)->format('d/m/Y');
 
-    // ✅ Load view + kirim variabel tambahan kasbonData
     $pdf = Pdf::loadView('bonus_ayak.pdf', [
         'data' => $data,
         'displayFrom' => $displayFrom,
@@ -170,6 +174,7 @@ public function exportPdf(Request $request)
 
     return $pdf->setPaper('a4','portrait')->download('rekap_bonus_ayak.pdf');
 }
+
 
     private function hitungBonus(int $trip): int
     {
