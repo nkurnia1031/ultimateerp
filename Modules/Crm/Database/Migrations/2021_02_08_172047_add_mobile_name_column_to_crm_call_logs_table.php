@@ -14,7 +14,7 @@ class AddMobileNameColumnToCrmCallLogsTable extends Migration
     public function up()
     {
         Schema::table('crm_call_logs', function (Blueprint $table) {
-            $table->string('mobile_name')->nullable()->after('mobile_number');
+            // $table->string('mobile_name')->nullable()->after('mobile_number');
         });
     }
 

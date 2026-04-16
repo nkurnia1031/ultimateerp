@@ -42,6 +42,7 @@ Route::middleware('web', 'authh', 'auth', 'SetSessionData', 'language', 'timezon
 
     Route::get('surat-kontrak/import', [Modules\Crm\Http\Controllers\SuratKontrakController::class, 'import']);
     Route::post('surat-kontrak/importproses', [Modules\Crm\Http\Controllers\SuratKontrakController::class, 'importproses']);
+    Route::delete('surat-kontrak/destroy-batch/{batch}', [Modules\Crm\Http\Controllers\SuratKontrakController::class, 'destroyBatch']);
     Route::get('surat-kontrak/download-sample', [Modules\Crm\Http\Controllers\SuratKontrakController::class, 'downloadSample']);
 
     Route::resource('surat-kontrak', 'Modules\Crm\Http\Controllers\SuratKontrakController');

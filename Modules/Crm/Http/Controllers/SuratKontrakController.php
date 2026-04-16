@@ -14,6 +14,9 @@ use Modules\Crm\Entities\SuratKontrak;
 use Modules\Crm\Utils\CrmUtil;
 use Excel;
 use Yajra\DataTables\Facades\DataTables;
+use Illuminate\Support\Facades\DB;
+
+use PhpOffice\PhpSpreadsheet\Shared\Date;
 
 class SuratKontrakController extends Controller
 {
@@ -118,9 +121,64 @@ class SuratKontrakController extends Controller
         $sources = Category::forDropdown($business_id, 'source');
 
         $users = User::forDropdown($business_id, false, false, false, true);
+        $listBatch=$this->getImportBatchList();
 
         return view('crm::surat_kontrak.index')
-            ->with(compact('sources', 'life_stages', 'users'));
+            ->with(compact('sources', 'life_stages', 'users', 'listBatch'));
+    }
+    public function getImportBatchList()
+    {
+        $business_id = request()->session()->get('user.business_id');
+
+        $batches = SuratKontrak::where('business_id', $business_id)
+            ->whereNotNull('import_batch')
+            ->select(
+                'import_batch',
+                DB::raw('MIN(created_at) as created_at'),
+                DB::raw('GROUP_CONCAT(nomor SEPARATOR ", ") as nomor_list')
+            )
+            ->groupBy('import_batch')
+            ->orderBy('import_batch', 'desc')
+            ->get();
+
+        return $batches;
+    }
+    public function destroyBatch($batch)
+    {
+        if (!request()->ajax()) {
+            abort(404);
+        }
+
+        $business_id = request()->session()->get('user.business_id');
+
+        if (!(auth()->user()->can('superadmin') ||
+            $this->moduleUtil->hasThePermissionInSubscription($business_id, 'crm_module'))) {
+            abort(403, 'Unauthorized action.');
+        }
+
+        try {
+
+            SuratKontrak::where('business_id', $business_id)
+                ->where('import_batch', $batch)
+                ->delete();
+
+            $output = [
+                'success' => true,
+                'msg' => 'Batch #' . $batch . ' berhasil dihapus'
+            ];
+        } catch (\Exception $e) {
+
+            \Log::emergency('File:' . $e->getFile()
+                . ' Line:' . $e->getLine()
+                . ' Message:' . $e->getMessage());
+
+            $output = [
+                'success' => false,
+                'msg' => __('messages.something_went_wrong')
+            ];
+        }
+
+        return $output;
     }
 
     /**
@@ -154,9 +212,11 @@ class SuratKontrakController extends Controller
         if (! (auth()->user()->can('superadmin') || $this->moduleUtil->hasThePermissionInSubscription($business_id, 'crm_module'))) {
             abort(403, 'Unauthorized action.');
         }
+        $listBatch=$this->getImportBatchList();
+
 
         return view('crm::surat_kontrak.import')
-            ->with(compact('business_id'));
+            ->with(compact('business_id', 'listBatch'));
     }
     public function prosesContactId($contactId)
     {
@@ -189,66 +249,87 @@ class SuratKontrakController extends Controller
             'import_file' => 'required|file|mimes:xlsx,xls'
         ]);
 
-        // Ambil file
-        $file = $request->file('import_file');
+        try {
 
-        // Baca excel jadi array
-        $rows = Excel::toArray([], $file)[0];
+            DB::beginTransaction(); // 🔥 mulai transaction
 
-        // Ambil header (baris pertama)
-        $header = array_shift($rows);
+            $file = $request->file('import_file');
 
-        $dataInsert = [];
+            $rows = Excel::toArray([], $file)[0];
+            $header = array_shift($rows);
 
-        foreach ($rows as $row) {
+            // ambil batch terakhir
+            $lastBatch = SuratKontrak::max('import_batch');
+            $currentBatch = $lastBatch ? $lastBatch + 1 : 1;
 
-            if (empty(array_filter($row))) {
-                continue; // skip baris kosong
+            $dataInsert = [];
+
+            foreach ($rows as $row) {
+
+                if (empty(array_filter($row))) {
+                    continue;
+                }
+
+                $item = array_combine(
+                    array_slice($header, 0, count($row)),
+                    $row
+                );
+
+                $item['Selesai'] = is_int($item['Selesai'])
+                    ? Date::excelToDateTimeObject($item['Selesai'])->format('Y-m-d')
+                    : null;
+
+                $item['Mulai Kerja'] = is_int($item['Mulai Kerja'])
+                    ? Date::excelToDateTimeObject($item['Mulai Kerja'])->format('Y-m-d')
+                    : null;
+
+                $item['Contact ID'] = $this->prosesContactId($item['Contact ID'] ?? null);
+
+                $dataInsert[] = [
+                    'nomor' => $item['Nomor'] ?? null,
+                    'contact_id' => $item['Contact ID'] ?? null,
+                    'jabatan_pihak_2' => $item['Jabatan Pihak 2'] ?? null,
+                    'pekerjaan' => $item['Pekerjaan'] ?? null,
+                    'kapal_mv' => $item['Kapal / MV'] ?? null,
+                    'tonase' => isset($item['Tonase']) && is_numeric($item['Tonase'])
+    ? round((float)$item['Tonase'], -1)
+    : null,
+                    'lokasi_muat' => $item['Lokasi Muat'] ?? null,
+                    'lokasi_bongkar' => $item['Lokasi Bongkar'] ?? null,
+                    'mulai_kerja' => $item['Mulai Kerja'] ?? null,
+                    'selesai' => $item['Selesai'] ?? null,
+                    'jangka_waktu' => $item['Jangka Waktu'] ?? null,
+                    'notes' => $item['Notes'] ?? null,
+                    'business_id' => auth()->user()->business_id,
+                    'import_batch' => $currentBatch,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ];
             }
 
-            $item = array_combine(
-                array_slice($header, 0, count($row)),
-                $row
-            );
-            $item['Contact ID'] = $this->prosesContactId($item['Contact ID'] ?? null);
-            $dataInsert[] = [
-                'nomor' => $item['Nomor'] ?? null,
-                'contact_id' => $item['Contact ID'] ?? null,
-                'jabatan_pihak_2' => $item['Jabatan Pihak 2'] ?? null,
-                'pekerjaan' => $item['Pekerjaan'] ?? null,
-                'kapal_mv' => $item['Kapal / MV'] ?? null,
-                'tonase' => $item['Tonase'] ?? null,
-                'lokasi_muat' => $item['Lokasi Muat'] ?? null,
-                'lokasi_bongkar' => $item['Lokasi Bongkar'] ?? null,
-                'mulai_kerja' => $item['Mulai Kerja'] ?? null,
-                'selesai' => $item['Selesai'] ?? null,
-                'jangka_waktu' => $item['Jangka Waktu'] ?? null,
-                'notes' => $item['Notes'] ?? null,
-                'business_id' => auth()->user()->business_id,
-                'created_at' => now(),
-                'updated_at' => now(),
+            if (!empty($dataInsert)) {
+                SuratKontrak::insert($dataInsert);
+            }
+
+            DB::commit(); // 🔥 commit kalau sukses
+
+            return [
+                'success' => true,
+                'msg' => 'Surat kontrak berhasil diimport (Batch #' . $currentBatch . ')'
+            ];
+        } catch (\Exception $e) {
+
+            DB::rollBack(); // 🔥 rollback kalau error
+
+            \Log::emergency('File:' . $e->getFile()
+                . ' Line:' . $e->getLine()
+                . ' Message:' . $e->getMessage());
+
+            return [
+                'success' => false,
+                'msg' => $e->getMessage()
             ];
         }
-
-        // Insert bulk
-        if (!empty($dataInsert)) {
-            try {
-                SuratKontrak::insert($dataInsert);
-                $output = [
-                    'success' => true,
-                    'msg' => 'Surat kontrak berhasil diimport'
-                ];
-            } catch (\Exception $e) {
-                \Log::emergency('File:' . $e->getFile()
-                    . ' Line:' . $e->getLine()
-                    . ' Message:' . $e->getMessage());
-                $output = [
-                    'success' => false,
-                    'msg' => $e->getMessage()
-                ];
-            }
-        }
-        return $output;
     }
 
     public function downloadSample(Request $request)
@@ -356,6 +437,9 @@ class SuratKontrakController extends Controller
             }
 
             $input['business_id'] = $business_id;
+            $input['tonase'] = isset($input['tonase']) && is_numeric($input['tonase'])
+                ? round((float)$input['tonase'], -1)
+                : null;
             // $input['created_by'] = $request->session()->get('user.id');
 
             SuratKontrak::create($input);
@@ -487,6 +571,9 @@ class SuratKontrakController extends Controller
                     . '/SPK/BMT/' . $year;
             }
 
+            $input['tonase'] = isset($input['tonase']) && is_numeric($input['tonase'])
+            ? round((float)$input['tonase'], -1)
+            : null;
             $surat_kontrak->update($input);
 
             $output = [

@@ -151,7 +151,7 @@
                             <th>Pihak Kedua</th>
                             <th>Pekerjaan</th>
                             <th>Kapal MV</th>
-                            <th>Tonase</th>
+                            <th>Estimasi Tonase</th>
                             <th>Lokasi Muat</th>
                             <th>Lokasi Bongkar</th>
                             <th>Mulai Kerja</th>
@@ -409,5 +409,36 @@
         }
     </script>
     <script src="{{ asset('modules/crm/js/jQuery.print.js') }}"></script>
+    <script>
+        $(document).on('click', '.delete-batch', function () {
+        
+            let batch = $(this).data('batch');
+        
+            if (!confirm('Yakin mau hapus batch #' + batch + '?')) {
+                return;
+            }
+        
+            $.ajax({
+                url: '/crm/surat-kontrak/destroy-batch/' + batch,
+                method: 'POST',
+                data: {
+                    _token: $('meta[name="csrf-token"]').attr('content'),
+                     _method: 'DELETE'
+                },
+                success: function (res) {
+                    if (res.success) {
+                        alert(res.msg);
+                        location.reload(); // refresh
+                    } else {
+                        alert(res.msg);
+                    }
+                },
+                error: function () {
+                    alert('Terjadi kesalahan');
+                }
+            });
+        
+        });
+        </script>
 
 @endsection

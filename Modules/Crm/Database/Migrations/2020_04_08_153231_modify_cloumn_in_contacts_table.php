@@ -14,8 +14,12 @@ class ModifyCloumnInContactsTable extends Migration
     public function up()
     {
         Schema::table('contacts', function (Blueprint $table) {
-            $table->string('crm_source')->index()->nullable()->after('customer_group_id');
-            $table->string('crm_life_stage')->index()->nullable()->after('crm_source');
+            if (!Schema::hasColumn('contacts', 'crm_source')) {
+                $table->string('crm_source')->nullable()->after('customer_group_id');
+            }
+            if (!Schema::hasColumn('contacts', 'crm_life_stage')) {
+                $table->string('crm_life_stage')->nullable()->after('crm_source');
+            }
         });
     }
 

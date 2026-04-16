@@ -14,8 +14,13 @@ class AddNewColumnsToContactsTable extends Migration
     public function up()
     {
         Schema::table('contacts', function (Blueprint $table) {
-            $table->integer('converted_by')->nullable()->after('created_by');
-            $table->datetime('converted_on')->nullable()->after('converted_by');
+            if (!Schema::hasColumn('contacts', 'converted_by')) {
+                $table->string('converted_by')->nullable()->after('customer_group_id');
+            }
+            if (!Schema::hasColumn('contacts', 'converted_on')) {
+                $table->string('converted_on')->nullable()->after('converted_by');
+            }
+            
         });
     }
 

@@ -8,6 +8,8 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
 use Modules\Essentials\Entities\Reminder;
+use Illuminate\Support\Facades\DB;
+use Carbon\Carbon;
 
 class ReminderController extends Controller
 {
@@ -24,6 +26,100 @@ class ReminderController extends Controller
         $this->moduleUtil = $moduleUtil;
     }
 
+    public function InsertNotifSTNK()
+    {
+        $business_id = auth()->user()->business_id;
+        $user_id = auth()->id();
+    
+        $today = Carbon::today();
+    
+        $assets = DB::table('assets')
+            ->select('id', 'asset_code', 'name', 'model', 'stnk_expired_at', 'tbpkp_expired_at')
+            ->where(function ($q) {
+                $q->whereNotNull('stnk_expired_at')
+                  ->orWhereNotNull('tbpkp_expired_at');
+            })
+            ->get();
+    
+        foreach ($assets as $asset) {
+    
+            // =========================
+            // STNK
+            // =========================
+            if (!empty($asset->stnk_expired_at)) {
+    
+                $expiredDate = Carbon::parse($asset->stnk_expired_at);
+                $reminderDate = $expiredDate->copy()->subDays(7);
+    
+                // 🔥 skip kalau sudah lewat
+                if ($reminderDate->lt($today)) {
+                    continue;
+                }
+    
+                $name = "Reminder STNK Asset {$asset->asset_code} - {$asset->name} ({$asset->model}) akan expired pada {$expiredDate->format('d-m-Y')}. Mohon dipastikan dan dilakukan perpanjangan setelah dilakukan pengecekan.";
+    
+                $exists = Reminder::where('business_id', $business_id)
+                    ->where('name', $name)
+                    ->whereDate('date', $reminderDate)
+                    ->exists();
+    
+                if (!$exists) {
+                    Reminder::create([
+                        'business_id' => $business_id,
+                        'user_id' => $user_id,
+                        'name' => $name,
+                        'date' => $reminderDate->format('Y-m-d'),
+                        'time' => '09:00:00',
+                        'end_time' => null,
+                        'repeat' => 'every_day',
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ]);
+                }
+            }
+    
+            // =========================
+            // TBPKP
+            // =========================
+            if (!empty($asset->tbpkp_expired_at)) {
+    
+                $expiredDate = Carbon::parse($asset->tbpkp_expired_at);
+                $reminderDate = $expiredDate->copy()->subDays(7);
+    
+                // 🔥 skip kalau sudah lewat
+                if ($reminderDate->lt($today)) {
+                    continue;
+                }
+    
+                $name = "Reminder TBPKP Asset {$asset->asset_code} - {$asset->name} ({$asset->model}) akan expired pada {$expiredDate->format('d-m-Y')}. Mohon dipastikan dan dilakukan perpanjangan setelah dilakukan pengecekan.";
+    
+                $exists = Reminder::where('business_id', $business_id)
+                    ->where('name', $name)
+                    ->whereDate('date', $reminderDate)
+                    ->exists();
+    
+                if (!$exists) {
+                    Reminder::create([
+                        'business_id' => $business_id,
+                        'user_id' => $user_id,
+                        'name' => $name,
+                        'date' => $reminderDate->format('Y-m-d'),
+                        'time' => '09:00:00',
+                        'end_time' => null,
+                        'repeat' => 'every_day',
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ]);
+                }
+            }
+        }
+    
+        return [
+            'success' => true,
+            'msg' => 'Reminder H-7 berhasil dibuat (tanpa duplikat & tidak melewati tanggal)'
+        ];
+    }
+
     /**
      * Display a listing of the resource.
      *
@@ -35,7 +131,7 @@ class ReminderController extends Controller
         if (! (auth()->user()->can('superadmin') || $this->moduleUtil->hasThePermissionInSubscription($business_id, 'essentials_module'))) {
             abort(403, 'Unauthorized action.');
         }
-
+        $this->InsertNotifSTNK();
         $business_id = request()->session()->get('user.business_id');
         $user_id = request()->session()->get('user.id');
 

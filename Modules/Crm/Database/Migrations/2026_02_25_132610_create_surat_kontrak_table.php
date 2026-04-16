@@ -31,7 +31,8 @@ return new class extends Migration
             $table->text('atribut_tambahan')->nullable();
 
             $table->string('nomor')->unique(); // nomor surat kontrak
-
+            $table->unsignedInteger('import_batch')->nullable();
+            $table->index(['business_id', 'import_batch']);
             $table->timestamps();
         });
         DB::statement("ALTER TABLE surat_kontrak MODIFY contact_id INT(10) UNSIGNED");
