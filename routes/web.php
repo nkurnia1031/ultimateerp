@@ -114,6 +114,8 @@ Route::middleware(['setData', 'auth', 'SetSessionData', 'language', 'timezone', 
     Route::get('/bonus-ayak/kasbon', [BonusAyakController::class, 'kasbonForm'])->name('bonus-ayak.kasbon-form');
     Route::post('/bonus-ayak/kasbon', [BonusAyakController::class, 'kasbonStore'])->name('bonus-ayak.kasbon-store');
     Route::delete('/bonus-ayak/kasbon/{id}', [BonusAyakController::class, 'kasbonDelete'])->name('bonus-ayak.kasbon-delete');
+    Route::get('/bonus-ayak/export-excel', [BonusAyakController::class, 'exportExcel'])
+    ->name('bonus-ayak.export-excel');
 
     Route::resource('bonus-ayak', BonusAyakController::class);
   
