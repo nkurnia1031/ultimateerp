@@ -35,6 +35,15 @@ class AddMoreFieldsInTransactionsTable extends Migration
      */
     public function down()
     {
-        // Schema::dropIfExists('transactions');
+        Schema::table('transactions', function (Blueprint $table) {
+            if (Schema::hasColumn('transactions', 'pjt_project_id')) {
+                $table->dropForeign(['pjt_project_id']);
+                $table->dropColumn('pjt_project_id');
+            }
+
+            if (Schema::hasColumn('transactions', 'pjt_title')) {
+                $table->dropColumn('pjt_title');
+            }
+        });
     }
 }

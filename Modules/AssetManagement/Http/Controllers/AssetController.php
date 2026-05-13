@@ -5,6 +5,7 @@ namespace Modules\AssetManagement\Http\Controllers;
 use App\BusinessLocation;
 use App\Category;
 use App\Media;
+use App\Tag;
 use App\Utils\ModuleUtil;
 use App\Utils\Util;
 use Illuminate\Http\Request;
@@ -242,11 +243,20 @@ class AssetController extends Controller
                                     </a>
                                     </li>';
                     }
+
+                    $html .= '
+                            <li>
+                                <a data-href="' . action([\Modules\AssetManagement\Http\Controllers\AssetController::class, 'show'], [$row->id]) . '" class="cursor-pointer view_asset">
+                                    <i class="fas fa-eye"></i>
+                                    ' . __('messages.view') . '
+                                </a>
+                            </li>';
+
                     $row->document = $row->stnk;
                     if (! empty($row->document)) {
                         $document_name = ! empty(explode('_', $row->document, 2)[1]) ? explode('_', $row->document, 2)[1] : $row->document;
                         $html .= '<li><a href="' . url('uploads/documents/' . $row->document) . '" download="' . $document_name . '"><i class="fas fa-download" aria-hidden="true"></i>' . __('Download STNK') . '</a></li>';
-                        if (isFileImage($document_name)) {
+                        if (isFileImage($document_name) || isFilePdf($document_name)) {
                             $html .= '<li><a href="#" data-href="' . url('uploads/documents/' . $row->document) . '" class="view_uploaded_document"><i class="fas fa-image" aria-hidden="true"></i>' . __('Lihat STNK') . '</a></li>';
                         }
                     }
@@ -269,17 +279,34 @@ class AssetController extends Controller
                                     </a>
                                 </li>';
                     }
+
+                    $html .= '
+                            <li>
+                                <a href="' . action([\Modules\AssetManagement\Http\Controllers\AssetController::class, 'tagLedger'], [$row->id]) . '">
+                                    <i class="fas fa-scroll"></i>
+                                    Tag Ledger
+                                </a>
+                            </li>';
+
+                    $html .= '
+                            <li>
+                                <a href="' . action([\Modules\Project\Http\Controllers\ProjectController::class, 'ledger'], ['asset_id' => $row->id]) . '">
+                                    <i class="fas fa-tasks"></i>
+                                    Project Ledger
+                                </a>
+                            </li>';
+
                     if (auth()->user()->can('asset.delete')) {
                         $html .= '<li>
                                     <a data-href="' . action([\Modules\AssetManagement\Http\Controllers\AssetController::class, 'destroy'], [$row->id]) . '"  id="delete_asset" class="cursor-pointer">
                                         <i class="fas fa-trash"></i>
                                         ' . __('messages.delete') . '
                                     </a>
-                                </li>
-                                </ul>';
+                                </li>';
                     }
 
                     $html .= '
+                            </ul>
                             </div>';
 
                     return $html;
@@ -405,11 +432,12 @@ class AssetController extends Controller
         if ($request->ajax()) {
             $asset_category = Category::forDropdown($business_id, 'asset');
             $business_locations = BusinessLocation::forDropdown($business_id);
+            $tags = Tag::where('business_id', $business_id)->pluck('name', 'id');
 
             $purchase_types = $this->purchaseTypes;
 
             return view('assetmanagement::asset.create')
-                ->with(compact('asset_category', 'business_locations', 'purchase_types'));
+                ->with(compact('asset_category', 'business_locations', 'purchase_types', 'tags'));
         }
     }
 
@@ -522,13 +550,15 @@ class AssetController extends Controller
                 $asset->warranties()->createMany($warranties);
             }
 
+            $this->syncAssetTags($asset, $request->input('tag_ids', []), $business_id);
+
             DB::commit();
 
             $output = [
                 'success' => true,
                 'msg' => __('lang_v1.success'),
             ];
-        } catch (Exception $e) {
+        } catch (\Exception $e) {
             DB::rollBack();
 
             \Log::emergency('File:' . $e->getFile() . 'Line:' . $e->getLine() . 'Message:' . $e->getMessage());
@@ -552,7 +582,24 @@ class AssetController extends Controller
      */
     public function show($id)
     {
-        return view('assetmanagement::show');
+        if (! auth()->user()->can('asset.view')) {
+            abort(403, 'Unauthorized action.');
+        }
+
+        $business_id = request()->session()->get('user.business_id');
+
+        if (! (auth()->user()->can('superadmin') || ($this->moduleUtil->hasThePermissionInSubscription($business_id, 'assetmanagement_module')))) {
+            abort(403, 'Unauthorized action.');
+        }
+
+        $asset = Asset::with(['businessLocation', 'createdBy', 'tags', 'warranties', 'media'])
+            ->leftJoin('categories as CAT', 'assets.category_id', '=', 'CAT.id')
+            ->where('assets.business_id', $business_id)
+            ->where('assets.id', $id)
+            ->select('assets.*', 'CAT.name as category_name')
+            ->firstOrFail();
+
+        return view('assetmanagement::asset.show')->with(compact('asset'));
     }
 
     /**
@@ -574,17 +621,19 @@ class AssetController extends Controller
         }
 
         if (request()->ajax()) {
-            $asset = Asset::with(['warranties'])
+            $asset = Asset::with(['warranties', 'tags'])
                 ->where('business_id', $business_id)
                 ->findOrfail($id);
 
             $asset_category = Category::forDropdown($business_id, 'asset');
             $business_locations = BusinessLocation::forDropdown($business_id);
+            $tags = Tag::where('business_id', $business_id)->pluck('name', 'id');
+            $selected_tags = $asset->tags->pluck('id')->toArray();
 
             $purchase_types = $this->purchaseTypes;
 
             return view('assetmanagement::asset.edit')
-                ->with(compact('asset_category', 'business_locations', 'asset', 'purchase_types'));
+                ->with(compact('asset_category', 'business_locations', 'asset', 'purchase_types', 'tags', 'selected_tags'));
         }
     }
 
@@ -711,13 +760,15 @@ class AssetController extends Controller
                 Media::uploadMedia($business_id, $asset, $request, 'image', true);
             }
 
+            $this->syncAssetTags($asset, $request->input('tag_ids', []), $business_id);
+
             DB::commit();
 
             $output = [
                 'success' => true,
                 'msg' => __('lang_v1.success'),
             ];
-        } catch (Exception $e) {
+        } catch (\Exception $e) {
             DB::rollBack();
 
             \Log::emergency('File:' . $e->getFile() . 'Line:' . $e->getLine() . 'Message:' . $e->getMessage());
@@ -731,6 +782,150 @@ class AssetController extends Controller
         return redirect()
             ->action([\Modules\AssetManagement\Http\Controllers\AssetController::class, 'index'])
             ->with('status', $output);
+    }
+
+    public function tagLedger($id)
+    {
+        if (! auth()->user()->can('asset.view')) {
+            abort(403, 'Unauthorized action.');
+        }
+
+        $business_id = request()->session()->get('user.business_id');
+
+        if (! (auth()->user()->can('superadmin') || ($this->moduleUtil->hasThePermissionInSubscription($business_id, 'assetmanagement_module')))) {
+            abort(403, 'Unauthorized action.');
+        }
+
+        $asset = Asset::with(['tags', 'businessLocation', 'createdBy'])
+            ->leftJoin('categories as CAT', 'assets.category_id', '=', 'CAT.id')
+            ->where('assets.business_id', $business_id)
+            ->where('assets.id', $id)
+            ->select('assets.*', 'CAT.name as category_name')
+            ->firstOrFail();
+
+        $tag_ids = $asset->tags->pluck('id')->toArray();
+        $ledger_details = $this->getAssetTagLedgerDetails($business_id, $tag_ids);
+
+        return view('assetmanagement::asset.tag_ledger')
+            ->with(compact('asset', 'ledger_details'));
+    }
+
+    private function syncAssetTags(Asset $asset, $tag_ids, $business_id)
+    {
+        if (! is_array($tag_ids)) {
+            $tag_ids = [$tag_ids];
+        }
+
+        $tag_ids = Tag::where('business_id', $business_id)
+            ->whereIn('id', array_filter($tag_ids))
+            ->pluck('id')
+            ->toArray();
+
+        $asset->tags()->sync($tag_ids);
+    }
+
+    private function getAssetTagLedgerDetails($business_id, $tag_ids)
+    {
+        if (empty($tag_ids)) {
+            return [
+                'total_sales' => 0,
+                'total_purchases' => 0,
+                'total_expenses' => 0,
+                'total_in' => 0,
+                'total_out' => 0,
+                'net_result' => 0,
+                'total_transactions' => 0,
+                'ledger' => collect(),
+            ];
+        }
+
+        $query = DB::table('transactions')
+            ->leftJoin('contacts AS c', 'transactions.contact_id', '=', 'c.id')
+            ->leftJoin('business_locations AS bl', 'transactions.location_id', '=', 'bl.id')
+            ->leftJoin('users AS u', 'transactions.created_by', '=', 'u.id')
+            ->where('transactions.business_id', $business_id)
+            ->whereExists(function ($q) use ($tag_ids) {
+                $q->select(DB::raw(1))
+                    ->from('transaction_tags AS tt')
+                    ->whereRaw('tt.transaction_id = transactions.id')
+                    ->whereIn('tt.tag_id', $tag_ids);
+            })
+            ->whereIn('transactions.type', ['sell', 'sell_return', 'purchase', 'purchase_return', 'expense', 'expense_refund'])
+            ->where(function ($q) {
+                $q->where('transactions.type', '!=', 'sell')
+                    ->orWhere('transactions.status', 'final');
+            });
+
+        $permitted_locations = auth()->user()->permitted_locations();
+        if ($permitted_locations != 'all') {
+            $query->whereIn('transactions.location_id', $permitted_locations);
+        }
+
+        $ledger = $query
+            ->select(
+                'transactions.id',
+                'transactions.transaction_date',
+                'transactions.type',
+                'transactions.invoice_no',
+                'transactions.ref_no',
+                'transactions.final_total',
+                'transactions.payment_status',
+                'transactions.additional_notes',
+                'transactions.staff_note',
+                'bl.name as location_name',
+                'c.name as contact_name',
+                'c.supplier_business_name',
+                DB::raw("CONCAT(COALESCE(u.surname, ''), ' ', COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, '')) as added_by"),
+                DB::raw("(SELECT GROUP_CONCAT(tags.name SEPARATOR ', ') FROM transaction_tags tt2 JOIN tags ON tags.id = tt2.tag_id WHERE tt2.transaction_id = transactions.id AND tt2.tag_id IN (" . implode(',', array_map('intval', $tag_ids)) . ")) AS tag_names"),
+                DB::raw("(SELECT GROUP_CONCAT(el.description SEPARATOR '\n') FROM expense_lines el WHERE el.transaction_id = transactions.id) AS expense_descriptions")
+            )
+            ->orderBy('transactions.transaction_date', 'asc')
+            ->orderBy('transactions.id', 'asc')
+            ->get()
+            ->map(function ($row) {
+                $amount_in = 0;
+                $amount_out = 0;
+
+                if (in_array($row->type, ['sell', 'purchase_return', 'expense_refund'])) {
+                    $amount_in = $row->final_total;
+                }
+
+                if (in_array($row->type, ['sell_return', 'purchase', 'expense'])) {
+                    $amount_out = $row->final_total;
+                }
+
+                $row->amount_in = $amount_in;
+                $row->amount_out = $amount_out;
+                $row->net_amount = $amount_in - $amount_out;
+                $row->reference_no = ! empty($row->invoice_no) ? $row->invoice_no : $row->ref_no;
+                $row->description = ! empty($row->expense_descriptions) ? $row->expense_descriptions : (! empty($row->additional_notes) ? $row->additional_notes : $row->staff_note);
+                $row->related_entity = ! empty($row->supplier_business_name) ? $row->supplier_business_name : $row->contact_name;
+
+                return $row;
+            });
+
+        $running_balance = 0;
+        $ledger = $ledger->map(function ($row) use (&$running_balance) {
+            $running_balance += $row->net_amount;
+            $row->running_balance = $running_balance;
+
+            return $row;
+        });
+
+        $total_sales = $ledger->where('type', 'sell')->sum('final_total') - $ledger->where('type', 'sell_return')->sum('final_total');
+        $total_purchases = $ledger->where('type', 'purchase')->sum('final_total') - $ledger->where('type', 'purchase_return')->sum('final_total');
+        $total_expenses = $ledger->where('type', 'expense')->sum('final_total') - $ledger->where('type', 'expense_refund')->sum('final_total');
+
+        return [
+            'total_sales' => $total_sales,
+            'total_purchases' => $total_purchases,
+            'total_expenses' => $total_expenses,
+            'total_in' => $ledger->sum('amount_in'),
+            'total_out' => $ledger->sum('amount_out'),
+            'net_result' => $ledger->sum('net_amount'),
+            'total_transactions' => $ledger->count(),
+            'ledger' => $ledger,
+        ];
     }
 
     /**
@@ -763,7 +958,7 @@ class AssetController extends Controller
                     'success' => true,
                     'msg' => __('lang_v1.success'),
                 ];
-            } catch (Exception $e) {
+            } catch (\Exception $e) {
                 \Log::emergency('File:' . $e->getFile() . 'Line:' . $e->getLine() . 'Message:' . $e->getMessage());
 
                 $output = [

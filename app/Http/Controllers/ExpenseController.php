@@ -10,6 +10,7 @@ use App\Events\ExpenseCreatedOrModified;
 use App\ExpenseCategory;
 use App\TaxRate;
 use App\Transaction;
+use App\Tag;
 use App\User;
 use App\Utils\CashRegisterUtil;
 use App\Utils\ModuleUtil;
@@ -275,7 +276,7 @@ class ExpenseController extends Controller
                     @if($document)
                         <li><a href="{{ url(\'uploads/documents/\' . $document)}}" 
                         download=""><i class="fa fa-download" aria-hidden="true"></i> @lang("purchase.download_document")</a></li>
-                        @if(isFileImage($document))
+                        @if(isFileImage($document) || isFilePdf($document))
                             <li><a href="#" data-href="{{ url(\'uploads/documents/\' . $document)}}" class="view_uploaded_document"><i class="fas fa-file-image" aria-hidden="true"></i>@lang("lang_v1.view_document")</a></li>
                         @endif
                     @endif
@@ -903,19 +904,40 @@ class ExpenseController extends Controller
                 $error_msg = '';
 
                 //Remove header row
+                $header = $parsed_array[0][0];
                 $imported_data = array_splice($parsed_array[0], 1);
 
                 $expense_array = [];
                 DB::beginTransaction();
+                $imported_data = collect($imported_data)->filter(function ($value) {
+                    return !empty(trim($value[4]));
+                })->values()->map(function ($row) use ($header, $import_batch, $now, $filename) {
+                    $item = array_combine($header, $row);
+                    $item['import_batch'] = $import_batch;
+                    $item['import_time'] = $now;
+                    $item['import_file'] = $filename;
+                    return $item;
+                });
+                $imported_data = $imported_data->groupBy('REFERENCE NO')->map(function ($row) use ($header) {
+                    $item = $row->first();
+                  
+                    $item['TOTAL AMOUNT'] = $row->sum('TOTAL AMOUNT');
+                    $item['PAID AMOUNT'] = $row->sum('PAID AMOUNT');
+                    $item['lines'] = $row->toArray();
+                    return $item;
+                });
+
+                $lines = [];
 
                 foreach ($imported_data as $key => $value) {
+
 
                     $row_no = $key + 1;
                     $expense_array['business_id'] = $business_id;
                     $expense_array['created_by'] = $user_id;
 
-                    if (!empty(trim($value[0]))) {
-                        $location_name = trim($value[0]);
+                    if (!empty(trim($value['LOCATION']))) {
+                        $location_name = trim($value['LOCATION']);
                         $location = BusinessLocation::where('name', $location_name)
                             ->where('business_id', $business_id)
                             ->first();
@@ -932,7 +954,8 @@ class ExpenseController extends Controller
                     }
 
                     //Check if category exists else create new
-                    $category_name = trim($value[1]);
+                    $expense_array['expense_category_id']=null;
+                    $category_name = trim($value['CATEGORY']);
                     if (!empty($category_name)) {
                         $category = ExpenseCategory::where('business_id', $business_id)
                             ->where('name', $category_name)
@@ -947,8 +970,8 @@ class ExpenseController extends Controller
                     }
 
                     //  Add Sub-Category
-                    $sub_category_name = trim($value[2]);
-
+                    $sub_category_name = trim($value['SUB-CATEGORY']);
+                    $expense_array['expense_sub_category_id']= null;
                     if (!empty($sub_category_name)) {
                         $sub_category = ExpenseCategory::where('business_id', $business_id)
                             ->where('name', $sub_category_name)
@@ -967,14 +990,14 @@ class ExpenseController extends Controller
                     //Update reference count
                     $ref_count = $this->transactionUtil->setAndGetReferenceCount('expense', $business_id);
                     //Generate reference number
-                    $ref_no = trim($value[3]);
+                    $ref_no = trim($value['REFERENCE NO']);
                     if (empty($ref_no)) {
                         $expense_array['ref_no'] = $this->transactionUtil->generateReferenceNumber('expense', $ref_count, $business_id);
                     } else {
                         $expense_array['ref_no'] = $ref_no;
                     }
 
-                    $date = trim($value[4]);
+                    $date = trim($value['EXPENSE DATE']);
 
                     //check if date is correct
                     if (!empty($date)) {
@@ -991,10 +1014,18 @@ class ExpenseController extends Controller
                         $expense_array['transaction_date'] = \Carbon::now()->toDateTimeString();
                     }
 
-                    $user_value = trim($value[5]);
+                    $user_value = trim($value['EXPENSE FOR']);
 
                     if (!empty($user_value)) {
-                        $user = User::where('email', $user_value)->orWhere('username', $user_value)->first();
+                        $user = User::where('email', $user_value)
+                            ->orWhere('username', $user_value)
+                            ->orWhere('surname', $user_value)
+                            ->orWhere('first_name', $user_value)
+                            ->orWhere('last_name', $user_value)
+                            ->orWhereRaw("CONCAT(surname, ' ', first_name, ' ', last_name) = ?", [$user_value])
+                            ->orWhereRaw("CONCAT(surname, ' ', first_name) = ?", [$user_value])
+                            ->orWhereRaw("TRIM(CONCAT(surname, ' ', first_name, ' ', COALESCE(last_name, ''))) = ?", [$user_value])
+                            ->first();
                         if (!empty($user)) {
                             $expense_array['expense_for'] = $user->id;
                         } else {
@@ -1004,7 +1035,7 @@ class ExpenseController extends Controller
                         }
                     }
 
-                    $contact_id = trim($value[6]);
+                    $contact_id = trim($value['EXPENSE FOR CONTACT ID']);
                     if (!empty($contact_id)) {
                         $contact = Contact::where('business_id', $business_id)
                             ->where(function ($query) use ($contact_id) {
@@ -1031,12 +1062,12 @@ class ExpenseController extends Controller
 
 
 
-                    $note = trim($value[9]);
+                    $note = trim($value['EXPENSE NOTE']);
                     if (!empty($note)) {
                         $expense_array['additional_notes'] = $note;
                     }
 
-                    $final_total = trim($value[10]);
+                    $final_total = trim($value['TOTAL AMOUNT']);
 
                     if (!empty($final_total)) {
                         $expense_array['final_total'] = $this->transactionUtil->num_uf($final_total);
@@ -1049,7 +1080,7 @@ class ExpenseController extends Controller
                     $expense_array['total_before_tax'] = $expense_array['final_total'];
 
                     //Add Tax
-                    $tax_name = trim($value[8]);
+                    $tax_name = trim($value['APPLICABLE TAX']);
                     $tax_amount = 0;
                     if (!empty($tax_name)) {
                         $tax = TaxRate::where('business_id', $business_id)
@@ -1081,7 +1112,7 @@ class ExpenseController extends Controller
                         // }
 
                     }
-                    $image_name = $value[7];
+                    $image_name = $value['ATTACH DOCUMENT'];
 
                     $expense_array['document'] = $image_name;
 
@@ -1092,18 +1123,52 @@ class ExpenseController extends Controller
                     $expense_array['import_time'] = $now;
                     $expense_array['import_file'] = $filename;
                     $expense_array['contact_id'] = $contact_id;
-
+                   
                     $transaction = Transaction::create($expense_array);
-                    \App\ExpenseLine::create([
-                        'transaction_id' =>  $transaction->id,
-                        'category_id' =>  $transaction->expense_category_id,
-                        'sub_category_id' =>  $transaction->expense_sub_category_id,
-                        'description' => $transaction->additional_notes,
-                        'document' =>  $transaction->document,
-                        'amount' => $transaction->final_total,
-                    ]);
+                    foreach ($value['lines'] as $key2 => $value2) {
+                        $expense_array['expense_category_id']=null;
+                        $category_name = trim($value2['CATEGORY']);
+                        if (!empty($category_name)) {
+                            $category = ExpenseCategory::where('business_id', $business_id)
+                                ->where('name', $category_name)
+                                ->first();
+                            if (empty($category)) {
+                                $category = new ExpenseCategory;
+                                $category->business_id = $business_id;
+                                $category->name = $category_name;
+                                $category->save();
+                            }
+                            $expense_array['expense_category_id'] = $category->id;
+                        }
+    
+                        //  Add Sub-Category
+                        $sub_category_name = trim($value2['SUB-CATEGORY']);
+                        $expense_array['expense_sub_category_id']= null;
+                        if (!empty($sub_category_name)) {
+                            $sub_category = ExpenseCategory::where('business_id', $business_id)
+                                ->where('name', $sub_category_name)
+                                ->where('parent_id', $category->id)
+                                ->first();
+                            if (empty($sub_category)) {
+                                $sub_category = new ExpenseCategory;
+                                $sub_category->business_id = $business_id;
+                                $sub_category->name = $sub_category_name;
+                                $sub_category->parent_id = $category->id;
+                                $sub_category->save();
+                            }
+                            $expense_array['expense_sub_category_id'] = $sub_category->id;
+                        }
+                        array_push($lines, [
+                            'transaction_id' => $transaction->id,
+                            'category_id' => $expense_array['expense_category_id'],
+                            'sub_category_id' => $expense_array['expense_sub_category_id'],
+                            'description' => trim($value2['DESCRIPTION']),
+                            'amount' => $this->transactionUtil->num_uf(trim($value2['TOTAL AMOUNT'])),
+                        ]);
+                    }
 
-                    $paid_amount = trim($value[11]);
+
+                    $paid_amount = trim($value['PAID AMOUNT']);
 
                     if (!empty($paid_amount)) {
                         $paid_amount = $this->transactionUtil->num_uf($paid_amount);
@@ -1113,7 +1178,7 @@ class ExpenseController extends Controller
                         break;
                     }
 
-                    $paid_on = trim($value[12]);
+                    $paid_on = trim($value['PAID ON DATE']);
 
                     //check if date is correct
                     if (!empty($paid_on)) {
@@ -1130,7 +1195,7 @@ class ExpenseController extends Controller
                         $paid_on = \Carbon::now()->toDateTimeString();
                     }
 
-                    $payment_method = trim($value[13]);
+                    $payment_method = trim($value['PAYMENT METHOD']);
                     if (!empty($payment_method)) {
 
                         $payment_types = $this->transactionUtil->payment_types(null, false, $business_id);
@@ -1148,7 +1213,7 @@ class ExpenseController extends Controller
                         // break;
                     }
 
-                    $account_number = trim($value[14]);
+                    $account_number = trim($value['PAYMENT ACCOUND']);
                     $account_id  = $this->AccountTransactionUtil->getPaymentAccount($account_number, $business_id);
 
                     $t_no = 0;
@@ -1164,15 +1229,43 @@ class ExpenseController extends Controller
                         'paid_on' => $paid_on,
                         'method' => $payment_method,
                         'account_id' => $account_id,
-                        'note' =>  trim($value[15]),
+                        'note' =>  trim($value['PAYMENT NOTE']),
                         "transaction_no_{$t_no}" => null
                     ];
                     $this->transactionUtil->createOrUpdatePaymentLines($transaction, $payment, null, null, false);
                     $payment = [];
                     $this->transactionUtil->updatePaymentStatus($transaction->id, $transaction->final_total);
+                    if (!empty($value['TAGS'])) {
+                        $tags = collect(explode(';', $value['TAGS']))
+                            ->map(fn($tag) => trim($tag))
+                            ->filter()
+                            ->map(function ($tag) use ($business_id) {
+                                try {
+                                    return Tag::firstOrCreate([
+                                        'business_id' => $business_id,
+                                        'name'        => $tag,
+                                    ])->id;
+                                } catch (\Throwable $e) {
+                                    \Log::error("Gagal membuat/menemukan tag: {$tag}", [
+                                        'business_id' => $business_id,
+                                        'error'       => $e->getMessage(),
+                                    ]);
+                                    return null; // skip kalau gagal
+                                }
+                            })
+                            ->filter() // buang null hasil gagal
+                            ->unique() // pastikan ID tidak dobel
+                            ->values()
+                            ->toArray();
+                        if (!empty($tags)) {
+                            $this->transactionUtil->updateTagTransaction($transaction->id, $tags);
+                        }
+                    }
                 }
+                \App\ExpenseLine::insert($lines);
 
                 if (!$is_valid) {
+                    dd($error_msg);
                     throw new \Exception($error_msg);
                 }
             }

@@ -106,6 +106,9 @@ Route::middleware(['setData'])->group(function () {
 
 //Routes for authenticated users only
 Route::middleware(['setData', 'auth', 'SetSessionData', 'language', 'timezone', 'AdminSidebarMenu', 'CheckUserLogin'])->group(function () {
+    Route::get('/tags/ledger', [TagController::class, 'getLedger']);
+    Route::get('/tags/{tag}/similar', [TagController::class, 'similar']);
+    Route::post('/tags/{tag}/merge', [TagController::class, 'merge']);
     Route::resource('tags', TagController::class);
     
     Route::get('bonus-ayak/export-pdf', [BonusAyakController::class, 'exportPdf'])
@@ -303,6 +306,7 @@ Route::post('/solar/mess/import', [SolarController::class, 'importMess'])->name(
 
     Route::resource('roles', RoleController::class);
 
+    Route::get('/users/ledger', [ManageUserController::class, 'getLedger']);
     Route::resource('users', ManageUserController::class);
 
     Route::resource('group-taxes', GroupTaxController::class);

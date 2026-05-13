@@ -6,6 +6,7 @@
 Route::middleware('web', 'authh', 'SetSessionData', 'auth', 'language', 'timezone', 'AdminSidebarMenu')->prefix('project')->group(function () {
     Route::put('project/{id}/post-status', [Modules\Project\Http\Controllers\ProjectController::class, 'postProjectStatus']);
     Route::put('project-settings', [Modules\Project\Http\Controllers\ProjectController::class, 'postSettings']);
+    Route::get('ledger', [Modules\Project\Http\Controllers\ProjectController::class, 'ledger']);
     Route::resource('project', 'Modules\Project\Http\Controllers\ProjectController');
     Route::resource('project-task', 'Modules\Project\Http\Controllers\TaskController');
     Route::get('project-task-get-status', [Modules\Project\Http\Controllers\TaskController::class, 'getTaskStatus']);

@@ -2,6 +2,7 @@
 
 namespace Modules\Project\Http\Controllers;
 
+use App\Tag;
 use App\Utils\Util;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -49,7 +50,7 @@ class ProjectTimeLogController extends Controller
                             ->findOrFail($project_id);
 
             $project_task_time_logs = ProjectTimeLog::where('project_id', $project_id)
-                ->with('task', 'user', 'project')
+                ->with('task', 'task.tags', 'tags', 'user', 'project')
                 ->select('*');
 
             // check permission for crud time log
@@ -122,8 +123,23 @@ class ProjectTimeLogController extends Controller
                 ->editColumn('user', function ($row) {
                     return $row->user?->user_full_name;
                 })
+                ->addColumn('tags', function ($row) {
+                    $tags = $row->tags;
+
+                    if ($tags->isEmpty() && ! empty($row->task)) {
+                        $tags = $row->task->tags;
+                    }
+
+                    if ($tags->isEmpty()) {
+                        return '';
+                    }
+
+                    return $tags->map(function ($tag) {
+                        return '<span class="label bg-blue">'.$tag->name.'</span>';
+                    })->implode(' ');
+                })
                 ->removeColumn('id')
-                ->rawColumns(['action', 'task', 'start_datetime', 'end_datetime', 'work_hour', 'user'])
+                ->rawColumns(['action', 'task', 'tags', 'start_datetime', 'end_datetime', 'work_hour', 'user'])
                 ->make(true);
         }
 
@@ -137,11 +153,13 @@ class ProjectTimeLogController extends Controller
      */
     public function create()
     {
+        $business_id = request()->session()->get('user.business_id');
         $project_id = request()->get('project_id');
         $task_id = request()->get('task_id', null);
 
         $project_tasks = ProjectTask::taskDropdown($project_id);
         $project_members = ProjectMember::projectMembersDropdown($project_id);
+        $tags = Tag::where('business_id', $business_id)->pluck('name', 'id');
 
         //check if user is admin/lead & can add time log for other user
         $business_id = request()->session()->get('user.business_id');
@@ -156,7 +174,7 @@ class ProjectTimeLogController extends Controller
         $added_from = request()->input('added_from');
 
         return view('project::time_logs.create')
-            ->with(compact('project_tasks', 'project_id', 'project_members', 'is_lead_or_admin', 'added_from', 'task_id'));
+            ->with(compact('project_tasks', 'project_id', 'project_members', 'is_lead_or_admin', 'added_from', 'task_id', 'tags'));
     }
 
     /**
@@ -185,7 +203,8 @@ class ProjectTimeLogController extends Controller
                 $input['user_id'] = $request->session()->get('user.id');
             }
 
-            ProjectTimeLog::create($input);
+            $project_time_log = ProjectTimeLog::create($input);
+            $this->syncTimeLogTags($project_time_log, $request->input('tag_ids', []), $business_id);
 
             $task_timelog_html = '';
             $added_from = $request->get('added_from');
@@ -205,7 +224,7 @@ class ProjectTimeLogController extends Controller
                 'added_from' => $added_from,
                 'msg' => __('lang_v1.success'),
             ];
-        } catch (Exception $e) {
+        } catch (\Exception $e) {
             \Log::emergency('File:'.$e->getFile().'Line:'.$e->getLine().'Message:'.$e->getMessage());
 
             $output = [
@@ -237,11 +256,13 @@ class ProjectTimeLogController extends Controller
         $project_id = request()->get('project_id');
 
         $project_tasks = ProjectTask::taskDropdown($project_id);
-        $project_task_time_log = ProjectTimeLog::where('project_id', $project_id)
+        $project_task_time_log = ProjectTimeLog::with('tags')
+            ->where('project_id', $project_id)
             ->findOrFail($id);
         $project_members = ProjectMember::projectMembersDropdown($project_id);
         //check if user is admin/lead & can add time log for other user
         $business_id = request()->session()->get('user.business_id');
+        $tags = Tag::where('business_id', $business_id)->pluck('name', 'id');
         $is_admin = $this->commonUtil->is_admin(auth()->user(), $business_id);
         $is_lead = $this->projectUtil->isProjectLead(auth()->user()->id, $project_id);
 
@@ -251,7 +272,7 @@ class ProjectTimeLogController extends Controller
         }
 
         return view('project::time_logs.edit')
-            ->with(compact('project_tasks', 'project_task_time_log', 'is_lead_or_admin', 'project_members'));
+            ->with(compact('project_tasks', 'project_task_time_log', 'is_lead_or_admin', 'project_members', 'tags'));
     }
 
     /**
@@ -289,12 +310,13 @@ class ProjectTimeLogController extends Controller
                 ->findOrFail($id);
 
             $project_task_time_log->update($input);
+            $this->syncTimeLogTags($project_task_time_log, $request->input('tag_ids', []), $business_id);
 
             $output = [
                 'success' => true,
                 'msg' => __('lang_v1.success'),
             ];
-        } catch (Exception $e) {
+        } catch (\Exception $e) {
             \Log::emergency('File:'.$e->getFile().'Line:'.$e->getLine().'Message:'.$e->getMessage());
 
             $output = [
@@ -304,6 +326,16 @@ class ProjectTimeLogController extends Controller
         }
 
         return $output;
+    }
+
+    private function syncTimeLogTags(ProjectTimeLog $project_time_log, $tag_ids, $business_id)
+    {
+        $tag_ids = Tag::where('business_id', $business_id)
+            ->whereIn('id', (array) $tag_ids)
+            ->pluck('id')
+            ->toArray();
+
+        $project_time_log->tags()->sync($tag_ids);
     }
 
     /**
@@ -321,7 +353,7 @@ class ProjectTimeLogController extends Controller
                 'success' => true,
                 'msg' => __('lang_v1.success'),
             ];
-        } catch (Exception $e) {
+        } catch (\Exception $e) {
             \Log::emergency('File:'.$e->getFile().'Line:'.$e->getLine().'Message:'.$e->getMessage());
 
             $output = [

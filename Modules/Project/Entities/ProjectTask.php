@@ -76,6 +76,11 @@ class ProjectTask extends Model
         return $this->hasMany('Modules\Project\Entities\ProjectTimeLog');
     }
 
+    public function tags()
+    {
+        return $this->belongsToMany(\App\Tag::class, 'project_task_tags', 'project_task_id', 'tag_id');
+    }
+
     /**
      * Return the priority for project task.
      */

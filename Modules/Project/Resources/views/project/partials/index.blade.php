@@ -58,6 +58,12 @@
 								    		@lang('project::lang.task')
 								    	</a>
 								    </li>
+								    <li>
+								    	<a href="{{action([\Modules\Project\Http\Controllers\ProjectController::class, 'ledger'], ['project_id' => $project->id])}}">
+								    		<i class="fas fa-scroll"></i>
+								    		Project Ledger
+								    	</a>
+								    </li>
 								    @if(isset($project->settings['enable_timelog']) && $project->settings['enable_timelog'])
 								    	<li>
 									    	<a href="{{action([\Modules\Project\Http\Controllers\ProjectController::class, 'show'], [$project->id]).'?view=time_log'}}">

@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\BusinessLocation;
 use App\Account;
 
+use App\Transaction;
 use App\User;
 use App\Utils\ModuleUtil;
 use DB;
@@ -73,6 +74,10 @@ class ManageUserController extends Controller
                     @endcan
                     @can("user.view")
                     <a href="{{action(\'App\Http\Controllers\ManageUserController@show\', [$id])}}" class="tw-dw-btn tw-dw-btn-xs tw-dw-btn-outline  tw-dw-btn-info"><i class="fa fa-eye"></i> @lang("messages.view")</a>
+                    &nbsp;
+                    <a href="{{action(\'App\Http\Controllers\ManageUserController@show\', [$id])}}?view=ledger" class="tw-dw-btn tw-dw-btn-xs tw-dw-btn-outline tw-dw-btn-info"><i class="fas fa-scroll"></i> @lang("lang_v1.ledger")</a>
+                    &nbsp;
+                    <a href="{{action(\'Modules\Project\Http\Controllers\ProjectController@ledger\', [\'user_id\' => $id])}}" class="tw-dw-btn tw-dw-btn-xs tw-dw-btn-outline tw-dw-btn-info"><i class="fas fa-tasks"></i> Project Ledger</a>
                     &nbsp;
                     @endcan
                     @can("user.delete")
@@ -192,7 +197,152 @@ class ManageUserController extends Controller
             ->latest()
             ->get();
 
-        return view('manage_user.show')->with(compact('user', 'view_partials', 'users', 'activities'));
+        $view_type = request()->get('view');
+        $business_locations = BusinessLocation::forDropdown($business_id, true);
+
+        return view('manage_user.show')->with(compact('user', 'view_partials', 'users', 'activities', 'view_type', 'business_locations'));
+    }
+
+    /**
+     * Shows expense ledger for a user.
+     *
+     * @return \Illuminate\Http\Response
+     */
+    public function getLedger(Request $request)
+    {
+        if (! auth()->user()->can('user.view')) {
+            abort(403, 'Unauthorized action.');
+        }
+
+        if (! auth()->user()->can('all_expense.access') && ! auth()->user()->can('view_own_expense')) {
+            abort(403, 'Unauthorized action.');
+        }
+
+        $business_id = $request->session()->get('user.business_id');
+        $user_id = $request->input('user_id');
+
+        if (! auth()->user()->can('all_expense.access') && (int) $user_id !== (int) auth()->user()->id) {
+            abort(403, 'Unauthorized action.');
+        }
+
+        $user = User::where('business_id', $business_id)
+            ->user()
+            ->findOrFail($user_id);
+
+        $start_date = $request->input('start_date');
+        $end_date = $request->input('end_date');
+        $location_id = $request->input('location_id');
+
+        $ledger_details = $this->getUserExpenseLedgerDetails($business_id, $user->id, $start_date, $end_date, $location_id);
+
+        $location = null;
+        if (! empty($location_id)) {
+            $location = BusinessLocation::where('business_id', $business_id)->find($location_id);
+        }
+
+        return view('manage_user.ledger')->with(compact('ledger_details', 'user', 'location'));
+    }
+
+    /**
+     * Returns expense summary and rows for user ledger.
+     *
+     * @param  int  $business_id
+     * @param  int  $user_id
+     * @param  string|null  $start_date
+     * @param  string|null  $end_date
+     * @param  int|null  $location_id
+     * @return array
+     */
+    private function getUserExpenseLedgerDetails($business_id, $user_id, $start_date = null, $end_date = null, $location_id = null)
+    {
+        $payment_subquery = DB::raw('(SELECT transaction_id, SUM(IF(is_return = 0, amount, amount * -1)) as amount_paid FROM transaction_payments GROUP BY transaction_id) AS TP');
+
+        $query = Transaction::leftJoin('expense_categories AS ec', 'transactions.expense_category_id', '=', 'ec.id')
+            ->leftJoin('expense_categories AS esc', 'transactions.expense_sub_category_id', '=', 'esc.id')
+            ->leftJoin('business_locations AS bl', 'transactions.location_id', '=', 'bl.id')
+            ->leftJoin('contacts AS c', 'transactions.contact_id', '=', 'c.id')
+            ->leftJoin('users AS usr', 'transactions.created_by', '=', 'usr.id')
+            ->leftJoin($payment_subquery, 'transactions.id', '=', 'TP.transaction_id')
+            ->where('transactions.business_id', $business_id)
+            ->whereIn('transactions.type', ['expense', 'expense_refund'])
+            ->where('transactions.expense_for', $user_id);
+
+        if (! empty($start_date) && ! empty($end_date)) {
+            $query->whereDate('transactions.transaction_date', '>=', $start_date)
+                ->whereDate('transactions.transaction_date', '<=', $end_date);
+        }
+
+        if (! empty($location_id)) {
+            $query->where('transactions.location_id', $location_id);
+        }
+
+        $permitted_locations = auth()->user()->permitted_locations();
+        if ($permitted_locations != 'all') {
+            $query->whereIn('transactions.location_id', $permitted_locations);
+        }
+
+        $summary = (clone $query)
+            ->select(
+                DB::raw("SUM(IF(transactions.type = 'expense_refund', -1 * transactions.final_total, transactions.final_total)) as total_expense"),
+                DB::raw("SUM(IF(transactions.type = 'expense_refund', -1 * IFNULL(TP.amount_paid, 0), IFNULL(TP.amount_paid, 0))) as total_paid"),
+                DB::raw("SUM(IF(transactions.payment_status = 'paid', 1, 0)) as paid_count"),
+                DB::raw("SUM(IF(transactions.payment_status = 'partial', 1, 0)) as partial_count"),
+                DB::raw("SUM(IF(transactions.payment_status = 'due', 1, 0)) as due_count"),
+                DB::raw('COUNT(transactions.id) as total_transactions')
+            )
+            ->first();
+
+        $ledger = $query
+            ->select(
+                'transactions.id',
+                'transactions.transaction_date',
+                'transactions.ref_no',
+                'transactions.type',
+                'transactions.payment_status',
+                'transactions.final_total',
+                'transactions.additional_notes',
+                'ec.name as category',
+                'esc.name as sub_category',
+                'bl.name as location_name',
+                'c.name as contact_name',
+                'c.supplier_business_name',
+                DB::raw('IFNULL(TP.amount_paid, 0) as amount_paid'),
+                DB::raw("CONCAT(COALESCE(usr.surname, ''), ' ', COALESCE(usr.first_name, ''), ' ', COALESCE(usr.last_name, '')) as added_by"),
+                DB::raw("(SELECT GROUP_CONCAT(DISTINCT ec2.name SEPARATOR ', ') FROM expense_lines el LEFT JOIN expense_categories ec2 ON el.category_id = ec2.id WHERE el.transaction_id = transactions.id) AS line_categories"),
+                DB::raw("(SELECT GROUP_CONCAT(DISTINCT esc2.name SEPARATOR ', ') FROM expense_lines el LEFT JOIN expense_categories esc2 ON el.sub_category_id = esc2.id WHERE el.transaction_id = transactions.id) AS line_sub_categories"),
+                DB::raw("(SELECT GROUP_CONCAT(el.description SEPARATOR '\n') FROM expense_lines el WHERE el.transaction_id = transactions.id) AS descriptions")
+            )
+            ->orderBy('transactions.transaction_date', 'asc')
+            ->orderBy('transactions.id', 'asc')
+            ->get()
+            ->map(function ($row) {
+                $total = $row->type == 'expense_refund' ? -1 * $row->final_total : $row->final_total;
+                $paid = $row->type == 'expense_refund' ? -1 * $row->amount_paid : $row->amount_paid;
+
+                $row->signed_total = $total;
+                $row->signed_paid = $paid;
+                $row->signed_due = $total - $paid;
+                $row->display_category = ! empty($row->line_categories) ? $row->line_categories : $row->category;
+                $row->display_sub_category = ! empty($row->line_sub_categories) ? $row->line_sub_categories : $row->sub_category;
+
+                return $row;
+            });
+
+        $total_expense = $summary->total_expense ?? 0;
+        $total_paid = $summary->total_paid ?? 0;
+
+        return [
+            'start_date' => $start_date,
+            'end_date' => $end_date,
+            'total_expense' => $total_expense,
+            'total_paid' => $total_paid,
+            'total_due' => $total_expense - $total_paid,
+            'total_transactions' => $summary->total_transactions ?? 0,
+            'paid_count' => $summary->paid_count ?? 0,
+            'partial_count' => $summary->partial_count ?? 0,
+            'due_count' => $summary->due_count ?? 0,
+            'ledger' => $ledger,
+        ];
     }
 
     /**

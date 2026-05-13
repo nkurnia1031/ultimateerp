@@ -255,7 +255,7 @@
                                                 download="{{ $payment->document_name }}"><i class="fa fa-download"
                                                     data-toggle="tooltip"
                                                     title="{{ __('purchase.download_document') }}"></i></a>
-                                            @if (isFileImage($payment->document_name))
+                                            @if (isFileImage($payment->document_name) || isFilePdf($payment->document_name))
                                                 &nbsp;
                                                 <button data-href="{{ $payment->document_path }}"
                                                     class="tw-dw-btn tw-dw-btn-xs tw-dw-btn-outline  tw-dw-btn-info view_uploaded_document"

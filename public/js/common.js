@@ -539,13 +539,30 @@ jQuery.validator.addMethod(
 $(document).on('click', '.view_uploaded_document', function (e) {
     e.preventDefault();
     var src = $(this).data('href');
+    var is_pdf = /\.pdf(\?.*)?$/i.test(src);
+    var modal_size = is_pdf ? ' modal-lg' : '';
+    var modal_body = is_pdf
+        ? '<div id="uploaded_pdf_viewer" style="height: 75vh; width: 100%;"><iframe src="' +
+          src +
+          '" style="border: 0; height: 75vh; width: 100%;"></iframe></div>'
+        : '<img src="' + src + '" class="img-responsive" alt="Uploaded Document">';
     var html =
-        '<div class="modal-dialog" role="document"><div class="modal-content"><div class="modal-header"><button type="button" class="close" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button></div><div class="modal-body"><img src="' +
-        src +
-        '" class="img-responsive" alt="Uploaded Document"></div><div class="modal-footer"><button type="button" class="btn btn-default" data-dismiss="modal">Close</button> <a href="' +
+        '<div class="modal-dialog' +
+        modal_size +
+        '" role="document"><div class="modal-content"><div class="modal-header"><button type="button" class="close" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button></div><div class="modal-body">' +
+        modal_body +
+        '</div><div class="modal-footer"><button type="button" class="btn btn-default" data-dismiss="modal">Close</button> <a href="' +
         src +
         '" class="btn btn-success" download=""><i class="fa fa-download"></i> Download</a></div></div></div>';
     $('div.view_modal').html(html).modal('show');
+
+    if (is_pdf && typeof PDFObject !== 'undefined') {
+        PDFObject.embed(src, '#uploaded_pdf_viewer', {
+            height: '75vh',
+            fallbackLink:
+                '<p>PDF tidak bisa ditampilkan. <a href="[url]" target="_blank">Buka PDF</a></p>',
+        });
+    }
 });
 
 $(document).on('click', '#accordion .box-header', function (e) {

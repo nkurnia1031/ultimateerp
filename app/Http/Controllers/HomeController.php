@@ -4,15 +4,18 @@ namespace App\Http\Controllers;
 
 use App\BusinessLocation;
 use App\Charts\CommonChart;
+use Carbon\Carbon;
 use App\Currency;
 use App\Media;
 use App\Transaction;
 use App\User;
+use App\Business;
 use App\Utils\BusinessUtil;
 use App\Utils\ModuleUtil;
 use App\Utils\RestaurantUtil;
 use App\Utils\TransactionUtil;
 use App\Utils\ProductUtil;
+use App\Notifications\ReminderEmailNotification;
 use App\Utils\Util;
 use App\VariationLocationDetails;
 use Datatables;
@@ -69,8 +72,45 @@ class HomeController extends Controller
             return redirect()->action([\Modules\Crm\Http\Controllers\DashboardController::class, 'index']);
         }
 
-        $business_id = request()->session()->get('user.business_id');
 
+
+        $business_id = request()->session()->get('user.business_id');
+        $lockFile = storage_path('app/reminder_sent_' . Carbon::today()->format('Y-m-d') . '.lock');
+
+        if (!file_exists($lockFile)) {
+            // Tandai sudah dijalankan hari ini
+            file_put_contents($lockFile, Carbon::now()->toDateTimeString());
+
+            $today = Carbon::today();
+
+            $reminders = DB::table('essentials_reminders')
+                ->whereBetween('date', [
+                    $today->copy()->addDays(1),
+                    $today->copy()->addMonth(),
+                ])
+                ->get()
+                ->filter(function ($reminder) use ($today) {
+                    $date = Carbon::parse($reminder->date);
+                    $startShow = $date->copy()->subMonth();
+                    $daysSinceStart = $startShow->diffInDays($today);
+                    return $daysSinceStart % 7 === 0;
+                });
+
+            $business = Business::findOrFail($business_id);
+            $data = $business->email_settings;
+
+            foreach ($reminders as $reminder) {
+                $data['subject'] = 'Email Reminder untuk tanggal ' . Carbon::parse($reminder->date)->format('d M Y');
+                $data['line'] = $reminder->name;
+                \Notification::route('mail', $data['mail_from_address'])
+                    ->notify(new ReminderEmailNotification($data));
+            }
+        }
+        foreach (glob(storage_path('app/reminder_sent_*.lock')) as $oldFile) {
+            if (filemtime($oldFile) < strtotime('-7 days')) {
+                unlink($oldFile);
+            }
+        }
         $is_admin = $this->businessUtil->is_admin(auth()->user());
 
         if (! auth()->user()->can('dashboard.data')) {
@@ -127,10 +167,10 @@ class HomeController extends Controller
         $sells_chart_1 = new CommonChart;
 
         $sells_chart_1->labels($labels)
-                        ->options($this->__chartOptions(__(
-                            'home.total_sells',
-                            ['currency' => $currency->code]
-                            )));
+            ->options($this->__chartOptions(__(
+                'home.total_sells',
+                ['currency' => $currency->code]
+            )));
 
         if (! empty($location_sells)) {
             foreach ($location_sells as $location_sell) {
@@ -152,7 +192,7 @@ class HomeController extends Controller
             $fy_months[] = $month_year;
 
             $labels[] = \Carbon::createFromFormat('m-Y', $month_year)
-                            ->format('M-Y');
+                ->format('M-Y');
             $date = strtotime('+1 month', $date);
 
             $total_sell_in_month_year = $sells_this_fy->where('yearmonth', $month_year)->sum('total_sells');
@@ -183,10 +223,10 @@ class HomeController extends Controller
 
         $sells_chart_2 = new CommonChart;
         $sells_chart_2->labels($labels)
-                    ->options($this->__chartOptions(__(
-                        'home.total_sells',
-                        ['currency' => $currency->code]
-                            )));
+            ->options($this->__chartOptions(__(
+                'home.total_sells',
+                ['currency' => $currency->code]
+            )));
         if (! empty($fy_sells_by_location_data)) {
             foreach ($fy_sells_by_location_data as $location_sell) {
                 $sells_chart_2->dataset($location_sell['loc_label'], 'line', $location_sell['values']);
@@ -238,7 +278,9 @@ class HomeController extends Controller
             $purchase_details['purchase_due'] = $purchase_details['purchase_due'] - $total_ledger_discount['total_purchase_discount'];
 
             $transaction_types = [
-                'purchase_return', 'sell_return', 'expense',
+                'purchase_return',
+                'sell_return',
+                'expense',
             ];
 
             $transaction_totals = $this->transactionUtil->getTransactionTotals(
@@ -290,15 +332,15 @@ class HomeController extends Controller
             return Datatables::of($products)
                 ->editColumn('product', function ($row) {
                     if ($row->type == 'single') {
-                        return $row->product.' ('.$row->sku.')';
+                        return $row->product . ' (' . $row->sku . ')';
                     } else {
-                        return $row->product.' - '.$row->product_variation.' - '.$row->variation.' ('.$row->sub_sku.')';
+                        return $row->product . ' - ' . $row->product_variation . ' - ' . $row->variation . ' (' . $row->sub_sku . ')';
                     }
                 })
                 ->editColumn('stock', function ($row) {
                     $stock = $row->stock ? $row->stock : 0;
 
-                    return '<span data-is_quantity="true" class="display_currency" data-currency_symbol=false>'.(float) $stock.'</span> '.$row->unit;
+                    return '<span data-is_quantity="true" class="display_currency" data-currency_symbol=false>' . (float) $stock . '</span> ' . $row->unit;
                 })
                 ->removeColumn('sku')
                 ->removeColumn('sub_sku')
@@ -328,16 +370,16 @@ class HomeController extends Controller
                 '=',
                 'c.id'
             )
-                    ->leftJoin(
-                        'transaction_payments as tp',
-                        'transactions.id',
-                        '=',
-                        'tp.transaction_id'
-                    )
-                    ->where('transactions.business_id', $business_id)
-                    ->where('transactions.type', 'purchase')
-                    ->where('transactions.payment_status', '!=', 'paid')
-                    ->whereRaw("DATEDIFF( DATE_ADD( transaction_date, INTERVAL IF(transactions.pay_term_type = 'days', transactions.pay_term_number, 30 * transactions.pay_term_number) DAY), '$today') <= 7");
+                ->leftJoin(
+                    'transaction_payments as tp',
+                    'transactions.id',
+                    '=',
+                    'tp.transaction_id'
+                )
+                ->where('transactions.business_id', $business_id)
+                ->where('transactions.type', 'purchase')
+                ->where('transactions.payment_status', '!=', 'paid')
+                ->whereRaw("DATEDIFF( DATE_ADD( transaction_date, INTERVAL IF(transactions.pay_term_type = 'days', transactions.pay_term_number, 30 * transactions.pay_term_number) DAY), '$today') <= 7");
 
             //Check for permitted locations of a user
             $permitted_locations = auth()->user()->permitted_locations();
@@ -357,23 +399,23 @@ class HomeController extends Controller
                 'final_total',
                 DB::raw('SUM(tp.amount) as total_paid')
             )
-                        ->groupBy('transactions.id');
+                ->groupBy('transactions.id');
 
             return Datatables::of($dues)
                 ->addColumn('due', function ($row) {
                     $total_paid = ! empty($row->total_paid) ? $row->total_paid : 0;
                     $due = $row->final_total - $total_paid;
 
-                    return '<span class="display_currency" data-currency_symbol="true">'.
-                    $due.'</span>';
+                    return '<span class="display_currency" data-currency_symbol="true">' .
+                        $due . '</span>';
                 })
                 ->addColumn('action', '@can("purchase.create") <a href="{{action([\App\Http\Controllers\TransactionPaymentController::class, \'addPayment\'], [$id])}}" class="tw-dw-btn tw-dw-btn-xs tw-dw-btn-outline tw-dw-btn-accent add_payment_modal"><i class="fas fa-money-bill-alt"></i> @lang("purchase.add_payment")</a> @endcan')
                 ->removeColumn('supplier_business_name')
                 ->editColumn('supplier', '@if(!empty($supplier_business_name)) {{$supplier_business_name}}, <br> @endif {{$supplier}}')
                 ->editColumn('ref_no', function ($row) {
                     if (auth()->user()->can('purchase.view')) {
-                        return  '<a href="#" data-href="'.action([\App\Http\Controllers\PurchaseController::class, 'show'], [$row->id]).'"
-                                    class="btn-modal" data-container=".view_modal">'.$row->ref_no.'</a>';
+                        return  '<a href="#" data-href="' . action([\App\Http\Controllers\PurchaseController::class, 'show'], [$row->id]) . '"
+                                    class="btn-modal" data-container=".view_modal">' . $row->ref_no . '</a>';
                     }
 
                     return $row->ref_no;
@@ -403,18 +445,18 @@ class HomeController extends Controller
                 '=',
                 'c.id'
             )
-                    ->leftJoin(
-                        'transaction_payments as tp',
-                        'transactions.id',
-                        '=',
-                        'tp.transaction_id'
-                    )
-                    ->where('transactions.business_id', $business_id)
-                    ->where('transactions.type', 'sell')
-                    ->where('transactions.payment_status', '!=', 'paid')
-                    ->whereNotNull('transactions.pay_term_number')
-                    ->whereNotNull('transactions.pay_term_type')
-                    ->whereRaw("DATEDIFF( DATE_ADD( transaction_date, INTERVAL IF(transactions.pay_term_type = 'days', transactions.pay_term_number, 30 * transactions.pay_term_number) DAY), '$today') <= 7");
+                ->leftJoin(
+                    'transaction_payments as tp',
+                    'transactions.id',
+                    '=',
+                    'tp.transaction_id'
+                )
+                ->where('transactions.business_id', $business_id)
+                ->where('transactions.type', 'sell')
+                ->where('transactions.payment_status', '!=', 'paid')
+                ->whereNotNull('transactions.pay_term_number')
+                ->whereNotNull('transactions.pay_term_type')
+                ->whereRaw("DATEDIFF( DATE_ADD( transaction_date, INTERVAL IF(transactions.pay_term_type = 'days', transactions.pay_term_number, 30 * transactions.pay_term_number) DAY), '$today') <= 7");
 
             //Check for permitted locations of a user
             $permitted_locations = auth()->user()->permitted_locations();
@@ -434,20 +476,20 @@ class HomeController extends Controller
                 'final_total',
                 DB::raw('SUM(tp.amount) as total_paid')
             )
-                        ->groupBy('transactions.id');
+                ->groupBy('transactions.id');
 
             return Datatables::of($dues)
                 ->addColumn('due', function ($row) {
                     $total_paid = ! empty($row->total_paid) ? $row->total_paid : 0;
                     $due = $row->final_total - $total_paid;
 
-                    return '<span class="display_currency" data-currency_symbol="true">'.
-                    $due.'</span>';
+                    return '<span class="display_currency" data-currency_symbol="true">' .
+                        $due . '</span>';
                 })
                 ->editColumn('invoice_no', function ($row) {
                     if (auth()->user()->can('sell.view')) {
-                        return  '<a href="#" data-href="'.action([\App\Http\Controllers\SellController::class, 'show'], [$row->id]).'"
-                                    class="btn-modal" data-container=".view_modal">'.$row->invoice_no.'</a>';
+                        return  '<a href="#" data-href="' . action([\App\Http\Controllers\SellController::class, 'show'], [$row->id]) . '"
+                                    class="btn-modal" data-container=".view_modal">' . $row->invoice_no . '</a>';
                     }
 
                     return $row->invoice_no;
@@ -598,7 +640,7 @@ class HomeController extends Controller
 
                 //find model to which medias are to be attached
                 $model_to_be_attached = $model::where('business_id', $business_id)
-                                        ->findOrFail($model_id);
+                    ->findOrFail($model_id);
 
                 Media::uploadMedia($business_id, $model_to_be_attached, $request, 'file', false, $model_media_type);
 
@@ -611,7 +653,7 @@ class HomeController extends Controller
             } catch (Exception $e) {
                 DB::rollBack();
 
-                \Log::emergency('File:'.$e->getFile().'Line:'.$e->getLine().'Message:'.$e->getMessage());
+                \Log::emergency('File:' . $e->getFile() . 'Line:' . $e->getLine() . 'Message:' . $e->getMessage());
 
                 $output = [
                     'success' => false,

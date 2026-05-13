@@ -44,6 +44,12 @@
                         </div>
                     </div>
                 @endif
+                <div class="col-md-4">
+                    <div class="form-group">
+                        {!! Form::label('tag_ids', 'Tags:') !!}
+                        {!! Form::select('tag_ids[]', $tags, null, ['class' => 'form-control select2', 'multiple', 'style' => 'width: 100%;']); !!}
+                    </div>
+                </div>
             </div>
             <div class="row">
                 <div class="col-md-12">

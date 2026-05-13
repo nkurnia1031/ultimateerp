@@ -64,7 +64,7 @@
 	@endphp
 	@component('components.widget', ['class' => 'box-primary', 'title' => __( 'project::lang.my_tasks'), 'tool' => $tool])
 		<div class="table-responsive">
-		    <table class="table table-bordered table-striped" id="my_task_table">
+		    <table class="table table-bordered table-striped" id="my_task_table" style="width: 100%;">
 		        <thead>
 		            <tr>
 		            	<th> @lang('messages.action')</th>
@@ -77,6 +77,7 @@
 		                <th class="col-md-2">
 		                	@lang('project::lang.assigned_to')
 		                </th>
+		                <th>Tags</th>
 		                <th> @lang('project::lang.priority')</th>
 		                <th> @lang('business.start_date')</th>
 		                <th>@lang('project::lang.due_date')</th>

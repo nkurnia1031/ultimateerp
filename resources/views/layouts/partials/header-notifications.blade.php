@@ -37,3 +37,8 @@
 </li>
 
 <input type="hidden" id="notification_page" value="1">
+<style>
+    .dropdown-backdrop{
+        display: none;
+    }
+</style>

@@ -66,4 +66,9 @@ class ProjectTimeLog extends Model
     {
         return $this->belongsTo('Modules\Project\Entities\Project', 'project_id');
     }
+
+    public function tags()
+    {
+        return $this->belongsToMany(\App\Tag::class, 'project_time_log_tags', 'project_time_log_id', 'tag_id');
+    }
 }

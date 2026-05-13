@@ -2,6 +2,7 @@
 
 namespace Modules\Project\Http\Controllers;
 
+use App\Tag;
 use App\User;
 use App\Utils\ModuleUtil;
 use App\Utils\Util;
@@ -58,7 +59,7 @@ class TaskController extends Controller
         }
 
         if (request()->ajax()) {
-            $project_task = ProjectTask::with(['members', 'createdBy', 'project', 'comments'])
+            $project_task = ProjectTask::with(['members', 'createdBy', 'project', 'comments', 'tags'])
                 ->where('business_id', $business_id)
                 ->select('*');
 
@@ -202,6 +203,15 @@ class TaskController extends Controller
 
                         return $html;
                     })
+                    ->addColumn('tags', function ($row) {
+                        if ($row->tags->isEmpty()) {
+                            return '';
+                        }
+
+                        return $row->tags->map(function ($tag) {
+                            return '<span class="label bg-blue">'.$tag->name.'</span>';
+                        })->implode(' ');
+                    })
                     ->editColumn('status', function ($row) {
                         if ($row->status == 'completed') {
                             $status = __('project::lang.completed');
@@ -235,7 +245,7 @@ class TaskController extends Controller
                             </a>
                         ')
                     ->removeColumn('id')
-                    ->rawColumns(['action', 'project', 'subject', 'members', 'priority', 'start_date', 'due_date', 'status', 'createdBy'])
+                    ->rawColumns(['action', 'project', 'subject', 'members', 'tags', 'priority', 'start_date', 'due_date', 'status', 'createdBy'])
                     ->make(true);
             } elseif (request()->get('task_view') == 'kanban') {
                 $project_task = $project_task->get()->groupBy('status');
@@ -339,13 +349,15 @@ class TaskController extends Controller
      */
     public function create()
     {
+        $business_id = request()->session()->get('user.business_id');
         $project_id = request()->get('project_id');
         $project_members = ProjectMember::projectMembersDropdown($project_id);
         $priorities = ProjectTask::prioritiesDropdown();
         $statuses = ProjectTask::taskStatuses();
+        $tags = Tag::where('business_id', $business_id)->pluck('name', 'id');
 
         return view('project::task.create')
-            ->with(compact('project_members', 'priorities', 'project_id', 'statuses'));
+            ->with(compact('project_members', 'priorities', 'project_id', 'statuses', 'tags'));
     }
 
     /**
@@ -367,6 +379,7 @@ class TaskController extends Controller
 
             $project_task = ProjectTask::create($input);
             $task_members = $project_task->members()->sync($members);
+            $this->syncTaskTags($project_task, $request->input('tag_ids', []), $input['business_id']);
 
             // send notification to task members
             if (! empty($task_members['attached'])) {
@@ -396,7 +409,7 @@ class TaskController extends Controller
                 'success' => true,
                 'msg' => __('lang_v1.success'),
             ];
-        } catch (Exception $e) {
+        } catch (\Exception $e) {
             \Log::emergency('File:'.$e->getFile().'Line:'.$e->getLine().'Message:'.$e->getMessage());
 
             $output = [
@@ -447,17 +460,19 @@ class TaskController extends Controller
      */
     public function edit($id)
     {
+        $business_id = request()->session()->get('user.business_id');
         $project_id = request()->get('project_id');
-        $project_task = ProjectTask::with('members')
+        $project_task = ProjectTask::with('members', 'tags')
                             ->where('project_id', $project_id)
                             ->findOrFail($id);
 
         $project_members = ProjectMember::projectMembersDropdown($project_id);
         $priorities = ProjectTask::prioritiesDropdown();
         $statuses = ProjectTask::taskStatuses();
+        $tags = Tag::where('business_id', $business_id)->pluck('name', 'id');
 
         return view('project::task.edit')
-            ->with(compact('project_members', 'priorities', 'project_task', 'statuses'));
+            ->with(compact('project_members', 'priorities', 'project_task', 'statuses', 'tags'));
     }
 
     /**
@@ -480,6 +495,7 @@ class TaskController extends Controller
 
             $project_task->update($input);
             $task_members = $project_task->members()->sync($members);
+            $this->syncTaskTags($project_task, $request->input('tag_ids', []), request()->session()->get('user.business_id'));
 
             // send notification to task members
             if (! empty($task_members['attached'])) {
@@ -508,7 +524,7 @@ class TaskController extends Controller
                 'success' => true,
                 'msg' => __('lang_v1.success'),
             ];
-        } catch (Exception $e) {
+        } catch (\Exception $e) {
             \Log::emergency('File:'.$e->getFile().'Line:'.$e->getLine().'Message:'.$e->getMessage());
 
             $output = [
@@ -518,6 +534,16 @@ class TaskController extends Controller
         }
 
         return $output;
+    }
+
+    private function syncTaskTags(ProjectTask $project_task, $tag_ids, $business_id)
+    {
+        $tag_ids = Tag::where('business_id', $business_id)
+            ->whereIn('id', (array) $tag_ids)
+            ->pluck('id')
+            ->toArray();
+
+        $project_task->tags()->sync($tag_ids);
     }
 
     /**
@@ -539,7 +565,7 @@ class TaskController extends Controller
                 'success' => true,
                 'msg' => __('lang_v1.success'),
             ];
-        } catch (Exception $e) {
+        } catch (\Exception $e) {
             \Log::emergency('File:'.$e->getFile().'Line:'.$e->getLine().'Message:'.$e->getMessage());
 
             $output = [
@@ -588,7 +614,7 @@ class TaskController extends Controller
                 'success' => true,
                 'msg' => __('lang_v1.success'),
             ];
-        } catch (Exception $e) {
+        } catch (\Exception $e) {
             \Log::emergency('File:'.$e->getFile().'Line:'.$e->getLine().'Message:'.$e->getMessage());
 
             $output = [
@@ -628,7 +654,7 @@ class TaskController extends Controller
                 'task_description_html' => $task_description_html,
                 'msg' => __('lang_v1.success'),
             ];
-        } catch (Exception $e) {
+        } catch (\Exception $e) {
             \Log::emergency('File:'.$e->getFile().'Line:'.$e->getLine().'Message:'.$e->getMessage());
 
             $output = [

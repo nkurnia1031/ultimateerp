@@ -29,7 +29,7 @@ class DataController extends Controller
             $project = Project::with('createdBy')
                             ->find($data['project_id']);
 
-            if (! empty($project)) {
+            if (! empty($project) && ! empty($project->id)) {
                 $msg = __(
                     'project::lang.new_project_assgined_notification',
                     [
@@ -38,7 +38,7 @@ class DataController extends Controller
                     ]
                 );
 
-                $link = action([\Modules\Project\Http\Controllers\ProjectController::class, 'show'], ['id' => $project->id]);
+                $link = action([\Modules\Project\Http\Controllers\ProjectController::class, 'show'], ['project' => $project->id]);
 
                 $notification_datas = [
                     'msg' => $msg,

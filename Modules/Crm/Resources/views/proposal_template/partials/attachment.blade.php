@@ -21,6 +21,11 @@
 					<a href="{{$media->display_url}}" download="{{$media->display_name}}" class="btn btn-success btn-sm">
 						<i class="fas fa-download"></i>
 					</a>
+					@if(isFileImage($media->display_url) || isFilePdf($media->display_url))
+						<button type="button" data-href="{{$media->display_url}}" class="btn btn-info btn-sm view_uploaded_document">
+							<i class="fas fa-eye"></i>
+						</button>
+					@endif
 					<a data-href="{{action([\Modules\Crm\Http\Controllers\ProposalTemplateController::class, 'deleteProposalMedia'], ['id' => $media->id])}}" class="btn btn-danger btn-sm delete_attachment">
 						<i class="fas fa-trash-alt"></i>
 					</a>

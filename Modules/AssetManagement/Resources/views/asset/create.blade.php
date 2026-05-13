@@ -159,6 +159,16 @@
                         </div>
                     </div>
                 </div>
+                <div class="col-md-8">
+                    <div class="form-group">
+                        {!! Form::label('tag_ids', 'Tags:') !!}
+                        {!! Form::select('tag_ids[]', $tags, null, [
+                            'class' => 'form-control select2',
+                            'multiple',
+                            'style' => 'width: 100%;',
+                        ]) !!}
+                    </div>
+                </div>
                 <div class="col-md-12">
                     <div class="form-group">
                         {!! Form::label('description', __('lang_v1.description') . ':') !!}

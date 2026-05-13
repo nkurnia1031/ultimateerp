@@ -145,6 +145,16 @@
                 </div>
                 <div class="clearfix"></div>
                 <div class="col-md-12">
+                    <div class="form-group">
+                        {!! Form::label('tag_ids', 'Tags:') !!}
+                        {!! Form::select('tag_ids[]', $tags, $selected_tags, [
+                            'class' => 'form-control select2',
+                            'multiple',
+                            'style' => 'width: 100%;',
+                        ]) !!}
+                    </div>
+                </div>
+                <div class="col-md-12">
                     {!! Form::label('description', __('lang_v1.description') . ':') !!}
                     {!! Form::textarea('description', $asset->description, [
                         'class' => 'form-control',

@@ -68,97 +68,89 @@
                 @component('components.widget', ['class' => 'box-primary', 'title' => __('lang_v1.instructions')])
                     <table class="table table-striped">
                         <tr>
-                            <th>@lang('lang_v1.col_no')</th>
                             <th>@lang('lang_v1.col_name')</th>
                             <th>@lang('lang_v1.instruction')</th>
                         </tr>
 
                         <tr>
-                            <td>1</td>
                             <td>@lang('purchase.business_location')</td>
                             <td></td>
                         </tr>
                         <tr>
-                            <td>2</td>
                             <td>@lang('expense.expense_category') <small class="text-muted">(@lang('lang_v1.optional'))</small></td>
                             <td>@lang('lang_v1.category_ins') <br><small class="text-muted">(@lang('lang_v1.category_ins2'))</small></td>
                         </tr>
                         <tr>
-                            <td>3</td>
                             <td>@lang('product.sub_category') <small class="text-muted">(@lang('lang_v1.optional'))</small></td>
                             <td>@lang('lang_v1.sub_category_ins') <br><small class="text-muted">(@lang('lang_v1.sub_category_ins2'))</small></td>
                         </tr>
-
                         <tr>
-                            <td>4</td>
-                            <td>@lang('purchase.ref_no') <small class="text-muted">(@lang('lang_v1.optional'))</small></td>
-                            <td>@lang('lang_v1.leave_empty_to_autogenerate')</td>
+                            <td>Deskripsi <small class="text-muted">(@lang('lang_v1.optional'))</small></td>
+                            <td></td>
                         </tr>
 
                         <tr>
-                            <td>5</td>
+                            <td>@lang('purchase.ref_no') <small class="text-muted">(@lang('lang_v1.optional'))</small></td>
+                            <td>@lang('lang_v1.leave_empty_to_autogenerate')</td>
+                        </tr>
+                        <tr>
+                            <td>Tags <small class="text-muted">(@lang('lang_v1.optional'))</small></td>
+                            <td>pisahkan tags dengan ; misalnya: BM 7228 TY;BM 1268 UY</td>
+                        </tr>
+
+
+                        <tr>
                             <td>@lang('messages.date') <small class="text-muted">(@lang('lang_v1.optional'))</small></td>
                             <td>@lang('expense.date_format_instruction')</td>
                         </tr>
 
                         <tr>
-                            <td>6</td>
                             <td>@lang('expense.expense_for') <small class="text-muted">(@lang('lang_v1.optional'))</small></td>
                             <td>@lang('expense.expense_for_help')</td>
                         </tr>
 
                         <tr>
-                            <td>7</td>
                             <td>@lang('lang_v1.contact_id') <small class="text-muted">(@lang('lang_v1.optional'))</small></td>
                             <td></td>
                         </tr>
 
                         <tr>
-                            <td>8</td>
                             <td>@lang('purchase.attach_document') <small class="text-muted">(@lang('lang_v1.optional'))</small></td>
                             <td></td>
                         </tr>
                         <tr>
-                            <td>9</td>
                             <td>@lang('product.applicable_tax') <small class="text-muted">(@lang('lang_v1.optional'))</small></td>
                             <td></td>
                         </tr>
                         <tr>
-                            <td>10</td>
                             <td>@lang('expense.expense_note') <small class="text-muted">(@lang('lang_v1.optional'))</small></td>
                             <td></td>
                         </tr>
 
                         <tr>
-                            <td>11</td>
                             <td>@lang('sale.total_amount')</td>
                             <td></td>
                         </tr>
 
                         <tr>
-                            <td>12</td>
                             <td>@lang('lang_v1.paid_amount')</td>
                             <td></td>
                         </tr>
 
                         <tr>
-                            <td>13</td>
                             <td>@lang('lang_v1.paid_on') </td>
                             <td>@lang('expense.date_format_instruction')</td>
                         </tr>
 
                         <tr>
-                            <td>14</td>
                             <td>@lang('lang_v1.payment_method') </td>
                             <td>{{ implode(', ', $payment_types) }}</td>
                         </tr>
                         <tr>
-                            <td>15</td>
                             <td>@lang('lang_v1.payment_account') <small class="text-muted">(@lang('lang_v1.optional'))</small></td>
                             <td></td>
                         </tr>
                         <tr>
-                            <td>16</td>
                             <td>@lang('sale.payment_note') <small class="text-muted">(@lang('lang_v1.optional'))</small></td>
                             <td></td>
                         </tr>

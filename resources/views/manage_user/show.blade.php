@@ -73,8 +73,12 @@
             <div class="col-md-9">
                 <div class="nav-tabs-custom">
                     <ul class="nav nav-tabs nav-justified">
-                        <li class="active">
+                        <li class="@if(empty($view_type) || $view_type == 'user_info') active @endif">
                             <a href="#user_info_tab" data-toggle="tab" aria-expanded="true"><i class="fas fa-user" aria-hidden="true"></i> @lang( 'lang_v1.user_info')</a>
+                        </li>
+
+                        <li class="@if(!empty($view_type) && $view_type == 'ledger') active @endif">
+                            <a href="#ledger_tab" data-toggle="tab" aria-expanded="true"><i class="fas fa-scroll" aria-hidden="true"></i> @lang('lang_v1.ledger')</a>
                         </li>
                         
                         <li>
@@ -87,7 +91,7 @@
                     </ul>
 
                     <div class="tab-content">
-                        <div class="tab-pane active" id="user_info_tab">
+                        <div class="tab-pane @if(empty($view_type) || $view_type == 'user_info') active @endif" id="user_info_tab">
                             <div class="row">
                                 <div class="col-md-12">
                                     <div class="col-md-6">
@@ -123,6 +127,9 @@
                             </div>
                             @include('user.show_details')
                         </div>
+                        <div class="tab-pane @if(!empty($view_type) && $view_type == 'ledger') active @endif" id="ledger_tab">
+                            @include('manage_user.partials.ledger_tab')
+                        </div>
                         <div class="tab-pane" id="documents_and_notes_tab">
                             <!-- model id like project_id, user_id -->
                             <input type="hidden" name="notable_id" id="notable_id" value="{{$user->id}}">
@@ -142,7 +149,8 @@
                 </div>
             </div>
         </div>
-    </section>    
+    </section>
+    <div class="modal fade payment_modal" tabindex="-1" role="dialog" aria-labelledby="gridSystemModalLabel"></div>
 @endsection
 @section('javascript')
     <!-- document & note.js -->
@@ -155,6 +163,52 @@
                     window.location = "{{url('/users')}}/" + $(this).val();
                 }
             });
+
+            $('#user_ledger_date_range').daterangepicker(
+                dateRangeSettings,
+                function (start, end) {
+                    $('#user_ledger_date_range').val(start.format(moment_date_format) + ' ~ ' + end.format(moment_date_format));
+                }
+            );
+
+            $('#user_ledger_date_range, #user_ledger_location').change(function() {
+                get_user_ledger();
+            });
+
+            get_user_ledger();
         });
+
+        function get_user_ledger() {
+            var start_date = '';
+            var end_date = '';
+            var location_id = $('#user_ledger_location').val();
+
+            if ($('#user_ledger_date_range').val()) {
+                start_date = $('#user_ledger_date_range').data('daterangepicker').startDate.format('YYYY-MM-DD');
+                end_date = $('#user_ledger_date_range').data('daterangepicker').endDate.format('YYYY-MM-DD');
+            }
+
+            $.ajax({
+                url: "{{action([\App\Http\Controllers\ManageUserController::class, 'getLedger'])}}?user_id={{$user->id}}",
+                data: {
+                    start_date: start_date,
+                    end_date: end_date,
+                    location_id: location_id
+                },
+                dataType: 'html',
+                success: function(result) {
+                    $('#user_ledger_div').html(result);
+                    __currency_convert_recursively($('#user_ledger_div'));
+
+                    $('#user_ledger_table').DataTable({
+                        searching: false,
+                        ordering: false,
+                        paging: false,
+                        fixedHeader: false,
+                        dom: 't'
+                    });
+                },
+            });
+        }
     </script>
 @endsection

@@ -62,12 +62,18 @@
                 </div>
                 <div class="col-md-4">
                     <div class="form-group">
+                        {!! Form::label('tag_ids', 'Tags:') !!}
+                       {!! Form::select('tag_ids[]', $tags, $project_task->tags->pluck('id'), ['class' => 'form-control select2', 'multiple', 'style' => 'width: 100%;']); !!}
+                    </div>
+                </div>
+            </div>
+            <div class="row">
+                <div class="col-md-4">
+                    <div class="form-group">
                         {!! Form::label('custom_field_1', __('project::lang.task_custom_field_1') . ':' )!!}
                         {!! Form::text('custom_field_1', $project_task->custom_field_1, ['class' => 'form-control']) !!}
                    </div>
                 </div>
-            </div>
-            <div class="row">
                 <div class="col-md-4">
                     <div class="form-group">
                         {!! Form::label('custom_field_2', __('project::lang.task_custom_field_2') . ':' )!!}

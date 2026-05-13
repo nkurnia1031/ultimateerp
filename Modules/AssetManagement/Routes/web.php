@@ -6,6 +6,7 @@ Route::middleware('web', 'authh', 'auth', 'SetSessionData', 'language', 'timezon
     Route::get('install/uninstall', [Modules\AssetManagement\Http\Controllers\InstallController::class, 'uninstall']);
     Route::get('install/update', [Modules\AssetManagement\Http\Controllers\InstallController::class, 'update']);
 
+    Route::get('assets/{asset}/tag-ledger', [Modules\AssetManagement\Http\Controllers\AssetController::class, 'tagLedger']);
     Route::resource('assets', Modules\AssetManagement\Http\Controllers\AssetController::class);
     Route::get('list', [Modules\AssetManagement\Http\Controllers\AssetController::class, 'getAssets']);
 

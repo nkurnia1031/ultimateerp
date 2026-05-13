@@ -175,7 +175,7 @@ class ExpenseUtil
                     @if($document)
                         <li><a href="{{ url(\'uploads/documents/\' . $document)}}" 
                         download=""><i class="fa fa-download" aria-hidden="true"></i> @lang("purchase.download_document")</a></li>
-                        @if(isFileImage($document))
+                        @if(isFileImage($document) || isFilePdf($document))
                             <li><a href="#" data-href="{{ url(\'uploads/documents/\' . $document)}}" class="view_uploaded_document"><i class="fas fa-file-image" aria-hidden="true"></i>@lang("lang_v1.view_document")</a></li>
                         @endif
                     @endif

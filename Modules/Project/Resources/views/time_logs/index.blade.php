@@ -5,11 +5,12 @@
     </button> <br><br>
 @endif
 <div class="table-responsive">
-    <table class="table table-bordered table-striped" id="time_logs_table">
+    <table class="table table-bordered table-striped" id="time_logs_table" style="width: 100%;">
         <thead>
             <tr>
                 <th> @lang('messages.action')</th>
                 <th> @lang('project::lang.task')</th>
+                <th>Tags</th>
                 <th> @lang('project::lang.start_date_time')</th>
                 <th>@lang('project::lang.end_date_time')</th>
                 <th>@lang('project::lang.work_hour')</th>

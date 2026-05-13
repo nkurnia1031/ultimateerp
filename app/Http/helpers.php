@@ -83,6 +83,18 @@ if (! function_exists('isFileImage')) {
     }
 }
 
+/**
+ * Checks if the uploaded document is a PDF
+ */
+if (! function_exists('isFilePdf')) {
+    function isFilePdf($filename)
+    {
+        $ext = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
+
+        return $ext === 'pdf';
+    }
+}
+
 function isAppInstalled()
 {
     $envPath = base_path('.env');

@@ -92,6 +92,11 @@ class Asset extends Model
         return $this->hasMany(\Modules\AssetManagement\Entities\AssetMaintenance::class);
     }
 
+    public function tags()
+    {
+        return $this->belongsToMany(\App\Tag::class, 'asset_tags', 'asset_id', 'tag_id');
+    }
+
     public function getIsInWarrantyAttribute()
     {
         $now = \Carbon::now();

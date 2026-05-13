@@ -36,12 +36,13 @@
         $project->settings['task_view'] != 'list_view')
         hide
     @endif">
-    <table class="table table-bordered table-striped" id="project_task_table">
+    <table class="table table-bordered table-striped" id="project_task_table" style="width: 100%;">
         <thead>
             <tr>
                 <th> @lang('messages.action')</th>
                 <th class="col-md-4"> @lang('project::lang.subject')</th>
                 <th class="col-md-2"> @lang('project::lang.assigned_to')</th>
+                <th>Tags</th>
                 <th> @lang('project::lang.priority')</th>
                 <th> @lang('business.start_date')</th>
                 <th>@lang('project::lang.due_date')</th>

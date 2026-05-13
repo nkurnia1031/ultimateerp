@@ -264,11 +264,28 @@
                 });
             });
 
+            $(document).on('click', '.view_asset', function() {
+                var url = $(this).data('href');
+                $.ajax({
+                    method: 'GET',
+                    dataType: 'html',
+                    url: url,
+                    success: function(response) {
+                        $("#asset_modal").html(response).modal('show');
+                        __currency_convert_recursively($("#asset_modal"));
+                    }
+                });
+            });
+
             $('#asset_modal').on('shown.bs.modal', function() {
 
                 $('form#asset_form .datepicker').datepicker({
                     autoclose: true,
                     format: datepicker_date_format
+                });
+
+                $('#asset_modal').find('.select2').select2({
+                    dropdownParent: $('#asset_modal')
                 });
 
                 $("form#asset_form").validate({

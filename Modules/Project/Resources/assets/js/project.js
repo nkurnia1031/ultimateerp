@@ -239,8 +239,14 @@ $('a[data-toggle="tab"]').on('shown.bs.tab', function (e) {
     var target = $(e.target).attr('href');
     if ( target == '#project_task') {
         initializeProjectTaskDatatable();
+        if (typeof project_task_datatable !== 'undefined') {
+            project_task_datatable.columns.adjust();
+        }
     } else if(target == '#time_log') {
         initializeTimeLogDatatable();
+        if (typeof time_logs_data_table !== 'undefined') {
+            time_logs_data_table.columns.adjust();
+        }
     } else if(target == '#documents_and_notes') {
         initializeNotesDataTable();
     } else if (target == '#activities') {
@@ -604,6 +610,7 @@ function initializeMyTaskDataTable() {
         my_task_datatable = $("#my_task_table").DataTable({
                 processing: true,
                 serverSide: true,
+                autoWidth: false,
                 ajax:{
                     url: '/project/project-task',
                     data: function(d) {
@@ -617,17 +624,18 @@ function initializeMyTaskDataTable() {
                 },
                 columnDefs: [
                     {
-                        targets: [0, 1, 3, 7, 8],
+                        targets: [0, 1, 3, 4, 8, 9],
                         orderable: false,
                         searchable: false,
                     },
                 ],
-                aaSorting: [[7, 'asc']],
+                aaSorting: [[8, 'asc']],
                 columns: [
                     { data: 'action', name: 'action' },
                     {data: 'project'},
                     { data: 'subject', name: 'subject' },
                     { data: 'members'},
+                    { data: 'tags', name: 'tags', searchable: false },
                     { data: 'priority', name: 'priority' },
                     { data: 'start_date', name: 'start_date' },
                     { data: 'due_date', name: 'due_date' },
@@ -888,6 +896,7 @@ function initializeProjectTaskDatatable() {
         project_task_datatable = $('#project_task_table').DataTable({
                 processing: true,
                 serverSide: true,
+                autoWidth: false,
                 ajax:{
                     url: '/project/project-task',
                     data: function(d) {
@@ -901,16 +910,17 @@ function initializeProjectTaskDatatable() {
                 },
                 columnDefs: [
                     {
-                        targets: [0, 2, 6, 7],
+                        targets: [0, 2, 3, 7, 8],
                         orderable: false,
                         searchable: false,
                     },
                 ],
-                aaSorting: [[6, 'asc']],
+                aaSorting: [[7, 'asc']],
                 columns: [
                     { data: 'action', name: 'action' },
                     { data: 'subject', name: 'subject' },
                     { data: 'members'},
+                    { data: 'tags', name: 'tags', searchable: false },
                     { data: 'priority', name: 'priority' },
                     { data: 'start_date', name: 'start_date' },
                     { data: 'due_date', name: 'due_date' },
@@ -922,8 +932,10 @@ function initializeProjectTaskDatatable() {
                     { data: 'custom_field_4', name: 'custom_field_4' },
                 ]
         });
+        project_task_datatable.columns.adjust();
     } else if (task_view == 'list_view') {
         project_task_datatable.ajax.reload();
+        project_task_datatable.columns.adjust();
     } else if (task_view == 'kanban') {
         initializeTaskKanbanBoard();
     }
@@ -934,6 +946,7 @@ function initializeTimeLogDatatable() {
         time_logs_data_table = $('#time_logs_table').DataTable({
             processing: true,
             serverSide: true,
+            autoWidth: false,
             ajax:{
                 url: '/project/project-task-time-logs',
                 data: function(d) {
@@ -942,15 +955,16 @@ function initializeTimeLogDatatable() {
             },
             columnDefs: [
                 {
-                    targets: [0, 1, 3, 4, 5, 6],
+                    targets: [0, 1, 2, 4, 5, 6, 7],
                     orderable: false,
                     searchable: false,
                 },
             ],
-            aaSorting: [[2, 'desc']],
+            aaSorting: [[3, 'desc']],
             columns: [
                 { data: 'action', name: 'action' },
                 { data: 'task'},
+                { data: 'tags', name: 'tags', searchable: false },
                 { data: 'start_datetime', name: 'start_datetime' },
                 { data: 'end_datetime', name: 'end_datetime' },
                 { data: 'work_hour'},
@@ -958,8 +972,10 @@ function initializeTimeLogDatatable() {
                 { data: 'note', name: 'note'},
             ]
         });
+        time_logs_data_table.columns.adjust();
     }else {
         time_logs_data_table.ajax.reload();
+        time_logs_data_table.columns.adjust();
     }
 }
 
