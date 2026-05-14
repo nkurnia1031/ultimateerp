@@ -29,6 +29,9 @@
         @can('accounting.add_journal')
             @slot('tool')
                 <div class="box-tools">
+                    <a class="btn btn-block btn-default" style="margin-bottom: 5px;"
+                        href="{{action([\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'import'])}}">
+                        <i class="fas fa-file-import"></i> Import</a>
                     <a class="btn btn-block btn-primary" 
                         href="{{action([\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'create'])}}">
                         <i class="fas fa-plus"></i> @lang( 'messages.add' )</a>

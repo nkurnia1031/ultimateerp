@@ -42,6 +42,14 @@ Route::group(['middleware' => ['web', 'authh', 'auth', 'SetSessionData', 'langua
         Route::get('get_journal_entries', 'JournalEntryController@get_journal_entries');
         Route::get('create', 'JournalEntryController@create');
         Route::post('store', 'JournalEntryController@store');
+        Route::get('import', 'JournalEntryController@import');
+        Route::post('import/analyze', 'JournalEntryController@analyzeImport');
+        Route::get('import/{id}/review', 'JournalEntryController@reviewImport');
+        Route::get('import/{id}/status', 'JournalEntryController@importStatus');
+        Route::post('import/start', 'JournalEntryController@startImport');
+        Route::post('import/process', 'JournalEntryController@processImport');
+        Route::post('import', 'JournalEntryController@storeImport');
+        Route::post('import/{id}/revert', 'JournalEntryController@revertImport');
         Route::get('{id}/show', 'JournalEntryController@show');
         Route::get('{id}/edit', 'JournalEntryController@edit');
         Route::get('{id}/reverse', 'JournalEntryController@reverse');

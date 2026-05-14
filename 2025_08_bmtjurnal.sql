@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: localhost:3306
--- Generation Time: May 12, 2026 at 01:53 PM
+-- Generation Time: May 14, 2026 at 06:36 AM
 -- Server version: 5.7.24
 -- PHP Version: 8.2.2
 
@@ -29,6 +29,7 @@ SET time_zone = "+00:00";
 
 CREATE TABLE `accounting_accounts` (
   `id` bigint(20) UNSIGNED NOT NULL,
+  `account_id` int(10) UNSIGNED DEFAULT NULL,
   `name` varchar(191) COLLATE utf8mb4_unicode_ci NOT NULL,
   `gl_code` varchar(191) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `business_id` int(11) NOT NULL,
@@ -51,6 +52,7 @@ CREATE TABLE `accounting_accounts` (
 
 CREATE TABLE `accounting_accounts_transactions` (
   `id` bigint(20) UNSIGNED NOT NULL,
+  `journal_import_id` bigint(20) UNSIGNED DEFAULT NULL,
   `accounting_account_id` bigint(20) UNSIGNED NOT NULL,
   `acc_trans_mapping_id` int(11) DEFAULT NULL COMMENT 'id form accounting_acc_trans_mapping table',
   `transaction_id` int(11) DEFAULT NULL COMMENT 'id form transactions table',
@@ -94,6 +96,8 @@ CREATE TABLE `accounting_account_types` (
 
 CREATE TABLE `accounting_acc_trans_mappings` (
   `id` bigint(20) UNSIGNED NOT NULL,
+  `journal_import_id` bigint(20) UNSIGNED DEFAULT NULL,
+  `import_source_key` varchar(191) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `business_id` int(11) NOT NULL,
   `ref_no` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
   `type` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
@@ -138,11 +142,39 @@ CREATE TABLE `accounting_budgets` (
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `accounting_journal_imports`
+--
+
+CREATE TABLE `accounting_journal_imports` (
+  `id` bigint(20) UNSIGNED NOT NULL,
+  `business_id` int(11) NOT NULL,
+  `file_name` varchar(191) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `source_date_range` varchar(191) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `total_entries` int(11) NOT NULL DEFAULT '0',
+  `imported_entries` int(11) NOT NULL DEFAULT '0',
+  `skipped_entries` int(11) NOT NULL DEFAULT '0',
+  `unbalanced_entries` int(11) NOT NULL DEFAULT '0',
+  `duplicate_entries` int(11) NOT NULL DEFAULT '0',
+  `missing_accounts` int(11) NOT NULL DEFAULT '0',
+  `unsupported_entries` int(11) NOT NULL DEFAULT '0',
+  `status` varchar(191) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'imported',
+  `summary` longtext COLLATE utf8mb4_unicode_ci,
+  `created_by` int(11) NOT NULL,
+  `reverted_by` int(11) DEFAULT NULL,
+  `reverted_at` datetime DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT NULL,
+  `updated_at` timestamp NULL DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `accounts`
 --
 
 CREATE TABLE `accounts` (
   `id` int(10) UNSIGNED NOT NULL,
+  `journal_import_id` bigint(20) UNSIGNED DEFAULT NULL,
   `business_id` int(11) NOT NULL,
   `name` varchar(191) COLLATE utf8mb4_unicode_ci NOT NULL,
   `account_number` varchar(191) COLLATE utf8mb4_unicode_ci NOT NULL,
@@ -198,6 +230,7 @@ CREATE TABLE `account_subtypes` (
 
 CREATE TABLE `account_transactions` (
   `id` int(10) UNSIGNED NOT NULL,
+  `journal_import_id` bigint(20) UNSIGNED DEFAULT NULL,
   `account_id` int(11) NOT NULL,
   `type` enum('debit','credit') COLLATE utf8mb4_unicode_ci NOT NULL,
   `sub_type` enum('opening_balance','fund_transfer','deposit') COLLATE utf8mb4_unicode_ci DEFAULT NULL,
@@ -347,6 +380,18 @@ CREATE TABLE `asset_maintenances` (
   `maintenance_note` text COLLATE utf8mb4_unicode_ci,
   `created_at` timestamp NULL DEFAULT NULL,
   `updated_at` timestamp NULL DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `asset_tags`
+--
+
+CREATE TABLE `asset_tags` (
+  `id` bigint(20) UNSIGNED NOT NULL,
+  `asset_id` int(10) UNSIGNED NOT NULL,
+  `tag_id` bigint(20) UNSIGNED NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
@@ -2324,6 +2369,34 @@ CREATE TABLE `product_variations` (
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `project_task_tags`
+--
+
+CREATE TABLE `project_task_tags` (
+  `id` bigint(20) UNSIGNED NOT NULL,
+  `project_task_id` int(10) UNSIGNED NOT NULL,
+  `tag_id` bigint(20) UNSIGNED NOT NULL,
+  `created_at` timestamp NULL DEFAULT NULL,
+  `updated_at` timestamp NULL DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `project_time_log_tags`
+--
+
+CREATE TABLE `project_time_log_tags` (
+  `id` bigint(20) UNSIGNED NOT NULL,
+  `project_time_log_id` int(10) UNSIGNED NOT NULL,
+  `tag_id` bigint(20) UNSIGNED NOT NULL,
+  `created_at` timestamp NULL DEFAULT NULL,
+  `updated_at` timestamp NULL DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `purchase_lines`
 --
 
@@ -3140,13 +3213,15 @@ CREATE TABLE `warranties` (
 -- Indexes for table `accounting_accounts`
 --
 ALTER TABLE `accounting_accounts`
-  ADD PRIMARY KEY (`id`);
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `accounting_accounts_account_id_index` (`account_id`);
 
 --
 -- Indexes for table `accounting_accounts_transactions`
 --
 ALTER TABLE `accounting_accounts_transactions`
-  ADD PRIMARY KEY (`id`);
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `accounting_accounts_transactions_journal_import_id_index` (`journal_import_id`);
 
 --
 -- Indexes for table `accounting_account_types`
@@ -3158,7 +3233,9 @@ ALTER TABLE `accounting_account_types`
 -- Indexes for table `accounting_acc_trans_mappings`
 --
 ALTER TABLE `accounting_acc_trans_mappings`
-  ADD PRIMARY KEY (`id`);
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `aatm_business_import_source_key_index` (`business_id`,`import_source_key`),
+  ADD KEY `accounting_acc_trans_mappings_journal_import_id_index` (`journal_import_id`);
 
 --
 -- Indexes for table `accounting_budgets`
@@ -3167,13 +3244,21 @@ ALTER TABLE `accounting_budgets`
   ADD PRIMARY KEY (`id`);
 
 --
+-- Indexes for table `accounting_journal_imports`
+--
+ALTER TABLE `accounting_journal_imports`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `accounting_journal_imports_business_id_status_index` (`business_id`,`status`);
+
+--
 -- Indexes for table `accounts`
 --
 ALTER TABLE `accounts`
   ADD PRIMARY KEY (`id`),
   ADD KEY `accounts_business_id_index` (`business_id`),
   ADD KEY `accounts_account_type_id_index` (`account_type_id`),
-  ADD KEY `accounts_created_by_index` (`created_by`);
+  ADD KEY `accounts_created_by_index` (`created_by`),
+  ADD KEY `accounts_journal_import_id_index` (`journal_import_id`);
 
 --
 -- Indexes for table `account_detail_types`
@@ -3199,7 +3284,8 @@ ALTER TABLE `account_transactions`
   ADD KEY `account_transactions_created_by_index` (`created_by`),
   ADD KEY `account_transactions_type_index` (`type`),
   ADD KEY `account_transactions_sub_type_index` (`sub_type`),
-  ADD KEY `account_transactions_operation_date_index` (`operation_date`);
+  ADD KEY `account_transactions_operation_date_index` (`operation_date`),
+  ADD KEY `account_transactions_journal_import_id_index` (`journal_import_id`);
 
 --
 -- Indexes for table `account_types`
@@ -3258,6 +3344,15 @@ ALTER TABLE `asset_maintenances`
   ADD KEY `asset_maintenances_priority_index` (`priority`),
   ADD KEY `asset_maintenances_created_by_index` (`created_by`),
   ADD KEY `asset_maintenances_assigned_to_index` (`assigned_to`);
+
+--
+-- Indexes for table `asset_tags`
+--
+ALTER TABLE `asset_tags`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `asset_tags_asset_id_tag_id_unique` (`asset_id`,`tag_id`),
+  ADD KEY `asset_tags_asset_id_index` (`asset_id`),
+  ADD KEY `asset_tags_tag_id_index` (`tag_id`);
 
 --
 -- Indexes for table `asset_transactions`
@@ -4000,6 +4095,24 @@ ALTER TABLE `product_variations`
   ADD KEY `product_variations_product_id_index` (`product_id`);
 
 --
+-- Indexes for table `project_task_tags`
+--
+ALTER TABLE `project_task_tags`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `project_task_tags_task_id_tag_id_unique` (`project_task_id`,`tag_id`),
+  ADD KEY `project_task_tags_project_task_id_index` (`project_task_id`),
+  ADD KEY `project_task_tags_tag_id_index` (`tag_id`);
+
+--
+-- Indexes for table `project_time_log_tags`
+--
+ALTER TABLE `project_time_log_tags`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `project_time_log_tags_log_id_tag_id_unique` (`project_time_log_id`,`tag_id`),
+  ADD KEY `project_time_log_tags_project_time_log_id_index` (`project_time_log_id`),
+  ADD KEY `project_time_log_tags_tag_id_index` (`tag_id`);
+
+--
 -- Indexes for table `purchase_lines`
 --
 ALTER TABLE `purchase_lines`
@@ -4109,8 +4222,9 @@ ALTER TABLE `stock_adjustment_lines`
 ALTER TABLE `surat_kontrak`
   ADD PRIMARY KEY (`id`),
   ADD UNIQUE KEY `surat_kontrak_nomor_unique` (`nomor`),
-  ADD KEY `surat_kontrak_business_id_import_batch_index` (`business_id`,`import_batch`),
-  ADD KEY `surat_kontrak_contact_id_foreign` (`contact_id`);
+  ADD KEY `surat_kontrak_contact_id_foreign` (`contact_id`),
+  ADD KEY `surat_kontrak_business_id_foreign` (`business_id`),
+  ADD KEY `business_id` (`business_id`,`import_batch`);
 
 --
 -- Indexes for table `system`
@@ -4342,6 +4456,12 @@ ALTER TABLE `accounting_budgets`
   MODIFY `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT for table `accounting_journal_imports`
+--
+ALTER TABLE `accounting_journal_imports`
+  MODIFY `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT for table `accounts`
 --
 ALTER TABLE `accounts`
@@ -4405,6 +4525,12 @@ ALTER TABLE `asset_depreciation`
 -- AUTO_INCREMENT for table `asset_maintenances`
 --
 ALTER TABLE `asset_maintenances`
+  MODIFY `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `asset_tags`
+--
+ALTER TABLE `asset_tags`
   MODIFY `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT;
 
 --
@@ -4888,6 +5014,18 @@ ALTER TABLE `product_variations`
   MODIFY `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT for table `project_task_tags`
+--
+ALTER TABLE `project_task_tags`
+  MODIFY `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `project_time_log_tags`
+--
+ALTER TABLE `project_time_log_tags`
+  MODIFY `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT for table `purchase_lines`
 --
 ALTER TABLE `purchase_lines`
@@ -5098,6 +5236,13 @@ ALTER TABLE `asset_consumptions`
 ALTER TABLE `asset_depreciation`
   ADD CONSTRAINT `asset_depreciation_asset_id_foreign` FOREIGN KEY (`asset_id`) REFERENCES `assets` (`id`) ON DELETE CASCADE,
   ADD CONSTRAINT `asset_depreciation_transaction_id_foreign` FOREIGN KEY (`transaction_id`) REFERENCES `transactions` (`id`) ON DELETE CASCADE;
+
+--
+-- Constraints for table `asset_tags`
+--
+ALTER TABLE `asset_tags`
+  ADD CONSTRAINT `asset_tags_asset_id_foreign` FOREIGN KEY (`asset_id`) REFERENCES `assets` (`id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `asset_tags_tag_id_foreign` FOREIGN KEY (`tag_id`) REFERENCES `tags` (`id`) ON DELETE CASCADE;
 
 --
 -- Constraints for table `asset_transactions`
@@ -5349,6 +5494,20 @@ ALTER TABLE `products`
 --
 ALTER TABLE `product_variations`
   ADD CONSTRAINT `product_variations_product_id_foreign` FOREIGN KEY (`product_id`) REFERENCES `products` (`id`) ON DELETE CASCADE;
+
+--
+-- Constraints for table `project_task_tags`
+--
+ALTER TABLE `project_task_tags`
+  ADD CONSTRAINT `project_task_tags_project_task_id_foreign` FOREIGN KEY (`project_task_id`) REFERENCES `pjt_project_tasks` (`id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `project_task_tags_tag_id_foreign` FOREIGN KEY (`tag_id`) REFERENCES `tags` (`id`) ON DELETE CASCADE;
+
+--
+-- Constraints for table `project_time_log_tags`
+--
+ALTER TABLE `project_time_log_tags`
+  ADD CONSTRAINT `project_time_log_tags_project_time_log_id_foreign` FOREIGN KEY (`project_time_log_id`) REFERENCES `pjt_project_time_logs` (`id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `project_time_log_tags_tag_id_foreign` FOREIGN KEY (`tag_id`) REFERENCES `tags` (`id`) ON DELETE CASCADE;
 
 --
 -- Constraints for table `purchase_lines`

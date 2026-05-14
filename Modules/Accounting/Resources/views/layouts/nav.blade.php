@@ -23,6 +23,10 @@
                         <li @if(request()->segment(2) == 'journal-entry') class="active" @endif><a href="{{action([\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'index'])}}">@lang('accounting::lang.journal_entry')</a></li>
                     @endif
 
+                    @if(auth()->user()->can('accounting.add_journal'))
+                        <li @if(request()->segment(2) == 'journal-entry' && request()->segment(3) == 'import') class="active" @endif><a href="{{action([\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'import'])}}">Import Journal</a></li>
+                    @endif
+
                     @if(auth()->user()->can('accounting.view_transfer'))
                         <li @if(request()->segment(2) == 'transfer') class="active" @endif>
                             <a href="{{action([\Modules\Accounting\Http\Controllers\TransferController::class, 'index'])}}">
