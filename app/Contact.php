@@ -217,20 +217,24 @@ class Contact extends Authenticatable
             ->whereIn('contacts.type', ['customer', 'both'])
             ->active();
 
-        if ($append_id) {
-            $all_contacts->select(
-                DB::raw("IF(contacts.contact_id IS NULL OR contacts.contact_id='', CONCAT( COALESCE(contacts.supplier_business_name, ''), ' - ', contacts.name), CONCAT(COALESCE(contacts.supplier_business_name, ''), ' - ', name, ' (', contacts.contact_id, ')')) AS customer"),
-                'contacts.id'
-            );
-        } else {
-            $all_contacts->select('contacts.id', DB::raw('contacts.name as customer'));
-        }
+        $all_contacts->select([
+            'contacts.id',
+            'contacts.contact_id',
+            'contacts.name',
+            'contacts.prefix',
+            'contacts.first_name',
+            'contacts.middle_name',
+            'contacts.last_name',
+            'contacts.supplier_business_name',
+        ]);
 
         if (auth()->check() && ! auth()->user()->can('customer.view') && auth()->user()->can('customer.view_own')) {
             $all_contacts->onlyOwnContact();
         }
 
-        $customers = $all_contacts->pluck('customer', 'id');
+        $customers = $all_contacts->get()->mapWithKeys(function ($contact) use ($append_id) {
+            return [$contact->id => self::formatCustomerDropdownLabel($contact, $append_id)];
+        });
 
         //Prepend none
         if ($prepend_none) {
@@ -238,6 +242,30 @@ class Contact extends Authenticatable
         }
 
         return $customers;
+    }
+
+    protected static function formatCustomerDropdownLabel($contact, $append_id = true)
+    {
+        $full_name = trim($contact->full_name ?: ($contact->name ?? ''));
+        $label_parts = array_filter([
+            trim((string) $contact->supplier_business_name),
+            $full_name,
+        ], function ($value) {
+            return $value !== '';
+        });
+
+        $display_label = ! empty($label_parts) ? implode(' - ', $label_parts) : '';
+        $contact_id = trim((string) $contact->contact_id);
+
+        if ($display_label === '') {
+            $display_label = $contact_id !== '' ? $contact_id : __('contact.customer') . ' #' . $contact->id;
+        }
+
+        if ($append_id && $contact_id !== '' && $display_label !== $contact_id) {
+            $display_label .= ' (' . $contact_id . ')';
+        }
+
+        return $display_label;
     }
 
     /**
