@@ -37,7 +37,7 @@ class Reminder extends Model
             $reminder_date = $reminder->date;
             // $time = $this->commonUtil->format_time($reminder->time);
 
-            if ($reminder->repeat == 'every_day' || $reminder->repeat == 'every_month' || $reminder->repeat == 'every_week') {
+            if ($reminder->repeat == 'every_day' || $reminder->repeat == 'every_week' || $reminder->repeat == 'every_month' || $reminder->repeat == 'every_quarter' || $reminder->repeat == 'every_year') {
                 while ($reminder_date <= $data['end_date']) {
                     $date = $reminder_date.' '.$reminder->time;
                     $end_time = ! empty($reminder->end_time) ? $reminder->end_time : $reminder->time;
@@ -61,10 +61,14 @@ class Reminder extends Model
 
                     if ($reminder->repeat == 'every_day') {
                         $reminder_date = date('Y-m-d', strtotime('+1 day', $dt));
-                    } elseif ($reminder->repeat == 'every_month') {
-                        $reminder_date = date('Y-m-d', strtotime('+1 month', $dt));
                     } elseif ($reminder->repeat == 'every_week') {
                         $reminder_date = date('Y-m-d', strtotime('+1 weeks', $dt));
+                    } elseif ($reminder->repeat == 'every_month') {
+                        $reminder_date = date('Y-m-d', strtotime('+1 month', $dt));
+                    } elseif ($reminder->repeat == 'every_quarter') {
+                        $reminder_date = date('Y-m-d', strtotime('+3 months', $dt));
+                    } elseif ($reminder->repeat == 'every_year') {
+                        $reminder_date = date('Y-m-d', strtotime('+1 year', $dt));
                     }
                 }
             } elseif ($reminder->repeat == 'one_time') {

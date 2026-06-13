@@ -16,6 +16,7 @@ use App\Utils\CashRegisterUtil;
 use App\Utils\ModuleUtil;
 use App\Utils\TransactionUtil;
 use App\Utils\TagTransactionUtil;
+use Illuminate\Support\Facades\Hash;
 
 use DB;
 use Excel;
@@ -931,8 +932,7 @@ class ExpenseController extends Controller
 
                 foreach ($imported_data as $key => $value) {
 
-
-                    $row_no = $key + 1;
+                    $row_no = $key;
                     $expense_array['business_id'] = $business_id;
                     $expense_array['created_by'] = $user_id;
 
@@ -1026,12 +1026,20 @@ class ExpenseController extends Controller
                             ->orWhereRaw("CONCAT(surname, ' ', first_name) = ?", [$user_value])
                             ->orWhereRaw("TRIM(CONCAT(surname, ' ', first_name, ' ', COALESCE(last_name, ''))) = ?", [$user_value])
                             ->first();
+                            
                         if (!empty($user)) {
                             $expense_array['expense_for'] = $user->id;
                         } else {
-                            $is_valid = false;
-                            $error_msg = "Invalid user details in row no. $row_no";
-                            break;
+                           $user= User::create([
+                                'email' => $user_value . '_' . Str::random(5) . '@example.com',
+                                'username' => $user_value . '_' . Str::random(5),
+                                'first_name' => $user_value,
+                                'last_name' => ' ',
+                                'password' => Hash::make(Str::random(8)),
+                                'business_id' => $business_id,
+                                'created_by' => $user_id,
+                            ]);
+                            $expense_array['expense_for'] = $user->id;
                         }
                     }
 

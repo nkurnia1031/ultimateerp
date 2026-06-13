@@ -12,6 +12,10 @@
 						<div class="row">
 					    	<div class="col-md-12">
 								<div class="box-tools pull-right">
+										<button data-href="{{ action([\Modules\Essentials\Http\Controllers\ReminderController::class, 'sendTestEmail']) }}" class="btn btn-sm btn-success test_reminder_email">
+											<i class="fa fa-envelope-o"></i>
+											 @lang('essentials::lang.send_test_email')
+										</button>
 										<button data-href="#" class="btn btn-sm btn-primary add_reminder">
 											<i class="fa fa-plus"></i>
 											 @lang('essentials::lang.add_reminder')
@@ -47,6 +51,42 @@
 		$('button.add_reminder').click( function(){
             $('div.reminder').modal('show');
         });
+
+		$(document).on('click', 'button.test_reminder_email', function(){
+			var button = $(this);
+			var url = button.data('href');
+
+			swal({
+		      title: LANG.sure,
+		      text: @json(__('essentials::lang.send_test_email')),
+		      icon: "warning",
+		      buttons: true,
+		      dangerMode: true,
+		    }).then((confirmed) => {
+		        if (confirmed) {
+		        	button.prop('disabled', true);
+		        	$.ajax({
+		        		method: "POST",
+		        		url: url,
+		        		dataType: "json",
+		        		data: {
+		        			_token: '{{ csrf_token() }}',
+		        		},
+		        		success: function(result){
+		        			if(result.success == true){
+		        				reload_calendar();
+		        				toastr.success(result.msg);
+		        			} else {
+		        				toastr.error(result.msg);
+		        			}
+		        		},
+		        		complete: function(){
+		        			button.prop('disabled', false);
+		        		}
+		        	});
+		        }
+		    });
+		});
 
 		//call function when modal opened
 		$(".reminder").on('shown.bs.modal', function(){

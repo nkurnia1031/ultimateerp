@@ -17,6 +17,8 @@
                       'every_day' => __('essentials::lang.every_day'),
                       'every_week' => __('essentials::lang.every_week'),
                       'every_month' => __('essentials::lang.every_month'),
+                      'every_quarter' => __('essentials::lang.every_quarter'),
+                      'every_year' => __('essentials::lang.every_year'),
                         ];
             @endphp
           <div class="row">

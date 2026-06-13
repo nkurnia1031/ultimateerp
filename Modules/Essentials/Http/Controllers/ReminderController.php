@@ -2,14 +2,16 @@
 
 namespace Modules\Essentials\Http\Controllers;
 
+use App\Business;
+use App\Services\ReminderDigestService;
 use App\Utils\ModuleUtil;
 use App\Utils\Util;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
+use Modules\AssetManagement\Services\AssetExpiryReminderService;
 use Modules\Essentials\Entities\Reminder;
-use Illuminate\Support\Facades\DB;
-use Carbon\Carbon;
 
 class ReminderController extends Controller
 {
@@ -20,104 +22,20 @@ class ReminderController extends Controller
 
     protected $moduleUtil;
 
-    public function __construct(Util $commonUtil, ModuleUtil $moduleUtil)
-    {
+    protected $assetExpiryReminderService;
+
+    protected $reminderDigestService;
+
+    public function __construct(
+        Util $commonUtil,
+        ModuleUtil $moduleUtil,
+        AssetExpiryReminderService $assetExpiryReminderService,
+        ReminderDigestService $reminderDigestService
+    ) {
         $this->commonUtil = $commonUtil;
         $this->moduleUtil = $moduleUtil;
-    }
-
-    public function InsertNotifSTNK()
-    {
-        $business_id = auth()->user()->business_id;
-        $user_id = auth()->id();
-    
-        $today = Carbon::today();
-    
-        $assets = DB::table('assets')
-            ->select('id', 'asset_code', 'name', 'model', 'stnk_expired_at', 'tbpkp_expired_at')
-            ->where(function ($q) {
-                $q->whereNotNull('stnk_expired_at')
-                  ->orWhereNotNull('tbpkp_expired_at');
-            })
-            ->get();
-    
-        foreach ($assets as $asset) {
-    
-            // =========================
-            // STNK
-            // =========================
-            if (!empty($asset->stnk_expired_at)) {
-    
-                $expiredDate = Carbon::parse($asset->stnk_expired_at);
-                $reminderDate = $expiredDate->copy()->subDays(7);
-    
-                // 🔥 skip kalau sudah lewat
-                if ($reminderDate->lt($today)) {
-                    continue;
-                }
-    
-                $name = "Reminder STNK Asset {$asset->asset_code} - {$asset->name} ({$asset->model}) akan expired pada {$expiredDate->format('d-m-Y')}. Mohon dipastikan dan dilakukan perpanjangan setelah dilakukan pengecekan.";
-    
-                $exists = Reminder::where('business_id', $business_id)
-                    ->where('name', $name)
-                    ->whereDate('date', $reminderDate)
-                    ->exists();
-    
-                if (!$exists) {
-                    Reminder::create([
-                        'business_id' => $business_id,
-                        'user_id' => $user_id,
-                        'name' => $name,
-                        'date' => $reminderDate->format('Y-m-d'),
-                        'time' => '09:00:00',
-                        'end_time' => null,
-                        'repeat' => 'every_day',
-                        'created_at' => now(),
-                        'updated_at' => now(),
-                    ]);
-                }
-            }
-    
-            // =========================
-            // TBPKP
-            // =========================
-            if (!empty($asset->tbpkp_expired_at)) {
-    
-                $expiredDate = Carbon::parse($asset->tbpkp_expired_at);
-                $reminderDate = $expiredDate->copy()->subDays(7);
-    
-                // 🔥 skip kalau sudah lewat
-                if ($reminderDate->lt($today)) {
-                    continue;
-                }
-    
-                $name = "Reminder TBPKP Asset {$asset->asset_code} - {$asset->name} ({$asset->model}) akan expired pada {$expiredDate->format('d-m-Y')}. Mohon dipastikan dan dilakukan perpanjangan setelah dilakukan pengecekan.";
-    
-                $exists = Reminder::where('business_id', $business_id)
-                    ->where('name', $name)
-                    ->whereDate('date', $reminderDate)
-                    ->exists();
-    
-                if (!$exists) {
-                    Reminder::create([
-                        'business_id' => $business_id,
-                        'user_id' => $user_id,
-                        'name' => $name,
-                        'date' => $reminderDate->format('Y-m-d'),
-                        'time' => '09:00:00',
-                        'end_time' => null,
-                        'repeat' => 'every_day',
-                        'created_at' => now(),
-                        'updated_at' => now(),
-                    ]);
-                }
-            }
-        }
-    
-        return [
-            'success' => true,
-            'msg' => 'Reminder H-7 berhasil dibuat (tanpa duplikat & tidak melewati tanggal)'
-        ];
+        $this->assetExpiryReminderService = $assetExpiryReminderService;
+        $this->reminderDigestService = $reminderDigestService;
     }
 
     /**
@@ -131,7 +49,6 @@ class ReminderController extends Controller
         if (! (auth()->user()->can('superadmin') || $this->moduleUtil->hasThePermissionInSubscription($business_id, 'essentials_module'))) {
             abort(403, 'Unauthorized action.');
         }
-        $this->InsertNotifSTNK();
         $business_id = request()->session()->get('user.business_id');
         $user_id = request()->session()->get('user.id');
 
@@ -226,6 +143,8 @@ class ReminderController extends Controller
                 'every_day' => __('essentials::lang.every_day'),
                 'every_week' => __('essentials::lang.every_week'),
                 'every_month' => __('essentials::lang.every_month'),
+                'every_quarter' => __('essentials::lang.every_quarter'),
+                'every_year' => __('essentials::lang.every_year'),
             ];
 
             return view('essentials::reminder.show')
@@ -304,6 +223,68 @@ class ReminderController extends Controller
             }
 
             return $output;
+        }
+    }
+
+    /**
+     * Send a manual reminder digest after syncing asset expiry schedules.
+     */
+    public function sendTestEmail(Request $request)
+    {
+        $business_id = $request->session()->get('user.business_id');
+        if (! (auth()->user()->can('superadmin') || $this->moduleUtil->hasThePermissionInSubscription($business_id, 'essentials_module'))) {
+            abort(403, 'Unauthorized action.');
+        }
+
+        try {
+            $business = Business::with('owner')->find($business_id);
+            if (empty($business)) {
+                return [
+                    'success' => false,
+                    'msg' => __('messages.something_went_wrong'),
+                ];
+            }
+
+            $recipient = data_get($business->email_settings, 'mail_from_address');
+            if (empty($recipient)) {
+                return [
+                    'success' => false,
+                    'msg' => __('essentials::lang.test_email_recipient_missing'),
+                ];
+            }
+
+            $this->assetExpiryReminderService->syncBusinessAssets($business_id);
+
+            $today = Carbon::today();
+            $items = $this->reminderDigestService->collectDueItemsForBusiness($business_id, $today);
+
+            if ($items->isEmpty()) {
+                return [
+                    'success' => false,
+                    'msg' => __('essentials::lang.no_due_items'),
+                ];
+            }
+
+            $sent = $this->reminderDigestService->sendDigestForBusiness($business, $items, $today, true);
+
+            if (! $sent) {
+                return [
+                    'success' => false,
+                    'msg' => __('messages.something_went_wrong'),
+                ];
+            }
+
+            return [
+                'success' => true,
+                'msg' => __('essentials::lang.test_email_sent'),
+            ];
+        } catch (\Exception $e) {
+            \Log::emergency('File:'.$e->getFile().'Line:'.$e->getLine().'Message:'.$e->getMessage());
+
+            return [
+                'success' => false,
+                'msg' => __('messages.something_went_wrong'),
+            ];
         }
     }
 }

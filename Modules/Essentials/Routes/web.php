@@ -30,6 +30,7 @@ Route::middleware('web', 'authh', 'auth', 'SetSessionData', 'language', 'timezon
 
         //reminder controller
         Route::resource('reminder', 'Modules\Essentials\Http\Controllers\ReminderController')->only(['index', 'store', 'edit', 'update', 'destroy', 'show']);
+        Route::post('reminder/test-email', [Modules\Essentials\Http\Controllers\ReminderController::class, 'sendTestEmail']);
 
         //message controller
         Route::get('get-new-messages', [Modules\Essentials\Http\Controllers\EssentialsMessageController::class, 'getNewMessages']);

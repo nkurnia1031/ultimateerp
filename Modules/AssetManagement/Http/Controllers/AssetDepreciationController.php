@@ -14,6 +14,7 @@ use Illuminate\Support\Facades\DB;
 use Modules\AssetManagement\Entities\Asset;
 use Modules\AssetManagement\Entities\AssetTransaction;
 use Modules\AssetManagement\Entities\AssetWarranty;
+use Modules\AssetManagement\Services\AssetExpiryReminderService;
 use Modules\AssetManagement\Utils\AssetUtil;
 use Yajra\DataTables\Facades\DataTables;
 use Carbon\Carbon;
@@ -29,16 +30,24 @@ class AssetDepreciationController extends Controller
 
     protected $assetUtil;
 
+    protected $assetExpiryReminderService;
+
     protected $purchaseTypes;
 
     /**
      * Constructor
      */
-    public function __construct(ModuleUtil $moduleUtil, Util $commonUtil, AssetUtil $assetUtil)
+    public function __construct(
+        ModuleUtil $moduleUtil,
+        Util $commonUtil,
+        AssetUtil $assetUtil,
+        AssetExpiryReminderService $assetExpiryReminderService
+    )
     {
         $this->moduleUtil = $moduleUtil;
         $this->commonUtil = $commonUtil;
         $this->assetUtil = $assetUtil;
+        $this->assetExpiryReminderService = $assetExpiryReminderService;
 
         $this->purchaseTypes = [
             'owned' => __('assetmanagement::lang.owned'),
@@ -384,13 +393,14 @@ class AssetDepreciationController extends Controller
                 $asset->warranties()->createMany($warranties);
             }
 
+            $this->assetExpiryReminderService->syncAsset($asset);
             DB::commit();
 
             $output = [
                 'success' => true,
                 'msg' => __('lang_v1.success'),
             ];
-        } catch (Exception $e) {
+        } catch (\Exception $e) {
             DB::rollBack();
 
             \Log::emergency('File:' . $e->getFile() . 'Line:' . $e->getLine() . 'Message:' . $e->getMessage());
@@ -568,13 +578,14 @@ class AssetDepreciationController extends Controller
                 Media::uploadMedia($business_id, $asset, $request, 'image', true);
             }
 
+            $this->assetExpiryReminderService->syncAsset($asset);
             DB::commit();
 
             $output = [
                 'success' => true,
                 'msg' => __('lang_v1.success'),
             ];
-        } catch (Exception $e) {
+        } catch (\Exception $e) {
             DB::rollBack();
 
             \Log::emergency('File:' . $e->getFile() . 'Line:' . $e->getLine() . 'Message:' . $e->getMessage());
@@ -610,17 +621,24 @@ class AssetDepreciationController extends Controller
 
         if (request()->ajax()) {
             try {
+                DB::beginTransaction();
+
                 $asset = Asset::where('business_id', $business_id)
                     ->findOrfail($id);
 
+                $this->assetExpiryReminderService->purgeAssetReminders($asset->id);
                 $asset->delete();
                 $asset->media()->delete();
+
+                DB::commit();
 
                 $output = [
                     'success' => true,
                     'msg' => __('lang_v1.success'),
                 ];
-            } catch (Exception $e) {
+            } catch (\Exception $e) {
+                DB::rollBack();
+
                 \Log::emergency('File:' . $e->getFile() . 'Line:' . $e->getLine() . 'Message:' . $e->getMessage());
 
                 $output = [

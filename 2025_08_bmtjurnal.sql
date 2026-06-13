@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: localhost:3306
--- Generation Time: May 14, 2026 at 06:36 AM
+-- Generation Time: Jun 08, 2026 at 04:11 AM
 -- Server version: 5.7.24
 -- PHP Version: 8.2.2
 
@@ -157,6 +157,12 @@ CREATE TABLE `accounting_journal_imports` (
   `duplicate_entries` int(11) NOT NULL DEFAULT '0',
   `missing_accounts` int(11) NOT NULL DEFAULT '0',
   `unsupported_entries` int(11) NOT NULL DEFAULT '0',
+  `processed_entries` int(11) NOT NULL DEFAULT '0',
+  `last_message` text COLLATE utf8mb4_unicode_ci,
+  `error_message` text COLLATE utf8mb4_unicode_ci,
+  `file_path` varchar(191) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `analysis_path` varchar(191) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `import_options` longtext COLLATE utf8mb4_unicode_ci,
   `status` varchar(191) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'imported',
   `summary` longtext COLLATE utf8mb4_unicode_ci,
   `created_by` int(11) NOT NULL,
@@ -1658,6 +1664,22 @@ CREATE TABLE `expense_lines` (
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `failed_jobs`
+--
+
+CREATE TABLE `failed_jobs` (
+  `id` bigint(20) UNSIGNED NOT NULL,
+  `uuid` varchar(191) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `connection` text COLLATE utf8mb4_unicode_ci NOT NULL,
+  `queue` text COLLATE utf8mb4_unicode_ci NOT NULL,
+  `payload` longtext COLLATE utf8mb4_unicode_ci NOT NULL,
+  `exception` longtext COLLATE utf8mb4_unicode_ci NOT NULL,
+  `failed_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `group_sub_taxes`
 --
 
@@ -1779,6 +1801,22 @@ CREATE TABLE `invoice_schemes` (
   `is_default` tinyint(1) NOT NULL DEFAULT '0',
   `created_at` timestamp NULL DEFAULT NULL,
   `updated_at` timestamp NULL DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `jobs`
+--
+
+CREATE TABLE `jobs` (
+  `id` bigint(20) UNSIGNED NOT NULL,
+  `queue` varchar(191) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `payload` longtext COLLATE utf8mb4_unicode_ci NOT NULL,
+  `attempts` tinyint(3) UNSIGNED NOT NULL,
+  `reserved_at` int(10) UNSIGNED DEFAULT NULL,
+  `available_at` int(10) UNSIGNED NOT NULL,
+  `created_at` int(10) UNSIGNED NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
@@ -3828,6 +3866,13 @@ ALTER TABLE `expense_lines`
   ADD KEY `expense_lines_transaction_id_foreign` (`transaction_id`);
 
 --
+-- Indexes for table `failed_jobs`
+--
+ALTER TABLE `failed_jobs`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `failed_jobs_uuid_unique` (`uuid`);
+
+--
 -- Indexes for table `group_sub_taxes`
 --
 ALTER TABLE `group_sub_taxes`
@@ -3849,6 +3894,13 @@ ALTER TABLE `invoice_schemes`
   ADD KEY `invoice_schemes_business_id_foreign` (`business_id`),
   ADD KEY `invoice_schemes_scheme_type_index` (`scheme_type`),
   ADD KEY `invoice_schemes_number_type_index` (`number_type`);
+
+--
+-- Indexes for table `jobs`
+--
+ALTER TABLE `jobs`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `jobs_queue_index` (`queue`);
 
 --
 -- Indexes for table `journal_entries`
@@ -4864,6 +4916,12 @@ ALTER TABLE `expense_lines`
   MODIFY `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT for table `failed_jobs`
+--
+ALTER TABLE `failed_jobs`
+  MODIFY `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT for table `invoice_layouts`
 --
 ALTER TABLE `invoice_layouts`
@@ -4874,6 +4932,12 @@ ALTER TABLE `invoice_layouts`
 --
 ALTER TABLE `invoice_schemes`
   MODIFY `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `jobs`
+--
+ALTER TABLE `jobs`
+  MODIFY `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `journal_entries`

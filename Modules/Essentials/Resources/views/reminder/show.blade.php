@@ -27,7 +27,7 @@
                   {!! Form::open(['url' => action([\Modules\Essentials\Http\Controllers\ReminderController::class, 'update'], [$reminder->id]), 'method' => 'PUT', 'id' => 'update_reminder_repeat' ]) !!}
                     <div class="input-group">
                       <!-- /btn-group -->
-                      {!! Form::select('repeat', $repeat, $reminder->repeat, ['class' => 'form-control', 'required']) !!}
+                {!! Form::select('repeat', $repeat, $reminder->repeat, ['class' => 'form-control', 'required']) !!}
                       <div class="input-group-btn">
                         <button type="submit" class="btn btn-primary change_reminder_repeat">@lang('messages.update')</button>
                       </div>

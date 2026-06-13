@@ -21,15 +21,17 @@ class Kernel extends ConsoleKernel
         if ($env === 'live') {
             //Scheduling backup, specify the time when the backup will get cleaned & time when it will run.
             
-            $schedule->command('backup:clean')->daily()->at('01:00');
-            $schedule->command('backup:run')->daily()->at('01:30');
+            $schedule->command('backup:clean')->daily()->at('01:00')->withoutOverlapping();
+            $schedule->command('backup:run')->daily()->at('01:30')->withoutOverlapping();
 
 
             //Schedule to create recurring invoices
-            $schedule->command('pos:generateSubscriptionInvoices')->dailyAt('23:30');
-            $schedule->command('pos:updateRewardPoints')->dailyAt('23:45');
+            $schedule->command('pos:generateSubscriptionInvoices')->dailyAt('23:30')->withoutOverlapping();
+            $schedule->command('pos:updateRewardPoints')->dailyAt('23:45')->withoutOverlapping();
 
-            $schedule->command('pos:autoSendPaymentReminder')->dailyAt('8:00');
+            $schedule->command('pos:autoSendPaymentReminder')->dailyAt('8:00')->withoutOverlapping();
+            $schedule->command('pos:processAssetExpiryReminders')->dailyAt('08:05')->withoutOverlapping();
+            $schedule->command('pos:processReminderEmails')->dailyAt('08:15')->withoutOverlapping();
 
         }
 

@@ -45,9 +45,16 @@ class ReminderEmailNotification extends Notification
     public function toMail($notifiable)
     {
         $data = $this->notificationInfo;
-        return (new MailMessage)
-        ->subject($data['subject'])
-                    ->line($data['line']);
+        $mail = (new MailMessage)
+            ->subject($data['subject']);
+
+        if (! empty($data['view'])) {
+            $mail->view($data['view'], $data['view_data'] ?? []);
+        } else {
+            $mail->line($data['line']);
+        }
+
+        return $mail;
     }
 
     /**

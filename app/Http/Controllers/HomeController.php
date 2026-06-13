@@ -9,13 +9,11 @@ use App\Currency;
 use App\Media;
 use App\Transaction;
 use App\User;
-use App\Business;
 use App\Utils\BusinessUtil;
 use App\Utils\ModuleUtil;
 use App\Utils\RestaurantUtil;
 use App\Utils\TransactionUtil;
 use App\Utils\ProductUtil;
-use App\Notifications\ReminderEmailNotification;
 use App\Utils\Util;
 use App\VariationLocationDetails;
 use Datatables;
@@ -71,46 +69,7 @@ class HomeController extends Controller
         if ($user->user_type == 'user_customer') {
             return redirect()->action([\Modules\Crm\Http\Controllers\DashboardController::class, 'index']);
         }
-
-
-
         $business_id = request()->session()->get('user.business_id');
-        $lockFile = storage_path('app/reminder_sent_' . Carbon::today()->format('Y-m-d') . '.lock');
-
-        if (!file_exists($lockFile)) {
-            // Tandai sudah dijalankan hari ini
-            file_put_contents($lockFile, Carbon::now()->toDateTimeString());
-
-            $today = Carbon::today();
-
-            $reminders = DB::table('essentials_reminders')
-                ->whereBetween('date', [
-                    $today->copy()->addDays(1),
-                    $today->copy()->addMonth(),
-                ])
-                ->get()
-                ->filter(function ($reminder) use ($today) {
-                    $date = Carbon::parse($reminder->date);
-                    $startShow = $date->copy()->subMonth();
-                    $daysSinceStart = $startShow->diffInDays($today);
-                    return $daysSinceStart % 7 === 0;
-                });
-
-            $business = Business::findOrFail($business_id);
-            $data = $business->email_settings;
-
-            foreach ($reminders as $reminder) {
-                $data['subject'] = 'Email Reminder untuk tanggal ' . Carbon::parse($reminder->date)->format('d M Y');
-                $data['line'] = $reminder->name;
-                \Notification::route('mail', $data['mail_from_address'])
-                    ->notify(new ReminderEmailNotification($data));
-            }
-        }
-        foreach (glob(storage_path('app/reminder_sent_*.lock')) as $oldFile) {
-            if (filemtime($oldFile) < strtotime('-7 days')) {
-                unlink($oldFile);
-            }
-        }
         $is_admin = $this->businessUtil->is_admin(auth()->user());
 
         if (! auth()->user()->can('dashboard.data')) {

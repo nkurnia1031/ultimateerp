@@ -97,6 +97,11 @@ class Asset extends Model
         return $this->belongsToMany(\App\Tag::class, 'asset_tags', 'asset_id', 'tag_id');
     }
 
+    public function expiryReminders()
+    {
+        return $this->hasMany(\Modules\AssetManagement\Entities\AssetExpiryReminder::class, 'asset_id');
+    }
+
     public function getIsInWarrantyAttribute()
     {
         $now = \Carbon::now();

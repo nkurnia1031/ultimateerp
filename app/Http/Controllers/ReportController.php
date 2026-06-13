@@ -2445,80 +2445,142 @@ class ReportController extends Controller
         $payment_types = $this->transactionUtil->payment_types(null, true, $business_id);
         if ($request->ajax()) {
             $customer_id = $request->get('supplier_id', null);
-            $contact_filter1 = ! empty($customer_id) ? "AND t.contact_id=$customer_id" : '';
-            $contact_filter2 = ! empty($customer_id) ? "AND transactions.contact_id=$customer_id" : '';
-
             $location_id = $request->get('location_id', null);
-            $parent_payment_query_part = empty($location_id) ? 'AND transaction_payments.parent_id IS NULL' : '';
+            $customer_group_id = $request->get('customer_group_id');
+            $payment_type = $request->get('payment_types');
+            $commission_agent = $request->get('commission_agent');
+            $permitted_locations = auth()->user()->permitted_locations();
+            // Keep customer labels consistent with the rest of the app for both direct and child payments.
+            $contact_name_sql = function ($alias) {
+                return "COALESCE(
+                    NULLIF(TRIM(CONCAT_WS(' ', NULLIF({$alias}.prefix, ''), NULLIF({$alias}.first_name, ''), NULLIF({$alias}.middle_name, ''), NULLIF({$alias}.last_name, ''))), ''),
+                    NULLIF({$alias}.name, '')
+                )";
+            };
+            $customer_display_sql = function ($alias) use ($contact_name_sql) {
+                return "NULLIF(CONCAT_WS('<br>', NULLIF({$alias}.supplier_business_name, ''), {$contact_name_sql($alias)}), '')";
+            };
+            $payment_customer_display_query = $customer_display_sql('payment_contact');
+            $transaction_customer_display_query = $customer_display_sql('c');
 
-            $query = TransactionPayment::leftjoin('transactions as t', function ($join) use ($business_id) {
-                $join->on('transaction_payments.transaction_id', '=', 't.id')
-                    ->where('t.business_id', $business_id)
-                    ->whereIn('t.type', ['sell', 'opening_balance']);
-            })
-                ->leftjoin('contacts as c', 't.contact_id', '=', 'c.id')
-                ->leftjoin('customer_groups AS CG', 'c.customer_group_id', '=', 'CG.id')
-
-            
-            //     DB::raw("IF(transaction_payments.transaction_id IS NULL, 
-            //     (SELECT c.name FROM transactions as ts
-            //     JOIN contacts as c ON ts.contact_id=c.id 
-            //     WHERE ts.id=(
-            //             SELECT tps.transaction_id FROM transaction_payments as tps
-            //             WHERE tps.parent_id=transaction_payments.id LIMIT 1
-            //         )
-            //     ),
-            //     (SELECT CONCAT(COALESCE(CONCAT(c.supplier_business_name, '<br>'), ''), c.name) FROM transactions as ts JOIN
-            //         contacts as c ON ts.contact_id=c.id
-            //         WHERE ts.id=t.id 
-            //     )
-            // ) as customer")
-            // remove above line from select and below join becouse customer search not work
-            
-                ->leftJoin(DB::raw("(
-                    SELECT 
-                        tp.id as payment_id, 
-                        IF(tp.transaction_id IS NULL, 
-                            (SELECT c.name 
-                             FROM transactions as ts
-                             JOIN contacts as c ON ts.contact_id = c.id 
-                             WHERE ts.id = (
-                                SELECT tps.transaction_id 
-                                FROM transaction_payments as tps 
-                                WHERE tps.parent_id = tp.id 
-                                LIMIT 1
-                             )
-                            ), 
-                            CONCAT(COALESCE(CONCAT(c.supplier_business_name, '<br>'), ''), c.name)
-                        ) as customer_name
-                    FROM transaction_payments tp
-                    LEFT JOIN transactions t ON tp.transaction_id = t.id
-                    LEFT JOIN contacts c ON t.contact_id = c.id
-                ) as customer_subquery"), 'transaction_payments.id', '=', 'customer_subquery.payment_id')              
+            $direct_query = DB::table('transaction_payments')
+                ->join('transactions as t', function ($join) use ($business_id) {
+                    $join->on('transaction_payments.transaction_id', '=', 't.id')
+                        ->where('t.business_id', $business_id)
+                        ->whereIn('t.type', ['sell', 'opening_balance']);
+                })
+                ->leftJoin('contacts as c', 't.contact_id', '=', 'c.id')
+                ->leftJoin('contacts as payment_contact', 'transaction_payments.payment_for', '=', 'payment_contact.id')
+                ->leftJoin('customer_groups AS CG', 'c.customer_group_id', '=', 'CG.id')
+                ->leftJoin('customer_groups AS payment_CG', 'payment_contact.customer_group_id', '=', 'payment_CG.id')
                 ->where('transaction_payments.business_id', $business_id)
-                ->where(function ($q) use ($business_id, $contact_filter1, $contact_filter2, $parent_payment_query_part) {
-                    $q->whereRaw("(transaction_payments.transaction_id IS NOT NULL AND t.type IN ('sell', 'opening_balance') $parent_payment_query_part $contact_filter1)")
-                        ->orWhereRaw("EXISTS(SELECT * FROM transaction_payments as tp JOIN transactions ON tp.transaction_id = transactions.id WHERE transactions.type IN ('sell', 'opening_balance') AND transactions.business_id = $business_id AND tp.parent_id=transaction_payments.id $contact_filter2)");
+                ->when(empty($location_id), function ($query) {
+                    $query->whereNull('transaction_payments.parent_id');
+                })
+                ->when(! empty($customer_id), function ($query) use ($customer_id) {
+                    $query->where('t.contact_id', $customer_id);
+                })
+                ->when($permitted_locations != 'all', function ($query) use ($permitted_locations) {
+                    $query->whereIn('t.location_id', $permitted_locations);
+                })
+                ->when(! empty($customer_group_id), function ($query) use ($customer_group_id) {
+                    $query->where(function ($q) use ($customer_group_id) {
+                        $q->where('payment_contact.customer_group_id', $customer_group_id)
+                            ->orWhere(function ($sub_query) use ($customer_group_id) {
+                                $sub_query->whereNull('payment_contact.customer_group_id')
+                                    ->where('c.customer_group_id', $customer_group_id);
+                            });
+                    });
+                })
+                ->when(! empty($location_id), function ($query) use ($location_id) {
+                    $query->where('t.location_id', $location_id);
+                })
+                ->when($request->filled('commission_agent'), function ($query) use ($commission_agent) {
+                    $query->where('t.commission_agent', $commission_agent);
+                })
+                ->when(! empty($payment_type), function ($query) use ($payment_type) {
+                    $query->where('transaction_payments.method', $payment_type);
                 })
                 ->select(
-                    'customer_subquery.customer_name as customer',
+                    DB::raw("COALESCE({$payment_customer_display_query}, {$transaction_customer_display_query}) as customer"),
                     'transaction_payments.amount',
                     'transaction_payments.is_return',
-                    'method',
-                    'paid_on',
+                    'transaction_payments.method',
+                    'transaction_payments.paid_on',
                     'transaction_payments.payment_ref_no',
                     'transaction_payments.document',
                     'transaction_payments.transaction_no',
                     't.invoice_no',
-                    'c.contact_id',
+                    DB::raw("COALESCE(NULLIF(payment_contact.contact_id, ''), NULLIF(c.contact_id, '')) as contact_id"),
                     't.id as transaction_id',
-                    'cheque_number',
-                    'card_transaction_number',
-                    'bank_account_number',
+                    'transaction_payments.cheque_number',
+                    'transaction_payments.card_transaction_number',
+                    'transaction_payments.bank_account_number',
                     'transaction_payments.id as DT_RowId',
-                    'CG.name as customer_group'
-                )
-                ->groupBy('transaction_payments.id');
+                    DB::raw("COALESCE(payment_CG.name, CG.name) as customer_group")
+                );
+
+            $parent_query = DB::table('transaction_payments')
+                ->leftJoin('contacts as payment_contact', 'transaction_payments.payment_for', '=', 'payment_contact.id')
+                ->leftJoin('customer_groups AS payment_CG', 'payment_contact.customer_group_id', '=', 'payment_CG.id')
+                ->where('transaction_payments.business_id', $business_id)
+                ->whereNull('transaction_payments.transaction_id')
+                ->whereNull('transaction_payments.parent_id')
+                ->when(! empty($customer_id), function ($query) use ($customer_id) {
+                    $query->where('transaction_payments.payment_for', $customer_id);
+                })
+                ->when(! empty($customer_group_id), function ($query) use ($customer_group_id) {
+                    $query->where('payment_contact.customer_group_id', $customer_group_id);
+                })
+                ->when(! empty($payment_type), function ($query) use ($payment_type) {
+                    $query->where('transaction_payments.method', $payment_type);
+                })
+                ->whereExists(function ($exists_query) use ($business_id, $customer_id, $location_id, $permitted_locations, $commission_agent, $request) {
+                    $exists_query->select(DB::raw(1))
+                        ->from('transaction_payments as child_tp')
+                        ->join('transactions as child_t', function ($join) use ($business_id) {
+                            $join->on('child_tp.transaction_id', '=', 'child_t.id')
+                                ->where('child_t.business_id', $business_id)
+                                ->whereIn('child_t.type', ['sell', 'opening_balance']);
+                        })
+                        ->whereColumn('child_tp.parent_id', 'transaction_payments.id');
+
+                    if (! empty($customer_id)) {
+                        $exists_query->where('child_t.contact_id', $customer_id);
+                    }
+
+                    if ($permitted_locations != 'all') {
+                        $exists_query->whereIn('child_t.location_id', $permitted_locations);
+                    }
+
+                    if (! empty($location_id)) {
+                        $exists_query->where('child_t.location_id', $location_id);
+                    }
+
+                    if ($request->filled('commission_agent')) {
+                        $exists_query->where('child_t.commission_agent', $commission_agent);
+                    }
+                })
+                ->select(
+                    DB::raw("{$payment_customer_display_query} as customer"),
+                    'transaction_payments.amount',
+                    'transaction_payments.is_return',
+                    'transaction_payments.method',
+                    'transaction_payments.paid_on',
+                    'transaction_payments.payment_ref_no',
+                    'transaction_payments.document',
+                    'transaction_payments.transaction_no',
+                    DB::raw('NULL as invoice_no'),
+                    DB::raw("NULLIF(payment_contact.contact_id, '') as contact_id"),
+                    DB::raw('NULL as transaction_id'),
+                    'transaction_payments.cheque_number',
+                    'transaction_payments.card_transaction_number',
+                    'transaction_payments.bank_account_number',
+                    'transaction_payments.id as DT_RowId',
+                    'payment_CG.name as customer_group'
+                );
+
+            $query = DB::query()->fromSub($direct_query->unionAll($parent_query), 'sell_payment_report_rows');
 
             $start_date = $request->get('start_date');
             $end_date = $request->get('end_date');
@@ -2526,27 +2588,13 @@ class ReportController extends Controller
                 $query->whereBetween(DB::raw('date(paid_on)'), [$start_date, $end_date]);
             }
 
-            $permitted_locations = auth()->user()->permitted_locations();
-            if ($permitted_locations != 'all') {
-                $query->whereIn('t.location_id', $permitted_locations);
-            }
-
-            if (! empty($request->get('customer_group_id'))) {
-                $query->where('CG.id', $request->get('customer_group_id'));
-            }
-
-            if (! empty($location_id)) {
-                $query->where('t.location_id', $location_id);
-            }
-            if (! empty($request->has('commission_agent'))) {
-                $query->where('t.commission_agent', $request->get('commission_agent'));
-            }
-
-            if (! empty($request->get('payment_types'))) {
-                $query->where('transaction_payments.method', $request->get('payment_types'));
-            }
-
             return Datatables::of($query)
+                ->filterColumn('customer', function ($query, $keyword) {
+                    $query->where('customer', 'like', "%{$keyword}%");
+                })
+                ->filterColumn('contact_id', function ($query, $keyword) {
+                    $query->where('contact_id', 'like', "%{$keyword}%");
+                })
                  ->editColumn('invoice_no', function ($row) {
                      if (! empty($row->transaction_id)) {
                          return '<a data-href="'.action([\App\Http\Controllers\SellController::class, 'show'], [$row->transaction_id])
