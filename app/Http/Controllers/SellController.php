@@ -21,6 +21,7 @@ use App\Utils\BusinessUtil;
 use App\Utils\ContactUtil;
 use App\Utils\ModuleUtil;
 use App\Utils\ProductUtil;
+use App\Utils\TagSellLineUtil;
 use App\Utils\TransactionUtil;
 use App\Variation;
 use App\Warranty;
@@ -43,19 +44,22 @@ class SellController extends Controller
 
     protected $productUtil;
 
+    protected $tagSellLineUtil;
+
     /**
      * Constructor
      *
      * @param  ProductUtils  $product
      * @return void
      */
-    public function __construct(ContactUtil $contactUtil, BusinessUtil $businessUtil, TransactionUtil $transactionUtil, ModuleUtil $moduleUtil, ProductUtil $productUtil)
+    public function __construct(ContactUtil $contactUtil, BusinessUtil $businessUtil, TransactionUtil $transactionUtil, ModuleUtil $moduleUtil, ProductUtil $productUtil, TagSellLineUtil $tagSellLineUtil)
     {
         $this->contactUtil = $contactUtil;
         $this->businessUtil = $businessUtil;
         $this->transactionUtil = $transactionUtil;
         $this->moduleUtil = $moduleUtil;
         $this->productUtil = $productUtil;
+        $this->tagSellLineUtil = $tagSellLineUtil;
 
         $this->dummyPaymentLine = [
             'method' => '',
@@ -529,19 +533,39 @@ class SellController extends Controller
                     }
                 )
                 ->removeColumn('id')
-                ->editColumn('tags', function ($row) {
-                    return (string) view('purchase.partials.tags', ['tags' => $row->tags]);
+                ->editColumn('tags', function ($row) use ($sale_type) {
+                    $tags = $sale_type === 'sell'
+                        ? collect(array_filter(explode('||', (string) $row->sell_line_tag_items)))
+                            ->map(function ($item) {
+                                [$id, $name] = array_pad(explode('::', $item, 2), 2, null);
+
+                                return (object) [
+                                    'id' => ! empty($id) ? (int) $id : null,
+                                    'name' => $name,
+                                ];
+                            })
+                        : $row->tags;
+
+                    return (string) view('purchase.partials.tags', ['tags' => $tags]);
                 })
-                ->filterColumn('tags', function ($query, $keyword) {
-                    $query->whereHas('tags', function ($q) use ($keyword) {
-                        $q->where('name', 'like', "%{$keyword}%");
-                    });
+                ->filterColumn('tags', function ($query, $keyword) use ($sale_type) {
+                    if ($sale_type === 'sell') {
+                        $query->whereRaw("COALESCE(sell_line_tag_aggregate.sell_line_tag_names, '') like ?", ["%{$keyword}%"]);
+                    } else {
+                        $query->whereHas('tags', function ($q) use ($keyword) {
+                            $q->where('name', 'like', "%{$keyword}%");
+                        });
+                    }
                 })
-                ->orderColumn('tags', function ($query, $order) {
-                    $query->leftJoin('transaction_tags', 'transactions.id', '=', 'transaction_tags.transaction_id')
-                        ->leftJoin('tags', 'tags.id', '=', 'transaction_tags.tag_id')
-                        ->groupBy('transactions.id') // penting biar nggak duplikat row
-                        ->orderByRaw("GROUP_CONCAT(tags.name ORDER BY tags.name ASC SEPARATOR ', ') {$order}");
+                ->orderColumn('tags', function ($query, $order) use ($sale_type) {
+                    if ($sale_type === 'sell') {
+                        $query->orderByRaw("COALESCE(sell_line_tag_aggregate.sell_line_tag_names, '') {$order}");
+                    } else {
+                        $query->leftJoin('transaction_tags', 'transactions.id', '=', 'transaction_tags.transaction_id')
+                            ->leftJoin('tags', 'tags.id', '=', 'transaction_tags.tag_id')
+                            ->groupBy('transactions.id')
+                            ->orderByRaw("GROUP_CONCAT(tags.name ORDER BY tags.name ASC SEPARATOR ', ') {$order}");
+                    }
                 })
                 ->editColumn(
                     'final_total',
@@ -928,13 +952,20 @@ class SellController extends Controller
             ->where('id', $id)
             ->with(['contact', 'delivery_person_user', 'sell_lines' => function ($q) {
                 $q->whereNull('parent_sell_line_id');
-            }, 'sell_lines.product', 'sell_lines.product.unit', 'sell_lines.product.second_unit', 'sell_lines.variations', 'sell_lines.variations.product_variation', 'payment_lines', 'sell_lines.modifiers', 'sell_lines.lot_details', 'tax', 'sell_lines.sub_unit', 'table', 'service_staff', 'sell_lines.service_staff', 'types_of_service', 'sell_lines.warranties', 'media']);
+            }, 'sell_lines.product', 'sell_lines.product.unit', 'sell_lines.product.second_unit', 'sell_lines.variations', 'sell_lines.variations.product_variation', 'payment_lines', 'sell_lines.modifiers', 'sell_lines.modifiers.tags', 'sell_lines.tags', 'sell_lines.lot_details', 'tax', 'sell_lines.sub_unit', 'table', 'service_staff', 'sell_lines.service_staff', 'types_of_service', 'sell_lines.warranties', 'media']);
 
         if (! auth()->user()->can('sell.view') && ! auth()->user()->can('direct_sell.access') && auth()->user()->can('view_own_sell_only')) {
             $query->where('transactions.created_by', request()->session()->get('user.id'));
         }
 
         $sell = $query->firstOrFail();
+
+        $sell->loadMissing('tags');
+
+        if ($sell->type === 'sell') {
+            $sell_line_tags = $this->tagSellLineUtil->getTransactionSellTags($sell);
+            $sell->setRelation('tags', $sell_line_tags->isNotEmpty() ? $sell_line_tags : $sell->tags);
+        }
 
         $activities = Activity::forSubject($sell)
             ->with(['causer', 'subject'])
@@ -954,6 +985,10 @@ class SellController extends Controller
                 } else {
                     $line_taxes[$taxes[$value->tax_id]] = ($value->item_tax * $value->quantity);
                 }
+            }
+
+            if ($sell->type === 'sell' && ! empty($sell->tags) && collect($sell->tags)->isNotEmpty() && (empty($sell->sell_lines[$key]->tags) || $sell->sell_lines[$key]->tags->isEmpty())) {
+                $sell->sell_lines[$key]->setRelation('tags', collect($sell->tags));
             }
         }
 
@@ -1082,7 +1117,7 @@ class SellController extends Controller
             ->leftjoin('units', 'units.id', '=', 'p.unit_id')
             ->leftjoin('units as u', 'p.secondary_unit_id', '=', 'u.id')
             ->where('transaction_sell_lines.transaction_id', $id)
-            ->with(['warranties', 'so_line'])
+            ->with(['warranties', 'so_line', 'tags'])
             ->select(
                 DB::raw("IF(pv.is_dummy = 0, CONCAT(p.name, ' (', pv.name, ':',variations.name, ')'), p.name) AS product_name"),
                 'p.id as product_id',
@@ -1212,6 +1247,20 @@ class SellController extends Controller
             }
         }
 
+        $this->tagSellLineUtil->hydrateEditableSellLineTags($sell_details);
+
+        if ($transaction->type === 'sell' && $transaction->tags->isNotEmpty()) {
+            $legacy_tag_ids = $transaction->tags->pluck('id')->all();
+            $legacy_tag_options = $transaction->tags->pluck('name', 'id')->toArray();
+
+            foreach ($sell_details as $sell_line) {
+                if (empty($sell_line->tag_ids)) {
+                    $sell_line->tag_ids = $legacy_tag_ids;
+                    $sell_line->tag_options = $legacy_tag_options;
+                }
+            }
+        }
+
         $commsn_agnt_setting = $business_details->sales_cmsn_agnt;
         $commission_agent = [];
         if ($commsn_agnt_setting == 'user') {
@@ -1322,8 +1371,13 @@ class SellController extends Controller
 
         //Added check because $users is of no use if enable_contact_assign if false
         $users = config('constants.enable_contact_assign') ? User::forDropdown($business_id, false, false, false, true) : [];
-        $transaction->tags = $transaction->tags->pluck('name', 'id')->toArray();
-        $transaction->tagsids = array_keys($transaction->tags);
+        if ($transaction->type === 'sales_order') {
+            $transaction->tags = $transaction->tags->pluck('name', 'id')->toArray();
+            $transaction->tagsids = array_keys($transaction->tags);
+        } else {
+            $transaction->tags = [];
+            $transaction->tagsids = [];
+        }
         return view('sell.edit')
             ->with(compact('business_details', 'taxes', 'sell_details', 'transaction', 'commission_agent', 'types', 'customer_groups', 'pos_settings', 'waiters', 'invoice_schemes', 'default_invoice_schemes', 'redeem_details', 'edit_discount', 'edit_price', 'shipping_statuses', 'warranties', 'statuses', 'sales_orders', 'payment_types', 'accounts', 'payment_lines', 'change_return', 'is_order_request_enabled', 'customer_due', 'users'));
     }
@@ -1613,6 +1667,7 @@ class SellController extends Controller
 
             $transaction = Transaction::where('business_id', $business_id)
                 ->where('type', 'sell')
+                ->with(['sell_lines.tags'])
                 ->findorfail($id);
             $duplicate_transaction_data = [];
             foreach ($transaction->toArray() as $key => $value) {
@@ -1632,10 +1687,23 @@ class SellController extends Controller
             //Create duplicate transaction
             $duplicate_transaction = Transaction::create($duplicate_transaction_data);
 
-            //Create duplicate transaction sell lines
-            $duplicate_sell_lines_data = [];
+            $original_sell_lines = $transaction->sell_lines->sortBy('id')->values();
+            $duplicated_line_map = [];
 
-            foreach ($transaction->sell_lines as $sell_line) {
+            foreach ($original_sell_lines->whereNull('parent_sell_line_id')->values() as $sell_line) {
+                $new_sell_line = [];
+                foreach ($sell_line->toArray() as $key => $value) {
+                    if (! in_array($key, ['id', 'transaction_id', 'created_at', 'updated_at', 'lot_no_line_id', 'parent_sell_line_id'])) {
+                        $new_sell_line[$key] = $value;
+                    }
+                }
+
+                $duplicated_line = $duplicate_transaction->sell_lines()->create($new_sell_line);
+                $duplicated_line->tags()->sync($sell_line->tags->pluck('id')->all());
+                $duplicated_line_map[$sell_line->id] = $duplicated_line->id;
+            }
+
+            foreach ($original_sell_lines->whereNotNull('parent_sell_line_id')->values() as $sell_line) {
                 $new_sell_line = [];
                 foreach ($sell_line->toArray() as $key => $value) {
                     if (! in_array($key, ['id', 'transaction_id', 'created_at', 'updated_at', 'lot_no_line_id'])) {
@@ -1643,15 +1711,17 @@ class SellController extends Controller
                     }
                 }
 
-                $duplicate_sell_lines_data[] = $new_sell_line;
-            }
+                $new_sell_line['parent_sell_line_id'] = $duplicated_line_map[$sell_line->parent_sell_line_id] ?? null;
 
-            $duplicate_transaction->sell_lines()->createMany($duplicate_sell_lines_data);
+                $duplicated_line = $duplicate_transaction->sell_lines()->create($new_sell_line);
+                $duplicated_line->tags()->sync($sell_line->tags->pluck('id')->all());
+                $duplicated_line_map[$sell_line->id] = $duplicated_line->id;
+            }
 
             DB::commit();
 
             $output = [
-                'success' => 0,
+                'success' => 1,
                 'msg' => trans('lang_v1.duplicate_sell_created_successfully'),
             ];
         } catch (\Exception $e) {

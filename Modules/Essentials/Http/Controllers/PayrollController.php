@@ -128,10 +128,18 @@ class PayrollController extends Controller
 
                         $html .= '<li><a href="#" data-href="' . action([\Modules\Essentials\Http\Controllers\PayrollController::class, 'show'], [$row->id]) . '" data-container=".view_modal" class="btn-modal"><i class="fa fa-eye" aria-hidden="true"></i> ' . __('messages.view') . '</a></li>';
 
-                        // $html .= '<li><a href="' . action([\App\Http\Controllers\TransactionPaymentController::class, 'show'], [$row->id]) . '" class="view_payment_modal"><i class="fa fa-money"></i> ' . __("purchase.view_payments") . '</a></li>';
+                        if (! empty($row->employee_id) && auth()->user()->can('user.view')) {
+                            $html .= '<li><a href="' . action([\App\Http\Controllers\ManageUserController::class, 'show'], [$row->employee_id]) . '?view=ledger"><i class="fas fa-scroll"></i> ' . __('lang_v1.ledger') . '</a></li>';
+                        }
 
-                        if (empty($row->payroll_group_id) && $row->payment_status != 'paid' && auth()->user()->can('essentials.create_payroll')) {
-                            $html .= '<li><a href="' . action([\App\Http\Controllers\TransactionPaymentController::class, 'addPayment'], [$row->id]) . '" class="add_payment_modal"><i class="fa fa-money"></i> ' . __('purchase.add_payment') . '</a></li>';
+                        $html .= '<li><a href="' . action([\App\Http\Controllers\TransactionPaymentController::class, 'show'], [$row->id]) . '" class="view_payment_modal"><i class="fa fa-money"></i> ' . __('purchase.view_payments') . '</a></li>';
+
+                        if ($row->payment_status != 'paid' && auth()->user()->can('essentials.create_payroll')) {
+                            if (empty($row->payroll_group_id)) {
+                                $html .= '<li><a href="' . action([\App\Http\Controllers\TransactionPaymentController::class, 'addPayment'], [$row->id]) . '" class="add_payment_modal"><i class="fa fa-money"></i> ' . __('purchase.add_payment') . '</a></li>';
+                            } elseif ($row->payroll_group_status == 'final') {
+                                $html .= '<li><a href="' . action([\Modules\Essentials\Http\Controllers\PayrollController::class, 'addPayment'], [$row->payroll_group_id]) . '" target="_blank"><i class="fa fa-money"></i> ' . __('purchase.add_payment') . ' (' . __('essentials::lang.payroll_group') . ')</a></li>';
+                            }
                         }
 
                         $html .= '</ul></div>';
@@ -143,6 +151,19 @@ class PayrollController extends Controller
                     $transaction_date = \Carbon::parse($row->transaction_date);
 
                     return $transaction_date->format('F Y');
+                })
+                ->editColumn('user', function ($row) {
+                    $can_open_ledger = auth()->user()->can('user.view')
+                        && (
+                            auth()->user()->can('essentials.view_all_payroll')
+                            || (int) $row->employee_id === (int) auth()->id()
+                        );
+
+                    if (! $can_open_ledger || empty($row->employee_id)) {
+                        return e($row->user);
+                    }
+
+                    return '<a href="' . action([\App\Http\Controllers\ManageUserController::class, 'show'], [$row->employee_id]) . '?view=ledger">' . e($row->user) . '</a>';
                 })
                 ->editColumn('final_total', '<span class="display_currency" data-currency_symbol="true">{{$final_total}}</span>')
                 ->filterColumn('user', function ($query, $keyword) {
@@ -156,7 +177,7 @@ class PayrollController extends Controller
                         '
                 )
                 ->removeColumn('id')
-                ->rawColumns(['action', 'final_total', 'payment_status'])
+                ->rawColumns(['action', 'user', 'final_total', 'payment_status'])
                 ->make(true);
         }
 

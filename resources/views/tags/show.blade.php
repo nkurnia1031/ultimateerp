@@ -85,15 +85,39 @@
                 },
                 dataType: 'html',
                 success: function(result) {
+                    if ($.fn.DataTable.isDataTable('#tag_ledger_table')) {
+                        $('#tag_ledger_table').DataTable().destroy();
+                    }
+
                     $('#tag_ledger_div').html(result);
                     __currency_convert_recursively($('#tag_ledger_div'));
 
                     $('#tag_ledger_table').DataTable({
-                        searching: false,
-                        ordering: false,
-                        paging: false,
+                        destroy: true,
+                        responsive: true,
+                        autoWidth: false,
+                        scrollX: true,
+                        pageLength: 25,
+                        lengthMenu: [[10, 25, 50, 100, -1], [10, 25, 50, 100, 'All']],
+                        order: [[0, 'desc']],
                         fixedHeader: false,
-                        dom: 't'
+                        columnDefs: [
+                            {
+                                targets: [7, 8, 9],
+                                className: 'text-right'
+                            },
+                            {
+                                targets: [0, 1, 2, 6],
+                                responsivePriority: 2
+                            },
+                            {
+                                targets: 3,
+                                responsivePriority: 100
+                            }
+                        ],
+                        drawCallback: function() {
+                            __currency_convert_recursively($('#tag_ledger_table'));
+                        }
                     });
                 },
             });

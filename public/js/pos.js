@@ -1,6 +1,58 @@
 var global_brand_id = null;
 var global_p_category_id = null;
 var global_is_clear_local_storage = false;
+
+function initSellLineTagSelect($context) {
+    var $container = $context && $context.length ? $context : $(document);
+
+    $container.find('select.sell-line-tag-select').each(function () {
+        var $select = $(this);
+
+        if ($select.hasClass('select2-hidden-accessible')) {
+            return;
+        }
+
+        $select.select2({
+            ajax: {
+                url: '/purchases/get_tags',
+                dataType: 'json',
+                delay: 250,
+                data: function (params) {
+                    return {
+                        q: params.term,
+                        page: params.page,
+                    };
+                },
+                processResults: function (data) {
+                    return {
+                        results: data,
+                    };
+                },
+            },
+            minimumInputLength: 1,
+            width: '100%',
+            escapeMarkup: function (m) {
+                return m;
+            },
+            templateResult: function (data) {
+                if (!data.id) {
+                    return data.text;
+                }
+
+                return data.name;
+            },
+            templateSelection: function (data) {
+                return data.name || data.text;
+            },
+            language: {
+                noResults: function () {
+                    return 'Tag tidak ditemukan, silakan klik tombol + untuk menambahkan';
+                },
+            },
+        });
+    });
+}
+
 $(document).ready(function () {
     customer_set = false;
     //Prevent enter key function except texarea
@@ -22,52 +74,7 @@ $(document).ready(function () {
     if ($('form#edit_pos_sell_form').length > 0 || $('form#add_pos_sell_form').length > 0) {
         initialize_printer();
     }
-
-    //get Tags
-    $('#tag_id').select2({
-        ajax: {
-            url: '/purchases/get_tags',
-            dataType: 'json',
-            delay: 250,
-            data: function (params) {
-                return {
-                    q: params.term, // search term
-                    page: params.page,
-                };
-            },
-            processResults: function (data) {
-                return {
-                    results: data,
-                };
-            },
-        },
-        minimumInputLength: 1,
-        escapeMarkup: function (m) {
-            return m;
-        },
-        templateResult: function (data) {
-            if (!data.id) {
-                return data.text;
-            }
-            var html = data.name;
-            return html;
-        },
-        templateSelection: function (data) {
-            return data.name || data.text; // tampil di input setelah dipilih
-        },
-        language: {
-            noResults: function () {
-                return 'Tag tidak ditemukan, silakan klik tombol + untuk menambahkan';
-            },
-        },
-    }).on('select2:select', function (e) {
-        var data = e.params.data;
-        // $('#pay_term_number').val(data.pay_term_number);
-        // $('#pay_term_type').val(data.pay_term_type);
-        // $('#advance_balance_text').text(__currency_trans_from_en(data.balance), true);
-        // $('#advance_balance').val(data.balance);
-        // set_supplier_address(data);
-    });
+    initSellLineTagSelect($(document));
     $('select#select_location_id').change(function () {
         reset_pos_form();
 
@@ -1837,6 +1844,7 @@ function pos_product_row(variation_id = null, purchase_line_id = null, weighing_
                         .find('tr')
                         .last();
                     pos_each_row(this_row);
+                    initSellLineTagSelect(this_row);
 
                     //For initial discount if present
                     var line_total = __read_number(this_row.find('input.pos_line_total'));
@@ -2955,6 +2963,7 @@ $("#sales_order_ids").on("select2:select", function (e) {
                         .find('tr')
                         .last();
                     pos_each_row(this_row);
+                    initSellLineTagSelect(this_row);
 
                     product_row = parseInt(product_row) + 1;
 

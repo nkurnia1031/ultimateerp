@@ -195,6 +195,21 @@
 			</select>
 		@endif
 	@endif
+	@if(empty($is_sales_order))
+		@php
+			$line_tag_options = !empty($product->tag_options) ? $product->tag_options : [];
+			$line_tag_ids = !empty($product->tag_ids) ? $product->tag_ids : [];
+		@endphp
+		<br>
+		<div class="form-group" style="margin-bottom: 8px;">
+			<label class="small text-muted">@lang('Tags')</label>
+			{!! Form::select("products[$row_count][tag_ids][]", $line_tag_options, $line_tag_ids, [
+				'class' => 'form-control input-sm sell-line-tag-select',
+				'multiple' => 'multiple',
+				'style' => 'width: 100%;',
+			]) !!}
+		</div>
+	@endif
 	@if(!empty($is_direct_sell))
   		<br>
   		<textarea class="form-control" name="products[{{$row_count}}][sell_line_note]" rows="2">{{$sell_line_note}}</textarea>

@@ -11,6 +11,16 @@
     ];
 @endphp
 
+<style>
+    .ledger-note-preview {
+        display: block;
+        max-width: 240px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+</style>
+
 <div class="col-md-12">
     <p class="text-center" style="text-align: center;">
         <strong>@lang('lang_v1.ledger') - {{$tag->name}}</strong>
@@ -83,11 +93,23 @@
             </thead>
             <tbody>
                 @foreach($ledger_details['ledger'] as $data)
+                    @php
+                        $full_note = $data->description;
+                        $note_preview = !empty($full_note) ? \Illuminate\Support\Str::limit(preg_replace('/\s+/', ' ', trim($full_note)), 90) : '';
+                    @endphp
                     <tr>
                         <td>{{@format_datetime($data->transaction_date)}}</td>
                         <td>{{isset($type_labels[$data->type]) ? $type_labels[$data->type] : $data->type}}</td>
                         <td>{{$data->reference_no}}</td>
-                        <td>{!! nl2br(e($data->description)) !!}</td>
+                        <td>
+                            @if(!empty($note_preview))
+                                <span class="ledger-note-preview" title="{{ $full_note }}">
+                                    {{ $note_preview }}
+                                </span>
+                            @else
+                                -
+                            @endif
+                        </td>
                         <td>{{$data->related_entity}}</td>
                         <td>{{$data->location_name}}</td>
                         <td>

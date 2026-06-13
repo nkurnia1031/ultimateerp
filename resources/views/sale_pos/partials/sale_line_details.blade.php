@@ -40,6 +40,12 @@
                 @if(!empty($sell_line->sell_line_note))
                 <br> {{$sell_line->sell_line_note}}
                 @endif
+                @if($sell->type == 'sell' && !empty($sell_line->tags) && $sell_line->tags->isNotEmpty())
+                    <br>
+                    @foreach($sell_line->tags as $tag)
+                        <span class="label bg-light-green">{{$tag->name}}</span>
+                    @endforeach
+                @endif
                 @if($is_warranty_enabled && !empty($sell_line->warranties->first()) )
                     <br><small>{{$sell_line->warranties->first()->display_name ?? ''}} - {{ @format_date($sell_line->warranties->first()->getEndDate($sell->transaction_date))}}</small>
                     @if(!empty($sell_line->warranties->first()->description))

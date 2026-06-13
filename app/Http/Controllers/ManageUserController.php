@@ -204,7 +204,7 @@ class ManageUserController extends Controller
     }
 
     /**
-     * Shows expense ledger for a user.
+     * Shows ledger for a user.
      *
      * @return \Illuminate\Http\Response
      */
@@ -214,14 +214,22 @@ class ManageUserController extends Controller
             abort(403, 'Unauthorized action.');
         }
 
-        if (! auth()->user()->can('all_expense.access') && ! auth()->user()->can('view_own_expense')) {
+        $current_user_id = auth()->id();
+        $can_view_all_expense_users = auth()->user()->can('all_expense.access');
+        $can_view_own_expense = auth()->user()->can('view_own_expense');
+        $can_view_expense_ledger = $can_view_all_expense_users || $can_view_own_expense;
+        $can_view_all_payroll_users = auth()->user()->can('essentials.view_all_payroll');
+        $can_view_own_payroll = auth()->user()->can('essentials.create_payroll');
+        $can_view_payroll_ledger = $can_view_all_payroll_users || $can_view_own_payroll;
+
+        if (! $can_view_expense_ledger && ! $can_view_payroll_ledger) {
             abort(403, 'Unauthorized action.');
         }
 
         $business_id = $request->session()->get('user.business_id');
         $user_id = $request->input('user_id');
 
-        if (! auth()->user()->can('all_expense.access') && (int) $user_id !== (int) auth()->user()->id) {
+        if (! $can_view_all_expense_users && ! $can_view_all_payroll_users && (int) $user_id !== (int) $current_user_id) {
             abort(403, 'Unauthorized action.');
         }
 
@@ -233,7 +241,19 @@ class ManageUserController extends Controller
         $end_date = $request->input('end_date');
         $location_id = $request->input('location_id');
 
-        $ledger_details = $this->getUserExpenseLedgerDetails($business_id, $user->id, $start_date, $end_date, $location_id);
+        $ledger_details = $this->getUserLedgerDetails(
+            $business_id,
+            $user->id,
+            $start_date,
+            $end_date,
+            $location_id,
+            [
+                'can_view_expense_ledger' => $can_view_expense_ledger,
+                'can_view_payroll_ledger' => $can_view_payroll_ledger,
+                'can_view_expense_details' => $can_view_all_expense_users || ((int) $user->id === (int) $current_user_id && $can_view_own_expense),
+                'can_view_payroll_details' => $can_view_all_payroll_users || ((int) $user->id === (int) $current_user_id && $can_view_payroll_ledger),
+            ]
+        );
 
         $location = null;
         if (! empty($location_id)) {
@@ -244,18 +264,28 @@ class ManageUserController extends Controller
     }
 
     /**
-     * Returns expense summary and rows for user ledger.
+     * Returns summary and rows for user ledger.
      *
      * @param  int  $business_id
      * @param  int  $user_id
      * @param  string|null  $start_date
      * @param  string|null  $end_date
      * @param  int|null  $location_id
+     * @param  array  $permissions
      * @return array
      */
-    private function getUserExpenseLedgerDetails($business_id, $user_id, $start_date = null, $end_date = null, $location_id = null)
+    private function getUserLedgerDetails($business_id, $user_id, $start_date = null, $end_date = null, $location_id = null, array $permissions = [])
     {
         $payment_subquery = DB::raw('(SELECT transaction_id, SUM(IF(is_return = 0, amount, amount * -1)) as amount_paid FROM transaction_payments GROUP BY transaction_id) AS TP');
+        $visible_transaction_types = [];
+
+        if (! empty($permissions['can_view_expense_ledger'])) {
+            $visible_transaction_types = ['expense', 'expense_refund'];
+        }
+
+        if (! empty($permissions['can_view_payroll_ledger'])) {
+            $visible_transaction_types[] = 'payroll';
+        }
 
         $query = Transaction::leftJoin('expense_categories AS ec', 'transactions.expense_category_id', '=', 'ec.id')
             ->leftJoin('expense_categories AS esc', 'transactions.expense_sub_category_id', '=', 'esc.id')
@@ -264,7 +294,7 @@ class ManageUserController extends Controller
             ->leftJoin('users AS usr', 'transactions.created_by', '=', 'usr.id')
             ->leftJoin($payment_subquery, 'transactions.id', '=', 'TP.transaction_id')
             ->where('transactions.business_id', $business_id)
-            ->whereIn('transactions.type', ['expense', 'expense_refund'])
+            ->whereIn('transactions.type', $visible_transaction_types)
             ->where('transactions.expense_for', $user_id);
 
         if (! empty($start_date) && ! empty($end_date)) {
@@ -283,7 +313,9 @@ class ManageUserController extends Controller
 
         $summary = (clone $query)
             ->select(
-                DB::raw("SUM(IF(transactions.type = 'expense_refund', -1 * transactions.final_total, transactions.final_total)) as total_expense"),
+                DB::raw("SUM(IF(transactions.type = 'expense_refund', -1 * transactions.final_total, transactions.final_total)) as total_amount"),
+                DB::raw("SUM(IF(transactions.type IN ('expense', 'expense_refund'), IF(transactions.type = 'expense_refund', -1 * transactions.final_total, transactions.final_total), 0)) as total_expense"),
+                DB::raw("SUM(IF(transactions.type = 'payroll', transactions.final_total, 0)) as total_payroll"),
                 DB::raw("SUM(IF(transactions.type = 'expense_refund', -1 * IFNULL(TP.amount_paid, 0), IFNULL(TP.amount_paid, 0))) as total_paid"),
                 DB::raw("SUM(IF(transactions.payment_status = 'paid', 1, 0)) as paid_count"),
                 DB::raw("SUM(IF(transactions.payment_status = 'partial', 1, 0)) as partial_count"),
@@ -310,37 +342,60 @@ class ManageUserController extends Controller
                 DB::raw("CONCAT(COALESCE(usr.surname, ''), ' ', COALESCE(usr.first_name, ''), ' ', COALESCE(usr.last_name, '')) as added_by"),
                 DB::raw("(SELECT GROUP_CONCAT(DISTINCT ec2.name SEPARATOR ', ') FROM expense_lines el LEFT JOIN expense_categories ec2 ON el.category_id = ec2.id WHERE el.transaction_id = transactions.id) AS line_categories"),
                 DB::raw("(SELECT GROUP_CONCAT(DISTINCT esc2.name SEPARATOR ', ') FROM expense_lines el LEFT JOIN expense_categories esc2 ON el.sub_category_id = esc2.id WHERE el.transaction_id = transactions.id) AS line_sub_categories"),
-                DB::raw("(SELECT GROUP_CONCAT(el.description SEPARATOR '\n') FROM expense_lines el WHERE el.transaction_id = transactions.id) AS descriptions")
+                DB::raw("(SELECT GROUP_CONCAT(el.description SEPARATOR '\n') FROM expense_lines el WHERE el.transaction_id = transactions.id) AS descriptions"),
+                DB::raw("DATE_FORMAT(transactions.transaction_date, '%M %Y') as payroll_period")
             )
             ->orderBy('transactions.transaction_date', 'asc')
             ->orderBy('transactions.id', 'asc')
             ->get()
-            ->map(function ($row) {
+            ->map(function ($row) use ($permissions) {
                 $total = $row->type == 'expense_refund' ? -1 * $row->final_total : $row->final_total;
                 $paid = $row->type == 'expense_refund' ? -1 * $row->amount_paid : $row->amount_paid;
 
                 $row->signed_total = $total;
                 $row->signed_paid = $paid;
                 $row->signed_due = $total - $paid;
-                $row->display_category = ! empty($row->line_categories) ? $row->line_categories : $row->category;
-                $row->display_sub_category = ! empty($row->line_sub_categories) ? $row->line_sub_categories : $row->sub_category;
+
+                if ($row->type == 'payroll') {
+                    $row->display_type = __('essentials::lang.payroll');
+                    $row->display_category = $row->payroll_period;
+                    $row->display_sub_category = '--';
+                    $row->display_contact = '--';
+                    $row->show_url = ! empty($permissions['can_view_payroll_details']) ? action([\Modules\Essentials\Http\Controllers\PayrollController::class, 'show'], [$row->id]) : null;
+                } else {
+                    $row->display_type = __('lang_v1.expense');
+                    $row->display_category = ! empty($row->line_categories) ? $row->line_categories : $row->category;
+                    $row->display_sub_category = ! empty($row->line_sub_categories) ? $row->line_sub_categories : $row->sub_category;
+                    $row->display_contact = ! empty($row->supplier_business_name) ? $row->supplier_business_name : $row->contact_name;
+                    $row->show_url = ! empty($permissions['can_view_expense_details']) ? action([\App\Http\Controllers\ExpenseController::class, 'show'], [$row->id]) : null;
+                }
+
+                $row->display_category = ! empty($row->display_category) ? $row->display_category : '--';
+                $row->display_sub_category = ! empty($row->display_sub_category) ? $row->display_sub_category : '--';
+                $row->display_contact = ! empty($row->display_contact) ? $row->display_contact : '--';
 
                 return $row;
             });
 
+        $total_amount = $summary->total_amount ?? 0;
         $total_expense = $summary->total_expense ?? 0;
+        $total_payroll = $summary->total_payroll ?? 0;
         $total_paid = $summary->total_paid ?? 0;
 
         return [
             'start_date' => $start_date,
             'end_date' => $end_date,
+            'total_amount' => $total_amount,
             'total_expense' => $total_expense,
+            'total_payroll' => $total_payroll,
             'total_paid' => $total_paid,
-            'total_due' => $total_expense - $total_paid,
+            'total_due' => $total_amount - $total_paid,
             'total_transactions' => $summary->total_transactions ?? 0,
             'paid_count' => $summary->paid_count ?? 0,
             'partial_count' => $summary->partial_count ?? 0,
             'due_count' => $summary->due_count ?? 0,
+            'show_expense_summary' => ! empty($permissions['can_view_expense_ledger']),
+            'show_payroll_summary' => ! empty($permissions['can_view_payroll_ledger']),
             'ledger' => $ledger,
         ];
     }

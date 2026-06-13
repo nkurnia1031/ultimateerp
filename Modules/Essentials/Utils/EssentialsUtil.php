@@ -321,9 +321,11 @@ class EssentialsUtil extends Util
                         'transaction_date',
                         'ref_no',
                         'transactions.payment_status',
+                        'transactions.expense_for as employee_id',
                         'dept.name as department',
                         'dsgn.name as designation',
                         'epgt.payroll_group_id',
+                        'epg.status as payroll_group_status',
                     ]);
 
         return $payrolls;

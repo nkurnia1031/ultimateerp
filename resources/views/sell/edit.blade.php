@@ -161,25 +161,27 @@
                                 {!! $transaction->contact->shipping_address ?? '' !!}
                             </div>
                         </small>
-                        <div class="form-group">
-                            {!! Form::label('tag_id', __('Tags') . ':') !!}
-                            <div class="input-group">
-                                <span class="input-group-addon">
-                                    <i class="fa fa-tag"></i>
-                                </span>
-                                {!! Form::select('tag[]', $transaction->tags, $transaction->tagsids, [
-                                    'class' => 'form-control',
-                                    'multiple' => 'true',
-                                    'id' => 'tag_id',
-                                ]) !!}
-                                <span class="input-group-btn">
-                                    <a target="_blank"
-                                        href="{{ action([\App\Http\Controllers\TagController::class, 'create']) }}"
-                                        class="btn btn-default bg-white btn-flat" data-name=""><i
-                                            class="fa fa-plus-circle text-primary fa-lg"></i></a>
-                                </span>
+                        @if ($transaction->type === 'sales_order')
+                            <div class="form-group">
+                                {!! Form::label('tag_id', __('Tags') . ':') !!}
+                                <div class="input-group">
+                                    <span class="input-group-addon">
+                                        <i class="fa fa-tag"></i>
+                                    </span>
+                                    {!! Form::select('tag[]', $transaction->tags, $transaction->tagsids, [
+                                        'class' => 'form-control',
+                                        'multiple' => 'true',
+                                        'id' => 'tag_id',
+                                    ]) !!}
+                                    <span class="input-group-btn">
+                                        <a target="_blank"
+                                            href="{{ action([\App\Http\Controllers\TagController::class, 'create']) }}"
+                                            class="btn btn-default bg-white btn-flat" data-name=""><i
+                                                class="fa fa-plus-circle text-primary fa-lg"></i></a>
+                                    </span>
+                                </div>
                             </div>
-                        </div>
+                        @endif
                     </div>
 
                     <div class="col-md-3">

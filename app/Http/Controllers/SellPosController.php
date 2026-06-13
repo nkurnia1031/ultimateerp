@@ -50,6 +50,7 @@ use App\Utils\CashRegisterUtil;
 use App\Utils\ContactUtil;
 use App\Utils\ModuleUtil;
 use App\Utils\NotificationUtil;
+use App\Utils\TagSellLineUtil;
 use App\Utils\TagTransactionUtil;
 
 use App\Utils\ProductUtil;
@@ -85,6 +86,7 @@ class SellPosController extends Controller
 
     protected $notificationUtil;
     protected $TagTransactionUtil;
+    protected $tagSellLineUtil;
     protected $dummyPaymentLine;
 
     /**
@@ -99,6 +101,7 @@ class SellPosController extends Controller
         BusinessUtil $businessUtil,
         TransactionUtil $transactionUtil,
         TagTransactionUtil $TagTransactionUtil,
+        TagSellLineUtil $tagSellLineUtil,
         CashRegisterUtil $cashRegisterUtil,
         ModuleUtil $moduleUtil,
         NotificationUtil $notificationUtil
@@ -108,6 +111,7 @@ class SellPosController extends Controller
         $this->businessUtil = $businessUtil;
         $this->transactionUtil = $transactionUtil;
         $this->TagTransactionUtil = $TagTransactionUtil;
+        $this->tagSellLineUtil = $tagSellLineUtil;
         $this->cashRegisterUtil = $cashRegisterUtil;
         $this->moduleUtil = $moduleUtil;
         $this->notificationUtil = $notificationUtil;
@@ -643,14 +647,16 @@ class SellPosController extends Controller
 
                 $this->transactionUtil->activityLog($transaction, 'added');
 
-
+                if ($transaction->type === 'sell') {
+                    $this->tagSellLineUtil->syncTransactionSellLineTags($transaction, $input['products']);
+                    $this->TagTransactionUtil->updateTagTransaction($transaction->id, []);
+                } else {
+                    $this->TagTransactionUtil->updateTagTransaction($transaction->id, $request->input('tag', []));
+                }
 
                 DB::commit();
 
                 SellCreatedOrModified::dispatch($transaction);
-                //Update Tags
-                $tag_ids = $request->get('tag');
-                $this->TagTransactionUtil->updateTagTransaction($transaction->id, $tag_ids);
                 if ($request->input('is_save_and_print') == 1) {
                     $url = $this->transactionUtil->getInvoiceUrl($transaction->id, $business_id);
 
@@ -887,7 +893,7 @@ class SellPosController extends Controller
 
         $transaction = Transaction::where('business_id', $business_id)
             ->where('type', 'sell')
-            ->with(['price_group', 'types_of_service'])
+            ->with(['price_group', 'types_of_service', 'tags'])
             ->findorfail($id);
 
         // If ZATCA module is installed and this transaction is successfully synced, prevent edit
@@ -930,7 +936,7 @@ class SellPosController extends Controller
             ->leftjoin('units', 'units.id', '=', 'p.unit_id')
             ->leftjoin('units as u', 'p.secondary_unit_id', '=', 'u.id')
             ->where('transaction_sell_lines.transaction_id', $id)
-            ->with(['warranties'])
+            ->with(['warranties', 'tags'])
             ->select(
                 DB::raw("IF(pv.is_dummy = 0, CONCAT(p.name, ' (', pv.name, ':',variations.name, ')'), p.name) AS product_name"),
                 'p.id as product_id',
@@ -1063,6 +1069,20 @@ class SellPosController extends Controller
             }
         }
 
+        $this->tagSellLineUtil->hydrateEditableSellLineTags($sell_details);
+
+        if ($transaction->tags->isNotEmpty()) {
+            $legacy_tag_ids = $transaction->tags->pluck('id')->all();
+            $legacy_tag_options = $transaction->tags->pluck('name', 'id')->toArray();
+
+            foreach ($sell_details as $sell_line) {
+                if (empty($sell_line->tag_ids)) {
+                    $sell_line->tag_ids = $legacy_tag_ids;
+                    $sell_line->tag_options = $legacy_tag_options;
+                }
+            }
+        }
+
         $featured_products = $business_location->getFeaturedProducts();
 
         $payment_lines = $this->transactionUtil->getPaymentDetails($id);
@@ -1154,9 +1174,6 @@ class SellPosController extends Controller
         //Added check because $users is of no use if enable_contact_assign if false
         $users = config('constants.enable_contact_assign') ? User::forDropdown($business_id, false, false, false, true) : [];
         $only_payment = request()->segment(2) == 'payment';
-        $transaction->tags = $transaction->tags->pluck('name', 'id')->toArray();
-        $transaction->tagsids = array_keys($transaction->tags);
-
 
         return view('sale_pos.edit')
             ->with(compact(
@@ -1457,6 +1474,13 @@ class SellPosController extends Controller
 
                 //Update Sell lines
                 $deleted_lines = $this->transactionUtil->createOrUpdateSellLines($transaction, $input['products'], $input['location_id'], true, $status_before);
+
+                if ($transaction->type === 'sell') {
+                    $this->tagSellLineUtil->syncTransactionSellLineTags($transaction, $input['products']);
+                    $this->TagTransactionUtil->updateTagTransaction($transaction->id, []);
+                } else {
+                    $this->TagTransactionUtil->updateTagTransaction($transaction->id, $request->input('tag', []));
+                }
 
                 //Update update lines
                 $is_credit_sale = isset($input['is_credit_sale']) && $input['is_credit_sale'] == 1 ? true : false;

@@ -34,6 +34,11 @@ class TransactionSellLine extends Model
             ->where('children_type', 'modifier');
     }
 
+    public function tags()
+    {
+        return $this->belongsToMany(\App\Tag::class, 'transaction_sell_line_tags', 'transaction_sell_line_id', 'tag_id');
+    }
+
     public function sell_line_purchase_lines()
     {
         return $this->hasMany(\App\TransactionSellLinesPurchaseLines::class, 'sell_line_id');

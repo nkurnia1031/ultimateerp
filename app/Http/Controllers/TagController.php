@@ -221,15 +221,35 @@ class TagController extends Controller
      */
     private function getTagLedgerDetails($business_id, $tag_id, $start_date = null, $end_date = null, $location_id = null)
     {
+        $sell_tag_match_query = DB::table('transaction_sell_lines as tsl')
+            ->join('transaction_sell_line_tags as tslt', 'tslt.transaction_sell_line_id', '=', 'tsl.id')
+            ->where('tslt.tag_id', $tag_id)
+            ->select(
+                'tsl.transaction_id',
+                DB::raw('SUM((tsl.quantity - COALESCE(tsl.quantity_returned, 0)) * tsl.unit_price_inc_tax) as matched_sell_total')
+            )
+            ->groupBy('tsl.transaction_id');
+
         $query = Transaction::leftJoin('contacts AS c', 'transactions.contact_id', '=', 'c.id')
             ->leftJoin('business_locations AS bl', 'transactions.location_id', '=', 'bl.id')
             ->leftJoin('users AS u', 'transactions.created_by', '=', 'u.id')
+            ->leftJoinSub($sell_tag_match_query, 'sell_tag_match', function ($join) {
+                $join->on('sell_tag_match.transaction_id', '=', 'transactions.id');
+            })
             ->where('transactions.business_id', $business_id)
-            ->whereExists(function ($q) use ($tag_id) {
-                $q->select(DB::raw(1))
-                    ->from('transaction_tags AS tt')
-                    ->whereRaw('tt.transaction_id = transactions.id')
-                    ->where('tt.tag_id', $tag_id);
+            ->where(function ($query) use ($tag_id) {
+                $query->where(function ($sell_query) {
+                    $sell_query->where('transactions.type', 'sell')
+                        ->whereNotNull('sell_tag_match.transaction_id');
+                })->orWhere(function ($non_sell_query) use ($tag_id) {
+                    $non_sell_query->where('transactions.type', '!=', 'sell')
+                        ->whereExists(function ($q) use ($tag_id) {
+                            $q->select(DB::raw(1))
+                                ->from('transaction_tags AS tt')
+                                ->whereRaw('tt.transaction_id = transactions.id')
+                                ->where('tt.tag_id', $tag_id);
+                        });
+                });
             })
             ->whereIn('transactions.type', ['sell', 'sell_return', 'purchase', 'purchase_return', 'expense', 'expense_refund'])
             ->where(function ($q) {
@@ -262,6 +282,7 @@ class TagController extends Controller
                 'transactions.payment_status',
                 'transactions.additional_notes',
                 'transactions.staff_note',
+                DB::raw('COALESCE(sell_tag_match.matched_sell_total, transactions.final_total) as matched_total'),
                 'bl.name as location_name',
                 'c.name as contact_name',
                 'c.supplier_business_name',
@@ -274,18 +295,20 @@ class TagController extends Controller
             ->map(function ($row) {
                 $amount_in = 0;
                 $amount_out = 0;
+                $matched_total = $row->type === 'sell' ? (float) $row->matched_total : (float) $row->final_total;
 
                 if (in_array($row->type, ['sell', 'purchase_return', 'expense_refund'])) {
-                    $amount_in = $row->final_total;
+                    $amount_in = $matched_total;
                 }
 
                 if (in_array($row->type, ['sell_return', 'purchase', 'expense'])) {
-                    $amount_out = $row->final_total;
+                    $amount_out = $matched_total;
                 }
 
                 $row->amount_in = $amount_in;
                 $row->amount_out = $amount_out;
                 $row->net_amount = $amount_in - $amount_out;
+                $row->ledger_total = $matched_total;
                 $row->reference_no = ! empty($row->invoice_no) ? $row->invoice_no : $row->ref_no;
                 $row->description = ! empty($row->expense_descriptions) ? $row->expense_descriptions : (! empty($row->additional_notes) ? $row->additional_notes : $row->staff_note);
                 $row->related_entity = ! empty($row->supplier_business_name) ? $row->supplier_business_name : $row->contact_name;
@@ -301,9 +324,9 @@ class TagController extends Controller
             return $row;
         });
 
-        $total_sales = $ledger->where('type', 'sell')->sum('final_total') - $ledger->where('type', 'sell_return')->sum('final_total');
-        $total_purchases = $ledger->where('type', 'purchase')->sum('final_total') - $ledger->where('type', 'purchase_return')->sum('final_total');
-        $total_expenses = $ledger->where('type', 'expense')->sum('final_total') - $ledger->where('type', 'expense_refund')->sum('final_total');
+        $total_sales = $ledger->where('type', 'sell')->sum('ledger_total') - $ledger->where('type', 'sell_return')->sum('ledger_total');
+        $total_purchases = $ledger->where('type', 'purchase')->sum('ledger_total') - $ledger->where('type', 'purchase_return')->sum('ledger_total');
+        $total_expenses = $ledger->where('type', 'expense')->sum('ledger_total') - $ledger->where('type', 'expense_refund')->sum('ledger_total');
 
         return [
             'start_date' => $start_date,
@@ -502,6 +525,32 @@ class TagController extends Controller
             DB::table('transaction_tags')
                 ->whereIn('tag_id', $valid_merge_tag_ids)
                 ->delete();
+
+            if (\Schema::hasTable('transaction_sell_line_tags')) {
+                $sell_line_ids = DB::table('transaction_sell_line_tags')
+                    ->whereIn('tag_id', $valid_merge_tag_ids)
+                    ->pluck('transaction_sell_line_id')
+                    ->unique()
+                    ->values();
+
+                foreach ($sell_line_ids as $sell_line_id) {
+                    $target_exists = DB::table('transaction_sell_line_tags')
+                        ->where('transaction_sell_line_id', $sell_line_id)
+                        ->where('tag_id', $target_tag->id)
+                        ->exists();
+
+                    if (! $target_exists) {
+                        DB::table('transaction_sell_line_tags')->insert([
+                            'transaction_sell_line_id' => $sell_line_id,
+                            'tag_id' => $target_tag->id,
+                        ]);
+                    }
+                }
+
+                DB::table('transaction_sell_line_tags')
+                    ->whereIn('tag_id', $valid_merge_tag_ids)
+                    ->delete();
+            }
 
             foreach ([
                 'asset_tags' => 'asset_id',

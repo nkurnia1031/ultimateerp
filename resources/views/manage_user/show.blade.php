@@ -197,15 +197,45 @@
                 },
                 dataType: 'html',
                 success: function(result) {
+                    if ($.fn.DataTable.isDataTable('#user_ledger_table')) {
+                        $('#user_ledger_table').DataTable().destroy();
+                    }
+
                     $('#user_ledger_div').html(result);
                     __currency_convert_recursively($('#user_ledger_div'));
 
                     $('#user_ledger_table').DataTable({
-                        searching: false,
-                        ordering: false,
-                        paging: false,
+                        destroy: true,
+                        responsive: true,
+                        autoWidth: false,
+                        scrollX: true,
+                        pageLength: 25,
+                        lengthMenu: [[10, 25, 50, 100, -1], [10, 25, 50, 100, 'All']],
+                        order: [[0, 'desc']],
                         fixedHeader: false,
-                        dom: 't'
+                        columnDefs: [
+                            {
+                                targets: [8, 9, 10],
+                                className: 'text-right'
+                            },
+                            {
+                                targets: 13,
+                                orderable: false,
+                                searchable: false,
+                                responsivePriority: 1
+                            },
+                            {
+                                targets: [0, 1, 7],
+                                responsivePriority: 2
+                            },
+                            {
+                                targets: 12,
+                                responsivePriority: 100
+                            }
+                        ],
+                        drawCallback: function() {
+                            __currency_convert_recursively($('#user_ledger_table'));
+                        }
                     });
                 },
             });

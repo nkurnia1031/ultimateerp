@@ -5230,7 +5230,29 @@ class TransactionUtil extends Util
      */
     public function getListSells($business_id, $sale_type = 'sell')
     {
-        $sells = Transaction::with('tags')->leftJoin('contacts', 'transactions.contact_id', '=', 'contacts.id')
+        $sells = Transaction::query();
+
+        if ($sale_type !== 'sell') {
+            $sells->with('tags');
+        }
+
+        if ($sale_type === 'sell') {
+            $sell_line_tag_query = DB::table('transaction_sell_lines as sell_tag_tsl')
+                ->join('transaction_sell_line_tags as tslt', 'tslt.transaction_sell_line_id', '=', 'sell_tag_tsl.id')
+                ->join('tags as sell_line_tags', 'sell_line_tags.id', '=', 'tslt.tag_id')
+                ->select(
+                    'sell_tag_tsl.transaction_id',
+                    DB::raw("GROUP_CONCAT(DISTINCT sell_line_tags.name ORDER BY sell_line_tags.name ASC SEPARATOR '||') as sell_line_tag_names"),
+                    DB::raw("GROUP_CONCAT(DISTINCT CONCAT(sell_line_tags.id, '::', REPLACE(REPLACE(sell_line_tags.name, '::', ' '), '||', ' ')) ORDER BY sell_line_tags.name ASC SEPARATOR '||') as sell_line_tag_items")
+                )
+                ->groupBy('sell_tag_tsl.transaction_id');
+
+            $sells->leftJoinSub($sell_line_tag_query, 'sell_line_tag_aggregate', function ($join) {
+                $join->on('transactions.id', '=', 'sell_line_tag_aggregate.transaction_id');
+            });
+        }
+
+        $sells->leftJoin('contacts', 'transactions.contact_id', '=', 'contacts.id')
             // ->leftJoin('transaction_payments as tp', 'transactions.id', '=', 'tp.transaction_id')
             ->leftJoin('transaction_sell_lines as tsl', function ($join) {
                 $join->on('transactions.id', '=', 'tsl.transaction_id')
@@ -5317,6 +5339,11 @@ class TransactionUtil extends Util
                 'transactions.is_export',
                 DB::raw("CONCAT(COALESCE(dp.surname, ''),' ',COALESCE(dp.first_name, ''),' ',COALESCE(dp.last_name,'')) as delivery_person")
             );
+
+        if ($sale_type === 'sell') {
+            $sells->addSelect(DB::raw("COALESCE(sell_line_tag_aggregate.sell_line_tag_names, '') as sell_line_tag_names"));
+            $sells->addSelect(DB::raw("COALESCE(sell_line_tag_aggregate.sell_line_tag_items, '') as sell_line_tag_items"));
+        }
 
         if ($sale_type == 'sell') {
             $sells->where('transactions.status', 'final');

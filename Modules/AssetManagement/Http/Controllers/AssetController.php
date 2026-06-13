@@ -850,16 +850,40 @@ class AssetController extends Controller
             ];
         }
 
+        $safe_tag_ids = array_map('intval', $tag_ids);
+
+        $sell_tag_match_query = DB::table('transaction_sell_lines as tsl')
+            ->join('transaction_sell_line_tags as tslt', 'tslt.transaction_sell_line_id', '=', 'tsl.id')
+            ->join('tags as sell_line_tags', 'sell_line_tags.id', '=', 'tslt.tag_id')
+            ->whereIn('tslt.tag_id', $safe_tag_ids)
+            ->select(
+                'tsl.transaction_id',
+                DB::raw('SUM((tsl.quantity - COALESCE(tsl.quantity_returned, 0)) * tsl.unit_price_inc_tax) as matched_sell_total'),
+                DB::raw("GROUP_CONCAT(DISTINCT sell_line_tags.name ORDER BY sell_line_tags.name ASC SEPARATOR ', ') as matched_tag_names")
+            )
+            ->groupBy('tsl.transaction_id');
+
         $query = DB::table('transactions')
             ->leftJoin('contacts AS c', 'transactions.contact_id', '=', 'c.id')
             ->leftJoin('business_locations AS bl', 'transactions.location_id', '=', 'bl.id')
             ->leftJoin('users AS u', 'transactions.created_by', '=', 'u.id')
+            ->leftJoinSub($sell_tag_match_query, 'sell_tag_match', function ($join) {
+                $join->on('sell_tag_match.transaction_id', '=', 'transactions.id');
+            })
             ->where('transactions.business_id', $business_id)
-            ->whereExists(function ($q) use ($tag_ids) {
-                $q->select(DB::raw(1))
-                    ->from('transaction_tags AS tt')
-                    ->whereRaw('tt.transaction_id = transactions.id')
-                    ->whereIn('tt.tag_id', $tag_ids);
+            ->where(function ($query) use ($safe_tag_ids) {
+                $query->where(function ($sell_query) {
+                    $sell_query->where('transactions.type', 'sell')
+                        ->whereNotNull('sell_tag_match.transaction_id');
+                })->orWhere(function ($non_sell_query) use ($safe_tag_ids) {
+                    $non_sell_query->where('transactions.type', '!=', 'sell')
+                        ->whereExists(function ($q) use ($safe_tag_ids) {
+                            $q->select(DB::raw(1))
+                                ->from('transaction_tags AS tt')
+                                ->whereRaw('tt.transaction_id = transactions.id')
+                                ->whereIn('tt.tag_id', $safe_tag_ids);
+                        });
+                });
             })
             ->whereIn('transactions.type', ['sell', 'sell_return', 'purchase', 'purchase_return', 'expense', 'expense_refund'])
             ->where(function ($q) {
@@ -883,11 +907,21 @@ class AssetController extends Controller
                 'transactions.payment_status',
                 'transactions.additional_notes',
                 'transactions.staff_note',
+                DB::raw('COALESCE(sell_tag_match.matched_sell_total, transactions.final_total) as matched_total'),
                 'bl.name as location_name',
                 'c.name as contact_name',
                 'c.supplier_business_name',
                 DB::raw("CONCAT(COALESCE(u.surname, ''), ' ', COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, '')) as added_by"),
-                DB::raw("(SELECT GROUP_CONCAT(tags.name SEPARATOR ', ') FROM transaction_tags tt2 JOIN tags ON tags.id = tt2.tag_id WHERE tt2.transaction_id = transactions.id AND tt2.tag_id IN (" . implode(',', array_map('intval', $tag_ids)) . ")) AS tag_names"),
+                DB::raw("CASE WHEN transactions.type = 'sell'
+                    THEN COALESCE(sell_tag_match.matched_tag_names, '')
+                    ELSE (
+                        SELECT GROUP_CONCAT(tags.name SEPARATOR ', ')
+                        FROM transaction_tags tt2
+                        JOIN tags ON tags.id = tt2.tag_id
+                        WHERE tt2.transaction_id = transactions.id
+                            AND tt2.tag_id IN (" . implode(',', $safe_tag_ids) . ")
+                    )
+                END AS tag_names"),
                 DB::raw("(SELECT GROUP_CONCAT(el.description SEPARATOR '\n') FROM expense_lines el WHERE el.transaction_id = transactions.id) AS expense_descriptions")
             )
             ->orderBy('transactions.transaction_date', 'asc')
@@ -896,18 +930,20 @@ class AssetController extends Controller
             ->map(function ($row) {
                 $amount_in = 0;
                 $amount_out = 0;
+                $matched_total = $row->type === 'sell' ? (float) $row->matched_total : (float) $row->final_total;
 
                 if (in_array($row->type, ['sell', 'purchase_return', 'expense_refund'])) {
-                    $amount_in = $row->final_total;
+                    $amount_in = $matched_total;
                 }
 
                 if (in_array($row->type, ['sell_return', 'purchase', 'expense'])) {
-                    $amount_out = $row->final_total;
+                    $amount_out = $matched_total;
                 }
 
                 $row->amount_in = $amount_in;
                 $row->amount_out = $amount_out;
                 $row->net_amount = $amount_in - $amount_out;
+                $row->ledger_total = $matched_total;
                 $row->reference_no = ! empty($row->invoice_no) ? $row->invoice_no : $row->ref_no;
                 $row->description = ! empty($row->expense_descriptions) ? $row->expense_descriptions : (! empty($row->additional_notes) ? $row->additional_notes : $row->staff_note);
                 $row->related_entity = ! empty($row->supplier_business_name) ? $row->supplier_business_name : $row->contact_name;
@@ -923,9 +959,9 @@ class AssetController extends Controller
             return $row;
         });
 
-        $total_sales = $ledger->where('type', 'sell')->sum('final_total') - $ledger->where('type', 'sell_return')->sum('final_total');
-        $total_purchases = $ledger->where('type', 'purchase')->sum('final_total') - $ledger->where('type', 'purchase_return')->sum('final_total');
-        $total_expenses = $ledger->where('type', 'expense')->sum('final_total') - $ledger->where('type', 'expense_refund')->sum('final_total');
+        $total_sales = $ledger->where('type', 'sell')->sum('ledger_total') - $ledger->where('type', 'sell_return')->sum('ledger_total');
+        $total_purchases = $ledger->where('type', 'purchase')->sum('ledger_total') - $ledger->where('type', 'purchase_return')->sum('ledger_total');
+        $total_expenses = $ledger->where('type', 'expense')->sum('ledger_total') - $ledger->where('type', 'expense_refund')->sum('ledger_total');
 
         return [
             'total_sales' => $total_sales,
