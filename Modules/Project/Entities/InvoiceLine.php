@@ -27,4 +27,12 @@ class InvoiceLine extends Model
     {
         return $this->belongsTo(\App\TaxRate::class, 'tax_rate_id');
     }
+
+    /**
+     * Get the Project task represented by this invoice line, when available.
+     */
+    public function projectTask()
+    {
+        return $this->belongsTo(ProjectTask::class, 'project_task_id');
+    }
 }

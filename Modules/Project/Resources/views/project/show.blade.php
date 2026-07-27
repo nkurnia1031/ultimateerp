@@ -2,6 +2,9 @@
 @section('title', __('project::lang.view_project'))
 @section('content')
 <section class="content-header">
+    <a href="{{ action([\Modules\Project\Http\Controllers\ProjectImportController::class, 'export'], [$project->id]) }}" class="btn btn-success pull-right">
+        <i class="fas fa-file-excel"></i> @lang('project::lang.export_project_excel')
+    </a>
     <h1>
         <i class="fas fa-check-circle"></i>
         {{ucFirst($project->name)}}

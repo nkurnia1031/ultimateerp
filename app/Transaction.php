@@ -51,6 +51,11 @@ class Transaction extends Model
         return $this->hasMany(\App\TransactionSellLine::class);
     }
 
+    public function project_invoice_lines()
+    {
+        return $this->hasMany(\Modules\Project\Entities\InvoiceLine::class, 'transaction_id');
+    }
+
     public function contact()
     {
         return $this->belongsTo(\App\Contact::class, 'contact_id');

@@ -422,7 +422,7 @@ class ProjectController extends Controller
 
         //Get time log details.
         $timelog = ProjectTimeLog::where('project_id', $id)
-            ->select(DB::raw('SUM(TIMESTAMPDIFF(SECOND, start_datetime, end_datetime)) as total_seconds'))
+            ->select(DB::raw('SUM(TIMESTAMPDIFF(SECOND, start_datetime, end_datetime) + COALESCE(TIMESTAMPDIFF(SECOND, second_start_datetime, second_end_datetime), 0)) as total_seconds'))
            ->first();
 
         //Invoice paid.
@@ -656,7 +656,7 @@ class ProjectController extends Controller
             ->groupBy('t.pjt_project_id');
 
         $project_seconds = DB::table('pjt_project_time_logs')
-            ->select('project_id', DB::raw('SUM(TIMESTAMPDIFF(SECOND, start_datetime, end_datetime)) as project_seconds'))
+            ->select('project_id', DB::raw('SUM(TIMESTAMPDIFF(SECOND, start_datetime, end_datetime) + COALESCE(TIMESTAMPDIFF(SECOND, second_start_datetime, second_end_datetime), 0)) as project_seconds'))
             ->groupBy('project_id');
 
         $query = DB::table('pjt_project_time_logs as ptl')
@@ -680,6 +680,9 @@ class ProjectController extends Controller
                 'ptl.project_task_id',
                 'ptl.start_datetime',
                 'ptl.end_datetime',
+                'ptl.second_start_datetime',
+                'ptl.second_end_datetime',
+                'ptl.shift',
                 'ptl.note',
                 'p.name as project_name',
                 'p.status as project_status',
@@ -692,7 +695,7 @@ class ProjectController extends Controller
                 DB::raw('COALESCE(inv.invoice_nos, "") as invoice_nos'),
                 DB::raw('(SELECT GROUP_CONCAT(tags.name SEPARATOR ", ") FROM project_time_log_tags ptl_tag JOIN tags ON tags.id = ptl_tag.tag_id WHERE ptl_tag.project_time_log_id = ptl.id) AS time_log_tag_names'),
                 DB::raw('(SELECT GROUP_CONCAT(tags.name SEPARATOR ", ") FROM project_task_tags pt_tag JOIN tags ON tags.id = pt_tag.tag_id WHERE pt_tag.project_task_id = pt.id) AS task_tag_names'),
-                DB::raw('TIMESTAMPDIFF(SECOND, ptl.start_datetime, ptl.end_datetime) as seconds'),
+                DB::raw('(TIMESTAMPDIFF(SECOND, ptl.start_datetime, ptl.end_datetime) + COALESCE(TIMESTAMPDIFF(SECOND, ptl.second_start_datetime, ptl.second_end_datetime), 0)) as seconds'),
                 DB::raw('COALESCE(ps.project_seconds, 0) as project_seconds')
             );
 

@@ -98,8 +98,8 @@
                                     @endif
                                 </td>
                                 <td>{{$row->user_name}}</td>
-                                <td>{{@format_datetime($row->start_datetime)}}</td>
-                                <td>{{@format_datetime($row->end_datetime)}}</td>
+                                <td>{{@format_datetime($row->start_datetime)}}@if($row->second_start_datetime)<br>{{@format_datetime($row->second_start_datetime)}}@endif</td>
+                                <td>{{@format_datetime($row->end_datetime)}}@if($row->second_end_datetime)<br>{{@format_datetime($row->second_end_datetime)}}@endif</td>
                                 <td>{{$row->work_hour}}</td>
                                 <td>{{$row->tag_names}}</td>
                                 <td>{{$row->customer_name}}</td>

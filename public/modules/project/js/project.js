@@ -955,18 +955,19 @@ function initializeTimeLogDatatable() {
             },
             columnDefs: [
                 {
-                    targets: [0, 1, 2, 4, 5, 6, 7],
+                    targets: [0, 1, 2, 3, 4, 5, 6, 7, 8],
                     orderable: false,
                     searchable: false,
                 },
             ],
-            aaSorting: [[3, 'desc']],
+            aaSorting: [],
             columns: [
                 { data: 'action', name: 'action' },
                 { data: 'task'},
                 { data: 'tags', name: 'tags', searchable: false },
-                { data: 'start_datetime', name: 'start_datetime' },
-                { data: 'end_datetime', name: 'end_datetime' },
+                { data: 'shift', name: 'shift' },
+                { data: 'work_period_1', name: 'start_datetime' },
+                { data: 'work_period_2', name: 'second_start_datetime' },
                 { data: 'work_hour'},
                 { data: 'user'},
                 { data: 'note', name: 'note'},

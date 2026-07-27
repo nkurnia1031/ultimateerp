@@ -241,12 +241,16 @@
             <br>
             <div class="row">
                 <div class="col-sm-12 col-xs-12">
-                    <h4>{{ __('sale.products') }}:</h4>
+                    <h4>{{ $sell->sub_type === 'project_invoice' ? __('project::lang.tasks') : __('sale.products') }}:</h4>
                 </div>
 
                 <div class="col-sm-12 col-xs-12">
                     <div class="table-responsive">
-                        @include('sale_pos.partials.sale_line_details')
+                        @if($sell->sub_type === 'project_invoice')
+                            @include('project::invoice.partials.sell_line_details')
+                        @else
+                            @include('sale_pos.partials.sale_line_details')
+                        @endif
                     </div>
                 </div>
             </div>

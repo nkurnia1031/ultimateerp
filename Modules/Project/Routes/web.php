@@ -6,6 +6,10 @@
 Route::middleware('web', 'authh', 'SetSessionData', 'auth', 'language', 'timezone', 'AdminSidebarMenu')->prefix('project')->group(function () {
     Route::put('project/{id}/post-status', [Modules\Project\Http\Controllers\ProjectController::class, 'postProjectStatus']);
     Route::put('project-settings', [Modules\Project\Http\Controllers\ProjectController::class, 'postSettings']);
+    Route::get('project-import', [Modules\Project\Http\Controllers\ProjectImportController::class, 'index']);
+    Route::post('project-import', [Modules\Project\Http\Controllers\ProjectImportController::class, 'store']);
+    Route::get('project-import/template', [Modules\Project\Http\Controllers\ProjectImportController::class, 'downloadTemplate']);
+    Route::get('project/{id}/export', [Modules\Project\Http\Controllers\ProjectImportController::class, 'export']);
     Route::get('ledger', [Modules\Project\Http\Controllers\ProjectController::class, 'ledger']);
     Route::resource('project', 'Modules\Project\Http\Controllers\ProjectController');
     Route::resource('project-task', 'Modules\Project\Http\Controllers\TaskController');

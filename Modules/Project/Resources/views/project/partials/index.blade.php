@@ -22,6 +22,12 @@
 								    		@lang('messages.view')
 								    	</a>
 								    </li>
+									<li>
+										<a href="{{ action([\Modules\Project\Http\Controllers\ProjectImportController::class, 'export'], [$project->id]) }}">
+											<i class="fas fa-file-excel"></i>
+											@lang('project::lang.export_project_excel')
+										</a>
+									</li>
 								    @can('project.edit_project')
 									    <li>
 									    	<a data-href="{{action([\Modules\Project\Http\Controllers\ProjectController::class, 'edit'], [$project->id])}}" class="cursor-pointer edit_a_project">

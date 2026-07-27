@@ -117,14 +117,6 @@ class SellController extends Controller
 
             $sells = $this->transactionUtil->getListSells($business_id, $sale_type);
 
-            // only display sell invoice we add it because project invoive show in sell list
-            if ($sale_type == 'sell') {
-                $sells->where(function ($query) {
-                    $query->where('transactions.sub_type', '!=', 'project_invoice')
-                        ->orWhereNull('transactions.sub_type');
-                });
-            }
-
             $permitted_locations = auth()->user()->permitted_locations();
             if ($permitted_locations != 'all') {
                 $sells->whereIn('transactions.location_id', $permitted_locations);
@@ -960,6 +952,10 @@ class SellController extends Controller
 
         $sell = $query->firstOrFail();
 
+        if ($sell->sub_type === 'project_invoice') {
+            $sell->load('project_invoice_lines.tax');
+        }
+
         $sell->loadMissing('tags');
 
         if ($sell->type === 'sell') {
@@ -1073,6 +1069,15 @@ class SellController extends Controller
             ->with(['price_group', 'types_of_service', 'media', 'media.uploaded_by_user'])
             ->whereIn('type', ['sell', 'sales_order'])
             ->findorfail($id);
+
+        // Project invoices use task-based lines instead of product sell lines.
+        // Keep editing in the Project form so the task lines are not lost.
+        if ($transaction->sub_type === 'project_invoice' && ! empty($transaction->pjt_project_id)) {
+            return redirect()->action(
+                [\Modules\Project\Http\Controllers\InvoiceController::class, 'edit'],
+                [$transaction->id, 'project_id' => $transaction->pjt_project_id]
+            );
+        }
 
         // If ZATCA module is installed and this transaction is successfully synced, prevent edit
         $moduleUtil = new ModuleUtil();
@@ -1451,6 +1456,7 @@ class SellController extends Controller
                     $join->on('transactions.id', '=', 'tsl.transaction_id')
                         ->whereNull('tsl.parent_sell_line_id');
                 })
+                ->leftJoin('pjt_invoice_lines as pil', 'transactions.id', '=', 'pil.transaction_id')
                 ->where('transactions.business_id', $business_id)
                 ->where('transactions.type', 'sell')
                 ->where('transactions.status', 'draft')
@@ -1464,8 +1470,8 @@ class SellController extends Controller
                     'bl.name as business_location',
                     'is_direct_sale',
                     'sub_status',
-                    DB::raw('COUNT( DISTINCT tsl.id) as total_items'),
-                    DB::raw('SUM(tsl.quantity) as total_quantity'),
+                    DB::raw('(COUNT(DISTINCT tsl.id) + COUNT(DISTINCT pil.id)) as total_items'),
+                    DB::raw('COALESCE(SUM(tsl.quantity), SUM(pil.quantity), 0) as total_quantity'),
                     DB::raw("CONCAT(COALESCE(u.surname, ''), ' ', COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, '')) as added_by"),
                     'transactions.is_export'
                 );

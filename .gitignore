@@ -30,3 +30,7 @@ Homestead.json
 .phpactor.json
 auth.json
 *.zip
+
+# Graphify local-only metadata (the graph itself is committed/shared).
+graphify-out/cost.json
+graphify-out/cache/

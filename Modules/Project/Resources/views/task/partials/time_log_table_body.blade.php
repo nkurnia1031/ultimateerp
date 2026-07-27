@@ -2,17 +2,20 @@
 <tr>
     <td>{{$loop->iteration}}</td>
     <td>
-        {{@format_datetime($timeLog->start_datetime)}}
+        {{ $timeLog->shift ? __('project::lang.shift_'.$timeLog->shift) : '-' }}
     </td>
     <td>
-        {{@format_datetime($timeLog->end_datetime)}}
+        {{@format_datetime($timeLog->start_datetime)}} - {{@format_datetime($timeLog->end_datetime)}}
     </td>
     <td>
-        @php
-            $start_datetime = \Carbon::parse($timeLog->start_datetime);
-            $end_datetime = \Carbon::parse($timeLog->end_datetime);
-        @endphp
-        {{$start_datetime->diffForHumans($end_datetime, true)}}
+        @if($timeLog->second_start_datetime && $timeLog->second_end_datetime)
+            {{@format_datetime($timeLog->second_start_datetime)}} - {{@format_datetime($timeLog->second_end_datetime)}}
+        @else
+            -
+        @endif
+    </td>
+    <td>
+        {{$timeLog->formatted_duration}}
     </td>
     <td>
        {{$timeLog->user->user_full_name}}

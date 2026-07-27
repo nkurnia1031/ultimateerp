@@ -20,9 +20,10 @@
                 <thead>
                     <tr>
                         <th>#</th>
-                        <th> @lang('project::lang.start_date_time')</th>
-                        <th>@lang('project::lang.end_date_time')</th>
-                        <th>@lang('project::lang.work_hour')</th>
+                        <th>@lang('project::lang.shift')</th>
+                        <th>@lang('project::lang.work_period_1')</th>
+                        <th>@lang('project::lang.work_period_2')</th>
+                        <th>@lang('project::lang.total_work_hours')</th>
                         <th>@lang('role.user')</th>
                         <th>@lang('brand.note')</th>
                     </tr>

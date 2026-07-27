@@ -7,6 +7,8 @@ use App\Utils\Util;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\ValidationException;
 use Modules\Project\Entities\Project;
 use Modules\Project\Entities\ProjectMember;
 use Modules\Project\Entities\ProjectTask;
@@ -108,17 +110,21 @@ class ProjectTimeLogController extends Controller
 
                     return $task;
                 })
-                ->editColumn('start_datetime', '
-                    {{@format_datetime($start_datetime)}}
-                ')
-                ->editColumn('end_datetime', '
-                    {{@format_datetime($end_datetime)}}
-                ')
-                ->editColumn('work_hour', function ($row) {
-                    $start_datetime = \Carbon::parse($row->start_datetime);
-                    $end_datetime = \Carbon::parse($row->end_datetime);
+                ->addColumn('shift', function ($row) {
+                    return $row->shift ? __('project::lang.shift_'.strtolower($row->shift)) : '-';
+                })
+                ->addColumn('work_period_1', function ($row) {
+                    return $this->commonUtil->format_date($row->start_datetime, true).' - '.$this->commonUtil->format_date($row->end_datetime, true);
+                })
+                ->addColumn('work_period_2', function ($row) {
+                    if (empty($row->second_start_datetime) || empty($row->second_end_datetime)) {
+                        return '-';
+                    }
 
-                    return $start_datetime->diffForHumans($end_datetime, true);
+                    return $this->commonUtil->format_date($row->second_start_datetime, true).' - '.$this->commonUtil->format_date($row->second_end_datetime, true);
+                })
+                ->editColumn('work_hour', function ($row) {
+                    return $row->formatted_duration;
                 })
                 ->editColumn('user', function ($row) {
                     return $row->user?->user_full_name;
@@ -139,7 +145,7 @@ class ProjectTimeLogController extends Controller
                     })->implode(' ');
                 })
                 ->removeColumn('id')
-                ->rawColumns(['action', 'task', 'tags', 'start_datetime', 'end_datetime', 'work_hour', 'user'])
+                ->rawColumns(['action', 'task', 'tags'])
                 ->make(true);
         }
 
@@ -186,10 +192,13 @@ class ProjectTimeLogController extends Controller
     public function store(Request $request)
     {
         try {
-            $input = $request->only('project_id', 'project_task_id', 'note');
+            $this->validateTimeLog($request);
+            $input = $request->only('project_id', 'project_task_id', 'note', 'shift');
 
             $input['start_datetime'] = $this->commonUtil->uf_date($request->input('start_datetime'), true);
             $input['end_datetime'] = $this->commonUtil->uf_date($request->input('end_datetime'), true);
+            $input['second_start_datetime'] = $this->parseOptionalDatetime($request->input('second_start_datetime'));
+            $input['second_end_datetime'] = $this->parseOptionalDatetime($request->input('second_end_datetime'));
             $input['created_by'] = $request->session()->get('user.id');
 
             //check if time log is creating by admin/lead
@@ -224,6 +233,8 @@ class ProjectTimeLogController extends Controller
                 'added_from' => $added_from,
                 'msg' => __('lang_v1.success'),
             ];
+        } catch (ValidationException $e) {
+            $output = ['success' => false, 'msg' => $e->validator->errors()->first()];
         } catch (\Exception $e) {
             \Log::emergency('File:'.$e->getFile().'Line:'.$e->getLine().'Message:'.$e->getMessage());
 
@@ -284,7 +295,8 @@ class ProjectTimeLogController extends Controller
     public function update(Request $request, $id)
     {
         try {
-            $input = $request->only('note', 'project_task_id');
+            $this->validateTimeLog($request);
+            $input = $request->only('note', 'project_task_id', 'shift');
 
             if (! empty($request->input('start_datetime'))) {
                 $input['start_datetime'] = $this->commonUtil->uf_date($request->input('start_datetime'), true);
@@ -294,10 +306,14 @@ class ProjectTimeLogController extends Controller
                 $input['end_datetime'] = $this->commonUtil->uf_date($request->input('end_datetime'), true);
             }
 
+            $input['second_start_datetime'] = $this->parseOptionalDatetime($request->input('second_start_datetime'));
+            $input['second_end_datetime'] = $this->parseOptionalDatetime($request->input('second_end_datetime'));
+
             //check if time log is creating by admin/lead
             $business_id = request()->session()->get('user.business_id');
             $is_admin = $this->commonUtil->is_admin(auth()->user(), $business_id);
-            $is_lead = $this->projectUtil->isProjectLead(auth()->user()->id, $id);
+            $project_id = $request->get('project_id');
+            $is_lead = $this->projectUtil->isProjectLead(auth()->user()->id, $project_id);
 
             if ($is_admin || $is_lead) {
                 $input['user_id'] = $request->get('user_id');
@@ -305,7 +321,6 @@ class ProjectTimeLogController extends Controller
                 $input['user_id'] = $request->session()->get('user.id');
             }
 
-            $project_id = $request->get('project_id');
             $project_task_time_log = ProjectTimeLog::where('project_id', $project_id)
                 ->findOrFail($id);
 
@@ -316,6 +331,8 @@ class ProjectTimeLogController extends Controller
                 'success' => true,
                 'msg' => __('lang_v1.success'),
             ];
+        } catch (ValidationException $e) {
+            $output = ['success' => false, 'msg' => $e->validator->errors()->first()];
         } catch (\Exception $e) {
             \Log::emergency('File:'.$e->getFile().'Line:'.$e->getLine().'Message:'.$e->getMessage());
 
@@ -336,6 +353,42 @@ class ProjectTimeLogController extends Controller
             ->toArray();
 
         $project_time_log->tags()->sync($tag_ids);
+    }
+
+    private function validateTimeLog(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'shift' => 'required|in:pagi,malam',
+            'start_datetime' => 'required',
+            'end_datetime' => 'required',
+            'second_start_datetime' => 'nullable|required_with:second_end_datetime',
+            'second_end_datetime' => 'nullable|required_with:second_start_datetime',
+        ]);
+
+        $validator->after(function ($validator) use ($request) {
+            foreach ([
+                ['start_datetime', 'end_datetime'],
+                ['second_start_datetime', 'second_end_datetime'],
+            ] as $period) {
+                [$startField, $endField] = $period;
+                if (empty($request->input($startField)) || empty($request->input($endField))) {
+                    continue;
+                }
+
+                $start = $this->commonUtil->uf_date($request->input($startField), true);
+                $end = $this->commonUtil->uf_date($request->input($endField), true);
+                if (strtotime($end) <= strtotime($start)) {
+                    $validator->errors()->add($endField, __('project::lang.end_must_be_after_start'));
+                }
+            }
+        });
+
+        $validator->validate();
+    }
+
+    private function parseOptionalDatetime($value)
+    {
+        return empty($value) ? null : $this->commonUtil->uf_date($value, true);
     }
 
     /**

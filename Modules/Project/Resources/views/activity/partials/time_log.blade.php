@@ -21,5 +21,5 @@
 - 
 {{@format_datetime($end_datetime)}}
 <code>
-({{ \Carbon::parse($start_datetime)->diffForHumans(\Carbon::parse($end_datetime), true)}})
+({{ isset($activity->subject) ? $activity->subject->formatted_duration : \Carbon::parse($start_datetime)->diffForHumans(\Carbon::parse($end_datetime), true) }})
 </code>

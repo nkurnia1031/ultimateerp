@@ -23,13 +23,10 @@ $record_not_available = true;
 			    				<thead>
 			    					<tr>
 			    						<th>@lang('project::lang.task')</th>
-			    						<th>
-			    							@lang('project::lang.start_date_time')
-			    						</th>
-			    						<th>
-			    							@lang('project::lang.end_date_time')
-			    						</th>
-			    						<th>@lang('project::lang.work_hour')</th>
+									<th>@lang('project::lang.shift')</th>
+									<th>@lang('project::lang.work_period_1')</th>
+									<th>@lang('project::lang.work_period_2')</th>
+									<th>@lang('project::lang.total_work_hours')</th>
 			    						<th>
 			    							@lang('brand.note')
 			    						</th>
@@ -41,9 +38,7 @@ $record_not_available = true;
 			    					@endphp
 				    				@foreach($project->timeLogs as $timeLog)
 				    					@php
-				    						$start_datetime = \Carbon::parse($timeLog->start_datetime);
-		        							$end_datetime = \Carbon::parse($timeLog->end_datetime);
-		        							$second = $start_datetime->diffInSeconds($end_datetime, true);
+										$second = $timeLog->total_seconds;
 		        							$total_sec += $second;
 				    					@endphp
 				    					<tr>
@@ -58,13 +53,18 @@ $record_not_available = true;
 				    							@endif
 				    						</td>
 											<td>
-												{{@format_datetime($timeLog->start_datetime)}}
+												{{ $timeLog->shift ? __('project::lang.shift_'.$timeLog->shift) : '-' }}
 											</td>
 											<td>
-												{{@format_datetime($timeLog->end_datetime)}}
+												{{@format_datetime($timeLog->start_datetime)}} - {{@format_datetime($timeLog->end_datetime)}}
 											</td>
 											<td>
-												{{$start_datetime->diffForHumans($end_datetime, true)}}
+												@if($timeLog->second_start_datetime && $timeLog->second_end_datetime)
+													{{@format_datetime($timeLog->second_start_datetime)}} - {{@format_datetime($timeLog->second_end_datetime)}}
+												@else - @endif
+											</td>
+											<td>
+												{{$timeLog->formatted_duration}}
 											</td>
 											<td>
 												{{$timeLog->note}}
@@ -74,7 +74,7 @@ $record_not_available = true;
 				    			</tbody>
 				    			<tfoot>
 				    				<tr class="bg-gray">
-				    					<td colspan="3"></td>
+									<td colspan="4"></td>
 				    					<td>
 				    						@php
 												$hours = floor($total_sec / 3600);

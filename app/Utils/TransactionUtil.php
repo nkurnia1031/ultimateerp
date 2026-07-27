@@ -1329,7 +1329,12 @@ class TransactionUtil extends Util
             $output['show_base_unit_details'] = ! empty($il->common_settings['show_base_unit_details']);
 
             $output['tax_summary_label'] = $il->common_settings['tax_summary_label'] ?? '';
-            $details = $this->_receiptDetailsSellLines($lines, $il, $business_details);
+            if ($transaction->sub_type === 'project_invoice') {
+                $project_lines = $transaction->project_invoice_lines()->with('tax')->get();
+                $details = $this->_receiptDetailsProjectInvoiceLines($project_lines, $business_details);
+            } else {
+                $details = $this->_receiptDetailsSellLines($lines, $il, $business_details);
+            }
 
             $output['lines'] = $details['lines'];
             $output['taxes'] = [];
@@ -2231,6 +2236,62 @@ class TransactionUtil extends Util
             }
 
             $output_lines[] = $line_array;
+        }
+
+        return ['lines' => $output_lines];
+    }
+
+    /**
+     * Format task-based Project invoice lines for the standard Sell receipt views.
+     */
+    protected function _receiptDetailsProjectInvoiceLines($lines, $business_details)
+    {
+        $output_lines = [];
+
+        foreach ($lines as $line) {
+            $quantity = (float) $line->quantity;
+            $rate = (float) $line->rate;
+            $total = (float) $line->total;
+            $unit_price_inc_tax = $quantity > 0 ? $total / $quantity : 0;
+            $item_tax = max(0, $unit_price_inc_tax - $rate);
+
+            $output_lines[] = [
+                'name' => $line->task,
+                'product_description' => $line->description,
+                'variation' => '',
+                'product_variation' => '',
+                'quantity' => $this->num_f($quantity, false, $business_details, true),
+                'quantity_uf' => $quantity,
+                'units' => '',
+                'base_unit_name' => '',
+                'base_unit_multiplier' => 1,
+                'orig_quantity' => $this->num_f($quantity, false, $business_details, true),
+                'unit_price' => $this->num_f($rate, false, $business_details),
+                'unit_price_uf' => $rate,
+                'tax' => $this->num_f($item_tax, false, $business_details),
+                'tax_id' => $line->tax_rate_id,
+                'tax_unformatted' => $item_tax,
+                'tax_name' => $line->tax->name ?? null,
+                'tax_percent' => $line->tax->amount ?? null,
+                'unit_price_inc_tax' => $this->num_f($unit_price_inc_tax, false, $business_details),
+                'unit_price_inc_tax_uf' => $unit_price_inc_tax,
+                'unit_price_exc_tax' => $this->num_f($rate, false, $business_details),
+                'base_unit_price' => $this->num_f($unit_price_inc_tax, false, $business_details),
+                'price_exc_tax' => $rate * $quantity,
+                'unit_price_before_discount' => $this->num_f($rate, false, $business_details),
+                'unit_price_before_discount_uf' => $rate,
+                'line_total' => $this->num_f($total, false, $business_details),
+                'line_total_uf' => $total,
+                'line_total_exc_tax' => $this->num_f($rate * $quantity, false, $business_details),
+                'line_total_exc_tax_uf' => $rate * $quantity,
+                'variation_id' => null,
+                'line_discount' => 0,
+                'line_discount_uf' => 0,
+                'total_line_discount' => 0,
+                'line_discount_amount_uf' => 0,
+                'line_discount_type_uf' => null,
+                'sell_line_note' => ! empty($line->description) ? nl2br(e($line->description)) : '',
+            ];
         }
 
         return ['lines' => $output_lines];
@@ -5332,7 +5393,7 @@ class TransactionUtil extends Util
                 'SR.id as return_transaction_id',
                 'tos.name as types_of_service_name',
                 'transactions.service_custom_field_1',
-                DB::raw('COUNT( DISTINCT tsl.id) as total_items'),
+                DB::raw('(COUNT(DISTINCT tsl.id) + (SELECT COUNT(*) FROM pjt_invoice_lines pil WHERE pil.transaction_id = transactions.id)) as total_items'),
                 DB::raw("CONCAT(COALESCE(ss.surname, ''),' ',COALESCE(ss.first_name, ''),' ',COALESCE(ss.last_name,'')) as waiter"),
                 'tables.name as table_name',
                 DB::raw('SUM(tsl.quantity - tsl.so_quantity_invoiced) as so_qty_remaining'),

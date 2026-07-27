@@ -19,6 +19,10 @@
 
                         <li @if(request()->segment(2) == 'project-task') class="active" @endif><a href="{{action([\Modules\Project\Http\Controllers\TaskController::class, 'index'])}}">@lang('project::lang.my_tasks')</a></li>
 
+                    @can('project.create_project')
+                        <li @if(request()->segment(2) == 'project-import') class="active" @endif><a href="{{action([\Modules\Project\Http\Controllers\ProjectImportController::class, 'index'])}}"><i class="fa fa-file-import"></i> @lang('project::lang.import_project')</a></li>
+                    @endcan
+
                     @if($__is_admin)
                         <li @if(request()->segment(2) == 'project-reports') class="active" @endif><a href="{{action([\Modules\Project\Http\Controllers\ReportController::class, 'index'])}}">@lang('report.reports')</a></li>
 

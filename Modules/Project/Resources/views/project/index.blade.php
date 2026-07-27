@@ -73,6 +73,12 @@
 				    </label>
 				</div>
 				@can('project.create_project')
+					<a href="{{ action([\Modules\Project\Http\Controllers\ProjectImportController::class, 'downloadTemplate']) }}" class="btn btn-success btn-sm">
+						<i class="fa fa-download"></i> @lang('project::lang.download_project_template')
+					</a>
+					<a href="{{ action([\Modules\Project\Http\Controllers\ProjectImportController::class, 'index']) }}" class="btn btn-info btn-sm">
+						<i class="fa fa-file-import"></i> @lang('project::lang.import_project')
+					</a>
 					<button type="button" class="btn btn-primary btn-sm add_new_project" data-href="{{action([\Modules\Project\Http\Controllers\ProjectController::class, 'create'])}}">
 						@lang('project::lang.new_project')&nbsp;
 						<i class="fa fa-plus"></i>
