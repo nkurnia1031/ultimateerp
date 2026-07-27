@@ -1,670 +1,362 @@
 @extends('layouts.app')
 
+@section('title', 'Manajemen Stok Solar')
+
+@section('css')
+<style>
+    .solar-toolbar { display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; align-items:center; }
+    .solar-actions { display:flex; flex-wrap:wrap; gap:6px; }
+    .solar-card { border-radius:8px; color:#fff; padding:16px; min-height:105px; margin-bottom:15px; box-shadow:0 2px 8px rgba(0,0,0,.08); }
+    .solar-card .value { font-size:25px; font-weight:700; line-height:1.25; }
+    .solar-card .label { font-size:12px; text-transform:uppercase; opacity:.9; }
+    .solar-card.actual { background:#286090; }
+    .solar-card.meter { background:#00897b; }
+    .solar-card.pool { background:#ef6c00; }
+    .solar-card.mess { background:#6a1b9a; }
+    .solar-table th { white-space:nowrap; background:#f5f7fa; }
+    .solar-table td { vertical-align:middle !important; }
+    .solar-empty { padding:35px !important; color:#777; text-align:center; }
+    .solar-source { text-transform:capitalize; }
+    .solar-help { margin-top:8px; color:#666; }
+    .solar-filter { display:flex; flex-wrap:wrap; gap:8px; align-items:flex-end; }
+    .solar-filter .form-group { margin-bottom:0; }
+    @media (max-width:767px) {
+        .solar-toolbar { align-items:stretch; }
+        .solar-actions .btn { flex:1 1 auto; }
+    }
+</style>
+@endsection
+
 @section('content')
-    <div class="panel panel-default">
-        <div class="panel-heading">
-            <h3 class="panel-title">LAPORAN SOLAR</h3>
-            <div class="pull-right">
-                <a href="#" class="btn btn-sm btn-info">
-                    <i class="fa fa-download"></i> Template
-                </a>
-                <a href="#" class="btn btn-sm btn-warning">
-                    <i class="fa fa-file-excel-o"></i> Export Excel
-                </a>
-                <button class="btn btn-sm btn-success" data-toggle="modal" data-target="#uploadCSV">
-                    <i class="fa fa-upload"></i> Upload CSV
-                </button>
+<section class="content-header">
+    <h1>Manajemen Stok Solar <small>ledger aktual, meteran, pool, dan mess</small></h1>
+</section>
+
+<section class="content" id="solar-app"
+    data-base-url="{{ url('/solar') }}"
+    data-active-ledger="{{ request('tab', 'stock') }}">
+    @php
+        $status = session('status');
+        $isSuccess = is_array($status) ? ($status['success'] ?? (($status['alert'] ?? '') === 'success')) : false;
+    @endphp
+    @if ($status)
+        <div class="alert alert-{{ $isSuccess ? 'success' : 'danger' }} alert-dismissible">
+            <button type="button" class="close" data-dismiss="alert">&times;</button>
+            {{ is_array($status) ? ($status['msg'] ?? '') : $status }}
+        </div>
+    @endif
+    @if ($errors->any())
+        <div class="alert alert-danger">
+            <strong>Data belum dapat disimpan.</strong>
+            <ul class="mb-0">
+                @foreach ($errors->all() as $error)
+                    <li>{{ $error }}</li>
+                @endforeach
+            </ul>
+        </div>
+    @endif
+
+    <div class="row">
+        <div class="col-sm-6 col-lg-3">
+            <div class="solar-card actual">
+                <div class="label">Stock Actual Terkini</div>
+                <div class="value">{{ number_format($balances['stock']['actual'] ?? 0, 2, ',', '.') }}</div>
+            </div>
+        </div>
+        <div class="col-sm-6 col-lg-3">
+            <div class="solar-card meter">
+                <div class="label">Stock Meteran Terkini</div>
+                <div class="value">{{ number_format($balances['stock']['meter'] ?? 0, 2, ',', '.') }}</div>
+            </div>
+        </div>
+        <div class="col-sm-6 col-lg-3">
+            <div class="solar-card pool">
+                <div class="label">Stock Pool Terkini</div>
+                <div class="value">{{ number_format($balances['pool']['quantity'] ?? 0, 2, ',', '.') }}</div>
+            </div>
+        </div>
+        <div class="col-sm-6 col-lg-3">
+            <div class="solar-card mess">
+                <div class="label">Stock Mess Terkini</div>
+                <div class="value">{{ number_format($balances['mess']['quantity'] ?? 0, 2, ',', '.') }}</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="box box-primary">
+        <div class="box-header with-border">
+            <div class="solar-toolbar">
+                <form method="get" class="solar-filter">
+                    <input type="hidden" name="tab" id="solar-filter-tab" value="{{ request('tab', 'stock') }}">
+                    <div class="form-group">
+                        <label for="date1">Dari tanggal</label>
+                        <input type="date" id="date1" name="date1" value="{{ $dateFrom }}" class="form-control">
+                    </div>
+                    <div class="form-group">
+                        <label for="date2">Sampai tanggal</label>
+                        <input type="date" id="date2" name="date2" value="{{ $dateTo }}" class="form-control">
+                    </div>
+                    <button type="submit" class="btn btn-primary"><i class="fa fa-filter"></i> Terapkan</button>
+                </form>
+                <div class="solar-actions">
+                    <button type="button" class="btn btn-success solar-add" data-ledger="stock">
+                        <i class="fa fa-plus"></i> Tambah Transaksi
+                    </button>
+                    <a href="{{ route('solar.template') }}" class="btn btn-info">
+                        <i class="fa fa-download"></i> Template
+                    </a>
+                    <a href="{{ route('solar.export', ['date1' => $dateFrom, 'date2' => $dateTo]) }}" class="btn btn-warning">
+                        <i class="fa fa-file-excel-o"></i> Export
+                    </a>
+                    <button type="button" class="btn btn-default" data-toggle="modal" data-target="#solar-import-modal">
+                        <i class="fa fa-exchange"></i> Cross-check / Import
+                    </button>
+                </div>
             </div>
         </div>
 
-        <div class="panel-body">
-            {{-- Filter Form --}}
-            <form class="form-inline" method="get">
-               <label>Dari:
-                    <input type="date" name="date1" value="{{ $date1 instanceof \DateTime ? $date1->format('Y-m-d') : $date1 }}" class="form-control">
-                </label>
-                <label>Sampai:
-                    <input type="date" name="date2" value="{{ $date2 instanceof \DateTime ? $date2->format('Y-m-d') : $date2 }}" class="form-control">
-                </label>
-                <button type="submit" class="btn btn-primary">Filter</button>
-            </form>
-
-            <hr>
-
-            {{-- Session Status --}}
-            @if (session('status'))
-                <div class="alert alert-{{ session('status')['alert'] }}">
-                    {{ session('status')['msg'] }}
-                </div>
-            @endif
-
-            {{-- Tab Navigation --}}
-            <ul class="nav nav-tabs">
-                <li class="active"><a data-toggle="tab" href="#stock">Stock</a></li>
-                <li><a data-toggle="tab" href="#pool">Pool</a></li>
-                <li><a data-toggle="tab" href="#mess">Mess</a></li>
+        <div class="box-body">
+            <ul class="nav nav-tabs" id="solar-tabs">
+                <li class="active"><a href="#stock" data-toggle="tab" data-ledger="stock">Stock Utama</a></li>
+                <li><a href="#pool" data-toggle="tab" data-ledger="pool">Pool</a></li>
+                <li><a href="#mess" data-toggle="tab" data-ledger="mess">Mess</a></li>
             </ul>
 
-            <div class="tab-content" style="margin-top:15px">
-
-                {{-- STOCK TAB --}}
-                <div id="stock" class="tab-pane fade in active">
-                    <h4>Stock Solar</h4>
-                    <div class="alert alert-info" style="padding:8px; margin-bottom:10px;">
-    <strong>Stok Awal Bulan Ini:</strong>
-    {{ number_format($stok_awal_actual ?? 0, 0, ',', '.') }} L (Actual)
-    &nbsp;/&nbsp;
-    {{ number_format($stok_awal_meteran ?? 0, 0, ',', '.') }} L (Meteran)
-</div>
-                    <input type="text" class="form-control input-sm search-stock"
-                        placeholder="Cari Tanggal / Keterangan ..." style="margin-bottom:10px; width: 300px;">
-                    <form method="post" action="{{ route('solar.stock.save') }}">
-                        @csrf
-                        <table class="table table-bordered" id="table-stock">
+            <div class="tab-content">
+                <div id="stock" class="tab-pane active">
+                    <div class="clearfix" style="margin:15px 0 10px">
+                        <input type="search" class="form-control solar-search pull-right" data-table="stock" placeholder="Cari transaksi Stock..." style="max-width:300px">
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-bordered table-hover solar-table" data-ledger-table="stock">
                             <thead>
                                 <tr>
-                                    <th>Tanggal</th>
-                                    <th>In</th>
-                                    <th>Out ACT</th>
-                                    <th>Stock ACT</th>
-                                    <th>Out Meteran</th>
-                                    <th>Stock Meteran</th>
-                                    <th>Keterangan</th>
-                                    <th>Aksi</th>
+                                    <th>Tanggal</th><th>IN</th><th>OUT ACT</th><th>STOCK ACT</th>
+                                    <th>OUT Meteran</th><th>STOCK Meteran</th><th>Keterangan</th><th>Sumber</th><th>Aksi</th>
                                 </tr>
                             </thead>
-                            <tbody id="table-stock-body">
-                                @foreach ($solar_stock as $row)
+                            <tbody>
+                                @forelse ($rows['stock'] as $row)
                                     <tr>
-                                        <input type="hidden" name="id[]" value="{{ $row->id }}">
-                                        <td><input type="date" name="tanggal[]" class="form-control"
-                                                value="{{ $row->tanggal }}"></td>
-                                        <td><input type="number" name="stock_in[]" class="form-control stock-in"
-                                                value="{{ $row->stock_in }}"></td>
-                                        <td><input type="number" name="out_actual[]" class="form-control out-actual"
-                                                value="{{ $row->out_actual }}"></td>
-                                        <td><input type="number" name="stock_actual[]" class="form-control stock-actual"
-                                                value="{{ $row->stock_actual }}" readonly></td>
-                                        <td><input type="number" name="out_meteran[]" class="form-control out-meteran"
-                                                value="{{ $row->out_meteran }}"></td>
-                                        <td><input type="number" name="stock_meteran[]" class="form-control stock-meteran"
-                                                value="{{ $row->stock_meteran }}" readonly></td>
-                                        <td><input type="text" name="keterangan[]" class="form-control"
-                                                value="{{ $row->keterangan }}"></td>
-                                        <td>
-                                            <button type="button" onclick="deleteStock({{ $row->id }})"
-                                                class="btn btn-danger btn-sm">
+                                        <td>{{ \Carbon\Carbon::parse($row->tanggal)->format('d/m/Y') }}</td>
+                                        <td class="text-right">{{ number_format($row->stock_in, 2, ',', '.') }}</td>
+                                        <td class="text-right">{{ number_format($row->out_actual, 2, ',', '.') }}</td>
+                                        <td class="text-right"><strong>{{ number_format($row->stock_actual, 2, ',', '.') }}</strong></td>
+                                        <td class="text-right">{{ number_format($row->out_meteran, 2, ',', '.') }}</td>
+                                        <td class="text-right"><strong>{{ number_format($row->stock_meteran, 2, ',', '.') }}</strong></td>
+                                        <td>{{ $row->keterangan ?: '—' }}</td>
+                                        <td><span class="label label-default solar-source">{{ $row->source ?? 'legacy' }}</span></td>
+                                        <td class="text-nowrap">
+                                            <button class="btn btn-xs btn-primary solar-edit" data-ledger="stock"
+                                                data-record="{{ base64_encode(json_encode($row, JSON_UNESCAPED_UNICODE)) }}">
+                                                <i class="fa fa-pencil"></i>
+                                            </button>
+                                            <button class="btn btn-xs btn-danger solar-delete" data-ledger="stock" data-id="{{ $row->id }}">
                                                 <i class="fa fa-trash"></i>
                                             </button>
                                         </td>
                                     </tr>
-                                @endforeach
+                                @empty
+                                    <tr><td colspan="9" class="solar-empty">Belum ada transaksi Stock pada rentang tanggal ini.</td></tr>
+                                @endforelse
                             </tbody>
                         </table>
-                        <button type="button" class="btn btn-success" onclick="addRowStock()"><i class="fa fa-plus"></i>
-                            Tambah Baris</button>
-                        <button type="submit" class="btn btn-primary">Simpan</button>
-                    </form>
+                    </div>
                 </div>
 
-                {{-- POOL TAB --}}
-                <div id="pool" class="tab-pane fade">
-                    <h4>Solar Pool</h4>
-                <button class="btn btn-sm btn-success" data-toggle="modal" data-target="#uploadCSVPool">
-                    <i class="fa fa-upload"></i> Upload CSV
-                </button>
-                <div class="alert alert-info" style="padding:8px; margin-bottom:10px;">
-                  <strong>Stok Awal Bulan Ini:</strong>
-                  {{ number_format($stok_awal_pool ?? 0, 0, ',', '.') }} GL
-                </div>
-
-                    <form method="post" action="{{ route('solar.pool.save') }}#pool">
-                        @csrf
-                        <table class="table table-bordered" id="table-pool">
+                <div id="pool" class="tab-pane">
+                    <div class="clearfix" style="margin:15px 0 10px">
+                        <input type="search" class="form-control solar-search pull-right" data-table="pool" placeholder="Cari transaksi Pool..." style="max-width:300px">
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-bordered table-hover solar-table" data-ledger-table="pool">
                             <thead>
                                 <tr>
-                                    <th>Tanggal</th>
-                                    <th>IN</th>
-                                    <th>OUT</th>
-                                    <th>Current</th>
-                                    <th>Keterangan</th>
-                                    <th>Unit</th>
-                                    <th>Operator</th>
-                                    <th>Customer</th>
-                                    <th>Aksi</th>
+                                    <th>Tanggal</th><th>IN</th><th>OUT</th><th>Current</th><th>Keterangan</th>
+                                    <th>Unit</th><th>Operator</th><th>Customer</th><th>Sumber</th><th>Aksi</th>
                                 </tr>
                             </thead>
-                            <tbody id="table-pool-body">
-                                @foreach ($solar_pool as $row)
+                            <tbody>
+                                @forelse ($rows['pool'] as $row)
                                     <tr>
-                                        <input type="hidden" name="id[]" value="{{ $row->id }}">
-                                        <td><input type="date" name="tanggal[]" class="form-control"
-                                                value="{{ $row->tanggal }}"></td>
-                                        <td><input type="number" name="qty_in[]" class="form-control pool-in"
-                                                value="{{ $row->qty_in }}"></td>
-                                        <td><input type="number" name="qty_out[]" class="form-control pool-out"
-                                                value="{{ $row->qty_out }}"></td>
-                                        <td><input type="number" name="current_stock[]"
-                                                class="form-control pool-current" value="{{ $row->current_stock }}"
-                                                readonly></td>
-                                        <td><input type="text" name="keterangan[]" class="form-control"
-                                                value="{{ $row->keterangan }}"></td>
-                                        <td><input type="text" name="unit[]" class="form-control"
-                                                value="{{ $row->unit }}"></td>
-                                        <td><input type="text" name="operator[]" class="form-control"
-                                                value="{{ $row->operator }}"></td>
-                                        {{-- ✅ Dropdown Customer --}}
-                                        <td>
-                                             <select name="customer_id[]" class="form-control select2">
-                                                <option value="">-- Pilih Customer --</option>
-                                                @foreach($customers as $cust)
-                                                    <option value="{{ $cust->id }}" 
-                                                        {{ isset($row->customer_id) && $row->customer_id == $cust->id ? 'selected' : '' }}>
-                                                        {{ $cust->display_name }}
-                                                    </option>
-                                                @endforeach
-                                            </select>
-                                        </td>
-                                        <td>
-                                            <button type="button" onclick="deletePool({{ $row->id }})"
-                                                class="btn btn-danger btn-sm">
-                                                <i class="fa fa-trash"></i>
-                                            </button>
-
+                                        <td>{{ \Carbon\Carbon::parse($row->tanggal)->format('d/m/Y') }}</td>
+                                        <td class="text-right">{{ number_format($row->qty_in, 2, ',', '.') }}</td>
+                                        <td class="text-right">{{ number_format($row->qty_out, 2, ',', '.') }}</td>
+                                        <td class="text-right"><strong>{{ number_format($row->current_stock, 2, ',', '.') }}</strong></td>
+                                        <td>{{ $row->keterangan ?: '—' }}</td>
+                                        <td>{{ $row->unit ?: '—' }}</td>
+                                        <td>{{ $row->operator ?: '—' }}</td>
+                                        <td>{{ $row->customer_name ?: '—' }}</td>
+                                        <td><span class="label label-default solar-source">{{ $row->source ?? 'legacy' }}</span></td>
+                                        <td class="text-nowrap">
+                                            <button class="btn btn-xs btn-primary solar-edit" data-ledger="pool"
+                                                data-record="{{ base64_encode(json_encode($row, JSON_UNESCAPED_UNICODE)) }}"><i class="fa fa-pencil"></i></button>
+                                            <button class="btn btn-xs btn-danger solar-delete" data-ledger="pool" data-id="{{ $row->id }}"><i class="fa fa-trash"></i></button>
                                         </td>
                                     </tr>
-                                @endforeach
+                                @empty
+                                    <tr><td colspan="10" class="solar-empty">Belum ada transaksi Pool pada rentang tanggal ini.</td></tr>
+                                @endforelse
                             </tbody>
                         </table>
-                        <button type="button" class="btn btn-success" onclick="addRowPool()"><i class="fa fa-plus"></i>
-                            Tambah Baris</button>
-                        <button type="submit" class="btn btn-primary">Simpan</button>
-                    </form>
-            <div class="d-flex justify-content-between align-items-center mt-3">
-                <div>
-                    <strong>Bulan ditampilkan:</strong>
-                    {{ \Carbon\Carbon::parse($currentMonth . '-01')->translatedFormat('F Y') }}
-                </div>
-            
-                <div>
-                    @if($page > 1)
-                        <a href="{{ route('solar.index', ['date1' => $date1->format('Y-m-d'), 'date2' => $date2->format('Y-m-d'), 'page' => $page - 1]) }}" class="btn btn-outline-primary btn-sm">
-                            &laquo; Sebelumnya
-                        </a>
-                    @endif
-            
-                    @if($page < $totalPages)
-                        <a href="{{ route('solar.index', ['date1' => $date1->format('Y-m-d'), 'date2' => $date2->format('Y-m-d'), 'page' => $page + 1]) }}" class="btn btn-outline-primary btn-sm">
-                            Berikutnya &raquo;
-                        </a>
-                    @endif
-                </div>
-            </div>
+                    </div>
                 </div>
 
-                {{-- MESS TAB --}}
-                <div id="mess" class="tab-pane fade">
-                    <h4>Solar Mess</h4>
-                    <button class="btn btn-sm btn-success" data-toggle="modal" data-target="#uploadCSVMess">
-                    <i class="fa fa-upload"></i> Upload CSV
-                    </button>
-                <div class="alert alert-info" style="padding:8px; margin-bottom:10px;">
-                  <strong>Stok Awal Bulan Ini:</strong>
-                  {{ number_format($stok_awal_mess ?? 0, 0, ',', '.') }} GL
-                </div>
-
-                    <form method="post" action="{{ route('solar.mess.save') }}#mess">
-                        @csrf
-                        <table class="table table-bordered" id="table-mess">
+                <div id="mess" class="tab-pane">
+                    <div class="clearfix" style="margin:15px 0 10px">
+                        <input type="search" class="form-control solar-search pull-right" data-table="mess" placeholder="Cari transaksi Mess..." style="max-width:300px">
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-bordered table-hover solar-table" data-ledger-table="mess">
                             <thead>
                                 <tr>
-                                    <th>Tanggal</th>
-                                    <th>IN</th>
-                                    <th>OUT</th>
-                                    <th>Current</th>
-                                    <th>Keterangan</th>
-                                    <th>Unit</th>
-                                    <th>Operator</th>
-                                    <th>Customer</th>
-                                    <th>Lokasi</th>
-                                    <th>Aksi</th>
+                                    <th>Tanggal</th><th>IN</th><th>OUT</th><th>Current</th><th>Keterangan</th><th>Nama Kapal</th>
+                                    <th>Unit</th><th>Operator</th><th>Customer</th><th>Lokasi</th><th>Sumber</th><th>Aksi</th>
                                 </tr>
                             </thead>
-                            <tbody id="table-mess-body">
-                                @foreach ($solar_mess as $row)
+                            <tbody>
+                                @forelse ($rows['mess'] as $row)
                                     <tr>
-                                        <input type="hidden" name="id[]" value="{{ $row->id }}">
-                                        <td><input type="date" name="tanggal[]" class="form-control"
-                                                value="{{ $row->tanggal }}"></td>
-                                        <td><input type="number" name="qty_in[]" class="form-control mess-in"
-                                                value="{{ $row->qty_in }}"></td>
-                                        <td><input type="number" name="qty_out[]" class="form-control mess-out"
-                                                value="{{ $row->qty_out }}"></td>
-                                        <td><input type="number" name="current_stock[]"
-                                                class="form-control mess-current" value="{{ $row->current_stock }}"
-                                                readonly></td>
-                                        <td><input type="text" name="keterangan[]" class="form-control"
-                                                value="{{ $row->keterangan }}"></td>
-                                        <td><input type="text" name="unit[]" class="form-control"
-                                                value="{{ $row->unit }}"></td>
-                                        <td><input type="text" name="operator[]" class="form-control"
-                                                value="{{ $row->operator }}"></td>
-                                        <td>
-                                            <select name="customer_id[]" class="form-control select2">
-                                                <option value="">-- Pilih Customer --</option>
-                                                @foreach($customers as $cust)
-                                                    <option value="{{ $cust->id }}" 
-                                                        {{ isset($row->customer_id) && $row->customer_id == $cust->id ? 'selected' : '' }}>
-                                                        {{ $cust->display_name }}
-                                                    </option>
-                                                @endforeach
-                                            </select>
-                                        </td>     
-                                    <td>
-                                        <select name="lokasi[]" class="form-control">
-                                            <option value="">-- Pilih Lokasi --</option>
-                                            <option value="Stockpile Jatim" {{ isset($row->lokasi) && $row->lokasi == 'Stockpile Jatim' ? 'selected' : '' }}>Stockpile Jatim</option>
-                                            <option value="Telly Dermaga C" {{ isset($row->lokasi) && $row->lokasi == 'Telly Dermaga C' ? 'selected' : '' }}>Telly Dermaga C</option>
-                                        </select>
-                                    </td>
-                                        <td>
-                                            <button type="button" onclick="deleteMess({{ $row->id }})"
-                                                class="btn btn-danger btn-sm">
-                                                <i class="fa fa-trash"></i>
-                                            </button>
-
-
+                                        <td>{{ \Carbon\Carbon::parse($row->tanggal)->format('d/m/Y') }}</td>
+                                        <td class="text-right">{{ number_format($row->qty_in, 2, ',', '.') }}</td>
+                                        <td class="text-right">{{ number_format($row->qty_out, 2, ',', '.') }}</td>
+                                        <td class="text-right"><strong>{{ number_format($row->current_stock, 2, ',', '.') }}</strong></td>
+                                        <td>{{ $row->keterangan ?: '—' }}</td>
+                                        <td>{{ $row->nama_kapal ?: '—' }}</td>
+                                        <td>{{ $row->unit ?: '—' }}</td>
+                                        <td>{{ $row->operator ?: '—' }}</td>
+                                        <td>{{ $row->customer_name ?: '—' }}</td>
+                                        <td>{{ $row->lokasi ?: '—' }}</td>
+                                        <td><span class="label label-default solar-source">{{ $row->source ?? 'legacy' }}</span></td>
+                                        <td class="text-nowrap">
+                                            <button class="btn btn-xs btn-primary solar-edit" data-ledger="mess"
+                                                data-record="{{ base64_encode(json_encode($row, JSON_UNESCAPED_UNICODE)) }}"><i class="fa fa-pencil"></i></button>
+                                            <button class="btn btn-xs btn-danger solar-delete" data-ledger="mess" data-id="{{ $row->id }}"><i class="fa fa-trash"></i></button>
                                         </td>
                                     </tr>
-                                @endforeach
+                                @empty
+                                    <tr><td colspan="12" class="solar-empty">Belum ada transaksi Mess pada rentang tanggal ini.</td></tr>
+                                @endforelse
                             </tbody>
                         </table>
-                        <button type="button" class="btn btn-success" onclick="addRowMess()"><i class="fa fa-plus"></i>
-                            Tambah Baris</button>
-                        <button type="submit" class="btn btn-primary">Simpan</button>
-                    </form>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
-    <!-- MODAL UPLOAD CSV/EXCEL -->
-<div class="modal fade" id="uploadCSV" tabindex="-1" role="dialog" aria-labelledby="uploadCSVLabel">
-  <div class="modal-dialog" role="document">
-    <div class="modal-content">
-      <form action="{{ route('solar.stock.import') }}" method="POST" enctype="multipart/form-data">
-        @csrf
-        <div class="modal-header">
-          <h4 class="modal-title" id="uploadCSVLabel">
-            <i class="fa fa-upload"></i> Import Data Solar Stock
-          </h4>
-          <button type="button" class="close" data-dismiss="modal" aria-label="Close">
-            <span aria-hidden="true">&times;</span>
-          </button>
-        </div>
 
-        <div class="modal-body">
-          <div class="form-group">
-            <label>Pilih File Excel / CSV</label>
-            <input type="file" name="file" class="form-control" required>
-            <small class="text-muted">Format yang didukung: .xlsx, .xls, .csv</small>
-          </div>
+    <div class="modal fade" id="solar-record-modal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <form method="post" id="solar-record-form">
+                    @csrf
+                    <input type="hidden" name="_method" id="solar-form-method" value="POST">
+                    <div class="modal-header">
+                        <button type="button" class="close" data-dismiss="modal">&times;</button>
+                        <h4 class="modal-title" id="solar-record-title">Tambah Transaksi Solar</h4>
+                    </div>
+                    <div class="modal-body">
+                        <div class="row">
+                            <div class="col-sm-6 form-group">
+                                <label for="solar-tanggal">Tanggal *</label>
+                                <input type="date" class="form-control" id="solar-tanggal" name="tanggal" required>
+                            </div>
+                            <div class="col-sm-6 form-group ledger-stock">
+                                <label for="solar-stock-in">IN</label>
+                                <input type="number" min="0" step="0.01" class="form-control" id="solar-stock-in" name="stock_in">
+                            </div>
+                            <div class="col-sm-6 form-group ledger-stock">
+                                <label for="solar-out-actual">OUT ACT</label>
+                                <input type="number" min="0" step="0.01" class="form-control" id="solar-out-actual" name="out_actual">
+                            </div>
+                            <div class="col-sm-6 form-group ledger-stock">
+                                <label for="solar-out-meteran">OUT Meteran</label>
+                                <input type="number" min="0" step="0.01" class="form-control" id="solar-out-meteran" name="out_meteran">
+                            </div>
+                            <div class="col-sm-6 form-group ledger-quantity">
+                                <label for="solar-qty-in">IN</label>
+                                <input type="number" min="0" step="0.01" class="form-control" id="solar-qty-in" name="qty_in">
+                            </div>
+                            <div class="col-sm-6 form-group ledger-quantity">
+                                <label for="solar-qty-out">OUT</label>
+                                <input type="number" min="0" step="0.01" class="form-control" id="solar-qty-out" name="qty_out">
+                            </div>
+                            <div class="col-sm-6 form-group ledger-quantity">
+                                <label for="solar-unit">Unit</label>
+                                <input type="text" class="form-control" id="solar-unit" name="unit" placeholder="Liter / gln">
+                            </div>
+                            <div class="col-sm-6 form-group ledger-quantity">
+                                <label for="solar-operator">Operator</label>
+                                <input type="text" class="form-control" id="solar-operator" name="operator">
+                            </div>
+                            <div class="col-sm-12 form-group ledger-quantity">
+                                <label for="solar-customer">Customer</label>
+                                <select class="form-control select2" id="solar-customer" name="customer_id" style="width:100%">
+                                    <option value="">— Opsional —</option>
+                                    @foreach ($customers as $customer)
+                                        <option value="{{ $customer->id }}">{{ $customer->display_name }}</option>
+                                    @endforeach
+                                </select>
+                            </div>
+                            <div class="col-sm-6 form-group ledger-mess">
+                                <label for="solar-nama-kapal">Nama Kapal</label>
+                                <input type="text" class="form-control" id="solar-nama-kapal" name="nama_kapal">
+                            </div>
+                            <div class="col-sm-6 form-group ledger-mess">
+                                <label for="solar-lokasi">Lokasi</label>
+                                <input type="text" class="form-control" id="solar-lokasi" name="lokasi">
+                            </div>
+                            <div class="col-sm-12 form-group">
+                                <label for="solar-keterangan">Keterangan</label>
+                                <textarea class="form-control" id="solar-keterangan" name="keterangan" rows="3"></textarea>
+                            </div>
+                        </div>
+                        <p class="solar-help"><i class="fa fa-info-circle"></i> Saldo akan dihitung ulang oleh server setelah transaksi disimpan.</p>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-default" data-dismiss="modal">Batal</button>
+                        <button type="submit" class="btn btn-primary"><i class="fa fa-save"></i> Simpan</button>
+                    </div>
+                </form>
+            </div>
         </div>
-
-        <div class="modal-footer">
-          <button type="button" class="btn btn-default" data-dismiss="modal">Batal</button>
-          <button type="submit" class="btn btn-success">
-            <i class="fa fa-check"></i> Import Sekarang
-          </button>
-        </div>
-      </form>
     </div>
-  </div>
-</div>
 
-<!-- MODAL UPLOAD CSV POOL -->
-<div class="modal fade" id="uploadCSVPool" tabindex="-1" role="dialog" aria-labelledby="uploadCSVPoolLabel">
-  <div class="modal-dialog" role="document">
-    <div class="modal-content">
-      <form action="{{ route('solar.pool.import') }}" method="POST" enctype="multipart/form-data">
-        @csrf
-        <div class="modal-header">
-          <h4 class="modal-title" id="uploadCSVPoolLabel">
-            <i class="fa fa-upload"></i> Import Data Solar Pool
-          </h4>
-          <button type="button" class="close" data-dismiss="modal" aria-label="Close">
-            <span aria-hidden="true">&times;</span>
-          </button>
+    <div class="modal fade" id="solar-import-modal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <form action="{{ route('solar.reconcile') }}" method="post" enctype="multipart/form-data">
+                    @csrf
+                    <div class="modal-header">
+                        <button type="button" class="close" data-dismiss="modal">&times;</button>
+                        <h4 class="modal-title"><i class="fa fa-exchange"></i> Cross-check dan Import Excel</h4>
+                    </div>
+                    <div class="modal-body">
+                        <div class="alert alert-info">
+                            File tidak langsung mengubah data. Sistem akan menampilkan baris cocok, berbeda, dan baru sebelum Anda mengonfirmasi import.
+                        </div>
+                        <div class="form-group">
+                            <label for="solar-import-file">Workbook Solar (.xlsx / .xls)</label>
+                            <input type="file" id="solar-import-file" name="file" class="form-control" accept=".xlsx,.xls" required>
+                            <p class="help-block">Gunakan satu file yang berisi sheet SOLAR, POOL, dan MESS dengan header pada baris 4.</p>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-default" data-dismiss="modal">Batal</button>
+                        <button type="submit" class="btn btn-primary"><i class="fa fa-search"></i> Tampilkan Preview</button>
+                    </div>
+                </form>
+            </div>
         </div>
-
-        <div class="modal-body">
-          <div class="form-group">
-            <label>Pilih File Excel / CSV</label>
-            <input type="file" name="file" class="form-control" required>
-            <small class="text-muted">Format yang didukung: .xlsx, .xls, .csv</small>
-          </div>
-        </div>
-
-        <div class="modal-footer">
-          <button type="button" class="btn btn-default" data-dismiss="modal">Batal</button>
-          <button type="submit" class="btn btn-success">
-            <i class="fa fa-check"></i> Import Sekarang
-          </button>
-        </div>
-      </form>
     </div>
-  </div>
-</div>
 
-<!-- MODAL UPLOAD CSV MESS -->
-<div class="modal fade" id="uploadCSVMess" tabindex="-1" role="dialog" aria-labelledby="uploadCSVMessLabel">
-  <div class="modal-dialog" role="document">
-    <div class="modal-content">
-      <form action="{{ route('solar.mess.import') }}" method="POST" enctype="multipart/form-data">
+    <form method="post" id="solar-delete-form" class="hide">
         @csrf
-        <div class="modal-header">
-          <h4 class="modal-title" id="uploadCSVMessLabel">
-            <i class="fa fa-upload"></i> Import Data Solar Mess
-          </h4>
-          <button type="button" class="close" data-dismiss="modal" aria-label="Close">
-            <span aria-hidden="true">&times;</span>
-          </button>
-        </div>
-
-        <div class="modal-body">
-          <div class="form-group">
-            <label>Pilih File Excel / CSV</label>
-            <input type="file" name="file" class="form-control" required>
-            <small class="text-muted">Format yang didukung: .xlsx, .xls, .csv</small>
-          </div>
-        </div>
-
-        <div class="modal-footer">
-          <button type="button" class="btn btn-default" data-dismiss="modal">Batal</button>
-          <button type="submit" class="btn btn-success">
-            <i class="fa fa-check"></i> Import Sekarang
-          </button>
-        </div>
-      </form>
-    </div>
-  </div>
-</div>
+        @method('DELETE')
+    </form>
+</section>
 @endsection
+
 @section('javascript')
-    <script>
-        function addRowStock() {
-            const tableBody = document.getElementById('table-stock-body');
-            const newRow = document.createElement('tr');
-            newRow.innerHTML = `
-            <td><input type="date" name="tanggal[]" class="form-control"></td>
-            <td><input type="number" name="stock_in[]" class="form-control stock-in"></td>
-            <td><input type="number" name="out_actual[]" class="form-control out-actual"></td>
-            <td><input type="number" name="stock_actual[]" class="form-control stock-actual" readonly></td>
-            <td><input type="number" name="out_meteran[]" class="form-control out-meteran"></td>
-            <td><input type="number" name="stock_meteran[]" class="form-control stock-meteran" readonly></td>
-            <td><input type="text" name="keterangan[]" class="form-control"></td>
-            <td><button type="button" class="btn btn-danger btn-sm" onclick="deleteRow(this)"><i class="fa fa-trash"></i></button></td>
-        `;
-            tableBody.appendChild(newRow);
-        }
-
-      function addRowPool() {
-    const tableBody = document.getElementById('table-pool-body');
-    const newRow = document.createElement('tr');
-    newRow.innerHTML = `
-        <td><input type="date" name="tanggal[]" class="form-control"></td>
-        <td><input type="number" name="qty_in[]" class="form-control pool-in"></td>
-        <td><input type="number" name="qty_out[]" class="form-control pool-out"></td>
-        <td><input type="number" name="current_stock[]" class="form-control pool-current" readonly></td>
-        <td><input type="text" name="keterangan[]" class="form-control"></td>
-        <td><input type="text" name="unit[]" class="form-control"></td>
-        <td><input type="text" name="operator[]" class="form-control"></td>
-        <td>
-            <select name="customer_id[]" class="form-control select2-customer">
-                <option value="">-- Pilih Customer --</option>
-                @foreach($customers as $cust)
-                    <option value="{{ $cust->id }}">{{ $cust->display_name }}</option>
-                @endforeach
-            </select>
-        </td>
-        <td><button type="button" class="btn btn-danger btn-sm" onclick="deleteRow(this)"><i class="fa fa-trash"></i></button></td>
-    `;
-    tableBody.appendChild(newRow);
-
-    // Aktifkan Select2 untuk semua dropdown customer baru
-    $('.select2-customer').select2({
-        placeholder: "-- Pilih Customer --",
-        allowClear: true,
-        width: '100%'
-    });
-}
-
-$(document).ready(function() {
-    $('.select2-customer').select2({
-        placeholder: "-- Pilih Customer --",
-        allowClear: true,
-        width: '100%'
-    });
-});
-
-        function addRowMess() {
-            const tableBody = document.getElementById('table-mess-body');
-            const newRow = document.createElement('tr');
-            newRow.innerHTML = `
-            <td><input type="date" name="tanggal[]" class="form-control"></td>
-            <td><input type="number" name="qty_in[]" class="form-control mess-in"></td>
-            <td><input type="number" name="qty_out[]" class="form-control mess-out"></td>
-            <td><input type="number" name="current_stock[]" class="form-control mess-current" readonly></td>
-            <td><input type="text" name="keterangan[]" class="form-control"></td>
-            <td><input type="text" name="unit[]" class="form-control"></td>
-            <td><input type="text" name="operator[]" class="form-control"></td>
-            <td>
-                <select name="customer_id" id="customer_id" class="form-control">
-                <option value="">-- Pilih Customer --</option>
-                @foreach($customers as $cust)
-                <option value="{{ $cust->id }}">{{ $cust->display_name }}</option>
-                @endforeach
-                </select>
-            </td>     
-            <td>
-                <select name="lokasi[]" class="form-control select2">
-                <option value="">-- Pilih Lokasi --</option>
-                <option value="Stockpile Jatim">Stockpile Jatim</option>
-                <option value="Telly Dermaga C">Telly Dermaga C</option>
-                </select>
-                                    </td>
-            <td><button type="button" class="btn btn-danger btn-sm" onclick="deleteRow(this)"><i class="fa fa-trash"></i></button></td>
-        `;
-            tableBody.appendChild(newRow);
-            
-                // Aktifkan Select2 untuk semua dropdown customer baru
-    $('.select2-customer').select2({
-        placeholder: "-- Pilih Customer --",
-        allowClear: true,
-        width: '100%'
-    });
-}
-
-        function deleteRow(btn) {
-            const row = btn.closest('tr');
-            row.remove();
-            calculateAll();
-        }
-
-        document.addEventListener('input', function() {
-            calculateAll();
-        });
-        // inject stok awal dari server ke JS (safe)
-        const START_STOCK_ACTUAL = @json($stok_awal_actual ?? 0);
-        const START_STOCK_METERAN = @json($stok_awal_meteran ?? 0);
-        const START_STOCK_POOL = @json($stok_awal_pool ?? 0);
-        const START_STOCK_MESS = @json($stok_awal_mess ?? 0);
-
-function calculateAll() {
-    // Stock tetap pakai fungsi lama
-    calculateStock('#table-stock', '.stock-in', '.out-actual', '.stock-actual');
-    calculateStock('#table-stock', '.stock-in', '.out-meteran', '.stock-meteran');
-
-    // Pool & Mess pakai fungsi baru akumulatif
-    calculateStockCumulative('#table-pool', '.pool-in', '.pool-out', '.pool-current', START_STOCK_POOL);
-    calculateStockCumulative('#table-mess', '.mess-in', '.mess-out', '.mess-current', START_STOCK_MESS);
-}
-
-// Fungsi stock lama tetap untuk #table-stock
-function calculateStock(tableId, inSelector, outSelector, resultSelector, startStock = 0) {
-    let total = 0;
-
-    if (tableId === '#table-stock' && resultSelector === '.stock-actual') {
-        total = parseFloat(START_STOCK_ACTUAL) || 0;
-    } else if (tableId === '#table-stock' && resultSelector === '.stock-meteran') {
-        total = parseFloat(START_STOCK_METERAN) || 0;
-    } else {
-        total = parseFloat(startStock) || 0;
-    }
-
-    const rows = document.querySelectorAll(`${tableId} tbody tr`);
-    rows.forEach(row => {
-        const inputIn = row.querySelector(inSelector);
-        const inputOut = row.querySelector(outSelector);
-        const result = row.querySelector(resultSelector);
-
-        const masuk = parseFloat(inputIn?.value || 0);
-        const keluar = parseFloat(inputOut?.value || 0);
-
-        total = total + masuk - keluar;
-        if (result) result.value = total;
-    });
-}
-
-// Fungsi baru khusus Pool & Mess (akumulatif dari baris pertama)
-function calculateStockCumulative(tableId, inSelector, outSelector, resultSelector, startStock = 0) {
-    const rows = document.querySelectorAll(`${tableId} tbody tr`);
-    let total = parseFloat(startStock) || 0;
-
-    rows.forEach(row => {
-        const inputIn = row.querySelector(inSelector);
-        const inputOut = row.querySelector(outSelector);
-        const result = row.querySelector(resultSelector);
-
-        const masuk = parseFloat(inputIn?.value || 0);
-        const keluar = parseFloat(inputOut?.value || 0);
-
-        total = total + masuk - keluar;
-        if (result) result.value = total;
-    });
-}
-
-
-
-        function filterTable(inputClass, tableId) {
-            $(inputClass).on("keyup", function() {
-                var value = $(this).val().toLowerCase();
-                $(`${tableId} tbody tr`).filter(function() {
-                    $(this).toggle($(this).text().toLowerCase().indexOf(value) > -1);
-                });
-            });
-        }
-
-        $(document).ready(function() {
-            var hash = window.location.hash;
-            if (hash) {
-                $('.nav-tabs a[href="' + hash + '"]').tab('show');
-            }
-            filterTable(".search-stock", "#table-stock");
-            filterTable(".search-pool", "#table-pool");
-            filterTable(".search-mess", "#table-mess");
-
-            // Aktifkan tab dari hash URL (sudah kamu punya sebelumnya)
-            var hash = window.location.hash;
-            if (hash) {
-                $('.nav-tabs a[href="' + hash + '"]').tab('show');
-            }
-        });
-
-        function deleteStock(id) {
-            if (!confirm('Yakin hapus data ini?')) return;
-
-            fetch(`solar/stock/${id}`, {
-                    method: 'DELETE',
-                    headers: {
-                        'X-CSRF-TOKEN': '{{ csrf_token() }}',
-                        'Accept': 'application/json'
-                    }
-                })
-                .then(response => {
-                    alert('Data berhasil dihapus');
-                    location.reload(); // reload halaman setelah hapus
-                })
-
-                .catch(error => {
-                    alert(error.message);
-                });
-        }
-
-        function deletePool(id) {
-            if (!confirm('Yakin hapus data ini?')) return;
-
-            fetch(`solar/pool/${id}`, {
-                    method: 'DELETE',
-                    headers: {
-                        'X-CSRF-TOKEN': '{{ csrf_token() }}',
-                        'Accept': 'application/json'
-                    }
-                })
-                .then(response => {
-                    alert('Data berhasil dihapus');
-                    location.reload(); // reload halaman setelah hapus
-                })
-
-                .catch(error => {
-                    alert(error.message);
-                });
-        }
-
-        function deleteMess(id) {
-            if (!confirm('Yakin hapus data ini?')) return;
-
-            fetch(`solar/mess/${id}`, {
-                    method: 'DELETE',
-                    headers: {
-                        'X-CSRF-TOKEN': '{{ csrf_token() }}',
-                        'Accept': 'application/json'
-                    }
-                })
-                .then(response => {
-                    alert('Data berhasil dihapus');
-                    location.reload(); // reload halaman setelah hapus
-                })
-
-                .catch(error => {
-                    alert(error.message);
-                });
-        }
-        
-        $(document).ready(function() {
-    var hash = window.location.hash;
-    if (hash) {
-        $('.nav-tabs a[href="' + hash + '"]').tab('show');
-    }
-
-    // ✅ aktifkan pencarian tabel
-    filterTable(".search-stock", "#table-stock");
-    filterTable(".search-pool", "#table-pool");
-    filterTable(".search-mess", "#table-mess");
-
-    // ✅ tetap biarkan tab aktif mengikuti URL
-    if (hash) {
-        $('.nav-tabs a[href="' + hash + '"]').tab('show');
-    }
-
-    // ✅ langsung hitung semua stok saat halaman pertama kali dibuka
-    calculateAll();
-
-    // ✅ setiap kali ada perubahan input, perhitungan diupdate otomatis
-    document.addEventListener('input', function() {
-        calculateAll();
-    });
-});
-
-    </script>
+<script src="{{ asset('js/solar.js') }}"></script>
 @endsection
-

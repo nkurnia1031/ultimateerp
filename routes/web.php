@@ -134,27 +134,25 @@ Route::middleware(['setData', 'auth', 'SetSessionData', 'language', 'timezone', 
 
     Route::prefix('solar')->name('solar.')->group(function () {
         Route::get('/', [SolarController::class, 'index'])->name('index');
-        Route::post('/stock/save', [SolarController::class, 'saveStock'])->name('stock.save');
-        Route::post('/pool/save', [SolarController::class, 'savePool'])->name('pool.save');
-        Route::post('/mess/save', [SolarController::class, 'saveMess'])->name('mess.save');
-
-        Route::delete('/stock/{id}', [SolarController::class, 'deleteStock'])->name('stock.delete');
-        Route::delete('/pool/{id}', [SolarController::class, 'deletePool'])->name('pool.delete');
-        Route::delete('/mess/{id}', [SolarController::class, 'deleteMess'])->name('mess.delete');
-
-        Route::put('/stock/{id}', [SolarController::class, 'updateStock'])->name('stock.update');
-        Route::put('/pool/{id}', [SolarController::class, 'updatePool'])->name('pool.update');
-        Route::put('/mess/{id}', [SolarController::class, 'updateMess'])->name('mess.update');
+        Route::get('/template', [SolarController::class, 'template'])->name('template');
+        Route::get('/export', [SolarController::class, 'export'])->name('export');
+        Route::post('/reconcile', [SolarController::class, 'reconcile'])->name('reconcile');
+        Route::post('/import/confirm', [SolarController::class, 'confirmImport'])->name('import.confirm');
+        Route::get('/reconcile/{token}/export', [SolarController::class, 'exportReconciliation'])
+            ->whereUuid('token')
+            ->name('reconcile.export');
+        Route::post('/{ledger}', [SolarController::class, 'store'])
+            ->whereIn('ledger', ['stock', 'pool', 'mess'])
+            ->name('store');
+        Route::put('/{ledger}/{id}', [SolarController::class, 'update'])
+            ->whereIn('ledger', ['stock', 'pool', 'mess'])
+            ->whereNumber('id')
+            ->name('update');
+        Route::delete('/{ledger}/{id}', [SolarController::class, 'destroy'])
+            ->whereIn('ledger', ['stock', 'pool', 'mess'])
+            ->whereNumber('id')
+            ->name('destroy');
     });
-Route::post('solar/stock/import', [App\Http\Controllers\SolarController::class, 'importStock'])
-    ->name('solar.stock.import');
-// ROUTE UNTUK STOCK AWAL SOLAR
-Route::post('/solar/stock-awal/save', [SolarController::class, 'saveStockAwal'])->name('solar.stock.awal.save');
-Route::post('/solar/pool/import', [SolarController::class, 'importPool'])->name('solar.pool.import');
-Route::post('/solar/mess/import', [SolarController::class, 'importMess'])->name('solar.mess.import');
-
-
-
 
     Route::get('pos/payment/{id}', [SellPosController::class, 'edit'])->name('edit-pos-payment');
     Route::get('service-staff-availability', [SellPosController::class, 'showServiceStaffAvailibility']);

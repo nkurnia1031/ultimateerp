@@ -5305,9 +5305,9 @@
     "semantic_hash": "120608a3ca3e9afc2222ac6ac449df5e"
   },
   "app/Http/Controllers/SolarController.php": {
-    "mtime": 1762624297.0,
-    "ast_hash": "b340c0aea0fe17db11dcff49a09b0c9c",
-    "semantic_hash": "b340c0aea0fe17db11dcff49a09b0c9c"
+    "mtime": 1785136037.3921714,
+    "ast_hash": "b4b1ee251437b8c9b49b0cbb8b7f7d49",
+    "semantic_hash": ""
   },
   "app/Http/Controllers/StockAdjustmentController.php": {
     "mtime": 1762624297.0,
@@ -5463,21 +5463,6 @@
     "mtime": 1778683766.7028193,
     "ast_hash": "51cc85517010ed5a6220849d005582c6",
     "semantic_hash": "51cc85517010ed5a6220849d005582c6"
-  },
-  "app/Imports/SolarMessImport.php": {
-    "mtime": 1762624297.0,
-    "ast_hash": "39a281ceffa727f7b2aa7df0ec944a09",
-    "semantic_hash": "39a281ceffa727f7b2aa7df0ec944a09"
-  },
-  "app/Imports/SolarPoolImport.php": {
-    "mtime": 1762624297.0,
-    "ast_hash": "191345393040d5097e3e20c9fbbec92c",
-    "semantic_hash": "191345393040d5097e3e20c9fbbec92c"
-  },
-  "app/Imports/SolarStockImport.php": {
-    "mtime": 1762624297.0,
-    "ast_hash": "4273213029c46952f45469e923f8e0ad",
-    "semantic_hash": "4273213029c46952f45469e923f8e0ad"
   },
   "app/InvoiceLayout.php": {
     "mtime": 1762624297.0,
@@ -9805,14 +9790,9 @@
     "semantic_hash": "9a27618c33d64d82fcf78fc3f7569817"
   },
   "resources/views/solar/index.blade.php": {
-    "mtime": 1762624297.0,
-    "ast_hash": "94e6729799fcc1db743d6d4fcf719b1b",
-    "semantic_hash": "94e6729799fcc1db743d6d4fcf719b1b"
-  },
-  "resources/views/solar/script.blade.php": {
-    "mtime": 1762624297.0,
-    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
-    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+    "mtime": 1785135439.0558562,
+    "ast_hash": "d100a92ff07c29814a70b04206ef7c5d",
+    "semantic_hash": ""
   },
   "resources/views/stock_adjustment/create.blade.php": {
     "mtime": 1762624297.0,
@@ -11015,9 +10995,9 @@
     "semantic_hash": "e604e8c82a6bc445c9785a4567a1ebeb"
   },
   "routes/web.php": {
-    "mtime": 1778650976.5266688,
-    "ast_hash": "28c620eefeb48622c2f731b4e2f1bc3c",
-    "semantic_hash": "28c620eefeb48622c2f731b4e2f1bc3c"
+    "mtime": 1785135282.3624551,
+    "ast_hash": "a5c4924db7b09f1d9ed93ecd4a934510",
+    "semantic_hash": ""
   },
   "Modules/Manufacturing/License.txt": {
     "mtime": 1762624297.0,
@@ -11537,6 +11517,36 @@
   "Modules/Project/Services/ProjectWorkbookExporter.php": {
     "mtime": 1784726446.873371,
     "ast_hash": "cea23d6d0407188f2e15154a561d42d6",
+    "semantic_hash": ""
+  },
+  "app/Console/Commands/BackfillSolarBusiness.php": {
+    "mtime": 1785135042.59632,
+    "ast_hash": "060eb0454cafe46a9a0ecdbd1d06dbe3",
+    "semantic_hash": ""
+  },
+  "app/Services/SolarLedgerService.php": {
+    "mtime": 1785136129.2107565,
+    "ast_hash": "effc2764ce29d57448a4bf390a884b2d",
+    "semantic_hash": ""
+  },
+  "app/Services/SolarWorkbookService.php": {
+    "mtime": 1785136381.493701,
+    "ast_hash": "985807f9e64fd197dbfc89a3ba51745a",
+    "semantic_hash": ""
+  },
+  "database/migrations/2026_07_27_000000_harden_solar_ledgers.php": {
+    "mtime": 1785135042.593304,
+    "ast_hash": "6242854dd9ad8df25ec3ba01cacef30a",
+    "semantic_hash": ""
+  },
+  "public/js/solar.js": {
+    "mtime": 1785135439.062977,
+    "ast_hash": "92dbb1a3f6366457c6990e641dd6296f",
+    "semantic_hash": ""
+  },
+  "resources/views/solar/reconcile.blade.php": {
+    "mtime": 1785135439.061438,
+    "ast_hash": "5212988bf89d1a36ecf28b27cb6ac97c",
     "semantic_hash": ""
   }
 }
