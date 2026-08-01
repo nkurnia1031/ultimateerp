@@ -16,6 +16,25 @@ $(document).ready(function () {
         ignoreReadonly: true,
     });
 
+    function getSupplierLabel(data) {
+        var candidates = [
+            data.text,
+            data.supplier_business_name,
+            data.contact_id,
+            data.mobile,
+            data.email,
+            data.id ? 'Supplier #' + data.id : '',
+        ];
+
+        for (var i = 0; i < candidates.length; i++) {
+            if (candidates[i] !== null && typeof candidates[i] !== 'undefined' && String(candidates[i]).trim() !== '') {
+                return String(candidates[i]).trim();
+            }
+        }
+
+        return 'Supplier';
+    }
+
     //get suppliers
     $('#supplier_id').select2({
         ajax: {
@@ -36,17 +55,13 @@ $(document).ready(function () {
         },
         minimumInputLength: 1,
         escapeMarkup: function (m) {
-            return m;
+            return $('<div>').text(m).html();
         },
         templateResult: function (data) {
-            if (!data.id) {
-                return data.text;
-            }
-            var html = data.text + ' - ' + data.business_name + ' (' + data.contact_id + ')';
-            return html;
+            return getSupplierLabel(data);
         },
         templateSelection: function (data) {
-            return data.supplier_business_name || data.text;;// tampil di input setelah dipilih
+            return getSupplierLabel(data);
         },
         language: {
             noResults: function () {

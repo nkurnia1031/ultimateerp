@@ -176,25 +176,23 @@ class Contact extends Authenticatable
     {
         $all_contacts = Contact::where('contacts.business_id', $business_id)
             ->whereIn('contacts.type', ['supplier', 'both'])
-            ->active();
-
-        if ($append_id) {
-            $all_contacts->select(
-                DB::raw("IF(contacts.contact_id IS NULL OR contacts.contact_id='', name, CONCAT(contacts.name, ' - ', COALESCE(contacts.supplier_business_name, ''), '(', contacts.contact_id, ')')) AS supplier"),
-                'contacts.id'
-            );
-        } else {
-            $all_contacts->select(
+            ->active()
+            ->select([
                 'contacts.id',
-                DB::raw("CONCAT(contacts.name, ' (', contacts.supplier_business_name, ')') as supplier")
-            );
-        }
+                'contacts.name',
+                'contacts.supplier_business_name',
+                'contacts.contact_id',
+                'contacts.mobile',
+                'contacts.email',
+            ]);
 
         if (auth()->check() && ! auth()->user()->can('supplier.view') && auth()->user()->can('supplier.view_own')) {
             $all_contacts->onlyOwnContact();
         }
 
-        $suppliers = $all_contacts->pluck('supplier', 'id');
+        $suppliers = $all_contacts->get()->mapWithKeys(function ($contact) use ($append_id) {
+            return [$contact->id => self::supplierDisplayName($contact, $append_id)];
+        });
 
         //Prepend none
         if ($prepend_none) {
@@ -202,6 +200,51 @@ class Contact extends Authenticatable
         }
 
         return $suppliers;
+    }
+
+    /**
+     * Build a supplier label without allowing an incomplete contact record to
+     * become an empty option in a dropdown or Select2 result.
+     */
+    public static function supplierDisplayName($contact, $append_id = true): string
+    {
+        $value = function ($key) use ($contact) {
+            return trim((string) (is_array($contact) ? ($contact[$key] ?? '') : ($contact->{$key} ?? '')));
+        };
+
+        $name = $value('name');
+        $businessName = $value('supplier_business_name');
+        if ($businessName === '') {
+            $businessName = $value('business_name');
+        }
+        $contactId = $value('contact_id');
+        $mobile = $value('mobile');
+        $email = $value('email');
+        $id = is_array($contact) ? ($contact['id'] ?? '') : ($contact->id ?? '');
+        $fallback = 'Supplier #'.trim((string) $id);
+
+        if ($append_id) {
+            $parts = $name !== '' ? [$name] : [];
+            if ($businessName !== '' && ($name === '' || strcasecmp($name, $businessName) !== 0)) {
+                $parts[] = $businessName;
+            }
+            $label = implode(' - ', $parts);
+
+            if ($contactId !== '') {
+                $label .= ($label !== '' ? ' ' : '').'('.$contactId.')';
+            }
+        } else {
+            $label = $name !== '' ? $name : $businessName;
+            if ($name !== '' && $businessName !== '' && strcasecmp($name, $businessName) !== 0) {
+                $label .= ' ('.$businessName.')';
+            }
+        }
+
+        if ($label === '') {
+            $label = $contactId !== '' ? $contactId : ($mobile !== '' ? $mobile : $email);
+        }
+
+        return trim($label) !== '' ? trim($label) : $fallback;
     }
 
     /**

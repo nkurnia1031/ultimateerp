@@ -996,6 +996,7 @@ class PurchaseController extends Controller
                 ->select(
                     'contacts.id',
                     DB::raw('IF(name="", supplier_business_name, name) as text'),
+                    'contacts.supplier_business_name',
                     'supplier_business_name as business_name',
                     'contacts.mobile',
                     'contacts.address_line_1',
@@ -1010,9 +1011,16 @@ class PurchaseController extends Controller
                     'contacts.balance'
                 )
                 ->onlySuppliers()
-                ->get();
+                ->get()
+                ->map(function ($supplier) {
+                    $supplier->text = Contact::supplierDisplayName($supplier, true);
+                    $supplier->business_name = trim((string) ($supplier->business_name ?? ''));
 
-            return json_encode($suppliers);
+                    return $supplier;
+                })
+                ->values();
+
+            return response()->json($suppliers);
         }
     }
 
