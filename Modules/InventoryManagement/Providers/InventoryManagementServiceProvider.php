@@ -61,9 +61,9 @@ class InventoryManagementServiceProvider extends ServiceProvider
             $sourcePath => $viewPath
         ],'views');
 
-        $this->loadViewsFrom(array_merge(array_map(function ($path) {
+        $this->loadViewsFrom(array_merge(array_filter(array_map(function ($path) {
             return $path . '/modules/inventorymanagement';
-        }, \Config::get('view.paths')), [$sourcePath]), 'inventorymanagement');
+        }, \Config::get('view.paths')), 'is_dir'), [$sourcePath]), 'inventorymanagement');
     }
 
     /**

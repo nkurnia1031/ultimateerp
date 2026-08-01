@@ -61,9 +61,9 @@ class AssetManagementServiceProvider extends ServiceProvider
             $sourcePath => $viewPath,
         ], 'views');
 
-        $this->loadViewsFrom(array_merge(array_map(function ($path) {
+        $this->loadViewsFrom(array_merge(array_filter(array_map(function ($path) {
             return $path.'/modules/assetmanagement';
-        }, config('view.paths')), [$sourcePath]), 'assetmanagement');
+        }, config('view.paths')), 'is_dir'), [$sourcePath]), 'assetmanagement');
     }
 
     /**

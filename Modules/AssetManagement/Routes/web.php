@@ -13,7 +13,8 @@ Route::middleware('web', 'authh', 'auth', 'SetSessionData', 'language', 'timezon
     Route::resource('depreciation', Modules\AssetManagement\Http\Controllers\AssetDepreciationController::class);
     Route::resource('allocation', Modules\AssetManagement\Http\Controllers\AssetAllocationController::class);
     Route::resource('revocation', Modules\AssetManagement\Http\Controllers\RevokeAllocatedAssetController::class);
-    Route::resource('settings', Modules\AssetManagement\Http\Controllers\AssetSettingsController::class);
+    Route::resource('settings', Modules\AssetManagement\Http\Controllers\AssetSettingsController::class)
+        ->names('asset.settings');
     Route::get('dashboard', [Modules\AssetManagement\Http\Controllers\AssetController::class, 'dashboard']);
 
     Route::resource('asset-maintenance', 'Modules\AssetManagement\Http\Controllers\AssetMaitenanceController');

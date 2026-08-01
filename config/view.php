@@ -13,10 +13,12 @@ return [
     |
     */
 
-    'paths' => [
+    // custom_views is an optional override directory. Only register paths
+    // that exist so commands such as `view:cache` work on a fresh deploy.
+    'paths' => array_values(array_filter([
         base_path('custom_views'),
         resource_path('views'),
-    ],
+    ], 'is_dir')),
 
     /*
     |--------------------------------------------------------------------------

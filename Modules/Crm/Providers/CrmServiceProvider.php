@@ -109,9 +109,9 @@ class CrmServiceProvider extends ServiceProvider
             $sourcePath => $viewPath,
         ], 'views');
 
-        $this->loadViewsFrom(array_merge(array_map(function ($path) {
+        $this->loadViewsFrom(array_merge(array_filter(array_map(function ($path) {
             return $path . '/modules/crm';
-        }, config('view.paths')), [$sourcePath]), 'crm');
+        }, config('view.paths')), 'is_dir'), [$sourcePath]), 'crm');
     }
 
     /**

@@ -132,9 +132,9 @@ class EssentialsServiceProvider extends ServiceProvider
             $sourcePath => $viewPath,
         ], 'views');
 
-        $this->loadViewsFrom(array_merge(array_map(function ($path) {
+        $this->loadViewsFrom(array_merge(array_filter(array_map(function ($path) {
             return $path.'/modules/essential';
-        }, config('view.paths')), [$sourcePath]), 'essentials');
+        }, config('view.paths')), 'is_dir'), [$sourcePath]), 'essentials');
     }
 
     /**

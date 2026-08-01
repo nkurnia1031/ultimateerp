@@ -75,9 +75,9 @@ class ProjectServiceProvider extends ServiceProvider
             $sourcePath => $viewPath,
         ], 'views');
 
-        $this->loadViewsFrom(array_merge(array_map(function ($path) {
+        $this->loadViewsFrom(array_merge(array_filter(array_map(function ($path) {
             return $path.'/modules/project';
-        }, config('view.paths')), [$sourcePath]), 'project');
+        }, config('view.paths')), 'is_dir'), [$sourcePath]), 'project');
     }
 
     /**

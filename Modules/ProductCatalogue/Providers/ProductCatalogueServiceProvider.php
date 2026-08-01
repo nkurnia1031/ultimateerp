@@ -61,9 +61,9 @@ class ProductCatalogueServiceProvider extends ServiceProvider
             $sourcePath => $viewPath,
         ], 'views');
 
-        $this->loadViewsFrom(array_merge(array_map(function ($path) {
+        $this->loadViewsFrom(array_merge(array_filter(array_map(function ($path) {
             return $path.'/modules/productcatalogue';
-        }, config('view.paths')), [$sourcePath]), 'productcatalogue');
+        }, config('view.paths')), 'is_dir'), [$sourcePath]), 'productcatalogue');
     }
 
     /**
