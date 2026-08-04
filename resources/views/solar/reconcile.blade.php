@@ -7,12 +7,21 @@
     <h1>Hasil Cross-check Stok Solar <small>preview sebelum import</small></h1>
 </section>
 
-<section class="content">
+<section class="content" id="solar-reconcile-app"
+    data-batch-id="{{ $token }}"
+    data-base-url="{{ route('solar.index') }}"
+    data-rows-url="{{ route('solar.imports.rows', $token) }}"
+    data-status-url="{{ route('solar.imports.status', $token) }}"
+    data-reconcile-url="{{ route('solar.imports.reconcile', $token) }}"
+    data-retry-url="{{ route('solar.imports.retry', $token) }}"
+    data-cancel-url="{{ route('solar.imports.cancel', $token) }}"
+    data-date-url-template="{{ route('solar.imports.rows.date', [$token, '__ROW__']) }}"
+    data-confirm-url="{{ route('solar.imports.confirm', $token) }}">
     @if (session('status'))
         <div class="alert alert-danger">{{ session('status.msg') }}</div>
     @endif
 
-    <div class="row">
+    <div class="row" id="solar-preview-summary">
         @php
             $cards = [
                 ['match', 'Cocok', 'bg-green'],
@@ -23,9 +32,9 @@
             ];
         @endphp
         @foreach ($cards as [$key, $label, $color])
-            <div class="col-sm-6 col-md-{{ $loop->first ? '2' : '2' }}">
+            <div class="col-sm-6 col-md-2">
                 <div class="small-box {{ $color }}">
-                    <div class="inner"><h3>{{ $result['summary'][$key] ?? 0 }}</h3><p>{{ $label }}</p></div>
+                    <div class="inner"><h3 data-summary="{{ $key }}">{{ $summary[$key] ?? 0 }}</h3><p>{{ $label }}</p></div>
                 </div>
             </div>
         @endforeach
@@ -42,63 +51,85 @@
         </div>
         <div class="box-body">
             <div class="alert alert-info">
-                Konfirmasi hanya menambahkan {{ $result['summary']['only_excel'] ?? 0 }} baris yang valid dan belum ada.
-                Baris berstatus Berbeda tidak akan menimpa aplikasi.
+                Hanya baris <strong>Hanya di Excel</strong> yang akan ditambahkan. Error tanggal dapat diperbaiki langsung dari tabel.
             </div>
-            @if ($totalItems > count($visibleItems))
-                <p class="text-muted">Menampilkan 500 dari {{ $totalItems }} hasil. Unduh laporan untuk melihat seluruh baris.</p>
-            @endif
+            <div class="row" style="margin-bottom:10px">
+                <div class="col-sm-3">
+                    <select id="solar-preview-ledger" class="form-control">
+                        <option value="">Semua ledger</option>
+                        <option value="stock">Stock</option>
+                        <option value="pool">Pool</option>
+                        <option value="mess">Mess</option>
+                    </select>
+                </div>
+                <div class="col-sm-3">
+                    <select id="solar-preview-status" class="form-control">
+                        <option value="">Semua status</option>
+                        <option value="match">Cocok</option>
+                        <option value="only_excel">Hanya di Excel</option>
+                        <option value="only_app">Hanya di Aplikasi</option>
+                        <option value="different">Berbeda</option>
+                        <option value="ambiguous">Ambigu</option>
+                        <option value="error">Error</option>
+                    </select>
+                </div>
+            </div>
             <div class="table-responsive">
-                <table class="table table-bordered table-striped">
-                    <thead>
-                        <tr><th>Ledger</th><th>Baris Excel</th><th>Tanggal</th><th>Status</th><th>Detail</th></tr>
-                    </thead>
-                    <tbody>
-                        @forelse ($visibleItems as $item)
-                            @php
-                                $labels = [
-                                    'match' => ['Cocok', 'success'],
-                                    'only_excel' => ['Hanya di Excel', 'info'],
-                                    'only_app' => ['Hanya di Aplikasi', 'warning'],
-                                    'different' => ['Berbeda', 'warning'],
-                                    'error' => ['Error', 'danger'],
-                                ];
-                                [$statusLabel, $statusColor] = $labels[$item['status']] ?? [$item['status'], 'default'];
-                            @endphp
-                            <tr>
-                                <td>{{ strtoupper($item['ledger']) }}</td>
-                                <td>{{ $item['row'] ?: '—' }}</td>
-                                <td>{{ $item['date'] ? \Carbon\Carbon::parse($item['date'])->format('d/m/Y') : '—' }}</td>
-                                <td><span class="label label-{{ $statusColor }}">{{ $statusLabel }}</span></td>
-                                <td>
-                                    @if (empty($item['differences']))
-                                        <span class="text-muted">Data dan saldo sesuai.</span>
-                                    @else
-                                        <ul class="list-unstyled" style="margin:0">
-                                            @foreach ($item['differences'] as $difference)
-                                                <li>{{ $difference }}</li>
-                                            @endforeach
-                                        </ul>
-                                    @endif
-                                </td>
-                            </tr>
-                        @empty
-                            <tr><td colspan="5" class="text-center text-muted">Tidak ada data untuk dibandingkan.</td></tr>
-                        @endforelse
-                    </tbody>
+                <table id="solar-preview-table" class="table table-bordered table-striped" style="width:100%">
+                    <thead><tr><th>Ledger</th><th>Baris Excel</th><th>Tanggal</th><th>Status</th><th>Metode</th><th>Detail</th><th>Aksi</th></tr></thead>
                 </table>
             </div>
         </div>
         <div class="box-footer">
             <a href="{{ route('solar.index') }}" class="btn btn-default"><i class="fa fa-arrow-left"></i> Kembali tanpa Import</a>
-            <form action="{{ route('solar.import.confirm') }}" method="post" class="pull-right">
+            <form action="{{ route('solar.import.confirm') }}" method="post" class="pull-right" id="solar-confirm-form"
+                data-ajax-url="{{ route('solar.imports.confirm', $token) }}">
                 @csrf
                 <input type="hidden" name="token" value="{{ $token }}">
-                <button class="btn btn-success" {{ ($result['summary']['only_excel'] ?? 0) < 1 ? 'disabled' : '' }}>
-                    <i class="fa fa-check"></i> Konfirmasi Import {{ $result['summary']['only_excel'] ?? 0 }} Baris Baru
+                <button id="solar-preview-confirm" class="btn btn-success" {{ ($summary['only_excel'] ?? 0) < 1 ? 'disabled' : '' }}>
+                    <i class="fa fa-check"></i> Konfirmasi Import <span data-summary="only_excel">{{ $summary['only_excel'] ?? 0 }}</span> Baris Baru
                 </button>
             </form>
         </div>
     </div>
+
+    <div class="modal fade" id="solar-date-edit-modal" tabindex="-1">
+        <div class="modal-dialog modal-sm">
+            <div class="modal-content">
+                <form id="solar-date-edit-form">
+                    @csrf
+                    <div class="modal-header"><button type="button" class="close" data-dismiss="modal">&times;</button><h4 class="modal-title">Perbaiki Tanggal</h4></div>
+                    <div class="modal-body">
+                        <p class="text-muted">Tanggal Excel: <strong id="solar-date-edit-raw"></strong></p>
+                        <input type="date" id="solar-date-edit-value" class="form-control" required>
+                    </div>
+                    <div class="modal-footer"><button type="button" class="btn btn-default" data-dismiss="modal">Batal</button><button class="btn btn-primary" type="submit">Simpan &amp; Proses Ulang</button></div>
+                </form>
+            </div>
+        </div>
+    </div>
 </section>
+
+<div class="modal fade" id="solar-process-modal" tabindex="-1" data-backdrop="static" data-keyboard="false">
+    <div class="modal-dialog modal-sm"><div class="modal-content">
+        <div class="modal-header"><h4 class="modal-title"><i class="fa fa-refresh fa-spin"></i> <span id="solar-process-title">Memproses</span></h4></div>
+        <div class="modal-body">
+            <div class="progress"><div id="solar-process-progress" class="progress-bar progress-bar-info progress-bar-striped active" style="width:0%">0%</div></div>
+            <p id="solar-process-stage" class="text-muted">Menunggu proses...</p>
+            <p id="solar-process-message">Memulai...</p>
+            <small class="text-muted">Berjalan: <span id="solar-process-elapsed">0 detik</span> · Pembaruan terakhir: <span id="solar-process-heartbeat">—</span></small>
+            <div id="solar-process-error" class="alert alert-danger" style="display:none;margin-top:10px"></div>
+            <div id="solar-process-stale" class="alert alert-warning" style="display:none;margin-top:10px">Tidak ada pembaruan dari server. Proses mungkin masih berjalan.</div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-warning" id="solar-process-retry" style="display:none">Coba cek lagi</button>
+            <button type="button" class="btn btn-default" id="solar-process-cancel">Batalkan</button>
+            <button type="button" class="btn btn-primary" id="solar-process-close" style="display:none" data-dismiss="modal">Tutup</button>
+        </div>
+    </div></div>
+</div>
+@endsection
+
+@section('javascript')
+<script src="{{ asset('js/solar.js') }}"></script>
 @endsection

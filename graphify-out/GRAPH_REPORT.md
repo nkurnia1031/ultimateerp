@@ -1,16 +1,16 @@
-# Graph Report - ultimateerp  (2026-08-01)
+# Graph Report - ultimateerp  (2026-08-02)
 
 ## Corpus Check
-- 2307 files · ~999,693 words
+- 2319 files · ~1,005,941 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 8841 nodes · 15456 edges · 1900 communities (1335 shown, 565 thin omitted)
-- Extraction: 85% EXTRACTED · 15% INFERRED · 0% AMBIGUOUS · INFERRED: 2295 edges (avg confidence: 0.72)
+- 8921 nodes · 15654 edges · 1915 communities (1364 shown, 551 thin omitted)
+- Extraction: 85% EXTRACTED · 15% INFERRED · 0% AMBIGUOUS · INFERRED: 2302 edges (avg confidence: 0.72)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `6399c069`
+- Built from commit: `23879968`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -208,6 +208,7 @@
 - Manufacturing Module Install Controller
 - ProductCatalogue Module Install Controller
 - ProductCatalogue Module Product Catalogue Service
+- Project Module Activity Controller
 - Project Module Install Controller
 - Spreadsheet Module Install Controller
 - Spreadsheet Module Service Provider
@@ -221,7 +222,6 @@
 - Essentials Module Install Controller
 - Essentials Module Document Share Notification
 - Essentials Module Leave Status Notification
-- Essentials Module New Task Comment
 - Essentials Module Payroll Notification
 - Project Module New Assigned Notification
 - Project Module New Task Assigned
@@ -246,7 +246,6 @@
 - AssetManagement Module Route Service Provider
 - Crm Module Route Service Provider
 - Essentials Module Todo Comment
-- Essentials Module New Leave Notification
 - Essentials Module Route Service Provider
 - InventoryManagement Module Data Controller
 - InventoryManagement Module Route Service Provider
@@ -357,15 +356,10 @@
 - Crm Module Add Version To
 - Crm Module Modify Cloumn In
 - Crm Module Lead Users Table
-- Crm Module Campaigns Table
-- Crm Module Add Additional Info
 - Crm Module Add New Columns
-- Crm Module Call Logs Table
 - Crm Module Add Mobile Name
 - Crm Module Add Indexing
 - Crm Module Followup Invoices
-- Crm Module Add Follow By
-- Crm Module Add Department And
 - Crm Module Add Recursive Fields
 - Crm Module Proposals Table
 - Crm Module Add Settings Column
@@ -378,16 +372,12 @@
 - Crm Module surat kontrak
 - Essentials Module Documents Table
 - Essentials Module Document Shares Table
-- Essentials Module To Dos Table
 - Essentials Module Messages
 - Essentials Module Add Message Permissions
 - Essentials Module Leave Types Table
 - Essentials Module Leaves Table
 - Essentials Module Add Settings Columns
-- Essentials Module Payrolls Table
 - Essentials Module Holidays Table
-- Essentials Module Add Approve Leave
-- Essentials Module Allowance And Deduction
 - Essentials Module User Allowances And
 - Essentials Module Todo Comments Table
 - Essentials Module Shift Table
@@ -396,28 +386,23 @@
 - Essentials Module Add End Time
 - Essentials Module Kb Table
 - Essentials Module Kb Users Table
-- Essentials Module Add Indexing
 - Essentials Module Payroll Groups Table
-- Essentials Module User Sales Targets
 - InventoryManagement Module Table Inventory Products
-- Manufacturing Module Add Version To
-- Manufacturing Module Mfg Recipes Table
 - Manufacturing Module Add Production Columns
 - Manufacturing Module Add Permissions
 - Manufacturing Module Mfg Recipe Ingredients
 - Manufacturing Module Add Recipe Add
 - Manufacturing Module Add Production Cost
 - ProductCatalogue Module Data Controller
-- Project Module Projects Table
 - Project Module Task Members Table
 - Project Module Task Comments Table
 - Project Module Time Logs Table
-- Project Module Add More Fields
-- Project Module Invoice Lines Table
 - Project Module Add Permissions
 - Project Module Add Version To
+- AddAdditionalInfoToCrmCampaignsTable
 - Spreadsheet Module Add Version To
 - Spreadsheet Module Spreadsheets Table
+- CreateCallLogsTable
 - Application Views view modal
 - Application Views sale pos
 - Application Views header pos
@@ -444,20 +429,24 @@
 - AssetManagement Module Asset Management Resources
 - Application Views ledger format 3
 - Crm Module schedule
+- CreateCrmFollowupInvoices
 - Database Migrations 2017 07 05
+- AddApproveLeavePermission
+- AddAllowanceAndDeductionsPermission
 - Database Migrations 2017 12 25
 - Database Migrations 2018 02 13
+- Database Migrations 2018 03 26
+- Database Migrations 2018 03 29
 - Database Migrations 2018 03 29
 - Database Migrations 2018 04 17
+- AddManufacturingPermissions
 - Database Migrations 2018 05 14
+- CreateProjectTasksTable
 - Database Migrations 2018 06 13
 - Database Migrations 2018 08 08
+- AddProjectPermissions
 - 2018_09_26_105557_add_transaction_payments_for_existing_expenses.php
-- 2019_11_25_160340_modify_categories_table_for_polymerphic_relationship.php
-- Database Migrations 2019 03 12
-- Database Migrations 2019 05 25
-- 2020_11_17_164041_modify_type_column_to_varchar_in_contacts_table.php
-- Database Migrations 2019 06 18
+- Database Migrations 2019 09 09
 - Essentials Module knowledge base
 - Essentials Module leave
 - Essentials Module leave type
@@ -779,6 +768,7 @@
 - Application Views navbar left
 - Application Views navbar right
 - project_import/index.blade.php
+- 2022_06_28_133342_add_secondary_unit_columns_to_products_sell_line_purchase_lines_tables.php
 
 ## God Nodes (most connected - your core abstractions)
 1. `Transaction` - 326 edges
@@ -807,75 +797,79 @@
 ## Import Cycles
 - None detected.
 
-## Communities (1900 total, 565 thin omitted)
+## Communities (1915 total, 551 thin omitted)
 
 ### Community 0 - "Essentials Module Illuminate Database Migrations"
 Cohesion: 0.02
-Nodes (25): up(), Illuminate\Database\Migrations\Migration, AddBusinessIdToChartOfAccountsTable, CreateAccountingBudgetsTable, AddAccountingSettingsColumnToBusinessTable, CreateAssetTransactionsTable, CreateAssetMaintenancesTable, AddContactIdToUsersTable (+17 more)
+Nodes (25): AddEventColumnToActivityLogTable, Illuminate\Database\Migrations\Migration, CreateChartOfAccountsTable, CreatePaymentTypesTable, AddReconcileOpeningBalanceToChartOfAccountsTable, CreateAccountingAccTransMapping, AddAssetManagementModuleVersionToSystemTable, CreateAssetWarrantiesTable (+17 more)
 
 ### Community 1 - "Application Controllers Product"
-Cohesion: 0.02
-Nodes (11): ImportProductsController, ProductController, ModifierSetsController, ProductModifierSetController, UnitController, Product, Unit, Variation (+3 more)
+Cohesion: 0.03
+Nodes (8): OpeningStockController, ProductController, ModifierSetsController, ProductModifierSetController, Product, Variation, VariationGroupPrice, VariationLocationDetails
 
 ### Community 2 - "Accounting Module Illuminate Database Eloquent"
-Cohesion: 0.02
-Nodes (40): GroupSubTax, TransactionSellLineTag, UserContactAccess, Illuminate\Database\Eloquent\Model, BankDetails, Barcode, BranchCapital, CashRegister (+32 more)
+Cohesion: 0.03
+Nodes (38): GroupSubTax, ReferenceCount, TagTransaction, TransactionSellLineTag, UserContactAccess, Illuminate\Database\Eloquent\Model, BankDetails, Barcode (+30 more)
 
 ### Community 3 - "Application Controllers view"
-Cohesion: 0.04
-Nodes (11): BonusAyak, BusinessLocation, BonusAyakController, BusinessController, CombinedPurchaseReturnController, OpeningStockController, ReportController, Illuminate\Http\Request (+3 more)
-
-### Community 5 - "Application Controllers Illuminate Http Request"
-Cohesion: 0.02
-Nodes (15): Barcode, TagTransaction, TypesOfService, AccountTransactionUtil, BusinessUtil, ModuleUtil, ProductUtil, TagSellLineUtil (+7 more)
+Cohesion: 0.03
+Nodes (10): BonusAyak, BonusAyakController, BusinessController, ContactController, SalesOrderController, UserController, Illuminate\Http\Request, get_uniqid() (+2 more)
 
 ### Community 6 - "Application Core Transaction"
 Cohesion: 0.02
-Nodes (13): LedgerDiscountController, PurchaseOrderController, PurchaseRequisitionController, PurchaseReturnController, DataController, SalesOrderController, SellController, SellReturnController (+5 more)
+Nodes (9): Transaction, TransactionUtil, up(), up(), up(), up(), up(), up() (+1 more)
 
 ### Community 7 - "Application Controllers User"
-Cohesion: 0.13
-Nodes (3): CrmCallLog, CallLogController, CrmDashboardController
+Cohesion: 0.18
+Nodes (6): ProcessAssetExpiryReminders, Carbon\Carbon, AssetExpiryReminder, AssetExpiryReminderService, Business, Carbon
 
 ### Community 8 - "Essentials Module Illuminate Routing Controller"
-Cohesion: 0.02
-Nodes (15): Brands, CustomerGroup, BrandController, CashRegisterController, CustomerGroupController, HomeController, LabelsController, RestaurantController (+7 more)
+Cohesion: 0.04
+Nodes (10): Brands, BusinessLocation, Category, Discount, BrandController, BusinessLocationController, DiscountController, PurchaseRequisitionController (+2 more)
+
+### Community 9 - "Application Utilities Product Util"
+Cohesion: 0.04
+Nodes (8): DataController, Illuminate\Routing\Controller, DataController, DataController, EssentialsSettingsController, DataController, SettingsController, ManufacturingUtil
 
 ### Community 10 - "Application Controllers Contact"
 Cohesion: 0.04
-Nodes (6): Contact, ContactController, ContactUtil, Illuminate\Foundation\Auth\User, LedgerController, ContactSidebarMenu
+Nodes (7): Contact, LedgerDiscountController, ContactUtil, up(), Illuminate\Foundation\Auth\User, LedgerController, OrderRequestController
 
 ### Community 11 - "Application Controllers Sell Pos Controller"
-Cohesion: 0.02
-Nodes (12): Category, ManageUserController, SalesCommissionAgentController, UserController, User, Illuminate\Notifications\Notifiable, Laravel\Passport\HasApiTokens, ManageProfileController (+4 more)
+Cohesion: 0.04
+Nodes (12): SalesCommissionAgentController, User, DummyBusinessSeeder, OldDummyBusinessSeeder, Illuminate\Notifications\Notifiable, Laravel\Passport\HasApiTokens, ManageProfileController, EssentialsUserSalesTarget (+4 more)
 
 ### Community 12 - "Application Utilities Transaction Util"
 Cohesion: 0.04
 Nodes (89): Ac(), addEmptyTag(), addMixTags(), addTags(), appendTag(), bc(), build(), cloneEvent() (+81 more)
 
 ### Community 13 - "Application Controllers Tax Rate"
-Cohesion: 0.05
-Nodes (6): DuplikatController, GroupTaxController, PurchaseController, TaxRateController, TaxRate, TaxUtil
+Cohesion: 0.03
+Nodes (10): CustomerGroup, CustomerGroupController, DuplikatController, GroupTaxController, PurchaseController, PurchaseOrderController, TaxRateController, TaxRate (+2 more)
 
 ### Community 14 - "Accounting Module Util"
-Cohesion: 0.09
-Nodes (6): AutoSendPaymentReminder, CustomerNotification, SupplierNotification, NotificationUtil, SendScheduleNotification, Notification
+Cohesion: 0.07
+Nodes (6): AutoClockOutUser, EssentialsAttendance, EssentialsUserShift, Shift, AttendanceController, ShiftController
 
 ### Community 15 - "Database Migrations Illuminate Seeder"
 Cohesion: 0.06
-Nodes (16): BarcodesTableSeeder, CurrenciesTableSeeder, DatabaseSeeder, OldDummyBusinessSeeder, PermissionsTableSeeder, Illuminate\Database\Seeder, AccountingDatabaseSeeder, AiAssistanceDatabaseSeeder (+8 more)
+Nodes (15): BarcodesTableSeeder, CurrenciesTableSeeder, DatabaseSeeder, PermissionsTableSeeder, Illuminate\Database\Seeder, AccountingDatabaseSeeder, AiAssistanceDatabaseSeeder, AssetManagementDatabaseSeeder (+7 more)
 
 ### Community 16 - "Application Controllers Booking"
-Cohesion: 0.09
-Nodes (3): BookingController, Booking, ContactBookingController
+Cohesion: 0.06
+Nodes (4): BookingController, Booking, RestaurantUtil, ContactBookingController
 
 ### Community 17 - "Application Core Business"
-Cohesion: 0.06
-Nodes (3): Business, MapPurchaseSell, UpdateRewardPoints
+Cohesion: 0.04
+Nodes (8): CashRegisterController, HomeController, PurchaseReturnController, KitchenController, RestaurantController, TableController, SellPosController, ResTable
+
+### Community 20 - "Application Controllers Account"
+Cohesion: 0.05
+Nodes (3): OrderController, SellReturnController, TransactionSellLine
 
 ### Community 21 - "Application Core Notification Util"
-Cohesion: 0.07
-Nodes (11): BackfillSolarBusiness, CreateDummyBusiness, MigrateSellLineTags, ProcessAssetExpiryReminders, ProcessReminderEmails, RecurringExpense, RecurringInvoice, Command (+3 more)
+Cohesion: 0.04
+Nodes (12): Business, AutoSendPaymentReminder, MapPurchaseSell, MigrateSellLineTags, RecurringExpense, RecurringInvoice, UpdateRewardPoints, NotificationController (+4 more)
 
 ### Community 22 - "Application Controllers Transaction Payment"
 Cohesion: 0.19
@@ -891,119 +885,131 @@ Nodes (4): AccountDetailType, AccountSubtype, AccountType, AccountingSettingsCon
 
 ### Community 25 - "Accounting Module Account"
 Cohesion: 0.08
-Nodes (5): AccountingAccount, AccountingAccountType, AccountingController, AccountTypeController, CoaController
+Nodes (4): AccountingAccount, AccountingAccountType, AccountTypeController, CoaController
 
 ### Community 27 - "AssetManagement Module Asset"
-Cohesion: 0.09
+Cohesion: 0.10
 Nodes (4): Asset, AssetWarranty, AssetController, AssetDepreciationController
 
 ### Community 28 - "Crm Module Schedule"
-Cohesion: 0.08
-Nodes (4): Schedule, ScheduleLog, ReportController, ScheduleLogController
+Cohesion: 0.13
+Nodes (3): CrmCallLog, CallLogController, CrmDashboardController
+
+### Community 29 - "Application Controllers Invoice Scheme"
+Cohesion: 0.13
+Nodes (3): InstallController, pos_boot(), InstallUtil
 
 ### Community 30 - "Accounting Module Transaction"
 Cohesion: 0.08
-Nodes (6): isFileImage(), isFilePdf(), Contact, Transaction, PurchaseUtil, SellUtil
-
-### Community 31 - "Application Controllers Category"
-Cohesion: 0.31
-Nodes (3): ProjectImportTemplate, PhpOffice\PhpSpreadsheet\Spreadsheet, PhpOffice\PhpSpreadsheet\Worksheet\Worksheet
+Nodes (7): isAppInstalled(), isFileImage(), isFilePdf(), str_ordinal(), Transaction, PurchaseUtil, SellUtil
 
 ### Community 32 - "Application Core Closure"
-Cohesion: 0.09
-Nodes (11): AdminSidebarMenu, CheckUserLogin, EcomApi, IsInstalled, Language, RedirectIfAuthenticated, SetSessionData, Superadmin (+3 more)
+Cohesion: 0.06
+Nodes (12): ModulesController, AdminSidebarMenu, CheckUserLogin, EcomApi, IsInstalled, Language, RedirectIfAuthenticated, Superadmin (+4 more)
 
 ### Community 33 - "Project Module Transaction"
-Cohesion: 0.09
+Cohesion: 0.10
 Nodes (4): TaxRate, ProjectTransaction, DataController, InvoiceController
 
 ### Community 34 - "Application Core Illuminate Queue Serializes"
-Cohesion: 0.11
-Nodes (11): ContactCreatedOrModified, ExpenseCreatedOrModified, ProductsCreatedOrModified, PurchaseCreatedOrModified, SellCreatedOrModified, StockAdjustmentCreatedOrModified, StockTransferCreatedOrModified, UserCreatedOrModified (+3 more)
+Cohesion: 0.08
+Nodes (12): ContactCreatedOrModified, ExpenseCreatedOrModified, ProductsCreatedOrModified, PurchaseCreatedOrModified, SellCreatedOrModified, StockAdjustmentCreatedOrModified, StockTransferCreatedOrModified, UserCreatedOrModified (+4 more)
 
 ### Community 35 - "Application Controllers Controller"
 Cohesion: 0.05
-Nodes (15): ForgotPasswordController, LoginController, ResetPasswordController, Controller, ImportOpeningStockController, WarrantyController, Illuminate\Foundation\Auth\Access\AuthorizesRequests, Illuminate\Foundation\Auth\AuthenticatesUsers (+7 more)
+Nodes (19): ConfirmPasswordController, ForgotPasswordController, RegisterController, ResetPasswordController, VerificationController, BackUpController, Controller, ImportOpeningStockController (+11 more)
 
 ### Community 36 - "Application Services Reminder Digest Service"
-Cohesion: 0.15
-Nodes (5): Business, Carbon, ReminderDigestService, Illuminate\Support\Collection, ReminderEmailDigest
+Cohesion: 0.11
+Nodes (8): ProcessReminderEmails, Business, Carbon, ReminderDigestService, Command, Illuminate\Support\Collection, Illuminate\Support\Facades\Notification, ReminderEmailDigest
 
 ### Community 37 - "Accounting Module Chart Of Account"
 Cohesion: 0.10
 Nodes (4): ChartOfAccount, theme_view_file(), AccountingTransactionController, ChartOfAccountController
 
-### Community 38 - "Application Controllers Bonus Ayak Controller"
-Cohesion: 0.15
-Nodes (7): Illuminate\Contracts\Queue\ShouldQueue, Illuminate\Foundation\Bus\Dispatchable, Illuminate\Queue\InteractsWithQueue, AnalyzeJournalImportJob, ProcessJournalImportJob, MapPurchaseTransaction, MapSellTransaction
-
 ### Community 39 - "Accounting Module Helpers general helper"
-Cohesion: 0.09
-Nodes (6): Illuminate\Contracts\View\Factory, get_accounting_transactions_index(), get_accounting_transactions_tabs(), get_module_names(), get_url(), is_admin()
+Cohesion: 0.08
+Nodes (9): Illuminate\Contracts\View\Factory, financial_year_start_date(), get_accounting_transactions_index(), get_accounting_transactions_tabs(), get_financial_year(), get_module_names(), get_url(), is_admin() (+1 more)
 
 ### Community 40 - "Accounting Module Business Location"
-Cohesion: 0.11
-Nodes (5): BusinessLocation, ReportController, MapExpenseTransactions, MapPaymentTransaction, OrderRequestController
+Cohesion: 0.12
+Nodes (5): BusinessLocation, ReportController, MapExpenseTransactions, MapPaymentTransaction, SetLocationIdOnExistingInvoice
 
 ### Community 41 - "Project Module Task"
 Cohesion: 0.11
 Nodes (3): ProjectMember, ProjectTask, TaskController
 
+### Community 43 - "Accounting Module Chart Of Account"
+Cohesion: 0.04
+Nodes (8): AccountTransactionUtil, BusinessUtil, CashRegisterUtil, ProductUtil, TagSellLineUtil, TagTransactionUtil, PurchaseController, ProductCatalogueController
+
 ### Community 44 - "AssetManagement Module Asset Expiry Reminder"
-Cohesion: 0.16
-Nodes (6): Carbon\Carbon, AssetExpiryReminder, AssetExpiryReminderItem, AssetExpiryReminderService, Business, Carbon
+Cohesion: 0.13
+Nodes (3): Currency, PaymentDetail, PaymentType
 
 ### Community 45 - "Application Controllers Variation Template"
-Cohesion: 0.09
-Nodes (5): BusinessLocationController, InvoiceSchemeController, LocationSettingsController, InvoiceLayout, InvoiceScheme
+Cohesion: 0.07
+Nodes (6): InvoiceLayoutController, InvoiceSchemeController, LocationSettingsController, InvoiceLayout, InvoiceScheme, InvoiceLayout
 
 ### Community 46 - "Essentials Module Illuminate Notifications Notification"
-Cohesion: 0.06
-Nodes (6): isPusherEnabled(), ScheduleNotification, DocumentShareNotification, LeaveStatusNotification, NewLeaveNotification, NewProjectAssignedNotification
+Cohesion: 0.11
+Nodes (3): SolarImportPreviewService, SolarImportProcessService, SolarImportService
 
 ### Community 47 - "Application Core Transaction Util"
 Cohesion: 0.07
 Nodes (68): aa(), an(), ar(), ba(), bn(), dn(), Do(), dr() (+60 more)
 
 ### Community 48 - "AssetManagement Module Illuminate Bus Queueable"
-Cohesion: 0.04
-Nodes (14): RecurringExpenseNotification, RecurringInvoiceNotification, ReminderEmailNotification, TestEmailNotification, Illuminate\Bus\Queueable, Illuminate\Notifications\Notification, AssetAssignedForMaintenance, AssetSentForMaintenance (+6 more)
+Cohesion: 0.03
+Nodes (17): ExceptionOccured, RecurringExpenseNotification, RecurringInvoiceNotification, ReminderEmailNotification, SupplierNotification, Illuminate\Bus\Queueable, Illuminate\Mail\Mailable, Illuminate\Notifications\Notification (+9 more)
 
 ### Community 49 - "InventoryManagement Module Variation"
-Cohesion: 0.10
+Cohesion: 0.11
 Nodes (3): Variation, inventoryProducts, InventoryManagementController
 
 ### Community 50 - "Project Module"
-Cohesion: 0.09
-Nodes (4): Project, ProjectCategory, ProjectController, ProjectUtil
-
-### Community 51 - "Application Utilities Cash Register Util"
-Cohesion: 0.21
-Nodes (3): CashRegister, CashRegisterTransaction, CashRegisterUtil
+Cohesion: 0.07
+Nodes (5): Project, ProjectCategory, ActivityController, ProjectController, ProjectUtil
 
 ### Community 52 - "Crm Module Contact"
-Cohesion: 0.11
-Nodes (4): Contact, CrmContact, ContactLoginController, LeadController
+Cohesion: 0.13
+Nodes (3): Contact, CrmContact, LeadController
+
+### Community 53 - "Accounting Module Product"
+Cohesion: 0.18
+Nodes (3): AssetExpiryReminderItem, Reminder, ReminderController
 
 ### Community 55 - "AssetManagement Module Asset Transaction"
 Cohesion: 0.13
 Nodes (3): AssetTransaction, AssetAllocationController, RevokeAllocatedAssetController
 
+### Community 56 - "Essentials Module Document Controller"
+Cohesion: 0.07
+Nodes (6): ProductsExport, SellController, WarrantyController, Warranty, Maatwebsite\Excel\Concerns\FromArray, Warranty
+
+### Community 57 - "Manufacturing Module Mfg Recipe"
+Cohesion: 0.11
+Nodes (4): MfgIngredientGroup, MfgRecipe, ProductionController, RecipeController
+
 ### Community 58 - "Application Core Illuminate Support Service"
-Cohesion: 0.16
-Nodes (4): AppServiceProvider, BroadcastServiceProvider, Illuminate\Database\Eloquent\Factory, Illuminate\Support\ServiceProvider
+Cohesion: 0.21
+Nodes (3): BroadcastServiceProvider, Illuminate\Database\Eloquent\Factory, Illuminate\Support\ServiceProvider
 
 ### Community 59 - "AssetManagement Module Asset Util"
 Cohesion: 0.08
 Nodes (25): calculate_balance_due(), calculate_billing_details(), calculate_discounted_unit_price(), checkMobileAndSubmitQuick(), checkTaxNumberAndSubmitQuick(), get_sales_orders(), get_subtotal(), getCustomerRewardPoints() (+17 more)
 
 ### Community 61 - "Accounting Module Accounts Transaction"
-Cohesion: 0.15
+Cohesion: 0.16
 Nodes (3): AccountingAccountsTransaction, AccountingAccTransMapping, TransferController
 
 ### Community 62 - "Application Core Expense Line"
 Cohesion: 0.10
 Nodes (7): ExpenseLine, BanController, BanRequest, Ban, BanPemasangan, Illuminate\Database\Eloquent\Factories\HasFactory, Illuminate\Foundation\Http\FormRequest
+
+### Community 63 - "Application Controllers Install Controller"
+Cohesion: 0.05
+Nodes (5): CashDenomination, TransactionPaymentAdded, AddAccountTransaction, DashboardController, EssentialsUtil
 
 ### Community 64 - "Project Module view"
 Cohesion: 0.07
@@ -1017,21 +1023,25 @@ Nodes (19): axios, dotenv, dotenv-expand, laravel-vite-plugin, lodash, devDepend
 Cohesion: 0.11
 Nodes (18): business.partials.settings_business, business.partials.settings_contact, business.partials.settings_custom_labels, business.partials.settings_dashboard, business.partials.settings_display_pos, business.partials.settings_email, business.partials.settings_modules, business.partials.settings_payment (+10 more)
 
-### Community 68 - "Application Core Spatie Activitylog Traits"
-Cohesion: 0.09
-Nodes (9): DocumentAndNote, LogOptions, DocumentAndNoteController, DocumentAndNote, LogOptions, LogOptions, LogOptions, Spatie\Activitylog\LogOptions (+1 more)
-
 ### Community 69 - "Application Controllers Document And Note"
-Cohesion: 0.07
-Nodes (5): VariationTemplateController, Media, ProductVariation, VariationValueTemplate, VariationTemplate
+Cohesion: 0.19
+Nodes (10): ProcessSolarImport, ProcessSolarPreview, Illuminate\Contracts\Queue\ShouldQueue, Illuminate\Foundation\Bus\Dispatchable, Illuminate\Queue\InteractsWithQueue, Illuminate\Queue\SerializesModels, Illuminate\Validation\Rule, AnalyzeJournalImportJob (+2 more)
+
+### Community 70 - "Application Controllers Unit"
+Cohesion: 0.19
+Nodes (6): BonusAyakExport, App\Models\BonusAyak, Maatwebsite\Excel\Concerns\FromCollection, Maatwebsite\Excel\Concerns\FromQuery, Maatwebsite\Excel\Concerns\WithHeadings, AccountingTableExport
 
 ### Community 71 - "Application Views contact"
 Cohesion: 0.11
 Nodes (17): contact.partials.documents_and_notes_tab, contact.partials.ledger_tab, contact.partials.stock_report_tab, contact.partials.subscriptions, ledger_discount.create, activity_log.activities, contact.contact_basic_info, contact.contact_more_info (+9 more)
 
 ### Community 72 - "Accounting Module Business"
-Cohesion: 0.11
-Nodes (6): Business, currency_code(), financial_year_start_date(), get_business_name(), get_financial_year(), AccountingReportService
+Cohesion: 0.10
+Nodes (3): Business, currency_code(), get_business_name()
+
+### Community 73 - "Crm Module Schedule Log Controller"
+Cohesion: 0.06
+Nodes (4): CombinedPurchaseReturnController, StockTransferController, PurchaseLine, TransactionSellLinesPurchaseLines
 
 ### Community 76 - "Essentials Module Dashboard Controller"
 Cohesion: 0.12
@@ -1041,8 +1051,20 @@ Nodes (34): Ae(), Bi(), Bo(), Ce(), cr(), en(), Fe(), Jn() (+26 more)
 Cohesion: 0.12
 Nodes (18): Code Snippet Reuse Prohibition, End User License Agreement, Intellectual Property Retention, Manufacturing Module for UltimatePOS, Paid License Requirement, Personal Modification Right, Redistribution Prohibition, SaaS Compatibility (+10 more)
 
+### Community 79 - "Project Module Time Log"
+Cohesion: 0.14
+Nodes (3): LogOptions, ProjectTimeLog, ProjectTimeLogController
+
+### Community 80 - "Application Core Media"
+Cohesion: 0.06
+Nodes (5): TransactionPaymentDeleted, TransactionPaymentUpdated, AccountReportsController, TransactionPaymentController, TransactionPayment
+
+### Community 81 - "Application Controllers Tag"
+Cohesion: 0.11
+Nodes (3): ImportSalesController, TagController, Tag
+
 ### Community 82 - "Essentials Module is Pusher Enabled"
-Cohesion: 0.12
+Cohesion: 0.11
 Nodes (4): ExpenseCategory, ExpenseCategoryController, ExpenseController, ExpenseCategory
 
 ### Community 83 - "Accounting Module Journal Entry"
@@ -1052,6 +1074,10 @@ Nodes (3): JournalEntry, thirty_days_ago(), DashboardController
 ### Community 84 - "Accounting Module scripts"
 Cohesion: 0.12
 Nodes (16): devDependencies, cross-env, laravel-mix, laravel-mix-merge-manifest, cross-env, laravel-mix, laravel-mix-merge-manifest, private (+8 more)
+
+### Community 85 - "Essentials Module Reminder"
+Cohesion: 0.09
+Nodes (8): DocumentAndNote, LogOptions, DocumentAndNoteController, DocumentAndNote, LogOptions, LogOptions, Spatie\Activitylog\LogOptions, Spatie\Activitylog\Traits\LogsActivity
 
 ### Community 86 - "AssetManagement Module scripts"
 Cohesion: 0.12
@@ -1097,25 +1123,29 @@ Nodes (16): devDependencies, cross-env, laravel-mix, laravel-mix-merge-manifest,
 Cohesion: 0.13
 Nodes (3): CreateCountriesTable, Country, KycIdentification
 
+### Community 100 - "Application Controllers Account Type"
+Cohesion: 0.04
+Nodes (10): CreateRecursiveFollowup, CrmMarketplace, Schedule, ScheduleLog, CrmMarketplaceController, CrmSettingsController, ReportController, ScheduleController (+2 more)
+
+### Community 103 - "Application Controllers Login Controller"
+Cohesion: 0.16
+Nodes (4): LoginController, ReCaptcha, Illuminate\Contracts\Validation\Rule, Illuminate\Foundation\Auth\AuthenticatesUsers
+
 ### Community 104 - "Application Core Solar Controller"
-Cohesion: 0.12
-Nodes (3): SolarController, SolarLedgerService, Illuminate\Validation\Rule
+Cohesion: 0.13
+Nodes (3): BackfillSolarBusiness, BackfillSolarSourceKeys, SolarLedgerService
 
 ### Community 105 - "Accounting Module Media"
 Cohesion: 0.07
 Nodes (4): Media, MediaController, ProjectTaskComment, TaskCommentController
 
-### Community 107 - "Crm Module Dashboard Controller"
-Cohesion: 0.16
-Nodes (3): DocumentShare, EssentialsTodoComment, DocumentShareController
-
 ### Community 109 - "Essentials Module Leave"
-Cohesion: 0.14
-Nodes (3): EssentialsLeave, LogOptions, EssentialsLeaveController
+Cohesion: 0.09
+Nodes (5): EssentialsLeave, LogOptions, EssentialsLeaveType, EssentialsLeaveController, EssentialsLeaveTypeController
 
 ### Community 111 - "Database Migrations artisan"
-Cohesion: 0.12
-Nodes (3): InstallUtil, VariationTemplate, DummyBusinessSeeder
+Cohesion: 0.05
+Nodes (6): VariationTemplateController, Media, ProductVariation, VariationTemplate, VariationValueTemplate, VariationTemplate
 
 ### Community 113 - "Application Core composer json"
 Cohesion: 0.14
@@ -1141,25 +1171,9 @@ Nodes (13): scripts, post-autoload-dump, post-create-project-cmd, post-install-c
 Cohesion: 0.12
 Nodes (10): calculateInvoiceTotal(), calculateSubtotal(), getProjectListForKanban(), getTaskListForKanban(), initializeMyTaskDataTable(), initializeProjectKanbanBoard(), initializeProjectTaskDatatable(), initializeTaskKanbanBoard() (+2 more)
 
-### Community 124 - "Accounting Module Payment Type"
-Cohesion: 0.12
-Nodes (3): CreatePaymentTypesTable, Currency, PaymentType
-
-### Community 125 - "AssetManagement Module Asset Maintenance"
-Cohesion: 0.12
-Nodes (4): Illuminate\Support\Facades\Notification, AssetMaintenance, AssetMaitenanceController, AssetUtil
-
-### Community 126 - "Project Module Task Comment Controller"
-Cohesion: 0.21
-Nodes (6): BonusAyakExport, App\Models\BonusAyak, Maatwebsite\Excel\Concerns\FromCollection, Maatwebsite\Excel\Concerns\FromQuery, Maatwebsite\Excel\Concerns\WithHeadings, AccountingTableExport
-
 ### Community 128 - "Application Controllers Home Controller"
 Cohesion: 0.12
 Nodes (10): calculateInvoiceTotal(), calculateSubtotal(), getProjectListForKanban(), getTaskListForKanban(), initializeMyTaskDataTable(), initializeProjectKanbanBoard(), initializeProjectTaskDatatable(), initializeTaskKanbanBoard() (+2 more)
-
-### Community 130 - "Application Controllers Taxonomy Controller"
-Cohesion: 0.17
-Nodes (3): isAppInstalled(), str_ordinal(), ExpenseUtil
 
 ### Community 132 - "Accounting Module composer json"
 Cohesion: 0.17
@@ -1201,10 +1215,6 @@ Nodes (11): authors, autoload, psr-4, description, extra, laravel, aliases, prov
 Cohesion: 0.17
 Nodes (11): contact.create, sale_pos.partials.configure_search_modal, sale_pos.partials.keyboard_shortcuts, sale_pos.partials.keyboard_shortcuts_details, sale_pos.partials.payment_modal, sale_pos.partials.pos_details, sale_pos.partials.recurring_invoice_modal, sale_pos.partials.right_div (+3 more)
 
-### Community 144 - "Application Controllers Invoice Layout Controller"
-Cohesion: 0.17
-Nodes (5): RegisterController, InvoiceLayoutController, App\Models\User, Illuminate\Foundation\Auth\RegistersUsers, InvoiceLayout
-
 ### Community 145 - "Application Controllers Import Sales Controller"
 Cohesion: 0.19
 Nodes (17): Be(), binding(), customBinding(), destroy(), dt(), ge(), Gt(), he() (+9 more)
@@ -1218,12 +1228,16 @@ Cohesion: 0.18
 Nodes (10): authors, autoload, psr-4, description, extra, laravel, aliases, providers (+2 more)
 
 ### Community 151 - "Project Module Util"
-Cohesion: 0.12
-Nodes (4): CommonChart, ConsoleTVs\Charts\Classes\Highcharts\Chart, PopulateAccountDetailTypesTable, PaymentDetail
+Cohesion: 0.09
+Nodes (4): CommonChart, SetSessionData, ConsoleTVs\Charts\Classes\Highcharts\Chart, ExpenseUtil
 
 ### Community 152 - "Accounting Module Resources views layouts"
 Cohesion: 0.20
 Nodes (9): accounting::layouts.partials.alert-feedback, accounting::layouts.partials.css, accounting::layouts.partials.javascripts, home.todays_profit_modal, layouts.partials.footer, layouts.partials.footer_pos, layouts.partials.header, layouts.partials.header-pos (+1 more)
+
+### Community 154 - "Application Controllers Expense Category Controller"
+Cohesion: 0.12
+Nodes (3): ImportProductsController, UnitController, Unit
 
 ### Community 155 - "Application Controllers My Fatoorah Controller"
 Cohesion: 0.13
@@ -1241,10 +1255,6 @@ Nodes (4): Spreadsheet, SpreadsheetShare, DataController, SpreadsheetController
 Cohesion: 0.20
 Nodes (9): contact.create, sale_pos.partials.configure_search_modal, sale_pos.partials.keyboard_shortcuts, sale_pos.partials.keyboard_shortcuts_details, sale_pos.partials.payment_modal, sale_pos.partials.pos_details, sale_pos.partials.recurring_invoice_modal, sale_pos.partials.right_div (+1 more)
 
-### Community 164 - "Application Controllers Ledger Discount Controller"
-Cohesion: 0.13
-Nodes (5): CashDenomination, TransactionPaymentAdded, TransactionPaymentDeleted, TransactionPaymentUpdated, AddAccountTransaction
-
 ### Community 165 - "Application Controllers Purchase Requisition Controller"
 Cohesion: 0.18
 Nodes (13): append_purchase_lines(), checkMobileAndSubmitPurchase(), checkTaxNumberAndSubmitPurchase(), get_purchase_entry_row(), iraqi_dinnar_selling_price_adjustment(), set_supplier_address(), submitQuickAddPurchaseContactForm(), update_grand_total() (+5 more)
@@ -1261,13 +1271,9 @@ Nodes (8): contact.create, sale_pos.partials.configure_search_modal, sale_pos.pa
 Cohesion: 0.16
 Nodes (7): checkMobileAndSubmit(), checkTaxNumberAndSubmit(), pad_zero(), show_invoice_preview(), submitContactForm(), updateProfitLoss(), updateStockBySellingPrice()
 
-### Community 175 - "Application Controllers Restaurant Controller"
-Cohesion: 0.13
-Nodes (3): NotificationController, NotificationTemplateController, NotificationTemplate
-
 ### Community 176 - "Application Controllers Res Table"
 Cohesion: 0.07
-Nodes (5): Account, AccountTransaction, AccountType, AccountController, AccountReportsController
+Nodes (6): AccountType, Account, AccountTransaction, AccountType, AccountController, AccountTypeController
 
 ### Community 178 - "Application Core require dev"
 Cohesion: 0.25
@@ -1275,7 +1281,15 @@ Nodes (8): require-dev, barryvdh/laravel-debugbar, fakerphp/faker, knuckleswtf/s
 
 ### Community 179 - "Accounting Module Account Transaction"
 Cohesion: 0.05
-Nodes (11): TableController, PaymentAccount, ResTable, Illuminate\Database\Eloquent\SoftDeletes, Brands, Category, ExpenseCategory, IncomeCategory (+3 more)
+Nodes (9): PaymentAccount, Illuminate\Database\Eloquent\SoftDeletes, Brands, Category, ExpenseCategory, IncomeCategory, PaymentAccount, SellingPriceGroup (+1 more)
+
+### Community 187 - "Crm Module Dashboard Controller"
+Cohesion: 0.06
+Nodes (9): Barcode, BarcodeController, LabelsController, RoleController, TypesOfServiceController, SellingPriceGroup, TypesOfService, Barcode (+1 more)
+
+### Community 188 - "Crm Module Install Controller"
+Cohesion: 0.06
+Nodes (5): isPusherEnabled(), LeaveStatusNotification, NewTaskNotification, PayrollNotification, NewCommentOnTaskNotification
 
 ### Community 197 - "Accounting Module transactions"
 Cohesion: 0.29
@@ -1292,10 +1306,6 @@ Nodes (7): ocramius/package-versions, php-http/discovery, config, allow-plugins,
 ### Community 200 - "Essentials Module settings add"
 Cohesion: 0.29
 Nodes (6): essentials::settings.partials.attendance_settings, essentials::settings.partials.essentials_settings, essentials::settings.partials.leave_settings, essentials::settings.partials.payroll_settings, essentials::settings.partials.sales_target_settings, essentials::layouts.nav_hrm
-
-### Community 206 - "Essentials Module Leave Status Notification"
-Cohesion: 0.13
-Nodes (3): MfgIngredientGroup, MfgRecipeIngredient, ProductionController
 
 ### Community 208 - "Essentials Module Payroll Notification"
 Cohesion: 0.26
@@ -1335,7 +1345,7 @@ Nodes (4): pad_zero(), show_invoice_preview(), updateProfitLoss(), updateStockBy
 
 ### Community 217 - "Application Controllers Back Controller"
 Cohesion: 0.03
-Nodes (5): BackUpController, KitchenController, ReferenceCount, RestaurantUtil, Util
+Nodes (7): DeleteAccountTransaction, UpdateAccountTransaction, ModuleUtil, Util, AccountingController, AccountingUtil, AssetUtil
 
 ### Community 219 - "AssetManagement Module Reminder Digest Service"
 Cohesion: 0.22
@@ -1466,8 +1476,8 @@ Cohesion: 0.50
 Nodes (3): inventorymanagement::partials.modals.editProductInventoryModal, inventorymanagement::partials.tableRowForListing, inventorymanagement::partials.mainscript
 
 ### Community 303 - "Accounting Module Add Payment Type"
-Cohesion: 0.60
-Nodes (3): openRecordModal(), setValue(), showLedgerFields()
+Cohesion: 0.26
+Nodes (14): escapeHtml(), finishProcess(), formatElapsed(), initProcessUI(), initReconcile(), openRecordModal(), pollProcess(), processText() (+6 more)
 
 ### Community 316 - "Accounting Module Budget"
 Cohesion: 0.53
@@ -1532,10 +1542,6 @@ Nodes (3): purchase_return_product_row(), update_table_row(), update_table_total
 ### Community 340 - "Crm Module Schedule Users Table"
 Cohesion: 0.60
 Nodes (3): stock_transfer_product_row(), update_table_row(), update_table_total()
-
-### Community 341 - "Crm Module Add Version To"
-Cohesion: 0.02
-Nodes (6): AddMessagePermissions, AddApproveLeavePermission, AddAllowanceAndDeductionsPermission, AddManufacturingPermissions, AddRecipeAddEditPermissions, AddProjectPermissions
 
 ### Community 361 - "Crm Module lead"
 Cohesion: 0.50
@@ -1608,22 +1614,22 @@ Nodes (3): stock_adjustment_product_row(), update_table_row(), update_table_tota
 ## Knowledge Gaps
 - **1026 isolated node(s):** `accounting::layouts.nav`, `accounting::layouts.nav`, `accounting::layouts.nav`, `accounting::budget.budget_table`, `accounting::budget.modals.edit_monthly_modal` (+1021 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **565 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **551 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `Transaction` connect `Application Core Transaction` to `Essentials Module Illuminate Database Migrations`, `Application Controllers Product`, `Application Controllers Taxonomy Controller`, `Application Controllers view`, `Accounting Module Illuminate Database Eloquent`, `Application Controllers Illuminate Http Request`, `Essentials Module Illuminate Routing Controller`, `Application Utilities Product Util`, `Application Controllers Contact`, `Application Controllers Sell Pos Controller`, `Application Controllers Tax Rate`, `Accounting Module Util`, `Application Core Business`, `Application Core Notification Util`, `Project Module Add Permissions`, `Application Controllers Expense Category Controller`, `Application Controllers Invoice Scheme`, `Accounting Module Transaction`, `Project Module Transaction`, `Application Core Illuminate Queue Serializes`, `Application Controllers Controller`, `Application Controllers Ledger Discount Controller`, `Application Controllers Bonus Ayak Controller`, `Accounting Module Business Location`, `Accounting Module Chart Of Account`, `Application Controllers Restaurant Controller`, `InventoryManagement Module Variation`, `Application Utilities Cash Register Util`, `Accounting Module Transaction Controller`, `Essentials Module Document Controller`, `Application Core Illuminate Support Service`, `Essentials Module Payroll Controller`, `2018_09_26_105557_add_transaction_payments_for_existing_expenses.php`, `Crm Module Schedule Log Controller`, `Essentials Module Leave Status Notification`, `Application Core Media`, `Application Controllers Tag`, `Essentials Module is Pusher Enabled`, `Application Controllers Back Controller`, `Application Controllers Account Type`, `Database Migrations 2019 03 12`, `Database Migrations 2019 05 25`, `Essentials Module Leave`, `Database Migrations artisan`, `Database Migrations 2019 06 18`, `Essentials Module Util`, `Crm Module Campaign`?**
-  _High betweenness centrality (0.110) - this node is a cross-community bridge._
-- **Why does `Contact` connect `Application Controllers Contact` to `Application Controllers view`, `Application Controllers Illuminate Http Request`, `Application Core Transaction`, `Application Controllers User`, `Essentials Module Illuminate Routing Controller`, `Application Controllers Sell Pos Controller`, `Application Controllers Tax Rate`, `Accounting Module Util`, `Application Core Business`, `Application Controllers Selling Price Group`, `Application Core Notification Util`, `Application Controllers Expense Category Controller`, `Crm Module Schedule`, `Application Controllers Invoice Scheme`, `Accounting Module Transaction`, `Project Module Transaction`, `Application Controllers Controller`, `Application Controllers Ledger Discount Controller`, `Accounting Module Business Location`, `Accounting Module Chart Of Account`, `Application Controllers Variation Template`, `Application Controllers Restaurant Controller`, `Project Module`, `Accounting Module Account Transaction`, `Crm Module Contact`, `Accounting Module Transaction Controller`, `Crm Module Surat Kontrak Controller`, `Essentials Module is Pusher Enabled`, `Application Controllers Back Controller`, `2020_11_17_164041_modify_type_column_to_varchar_in_contacts_table.php`, `Essentials Module Add Approve Leave`?**
-  _High betweenness centrality (0.035) - this node is a cross-community bridge._
-- **Why does `Controller` connect `Application Controllers Controller` to `Application Controllers Product`, `Application Controllers view`, `Application Controllers Illuminate Http Request`, `Application Core Transaction`, `Accounting Module Budget Controller`, `Essentials Module Illuminate Routing Controller`, `Crm Module Proposal Controller`, `Application Controllers Contact`, `Application Controllers Sell Pos Controller`, `Application Controllers Tax Rate`, `Application Controllers Invoice Layout Controller`, `Database Migrations 2018 05 14`, `Application Controllers Account`, `Application Controllers Dashboard Configurator Controller`, `Application Controllers Expense Category Controller`, `Application Controllers My Fatoorah Controller`, `Crm Module Schedule`, `Application Controllers Barcode Controller`, `Application Controllers Variation Template`, `Application Controllers Restaurant Controller`, `Application Controllers Res Table`, `Crm Module Contact`, `Application Core Expense Line`, `Application Controllers Install Controller`, `Application Core Spatie Activitylog Traits`, `Application Controllers Document And Note`, `Application Controllers Unit`, `Application Core Media`, `Application Controllers Tag`, `Essentials Module is Pusher Enabled`, `Crm Module Schedules Table`, `Application Controllers Back Controller`, `Crm Module Add Additional Info`, `Application Controllers Printer`, `Application Core Solar Controller`, `Application Controllers Selling Price Group`, `Application Controllers Discount`?**
-  _High betweenness centrality (0.031) - this node is a cross-community bridge._
+- **Why does `Transaction` connect `Application Core Transaction` to `Application Controllers Product`, `Application Controllers Taxonomy Controller`, `Application Controllers view`, `Accounting Module Illuminate Database Eloquent`, `Essentials Module Illuminate Routing Controller`, `Application Utilities Product Util`, `Application Controllers Contact`, `Application Controllers Sell Pos Controller`, `Application Controllers Tax Rate`, `Application Controllers Booking`, `Application Core Business`, `Application Controllers Account`, `Application Core Notification Util`, `Project Module Util`, `Application Controllers Expense Category Controller`, `Application Core Tag Transaction`, `Accounting Module Transaction`, `Project Module Transaction`, `Application Core Illuminate Queue Serializes`, `Application Controllers Controller`, `Accounting Module Business Location`, `Accounting Module Chart Of Account`, `InventoryManagement Module Variation`, `Accounting Module Transaction Controller`, `Essentials Module Document Controller`, `Manufacturing Module Mfg Recipe`, `Application Core Illuminate Support Service`, `Essentials Module Payroll Controller`, `Application Controllers Install Controller`, `Application Controllers Document And Note`, `Crm Module Schedule Log Controller`, `Application Core Media`, `Application Controllers Tag`, `Essentials Module is Pusher Enabled`, `Application Controllers Back Controller`, `Application Controllers Account Type`, `Crm Module Dashboard Controller`, `Essentials Module Leave`, `Crm Module Campaign`?**
+  _High betweenness centrality (0.116) - this node is a cross-community bridge._
+- **Why does `Util` connect `Application Controllers Back Controller` to `Accounting Module Illuminate Database Eloquent`, `Application Core Transaction`, `Essentials Module Illuminate Routing Controller`, `Application Utilities Product Util`, `Application Controllers Contact`, `Application Controllers Sell Pos Controller`, `Application Controllers Tax Rate`, `Application Controllers Booking`, `Application Controllers Account`, `Application Core Notification Util`, `Project Module Util`, `Application Controllers Expense Category Controller`, `Crm Module Schedule`, `Application Controllers Invoice Scheme`, `Application Controllers Controller`, `Accounting Module Chart Of Account`, `Accounting Module Chart Of Account`, `Application Controllers Variation Template`, `Project Module`, `Accounting Module Account Transaction`, `Application Core Illuminate Support Service`, `Crm Module Dashboard Controller`, `Application Controllers Install Controller`, `Project Module Time Log`, `Application Controllers Account Type`, `Application Controllers Selling Price Group`?**
+  _High betweenness centrality (0.034) - this node is a cross-community bridge._
+- **Why does `Controller` connect `Application Controllers Controller` to `Application Controllers Product`, `Application Controllers Taxonomy Controller`, `Application Controllers view`, `Accounting Module Budget Controller`, `Application Core Transaction`, `Essentials Module Illuminate Routing Controller`, `Application Utilities Product Util`, `Application Controllers Contact`, `Application Controllers Sell Pos Controller`, `Crm Module Proposal Controller`, `Application Controllers Tax Rate`, `Application Core Business`, `Application Controllers Account`, `Application Core Notification Util`, `Application Controllers Dashboard Configurator Controller`, `Application Controllers Expense Category Controller`, `Application Controllers My Fatoorah Controller`, `Application Controllers Invoice Scheme`, `Application Core Closure`, `Application Controllers Bonus Ayak Controller`, `Accounting Module Chart Of Account`, `Application Controllers Variation Template`, `Application Controllers Res Table`, `Essentials Module Document Controller`, `Crm Module Dashboard Controller`, `Application Core Expense Line`, `Application Controllers Install Controller`, `Application Core Spatie Activitylog Traits`, `Crm Module Schedule Log Controller`, `Application Core Media`, `Application Controllers Tag`, `Essentials Module is Pusher Enabled`, `Essentials Module Reminder`, `Application Controllers Back Controller`, `Application Controllers Printer`, `Application Controllers Account Type`, `Application Controllers Login Controller`, `Crm Module Dashboard Controller`, `Essentials Module Util`, `Database Migrations artisan`, `Application Controllers Selling Price Group`?**
+  _High betweenness centrality (0.029) - this node is a cross-community bridge._
 - **What connects `accounting::layouts.nav`, `accounting::layouts.nav`, `accounting::layouts.nav` to the rest of the system?**
   _1026 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Essentials Module Illuminate Database Migrations` be split into smaller, more focused modules?**
-  _Cohesion score 0.018793650793650793 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.019834710743801654 - nodes in this community are weakly interconnected._
 - **Should `Application Controllers Product` be split into smaller, more focused modules?**
-  _Cohesion score 0.022610483042137718 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.03050704818009678 - nodes in this community are weakly interconnected._
 - **Should `Accounting Module Illuminate Database Eloquent` be split into smaller, more focused modules?**
-  _Cohesion score 0.02359882005899705 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.026138909634055265 - nodes in this community are weakly interconnected._

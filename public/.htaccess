@@ -5,6 +5,11 @@
 
     RewriteEngine On
 
+    # Keep the application root out of Laravel's compiled route table. Older
+    # framework versions can serialize the root method index as HEAD-only.
+    RewriteCond %{REQUEST_URI} ^(.*/public)/?$
+    RewriteRule ^$ %1/login [R=302,L]
+
     # Handle Authorization Header
     RewriteCond %{HTTP:Authorization} .
     RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]

@@ -82,10 +82,6 @@ Route::get('/duplikat', [DuplikatController::class, 'index']);
 
 
 Route::middleware(['setData'])->group(function () {
-    Route::get('/', function () {
-        return view('welcome');
-    });
-
     Auth::routes();
 
     Route::get('/business/register', [BusinessController::class, 'getRegister'])->name('business.getRegister');
@@ -137,7 +133,40 @@ Route::middleware(['setData', 'auth', 'SetSessionData', 'language', 'timezone', 
         Route::get('/template', [SolarController::class, 'template'])->name('template');
         Route::get('/export', [SolarController::class, 'export'])->name('export');
         Route::post('/reconcile', [SolarController::class, 'reconcile'])->name('reconcile');
+        Route::post('/reconcile/upload', [SolarController::class, 'uploadPreview'])->name('reconcile.upload');
         Route::post('/import/confirm', [SolarController::class, 'confirmImport'])->name('import.confirm');
+        Route::get('/imports', [SolarController::class, 'importHistory'])->name('imports');
+        Route::get('/imports/{batchId}', [SolarController::class, 'importDetail'])
+            ->whereUuid('batchId')
+            ->name('imports.detail');
+        Route::get('/imports/{batchId}/rows', [SolarController::class, 'previewRows'])
+            ->whereUuid('batchId')
+            ->name('imports.rows');
+        Route::get('/imports/{batchId}/summary', [SolarController::class, 'previewSummary'])
+            ->whereUuid('batchId')
+            ->name('imports.summary');
+        Route::get('/imports/{batchId}/reconcile', [SolarController::class, 'reconcilePreview'])
+            ->whereUuid('batchId')
+            ->name('imports.reconcile');
+        Route::get('/imports/{batchId}/status', [SolarController::class, 'previewStatus'])
+            ->whereUuid('batchId')
+            ->name('imports.status');
+        Route::post('/imports/{batchId}/confirm', [SolarController::class, 'confirmImportAjax'])
+            ->whereUuid('batchId')
+            ->name('imports.confirm');
+        Route::post('/imports/{batchId}/cancel', [SolarController::class, 'cancelImport'])
+            ->whereUuid('batchId')
+            ->name('imports.cancel');
+        Route::post('/imports/{batchId}/retry', [SolarController::class, 'retryProcess'])
+            ->whereUuid('batchId')
+            ->name('imports.retry');
+        Route::patch('/imports/{batchId}/rows/{rowId}/date', [SolarController::class, 'updatePreviewDate'])
+            ->whereUuid('batchId')
+            ->whereNumber('rowId')
+            ->name('imports.rows.date');
+        Route::post('/imports/{batchId}/rollback', [SolarController::class, 'rollbackImport'])
+            ->whereUuid('batchId')
+            ->name('imports.rollback');
         Route::get('/reconcile/{token}/export', [SolarController::class, 'exportReconciliation'])
             ->whereUuid('token')
             ->name('reconcile.export');

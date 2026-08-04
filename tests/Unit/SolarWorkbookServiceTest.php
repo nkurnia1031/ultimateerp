@@ -92,6 +92,7 @@ class SolarWorkbookServiceTest extends TestCase
 
         try {
             $parsed = $service->parse($path);
+            $corrected = $service->parse($path, ['stock:5' => '2024-12-20']);
         } finally {
             @unlink($path);
         }
@@ -99,7 +100,11 @@ class SolarWorkbookServiceTest extends TestCase
         $this->assertCount(1, $parsed['errors']);
         $this->assertSame('stock', $parsed['errors'][0]['ledger']);
         $this->assertSame(5, $parsed['errors'][0]['row']);
+        $this->assertSame('20/12/202', $parsed['errors'][0]['raw_date']);
         $this->assertStringContainsString('tidak valid', $parsed['errors'][0]['message']);
         $this->assertSame([], $parsed['rows']['stock']);
+
+        $this->assertSame([], $corrected['errors']);
+        $this->assertSame('2024-12-20', $corrected['rows']['stock'][0]['tanggal']);
     }
 }

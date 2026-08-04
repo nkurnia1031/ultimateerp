@@ -111,6 +111,9 @@
                     <button type="button" class="btn btn-default" data-toggle="modal" data-target="#solar-import-modal">
                         <i class="fa fa-exchange"></i> Cross-check / Import
                     </button>
+                    <a href="{{ route('solar.imports') }}" class="btn btn-default">
+                        <i class="fa fa-history"></i> Riwayat Import
+                    </a>
                 </div>
             </div>
         </div>
@@ -245,6 +248,41 @@
         </div>
     </div>
 
+    <div class="box box-default">
+        <div class="box-header with-border">
+            <h3 class="box-title">Import Solar Terbaru</h3>
+            <a href="{{ route('solar.imports') }}" class="btn btn-xs btn-default pull-right">Lihat semua</a>
+        </div>
+        <div class="box-body table-responsive no-padding">
+            <table class="table table-striped">
+                <thead><tr><th>File</th><th>Waktu</th><th>Status</th><th>Jumlah</th><th>Aksi</th></tr></thead>
+                <tbody>
+                    @forelse ($importBatches as $batch)
+                        @php $counts = json_decode((string) $batch->counts, true) ?: []; @endphp
+                        <tr>
+                            <td>{{ $batch->file_name ?: 'Workbook Solar' }}</td>
+                            <td>{{ $batch->created_at ? \Carbon\Carbon::parse($batch->created_at)->format('d/m/Y H:i') : '—' }}</td>
+                            <td><span class="label label-{{ $batch->status === 'imported' ? 'success' : ($batch->status === 'rolled_back' ? 'default' : 'warning') }}">{{ ucfirst($batch->status) }}</span></td>
+                            <td>{{ ($counts['stock'] ?? 0) + ($counts['pool'] ?? 0) + ($counts['mess'] ?? 0) }} baris</td>
+                            <td>
+                                @if ($batch->status === 'imported')
+                                    <form method="post" action="{{ route('solar.imports.rollback', $batch->id) }}" onsubmit="return confirm('Rollback batch import ini?')" style="display:inline">
+                                        @csrf
+                                        <button class="btn btn-xs btn-danger"><i class="fa fa-undo"></i> Rollback</button>
+                                    </form>
+                                @else
+                                    <span class="text-muted">—</span>
+                                @endif
+                            </td>
+                        </tr>
+                    @empty
+                        <tr><td colspan="5" class="text-center text-muted">Belum ada riwayat import.</td></tr>
+                    @endforelse
+                </tbody>
+            </table>
+        </div>
+    </div>
+
     <div class="modal fade" id="solar-record-modal" tabindex="-1">
         <div class="modal-dialog">
             <div class="modal-content">
@@ -325,7 +363,12 @@
     <div class="modal fade" id="solar-import-modal" tabindex="-1">
         <div class="modal-dialog">
             <div class="modal-content">
-                <form action="{{ route('solar.reconcile') }}" method="post" enctype="multipart/form-data">
+                <form action="{{ route('solar.reconcile') }}" method="post" enctype="multipart/form-data" id="solar-import-form"
+                    data-ajax-url="{{ route('solar.reconcile.upload') }}"
+                    data-status-url-template="{{ route('solar.imports.status', ['batchId' => '__BATCH__']) }}"
+                    data-cancel-url-template="{{ route('solar.imports.cancel', ['batchId' => '__BATCH__']) }}"
+                    data-retry-url-template="{{ route('solar.imports.retry', ['batchId' => '__BATCH__']) }}"
+                    data-reconcile-url-template="{{ route('solar.imports.reconcile', ['batchId' => '__BATCH__']) }}">
                     @csrf
                     <div class="modal-header">
                         <button type="button" class="close" data-dismiss="modal">&times;</button>
@@ -343,9 +386,30 @@
                     </div>
                     <div class="modal-footer">
                         <button type="button" class="btn btn-default" data-dismiss="modal">Batal</button>
-                        <button type="submit" class="btn btn-primary"><i class="fa fa-search"></i> Tampilkan Preview</button>
+                        <button type="submit" class="btn btn-primary" id="solar-import-submit"><i class="fa fa-search"></i> Tampilkan Preview</button>
                     </div>
                 </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="solar-process-modal" tabindex="-1" data-backdrop="static" data-keyboard="false">
+        <div class="modal-dialog modal-sm">
+            <div class="modal-content">
+                <div class="modal-header"><h4 class="modal-title"><i class="fa fa-refresh fa-spin"></i> <span id="solar-process-title">Memproses</span></h4></div>
+                <div class="modal-body">
+                    <div class="progress"><div id="solar-process-progress" class="progress-bar progress-bar-info progress-bar-striped active" style="width:0%">0%</div></div>
+                    <p id="solar-process-stage" class="text-muted">Menunggu proses...</p>
+                    <p id="solar-process-message">Memulai...</p>
+                    <small class="text-muted">Berjalan: <span id="solar-process-elapsed">0 detik</span> · Pembaruan terakhir: <span id="solar-process-heartbeat">—</span></small>
+                    <div id="solar-process-error" class="alert alert-danger" style="display:none;margin-top:10px"></div>
+                    <div id="solar-process-stale" class="alert alert-warning" style="display:none;margin-top:10px">Tidak ada pembaruan dari server. Proses mungkin masih berjalan.</div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-warning" id="solar-process-retry" style="display:none">Coba cek lagi</button>
+                    <button type="button" class="btn btn-default" id="solar-process-cancel">Batalkan</button>
+                    <button type="button" class="btn btn-primary" id="solar-process-close" style="display:none" data-dismiss="modal">Tutup</button>
+                </div>
             </div>
         </div>
     </div>

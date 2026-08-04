@@ -38,7 +38,10 @@ return [
             'driver' => 'database',
             'table' => 'jobs',
             'queue' => 'default',
-            'retry_after' => 90,
+            // Solar workbooks can run for up to the worker timeout. Keep the
+            // visibility window longer than the job timeout to avoid duplicate
+            // processing when a large workbook is being imported.
+            'retry_after' => (int) env('QUEUE_RETRY_AFTER', 2100),
             'after_commit' => false,
         ],
 

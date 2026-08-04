@@ -67,7 +67,7 @@ class SolarWorkbookService
         ],
     ];
 
-    public function parse(string $path): array
+    public function parse(string $path, array $dateOverrides = []): array
     {
         $reader = IOFactory::createReaderForFile($path);
         $reader->setReadDataOnly(true);
@@ -100,7 +100,7 @@ class SolarWorkbookService
                     continue;
                 }
 
-                $this->parseSheet($sheet, $ledger, $result);
+                $this->parseSheet($sheet, $ledger, $result, $dateOverrides);
             }
         } finally {
             $workbook->disconnectWorksheets();
@@ -179,7 +179,7 @@ class SolarWorkbookService
         foreach (SolarLedgerService::LEDGERS as $ledger) {
             $sheet = new Worksheet($workbook, strtoupper($ledger));
             $workbook->addSheet($sheet);
-            $sheet->fromArray([['STATUS', 'BARIS EXCEL', 'TANGGAL', 'PERBEDAAN']], null, 'A1');
+            $sheet->fromArray([['STATUS', 'BARIS EXCEL', 'TANGGAL', 'METODE', 'PERBEDAAN']], null, 'A1');
             $rowNumber = 2;
             foreach ($result['items'] ?? [] as $item) {
                 if (($item['ledger'] ?? '') !== $ledger) {
@@ -189,19 +189,21 @@ class SolarWorkbookService
                     $this->statusLabel($item['status']),
                     $item['row'],
                     $item['date'],
+                    $item['balance_only'] ?? false ? 'Baris cocok, saldo berbeda' : ($item['matched_by'] ?? ''),
                     implode('; ', $item['differences'] ?? []),
                 ]], null, "A{$rowNumber}");
                 $rowNumber++;
             }
-            $sheet->getStyle('A1:D1')->getFont()->setBold(true)->getColor()->setARGB('FFFFFFFF');
-            $sheet->getStyle('A1:D1')->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setARGB('FF4472C4');
-            $sheet->setAutoFilter('A1:D'.max(2, $rowNumber - 1));
+            $sheet->getStyle('A1:E1')->getFont()->setBold(true)->getColor()->setARGB('FFFFFFFF');
+            $sheet->getStyle('A1:E1')->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setARGB('FF4472C4');
+            $sheet->setAutoFilter('A1:E'.max(2, $rowNumber - 1));
             $sheet->freezePane('A2');
             $sheet->getColumnDimension('A')->setWidth(22);
             $sheet->getColumnDimension('B')->setWidth(14);
             $sheet->getColumnDimension('C')->setWidth(15);
-            $sheet->getColumnDimension('D')->setWidth(80);
-            $sheet->getStyle('D2:D'.max(2, $rowNumber - 1))->getAlignment()->setWrapText(true);
+            $sheet->getColumnDimension('D')->setWidth(24);
+            $sheet->getColumnDimension('E')->setWidth(80);
+            $sheet->getStyle('E2:E'.max(2, $rowNumber - 1))->getAlignment()->setWrapText(true);
         }
 
         $workbook->setActiveSheetIndex(0);
@@ -210,18 +212,27 @@ class SolarWorkbookService
         return $workbook;
     }
 
-    private function parseSheet(Worksheet $sheet, string $ledger, array &$result): void
+    private function parseSheet(Worksheet $sheet, string $ledger, array &$result, array $dateOverrides = []): void
     {
         $firstTransactionFound = false;
         $highestRow = $sheet->getHighestDataRow();
 
         for ($rowNumber = self::DATA_ROW; $rowNumber <= $highestRow; $rowNumber++) {
+            $overrideKey = $ledger.':'.$rowNumber;
+            $hasDateOverride = array_key_exists($overrideKey, $dateOverrides);
+            $rawCellDate = $sheet->getCell("A{$rowNumber}")->getValue();
             try {
-                $values = $this->rowValues($sheet, $ledger, $rowNumber);
+                $values = $this->rowValues(
+                    $sheet,
+                    $ledger,
+                    $rowNumber,
+                    $hasDateOverride ? $dateOverrides[$overrideKey] : null
+                );
             } catch (InvalidArgumentException $exception) {
                 $result['errors'][] = [
                     'ledger' => $ledger,
                     'row' => $rowNumber,
+                    'raw_date' => $rawCellDate,
                     'message' => $exception->getMessage(),
                 ];
                 continue;
@@ -229,11 +240,13 @@ class SolarWorkbookService
             if ($this->isEmptyRow($values)) {
                 continue;
             }
+            $rawDate = $rawCellDate;
             if ($values['tanggal'] === null || trim((string) $values['tanggal']) === '') {
                 if ($this->hasMeaningfulTransaction($ledger, $values)) {
                     $result['errors'][] = [
                         'ledger' => $ledger,
                         'row' => $rowNumber,
+                        'raw_date' => $rawDate,
                         'message' => 'Tanggal wajib diisi untuk baris yang memiliki transaksi atau keterangan.',
                     ];
                 }
@@ -272,17 +285,21 @@ class SolarWorkbookService
                 $result['errors'][] = [
                     'ledger' => $ledger,
                     'row' => $rowNumber,
+                    'raw_date' => $rawDate,
                     'message' => $exception->getMessage(),
                 ];
             }
         }
     }
 
-    private function rowValues(Worksheet $sheet, string $ledger, int $row): array
+    private function rowValues(Worksheet $sheet, string $ledger, int $row, mixed $dateOverride = null): array
     {
+        $tanggal = $dateOverride !== null
+            ? $dateOverride
+            : $sheet->getCell("A{$row}")->getValue();
         if ($ledger === 'stock') {
             return [
-                'tanggal' => $sheet->getCell("A{$row}")->getValue(),
+                'tanggal' => $tanggal,
                 'stock_in' => $this->number($sheet->getCell("B{$row}")->getCalculatedValue()),
                 'out_actual' => $this->number($sheet->getCell("C{$row}")->getCalculatedValue()),
                 'excel_stock_actual' => $this->number($sheet->getCell("D{$row}")->getCalculatedValue(), true),
@@ -293,7 +310,7 @@ class SolarWorkbookService
         }
 
         $base = [
-            'tanggal' => $sheet->getCell("A{$row}")->getValue(),
+            'tanggal' => $tanggal,
             'qty_in' => $this->number($sheet->getCell("B{$row}")->getCalculatedValue()),
             'qty_out' => $this->number($sheet->getCell("C{$row}")->getCalculatedValue()),
             'excel_current_stock' => $this->number($sheet->getCell("D{$row}")->getCalculatedValue(), true),

@@ -2,7 +2,12 @@
 
 namespace App\Http\Controllers;
 
+use App\Jobs\ProcessSolarImport;
+use App\Jobs\ProcessSolarPreview;
+use App\Services\SolarImportProcessService;
+use App\Services\SolarImportService;
 use App\Services\SolarLedgerService;
+use App\Services\SolarImportPreviewService;
 use App\Services\SolarWorkbookService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -21,10 +26,25 @@ class SolarController extends Controller
 
     private SolarWorkbookService $workbookService;
 
-    public function __construct(SolarLedgerService $ledgerService, SolarWorkbookService $workbookService)
+    private SolarImportPreviewService $previewService;
+
+    private SolarImportProcessService $processService;
+
+    private SolarImportService $importService;
+
+    public function __construct(
+        SolarLedgerService $ledgerService,
+        SolarWorkbookService $workbookService,
+        SolarImportPreviewService $previewService,
+        SolarImportProcessService $processService,
+        SolarImportService $importService
+    )
     {
         $this->ledgerService = $ledgerService;
         $this->workbookService = $workbookService;
+        $this->previewService = $previewService;
+        $this->processService = $processService;
+        $this->importService = $importService;
     }
 
     public function index(Request $request)
@@ -70,7 +90,376 @@ class SolarController extends Controller
             'rows' => $rows,
             'balances' => $this->ledgerService->currentBalances($businessId),
             'customers' => $customers,
+            'importBatches' => DB::table('solar_import_batches')
+                ->where('business_id', $businessId)
+                ->orderByDesc('created_at')
+                ->limit(20)
+                ->get(),
         ]);
+    }
+
+    public function importHistory(Request $request)
+    {
+        $businessId = $this->authorizeSolar($request);
+
+        return view('solar.import-history', [
+            'batches' => DB::table('solar_import_batches')
+                ->where('business_id', $businessId)
+                ->orderByDesc('created_at')
+                ->paginate(25),
+        ]);
+    }
+
+    public function importDetail(Request $request, string $batchId)
+    {
+        $businessId = $this->authorizeSolar($request);
+        $batch = DB::table('solar_import_batches')
+            ->where('id', $batchId)
+            ->where('business_id', $businessId)
+            ->first();
+        abort_if(! $batch, 404);
+
+        $rows = [];
+        foreach (SolarLedgerService::LEDGERS as $ledger) {
+            $rows[$ledger] = DB::table($this->ledgerService->table($ledger))
+                ->where('business_id', $businessId)
+                ->where('import_batch_id', $batchId)
+                ->orderBy('tanggal')
+                ->orderBy('id')
+                ->get();
+        }
+
+        return view('solar.import-detail', compact('batch', 'rows'));
+    }
+
+    public function reconcilePreview(Request $request, string $batchId)
+    {
+        $businessId = $this->authorizeSolar($request);
+        $batch = DB::table('solar_import_batches')
+            ->where('id', $batchId)
+            ->where('business_id', $businessId)
+            ->first();
+        abort_if(! $batch, 404);
+        abort_unless(
+            ($batch->operation ?: 'preview') === 'preview'
+            && in_array($batch->process_state ?: 'completed', ['completed', 'failed'], true),
+            409,
+            'Preview belum selesai.'
+        );
+
+        return view('solar.reconcile', [
+            'token' => $batchId,
+            'summary' => $this->previewService->summary($batchId, $businessId),
+        ]);
+    }
+
+    public function previewRows(Request $request, string $batchId)
+    {
+        $businessId = $this->authorizeSolar($request);
+        $base = DB::table('solar_import_preview_rows')
+            ->where('batch_id', $batchId)
+            ->where('business_id', $businessId);
+        abort_if(! DB::table('solar_import_batches')->where('id', $batchId)->where('business_id', $businessId)->exists(), 404);
+
+        $total = (clone $base)->count();
+        $query = clone $base;
+        if ($request->filled('ledger') && in_array($request->input('ledger'), SolarLedgerService::LEDGERS, true)) {
+            $query->where('ledger', $request->input('ledger'));
+        }
+        if ($request->filled('status') && in_array($request->input('status'), ['match', 'only_excel', 'only_app', 'different', 'error', 'ambiguous'], true)) {
+            if ($request->input('status') === 'ambiguous') {
+                $query->where('status', 'error')->where('matched_by', 'ambiguous');
+            } else {
+                $query->where('status', $request->input('status'));
+            }
+        }
+        $search = trim((string) $request->input('search.value', $request->input('search', '')));
+        if ($search !== '') {
+            $query->where(function ($builder) use ($search) {
+                $builder->where('ledger', 'like', "%{$search}%")
+                    ->orWhere('raw_date', 'like', "%{$search}%")
+                    ->orWhere('status', 'like', "%{$search}%")
+                    ->orWhere('matched_by', 'like', "%{$search}%")
+                    ->orWhere('source_row', 'like', "%{$search}%")
+                    ->orWhere('normalized_date', 'like', "%{$search}%")
+                    ->orWhere('differences', 'like', "%{$search}%");
+            });
+        }
+        $filtered = (clone $query)->count();
+        $columns = ['ledger', 'source_row', 'normalized_date', 'status', 'matched_by', 'id'];
+        $orderIndex = (int) $request->input('order.0.column', 0);
+        $orderDirection = strtolower((string) $request->input('order.0.dir', 'asc')) === 'desc' ? 'desc' : 'asc';
+        $query->orderBy($columns[$orderIndex] ?? 'id', $orderDirection);
+        $length = min(100, max(1, (int) $request->input('length', 25)));
+        $start = max(0, (int) $request->input('start', 0));
+
+        $rows = $query->offset($start)->limit($length)->get();
+        $data = $rows->map(function ($row) {
+            $differences = json_decode((string) $row->differences, true) ?: [];
+            $label = $row->matched_by === 'ambiguous' ? 'Ambigu' : match ($row->status) {
+                'match' => 'Cocok',
+                'only_excel' => 'Hanya di Excel',
+                'only_app' => 'Hanya di Aplikasi',
+                'different' => $row->balance_only ? 'Baris cocok, saldo berbeda' : 'Berbeda',
+                'error' => 'Error',
+                default => ucfirst($row->status),
+            };
+            return [
+                'id' => $row->id,
+                'ledger' => strtoupper($row->ledger),
+                'source_row' => $row->source_row ?: '—',
+                'raw_date' => $row->raw_date ?: '—',
+                'date' => $row->normalized_date ? Carbon::parse($row->normalized_date)->format('d/m/Y') : '—',
+                'status' => $row->status,
+                'status_label' => $label,
+                'matched_by' => $row->matched_by ?: '—',
+                'detail' => implode('; ', $differences),
+                'can_edit_date' => $row->status === 'error' && str_contains(implode(' ', $differences), 'Tanggal'),
+            ];
+        })->values();
+
+        return response()->json([
+            'draw' => (int) $request->input('draw', 0),
+            'recordsTotal' => $total,
+            'recordsFiltered' => $filtered,
+            'data' => $data,
+            'summary' => $this->previewService->summary($batchId, $businessId),
+        ]);
+    }
+
+    public function previewSummary(Request $request, string $batchId)
+    {
+        $businessId = $this->authorizeSolar($request);
+        abort_if(! DB::table('solar_import_batches')->where('id', $batchId)->where('business_id', $businessId)->exists(), 404);
+
+        return response()->json($this->previewService->summary($batchId, $businessId));
+    }
+
+    public function previewStatus(Request $request, string $batchId)
+    {
+        $businessId = $this->authorizeSolar($request);
+
+        return response()->json($this->processService->status($batchId, $businessId));
+    }
+
+    public function uploadPreview(Request $request)
+    {
+        $businessId = $this->authorizeSolar($request);
+        $request->validate([
+            'file' => ['required', 'file', 'mimes:xlsx,xls', 'max:20480'],
+        ]);
+
+        try {
+            $token = (string) Str::uuid();
+            $directory = "solar-imports/{$businessId}";
+            $this->cleanupImports($directory);
+            $extension = strtolower($request->file('file')->getClientOriginalExtension());
+            $path = $request->file('file')->storeAs($directory, "{$token}.{$extension}", 'local');
+            DB::table('solar_import_batches')->insert([
+                'id' => $token,
+                'business_id' => $businessId,
+                'created_by' => optional($request->user())->id,
+                'file_name' => $request->file('file')->getClientOriginalName(),
+                'file_hash' => hash_file('sha256', Storage::disk('local')->path($path)),
+                'file_path' => $path,
+                'status' => 'preview',
+                'operation' => 'preview',
+                'process_state' => 'queued',
+                'stage' => 'uploading',
+                'progress_percent' => 0,
+                'progress_message' => 'File diterima, menunggu worker.',
+                'heartbeat_at' => now(),
+                'counts' => json_encode([]),
+                'opening_snapshot' => json_encode($this->ledgerService->openingSnapshot($businessId)),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+            $request->session()->put("solar_imports.{$token}", $path);
+            ProcessSolarPreview::dispatch($token, $businessId);
+
+            return response()->json([
+                'success' => true,
+                'batch_id' => $token,
+                'status_url' => route('solar.imports.status', $token),
+                'message' => 'Upload diterima dan preview sedang diproses.',
+            ], 202);
+        } catch (Throwable $exception) {
+            report($exception);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Workbook tidak dapat diproses. Periksa format file dan coba lagi.',
+            ], 422);
+        }
+    }
+
+    public function confirmImportAjax(Request $request, string $batchId)
+    {
+        $businessId = $this->authorizeSolar($request);
+        $batch = DB::transaction(function () use ($batchId, $businessId) {
+            $batch = DB::table('solar_import_batches')
+                ->where('id', $batchId)
+                ->where('business_id', $businessId)
+                ->lockForUpdate()
+                ->first();
+            abort_if(! $batch, 404, 'Batch import tidak ditemukan.');
+            abort_unless(
+                $batch->status === 'preview'
+                && ($batch->operation ?: 'preview') === 'preview'
+                && ($batch->process_state ?: 'completed') === 'completed',
+                409,
+                'Preview belum selesai atau sudah diproses.'
+            );
+
+            $this->processService->queued($batchId, $businessId, 'import', (int) $this->previewService->summary($batchId, $businessId)['only_excel']);
+
+            return $batch;
+        });
+        ProcessSolarImport::dispatch($batch->id, $businessId);
+
+        return response()->json([
+            'success' => true,
+            'batch_id' => $batch->id,
+            'status_url' => route('solar.imports.status', $batch->id),
+            'message' => 'Import diterima dan sedang diproses.',
+        ], 202);
+    }
+
+    public function cancelImport(Request $request, string $batchId)
+    {
+        $businessId = $this->authorizeSolar($request);
+        $cancelled = $this->processService->cancel($batchId, $businessId);
+
+        return response()->json([
+            'success' => $cancelled,
+            'message' => $cancelled ? 'Proses dibatalkan.' : 'Proses sudah berjalan atau selesai.',
+            'status' => $this->processService->status($batchId, $businessId),
+        ], $cancelled ? 200 : 409);
+    }
+
+    public function retryProcess(Request $request, string $batchId)
+    {
+        $businessId = $this->authorizeSolar($request);
+        [$batch, $operation] = DB::transaction(function () use ($batchId, $businessId) {
+            $batch = DB::table('solar_import_batches')
+                ->where('id', $batchId)
+                ->where('business_id', $businessId)
+                ->lockForUpdate()
+                ->first();
+            abort_if(! $batch, 404, 'Batch import tidak ditemukan.');
+            abort_unless(in_array($batch->process_state, ['failed', 'cancelled'], true), 409, 'Batch belum dapat diulang.');
+            abort_unless($batch->status === 'preview', 409, 'Batch import yang sudah selesai tidak dapat diulang.');
+
+            $operation = $batch->operation ?: 'preview';
+            $total = $operation === 'import'
+                ? (int) $this->previewService->summary($batchId, $businessId)['only_excel']
+                : 0;
+            $this->processService->queued($batchId, $businessId, $operation, $total);
+
+            return [$batch, $operation];
+        });
+        if ($operation === 'import') {
+            ProcessSolarImport::dispatch($batchId, $businessId);
+        } else {
+            ProcessSolarPreview::dispatch($batchId, $businessId);
+        }
+
+        return response()->json([
+            'success' => true,
+            'status_url' => route('solar.imports.status', $batchId),
+        ], 202);
+    }
+
+    public function updatePreviewDate(Request $request, string $batchId, int $rowId)
+    {
+        $businessId = $this->authorizeSolar($request);
+        $date = $request->validate(['date' => ['required', 'date_format:Y-m-d']])['date'];
+        $batch = DB::table('solar_import_batches')
+            ->where('id', $batchId)
+            ->where('business_id', $businessId)
+            ->where('status', 'preview')
+            ->first();
+        abort_if(! $batch, 404, 'Batch preview tidak ditemukan atau sudah diproses.');
+        $row = DB::table('solar_import_preview_rows')
+            ->where('id', $rowId)
+            ->where('batch_id', $batchId)
+            ->where('business_id', $businessId)
+            ->first();
+        abort_if(! $row, 404, 'Baris preview tidak ditemukan.');
+        abort_unless($row->status === 'error' && str_contains(implode(' ', json_decode((string) $row->differences, true) ?: []), 'Tanggal'), 422, 'Hanya error tanggal yang dapat diedit.');
+
+        $overrides = json_decode((string) ($batch->date_overrides ?? '[]'), true) ?: [];
+        $overrides[$row->ledger.':'.$row->source_row] = $date;
+        $path = $batch->file_path ?: $request->session()->get("solar_imports.{$batchId}");
+        abort_if(! $path || ! Storage::disk('local')->exists($path), 404, 'File preview sudah tidak tersedia.');
+
+        $this->previewService->rebuild($businessId, $batchId, Storage::disk('local')->path($path), $overrides);
+        DB::table('solar_import_batches')->where('id', $batchId)->update([
+            'date_overrides' => json_encode($overrides),
+            'updated_at' => now(),
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'summary' => $this->previewService->summary($batchId, $businessId),
+        ]);
+    }
+
+    public function rollbackImport(Request $request, string $batchId)
+    {
+        $businessId = $this->authorizeSolar($request);
+        $batch = DB::table('solar_import_batches')
+            ->where('id', $batchId)
+            ->where('business_id', $businessId)
+            ->first();
+        abort_if(! $batch, 404);
+
+        if ($batch->status !== 'imported') {
+            return back()->with('status', ['success' => false, 'msg' => 'Batch tersebut tidak dapat di-rollback pada status saat ini.']);
+        }
+
+        $hasNewerImport = false;
+        $newerBatchIds = DB::table('solar_import_batches')
+            ->where('business_id', $businessId)
+            ->where('status', 'imported')
+            ->where('created_at', '>', $batch->created_at)
+            ->pluck('id');
+        foreach (SolarLedgerService::LEDGERS as $ledger) {
+            if (DB::table($this->ledgerService->table($ledger))
+                ->where('business_id', $businessId)
+                ->whereIn('import_batch_id', $newerBatchIds)
+                ->exists()) {
+                $hasNewerImport = true;
+                break;
+            }
+        }
+        if ($hasNewerImport) {
+            return back()->with('status', ['success' => false, 'msg' => 'Rollback harus dimulai dari batch import yang paling baru.']);
+        }
+
+        DB::transaction(function () use ($businessId, $batch) {
+            foreach (SolarLedgerService::LEDGERS as $ledger) {
+                DB::table($this->ledgerService->table($ledger))
+                    ->where('business_id', $businessId)
+                    ->where('import_batch_id', $batch->id)
+                    ->delete();
+                $this->ledgerService->recalculate($businessId, $ledger);
+            }
+
+            $snapshot = json_decode((string) ($batch->opening_snapshot ?? '[]'), true) ?: [];
+            $this->ledgerService->restoreOpeningSnapshot($businessId, $snapshot);
+            foreach (SolarLedgerService::LEDGERS as $ledger) {
+                $this->ledgerService->recalculate($businessId, $ledger);
+            }
+
+            DB::table('solar_import_batches')->where('id', $batch->id)->update([
+                'status' => 'rolled_back',
+                'rolled_back_at' => now(),
+                'updated_at' => now(),
+            ]);
+        });
+
+        return back()->with('status', ['success' => true, 'msg' => 'Import Solar berhasil di-rollback.']);
     }
 
     public function store(Request $request, string $ledger)
@@ -103,6 +492,8 @@ class SolarController extends Controller
                 ->update($payload + [
                     'source' => 'manual',
                     'source_hash' => null,
+                    'source_key' => null,
+                    'import_batch_id' => null,
                     'updated_at' => now(),
                 ]);
 
@@ -184,18 +575,33 @@ class SolarController extends Controller
             $this->cleanupImports($directory);
             $extension = strtolower($request->file('file')->getClientOriginalExtension());
             $path = $request->file('file')->storeAs($directory, "{$token}.{$extension}", 'local');
-            $parsed = $this->prepareParsedRows(
+            DB::table('solar_import_batches')->insert([
+                'id' => $token,
+                'business_id' => $businessId,
+                'created_by' => optional($request->user())->id,
+                'file_name' => $request->file('file')->getClientOriginalName(),
+                'file_hash' => hash_file('sha256', Storage::disk('local')->path($path)),
+                'file_path' => $path,
+                'status' => 'preview',
+                'counts' => json_encode([]),
+                'opening_snapshot' => json_encode($this->ledgerService->openingSnapshot($businessId)),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+            $result = $this->previewService->rebuild(
                 $businessId,
-                $this->workbookService->parse(Storage::disk('local')->path($path))
+                $token,
+                Storage::disk('local')->path($path)
             );
-            $result = $this->ledgerService->reconciliation($businessId, $parsed);
+            DB::table('solar_import_batches')->where('id', $token)->update([
+                'counts' => json_encode($this->previewService->summary($token, $businessId)),
+                'updated_at' => now(),
+            ]);
             $request->session()->put("solar_imports.{$token}", $path);
 
             return view('solar.reconcile', [
                 'token' => $token,
-                'result' => $result,
-                'visibleItems' => array_slice($result['items'], 0, 500),
-                'totalItems' => count($result['items']),
+                'summary' => $this->previewService->summary($token, $businessId),
             ]);
         } catch (InvalidArgumentException $exception) {
             return back()->with('status', ['success' => false, 'msg' => $exception->getMessage()]);
@@ -211,16 +617,34 @@ class SolarController extends Controller
         $businessId = $this->authorizeSolar($request);
         $validated = $request->validate(['token' => ['required', 'uuid']]);
         $path = $request->session()->get("solar_imports.{$validated['token']}");
+        $batch = DB::table('solar_import_batches')
+            ->where('id', $validated['token'])
+            ->where('business_id', $businessId)
+            ->where('status', 'preview')
+            ->first();
+        abort_if(! $batch, 404, 'Batch import tidak ditemukan atau sudah diproses.');
+        $path = $batch->file_path ?: $path;
         abort_if(! $path || ! Storage::disk('local')->exists($path), 404, 'File preview sudah tidak tersedia.');
 
         try {
-            $parsed = $this->prepareParsedRows(
+            $overrides = json_decode((string) ($batch->date_overrides ?? '[]'), true) ?: [];
+            $result = $this->previewService->rebuild(
                 $businessId,
-                $this->workbookService->parse(Storage::disk('local')->path($path))
+                $batch->id,
+                Storage::disk('local')->path($path),
+                $overrides
             );
-            $result = $this->ledgerService->reconciliation($businessId, $parsed);
-            $inserted = DB::transaction(function () use ($businessId, $result) {
+            $rowsForImport = ['stock' => [], 'pool' => [], 'mess' => []];
+            foreach ($this->previewService->importableRows($batch->id, $businessId) as $row) {
+                $rowsForImport[$row['ledger'] ?? 'stock'][] = $row;
+            }
+            $inserted = DB::transaction(function () use ($businessId, $result, $batch, $rowsForImport) {
                 $inserted = ['stock' => 0, 'pool' => 0, 'mess' => 0];
+                $snapshot = $this->ledgerService->openingSnapshot($businessId);
+                DB::table('solar_import_batches')->where('id', $batch->id)->update([
+                    'opening_snapshot' => json_encode($snapshot),
+                    'updated_at' => now(),
+                ]);
 
                 foreach (SolarLedgerService::LEDGERS as $ledger) {
                     $table = $this->ledgerService->table($ledger);
@@ -230,12 +654,13 @@ class SolarController extends Controller
                             $businessId,
                             $ledger,
                             $opening,
-                            $opening['date']
+                            $opening['date'],
+                            $batch->id
                         );
                     }
 
                     $payloads = [];
-                    foreach ($result['onlyExcel'][$ledger] ?? [] as $row) {
+                    foreach ($rowsForImport[$ledger] ?? [] as $row) {
                         $hash = $this->ledgerService->rowHash($ledger, $row);
                         $payloads[] = $this->importPayload($ledger, $row) + [
                             'business_id' => $businessId,
@@ -243,6 +668,8 @@ class SolarController extends Controller
                             'source_sheet' => $row['source_sheet'],
                             'source_row' => $row['source_row'],
                             'source_hash' => $hash,
+                            'source_key' => $row['source_key'] ?? null,
+                            'import_batch_id' => $batch->id,
                             'created_at' => now(),
                             'updated_at' => now(),
                         ];
@@ -252,6 +679,13 @@ class SolarController extends Controller
                     }
                     $this->ledgerService->recalculate($businessId, $ledger);
                 }
+
+                DB::table('solar_import_batches')->where('id', $batch->id)->update([
+                    'status' => 'imported',
+                    'confirmed_at' => now(),
+                    'counts' => json_encode($inserted),
+                    'updated_at' => now(),
+                ]);
 
                 return $inserted;
             });
@@ -276,14 +710,8 @@ class SolarController extends Controller
     public function exportReconciliation(Request $request, string $token)
     {
         $businessId = $this->authorizeSolar($request);
-        $path = $request->session()->get("solar_imports.{$token}");
-        abort_if(! $path || ! Storage::disk('local')->exists($path), 404, 'File preview sudah tidak tersedia.');
-
-        $parsed = $this->prepareParsedRows(
-            $businessId,
-            $this->workbookService->parse(Storage::disk('local')->path($path))
-        );
-        $result = $this->ledgerService->reconciliation($businessId, $parsed);
+        abort_if(! DB::table('solar_import_batches')->where('id', $token)->where('business_id', $businessId)->exists(), 404, 'Batch import tidak ditemukan.');
+        $result = $this->previewService->result($token, $businessId);
 
         return $this->downloadWorkbook(
             $this->workbookService->buildReconciliation($result),
@@ -397,51 +825,6 @@ class SolarController extends Controller
         }
 
         return $payload;
-    }
-
-    private function prepareParsedRows(int $businessId, array $parsed): array
-    {
-        $customers = DB::table('contacts')
-            ->where('business_id', $businessId)
-            ->whereIn('type', ['customer', 'both'])
-            ->select('id', 'name', 'supplier_business_name')
-            ->get();
-        $byId = $customers->keyBy('id');
-        $byName = [];
-        foreach ($customers as $customer) {
-            foreach ([$customer->name, $customer->supplier_business_name] as $name) {
-                if ($name) {
-                    $byName[mb_strtolower(trim($name))] = (int) $customer->id;
-                }
-            }
-        }
-
-        foreach (['pool', 'mess'] as $ledger) {
-            foreach ($parsed['rows'][$ledger] as $index => $row) {
-                $reference = trim((string) ($row['customer_ref'] ?? ''));
-                $customerId = null;
-                if ($reference !== '') {
-                    if (preg_match('/^C(\d+)\b/i', $reference, $matches) && $byId->has((int) $matches[1])) {
-                        $customerId = (int) $matches[1];
-                    } elseif (isset($byName[mb_strtolower($reference)])) {
-                        $customerId = $byName[mb_strtolower($reference)];
-                    } else {
-                        $parsed['errors'][] = [
-                            'ledger' => $ledger,
-                            'row' => $row['source_row'],
-                            'message' => "Customer \"{$reference}\" tidak ditemukan pada business ini.",
-                        ];
-                        unset($parsed['rows'][$ledger][$index]);
-                        continue;
-                    }
-                }
-                $parsed['rows'][$ledger][$index]['customer_id'] = $customerId;
-                unset($parsed['rows'][$ledger][$index]['customer_ref']);
-            }
-            $parsed['rows'][$ledger] = array_values($parsed['rows'][$ledger]);
-        }
-
-        return $parsed;
     }
 
     private function customerReferences(int $businessId): array

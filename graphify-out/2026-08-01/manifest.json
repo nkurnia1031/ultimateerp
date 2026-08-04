@@ -700,9 +700,9 @@
     "semantic_hash": "4a469eb69b7d488baf7f112e8282a843"
   },
   "Modules/Accounting/Providers/AccountingServiceProvider.php": {
-    "mtime": 1762624297.0,
-    "ast_hash": "77ddeff54587c8fbdd31b7c80c957b6b",
-    "semantic_hash": "77ddeff54587c8fbdd31b7c80c957b6b"
+    "mtime": 1785568557.129041,
+    "ast_hash": "1c01ca780ba1b204e60246e9bce8e8b0",
+    "semantic_hash": ""
   },
   "Modules/Accounting/Providers/RouteServiceProvider.php": {
     "mtime": 1762624297.0,
@@ -1695,9 +1695,9 @@
     "semantic_hash": "d5757f5e424db753155fab0ef43d1b5b"
   },
   "Modules/AssetManagement/Providers/AssetManagementServiceProvider.php": {
-    "mtime": 1762624297.0,
-    "ast_hash": "926657ac2a6c0edd05e97b903203079c",
-    "semantic_hash": "926657ac2a6c0edd05e97b903203079c"
+    "mtime": 1785568557.1315591,
+    "ast_hash": "11a5c055bf3524ba9dc6ee074e537ff6",
+    "semantic_hash": ""
   },
   "Modules/AssetManagement/Providers/RouteServiceProvider.php": {
     "mtime": 1762624297.0,
@@ -1825,9 +1825,9 @@
     "semantic_hash": "9ba24c56c51f09683ef6fb5193f327ac"
   },
   "Modules/AssetManagement/Routes/web.php": {
-    "mtime": 1778651616.0113285,
-    "ast_hash": "3d8bf7da9656f448d8bb7cef1c604c76",
-    "semantic_hash": "3d8bf7da9656f448d8bb7cef1c604c76"
+    "mtime": 1785567962.9628053,
+    "ast_hash": "0b9415445a77697a1287bd506ce36996",
+    "semantic_hash": ""
   },
   "Modules/AssetManagement/Services/AssetExpiryReminderService.php": {
     "mtime": 1780906818.5249126,
@@ -2210,9 +2210,9 @@
     "semantic_hash": "66fa1b92a7eb8aa696ef520b2d1cb8f1"
   },
   "Modules/Crm/Providers/CrmServiceProvider.php": {
-    "mtime": 1761136252.0,
-    "ast_hash": "bc36ec8c5b49d032452575face80a7de",
-    "semantic_hash": "bc36ec8c5b49d032452575face80a7de"
+    "mtime": 1785568557.1337736,
+    "ast_hash": "8585eca46aa8b2a2d9e1446de02c0b7c",
+    "semantic_hash": ""
   },
   "Modules/Crm/Providers/RouteServiceProvider.php": {
     "mtime": 1761136252.0,
@@ -2600,9 +2600,9 @@
     "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
   },
   "Modules/Crm/Routes/web.php": {
-    "mtime": 1776328191.15418,
-    "ast_hash": "8280f56e630838ef6c9995418ce8d156",
-    "semantic_hash": "8280f56e630838ef6c9995418ce8d156"
+    "mtime": 1785567898.3570662,
+    "ast_hash": "13e4e6734a155ed0634340fac675bbdd",
+    "semantic_hash": ""
   },
   "Modules/Crm/Utils/CrmUtil.php": {
     "mtime": 1761136252.0,
@@ -3065,9 +3065,9 @@
     "semantic_hash": "acce7e8cf516769b4fd16705ff7548c8"
   },
   "Modules/Essentials/Providers/EssentialsServiceProvider.php": {
-    "mtime": 1761136252.0,
-    "ast_hash": "d3486d5f42367f0d273ff1d42042076f",
-    "semantic_hash": "d3486d5f42367f0d273ff1d42042076f"
+    "mtime": 1785568557.1357982,
+    "ast_hash": "7ad7bfee7c0aa5a5ca7cd01efdb492a5",
+    "semantic_hash": ""
   },
   "Modules/Essentials/Providers/RouteServiceProvider.php": {
     "mtime": 1761136252.0,
@@ -3620,9 +3620,9 @@
     "semantic_hash": "d5b1ffdc48d672745d67fa0d645a3a8b"
   },
   "Modules/InventoryManagement/Providers/InventoryManagementServiceProvider.php": {
-    "mtime": 1762624297.0,
-    "ast_hash": "abf815d6e481e75835b4cb4f88e14236",
-    "semantic_hash": "abf815d6e481e75835b4cb4f88e14236"
+    "mtime": 1785568571.0842237,
+    "ast_hash": "6c7174b27342beb4883f61f2ba2f6016",
+    "semantic_hash": ""
   },
   "Modules/InventoryManagement/Providers/RouteServiceProvider.php": {
     "mtime": 1762624297.0,
@@ -3875,9 +3875,9 @@
     "semantic_hash": "85e461fb31c2ee1250b7bb234b7cca84"
   },
   "Modules/Manufacturing/Providers/ManufacturingServiceProvider.php": {
-    "mtime": 1762624297.0,
-    "ast_hash": "21dbad8c4e9b5279475ced4b724b0b18",
-    "semantic_hash": "21dbad8c4e9b5279475ced4b724b0b18"
+    "mtime": 1785568571.087793,
+    "ast_hash": "0ae32dcc7b64d723af616eccefe57101",
+    "semantic_hash": ""
   },
   "Modules/Manufacturing/Providers/RouteServiceProvider.php": {
     "mtime": 1762624297.0,
@@ -3990,9 +3990,9 @@
     "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
   },
   "Modules/Manufacturing/Routes/web.php": {
-    "mtime": 1762624297.0,
-    "ast_hash": "3c201a74acf629de629c65861f37af58",
-    "semantic_hash": "3c201a74acf629de629c65861f37af58"
+    "mtime": 1785567962.960783,
+    "ast_hash": "458d5a8af0bb8e348e986a587b640c8d",
+    "semantic_hash": ""
   },
   "Modules/Manufacturing/Utils/ManufacturingUtil.php": {
     "mtime": 1762624297.0,
@@ -4050,9 +4050,9 @@
     "semantic_hash": "b8415cb9e51510563e6abcc79391f2d4"
   },
   "Modules/ProductCatalogue/Providers/ProductCatalogueServiceProvider.php": {
-    "mtime": 1762624297.0,
-    "ast_hash": "4df6f515db29aa638ba227bb20ec5472",
-    "semantic_hash": "4df6f515db29aa638ba227bb20ec5472"
+    "mtime": 1785568571.0908096,
+    "ast_hash": "6870872d8566cdcce8507814545dd93f",
+    "semantic_hash": ""
   },
   "Modules/ProductCatalogue/Providers/RouteServiceProvider.php": {
     "mtime": 1762624297.0,
@@ -4315,9 +4315,9 @@
     "semantic_hash": "b9bab7bad9b27661cf0784feada268e9"
   },
   "Modules/Project/Providers/ProjectServiceProvider.php": {
-    "mtime": 1762624297.0,
-    "ast_hash": "358acdd049393168f6af885c1b35ec45",
-    "semantic_hash": "358acdd049393168f6af885c1b35ec45"
+    "mtime": 1785568571.092937,
+    "ast_hash": "7380bcc0990d1f94f77d021ba83d1f41",
+    "semantic_hash": ""
   },
   "Modules/Project/Providers/RouteServiceProvider.php": {
     "mtime": 1762624297.0,
@@ -4650,9 +4650,9 @@
     "semantic_hash": "bc0aac87a609b24a0c11f7735210f21f"
   },
   "Modules/Spreadsheet/Providers/SpreadsheetServiceProvider.php": {
-    "mtime": 1762624297.0,
-    "ast_hash": "f85a986382c49233bda027edc3bd8f71",
-    "semantic_hash": "f85a986382c49233bda027edc3bd8f71"
+    "mtime": 1785568571.0949354,
+    "ast_hash": "b234dd72ffad24f83c1e37c7bc5e0ec0",
+    "semantic_hash": ""
   },
   "Modules/Spreadsheet/Resources/views/index.blade.php": {
     "mtime": 1762624297.0,
@@ -4840,9 +4840,9 @@
     "semantic_hash": "5d933bffacc17333f368545b7f90f6c8"
   },
   "app/Contact.php": {
-    "mtime": 1779769941.0164416,
-    "ast_hash": "a8eae3551d23eea667a9559ecdc07c3a",
-    "semantic_hash": "a8eae3551d23eea667a9559ecdc07c3a"
+    "mtime": 1785566890.3359659,
+    "ast_hash": "87cf8d5d9d96da288c8ba6f5771df21b",
+    "semantic_hash": ""
   },
   "app/Currency.php": {
     "mtime": 1762624297.0,
@@ -5205,9 +5205,9 @@
     "semantic_hash": "a857baeb631ed4a2c6dfd7b5be4e64ec"
   },
   "app/Http/Controllers/PurchaseController.php": {
-    "mtime": 1778683812.3013468,
-    "ast_hash": "d742aeb55397f80728c1ba2daf7ae95a",
-    "semantic_hash": "d742aeb55397f80728c1ba2daf7ae95a"
+    "mtime": 1785566890.3382978,
+    "ast_hash": "cde8a7ad77bbe2b26c77f6473c0d0b9f",
+    "semantic_hash": ""
   },
   "app/Http/Controllers/PurchaseOrderController.php": {
     "mtime": 1778683812.086796,
@@ -5305,8 +5305,8 @@
     "semantic_hash": "120608a3ca3e9afc2222ac6ac449df5e"
   },
   "app/Http/Controllers/SolarController.php": {
-    "mtime": 1785136037.3921714,
-    "ast_hash": "b4b1ee251437b8c9b49b0cbb8b7f7d49",
+    "mtime": 1785580866.6064336,
+    "ast_hash": "87b3a9eb3d09b693bf6813a6482a2ec3",
     "semantic_hash": ""
   },
   "app/Http/Controllers/StockAdjustmentController.php": {
@@ -5975,9 +5975,9 @@
     "semantic_hash": "cb96a2aa1f8ebe33e66f1b8959c01add"
   },
   "config/view.php": {
-    "mtime": 1756521633.0,
-    "ast_hash": "71832fc989387eb7e0d0a3c179b77195",
-    "semantic_hash": "71832fc989387eb7e0d0a3c179b77195"
+    "mtime": 1785568424.0989592,
+    "ast_hash": "7e2acbe2390d1fc8a3ec4bdd4db37f41",
+    "semantic_hash": ""
   },
   "database/factories/UserFactory.php": {
     "mtime": 1758622482.0,
@@ -9790,8 +9790,8 @@
     "semantic_hash": "9a27618c33d64d82fcf78fc3f7569817"
   },
   "resources/views/solar/index.blade.php": {
-    "mtime": 1785135439.0558562,
-    "ast_hash": "d100a92ff07c29814a70b04206ef7c5d",
+    "mtime": 1785573491.3157816,
+    "ast_hash": "0b3e2675aa70261f1f1889e43aec0f2b",
     "semantic_hash": ""
   },
   "resources/views/stock_adjustment/create.blade.php": {
@@ -10995,8 +10995,8 @@
     "semantic_hash": "e604e8c82a6bc445c9785a4567a1ebeb"
   },
   "routes/web.php": {
-    "mtime": 1785135282.3624551,
-    "ast_hash": "a5c4924db7b09f1d9ed93ecd4a934510",
+    "mtime": 1785580495.7054598,
+    "ast_hash": "bf4ab2f8bc9a3fdcb33bd79fd31881a9",
     "semantic_hash": ""
   },
   "Modules/Manufacturing/License.txt": {
@@ -11335,8 +11335,8 @@
     "semantic_hash": ""
   },
   "public/js/purchase.js": {
-    "mtime": 1757052742.058037,
-    "ast_hash": "3d2b29ade22cc6a9addfe96d8b1ff175",
+    "mtime": 1785566863.0024378,
+    "ast_hash": "afa82746e68ebb660f504db697d23514",
     "semantic_hash": ""
   },
   "public/js/purchase_return.js": {
@@ -11525,13 +11525,13 @@
     "semantic_hash": ""
   },
   "app/Services/SolarLedgerService.php": {
-    "mtime": 1785136129.2107565,
-    "ast_hash": "effc2764ce29d57448a4bf390a884b2d",
+    "mtime": 1785580614.5324266,
+    "ast_hash": "d4750b40d360d241df6ca446286610b4",
     "semantic_hash": ""
   },
   "app/Services/SolarWorkbookService.php": {
-    "mtime": 1785136381.493701,
-    "ast_hash": "985807f9e64fd197dbfc89a3ba51745a",
+    "mtime": 1785580286.0890932,
+    "ast_hash": "fbc642bc98d692ab7a47f4347c552560",
     "semantic_hash": ""
   },
   "database/migrations/2026_07_27_000000_harden_solar_ledgers.php": {
@@ -11540,13 +11540,43 @@
     "semantic_hash": ""
   },
   "public/js/solar.js": {
-    "mtime": 1785135439.062977,
-    "ast_hash": "92dbb1a3f6366457c6990e641dd6296f",
+    "mtime": 1785580574.9080918,
+    "ast_hash": "3421cb3e6cff63423f07c287ffae6dc8",
     "semantic_hash": ""
   },
   "resources/views/solar/reconcile.blade.php": {
-    "mtime": 1785135439.061438,
-    "ast_hash": "5212988bf89d1a36ecf28b27cb6ac97c",
+    "mtime": 1785580531.3817437,
+    "ast_hash": "2551e43c67079b9ffb569cd5c8277800",
+    "semantic_hash": ""
+  },
+  "app/Console/Commands/BackfillSolarSourceKeys.php": {
+    "mtime": 1785573531.1481657,
+    "ast_hash": "444bb6de7ba41d6356e048e77d0cf626",
+    "semantic_hash": ""
+  },
+  "database/migrations/2026_08_01_000000_add_solar_import_batches.php": {
+    "mtime": 1785573326.618729,
+    "ast_hash": "8b3c4f1dec72c381e5c62ce4b522ac2a",
+    "semantic_hash": ""
+  },
+  "resources/views/solar/import-history.blade.php": {
+    "mtime": 1785573922.4981947,
+    "ast_hash": "6020b9aefdd541fa215bf91206740cd1",
+    "semantic_hash": ""
+  },
+  "resources/views/solar/import-detail.blade.php": {
+    "mtime": 1785573935.5245118,
+    "ast_hash": "014bc8fb59c6765590e8ce2851ba34da",
+    "semantic_hash": ""
+  },
+  "app/Services/SolarImportPreviewService.php": {
+    "mtime": 1785580742.6562202,
+    "ast_hash": "c75f7296ea3f3894aea025d6f8769d7e",
+    "semantic_hash": ""
+  },
+  "database/migrations/2026_08_02_000000_create_solar_import_preview_rows.php": {
+    "mtime": 1785580844.7203865,
+    "ast_hash": "5c5f8a92c4d87eedd2dfbf05d7dd49e5",
     "semantic_hash": ""
   }
 }

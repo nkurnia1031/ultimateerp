@@ -4,6 +4,7 @@ namespace App\Services;
 
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use InvalidArgumentException;
 
 class SolarLedgerService
@@ -82,7 +83,13 @@ class SolarLedgerService
             ->first();
     }
 
-    public function setOpeningBalance(int $businessId, string $ledger, array $values, string $effectiveDate): void
+    public function setOpeningBalance(
+        int $businessId,
+        string $ledger,
+        array $values,
+        string $effectiveDate,
+        ?string $importBatchId = null
+    ): void
     {
         $payload = [
             'business_id' => $businessId,
@@ -100,7 +107,32 @@ class SolarLedgerService
         if ($query->exists()) {
             $query->update($payload);
         } else {
-            DB::table('solar_opening_balances')->insert($payload + ['created_at' => now()]);
+            $insert = $payload + ['created_at' => now()];
+            if ($importBatchId !== null && Schema::hasColumn('solar_opening_balances', 'import_batch_id')) {
+                $insert['import_batch_id'] = $importBatchId;
+            }
+            DB::table('solar_opening_balances')->insert($insert);
+        }
+    }
+
+    public function openingSnapshot(int $businessId): array
+    {
+        return DB::table('solar_opening_balances')
+            ->where('business_id', $businessId)
+            ->get()
+            ->mapWithKeys(function ($row) {
+                return [$row->ledger => (array) $row];
+            })
+            ->all();
+    }
+
+    public function restoreOpeningSnapshot(int $businessId, array $snapshot): void
+    {
+        DB::table('solar_opening_balances')->where('business_id', $businessId)->delete();
+        foreach ($snapshot as $row) {
+            unset($row['id']);
+            $row['business_id'] = $businessId;
+            DB::table('solar_opening_balances')->insert($row);
         }
     }
 
@@ -158,6 +190,30 @@ class SolarLedgerService
         return hash('sha256', json_encode($normalized, JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION));
     }
 
+    public function decorateSourceKeys(array $parsed): array
+    {
+        foreach (self::LEDGERS as $ledger) {
+            $occurrences = [];
+            foreach ($parsed['rows'][$ledger] ?? [] as $index => $row) {
+                $hash = $this->rowHash($ledger, $row);
+                $occurrence = $occurrences[$hash] ?? 0;
+                $occurrences[$hash] = $occurrence + 1;
+                $sheet = mb_strtolower(trim((string) ($row['source_sheet'] ?? $ledger)));
+                $sourceKey = hash('sha256', json_encode([
+                    'ledger' => $ledger,
+                    'sheet' => $sheet,
+                    'hash' => $hash,
+                    'occurrence' => $occurrence,
+                ], JSON_UNESCAPED_UNICODE));
+                $parsed['rows'][$ledger][$index]['source_hash'] = $hash;
+                $parsed['rows'][$ledger][$index]['source_occurrence'] = $occurrence;
+                $parsed['rows'][$ledger][$index]['source_key'] = $sourceKey;
+            }
+        }
+
+        return $parsed;
+    }
+
     public function reconciliation(int $businessId, array $parsed): array
     {
         $items = [];
@@ -179,6 +235,7 @@ class SolarLedgerService
                 'differences' => [$error['message']],
                 'excel' => null,
                 'app' => null,
+                'raw_date' => $error['raw_date'] ?? null,
             ];
         }
 
@@ -210,44 +267,57 @@ class SolarLedgerService
                     ->all();
             }
 
-            $deduplicatedExcel = [];
-            $seenExcel = [];
-            foreach ($excelRows as $row) {
-                $hash = $this->rowHash($ledger, $row);
-                if (isset($seenExcel[$hash])) {
-                    $summary['error']++;
-                    $items[] = [
-                        'ledger' => $ledger,
-                        'row' => $row['source_row'] ?? null,
-                        'date' => $row['tanggal'] ?? null,
-                        'status' => 'error',
-                        'differences' => ['Duplikat dari baris Excel '.$seenExcel[$hash].'. Baris ini tidak akan diimpor.'],
-                        'excel' => $row,
-                        'app' => null,
-                    ];
-                    continue;
-                }
-                $seenExcel[$hash] = $row['source_row'] ?? '-';
-                $deduplicatedExcel[] = $row;
-            }
-            $excelRows = $deduplicatedExcel;
-
-            $appBuckets = [];
+            $excelRows = array_values($excelRows);
+            $appBucketsByKey = [];
+            $appBucketsByHash = [];
             foreach ($appRows as $index => $row) {
-                $appBuckets[$this->rowHash($ledger, $row)][] = $index;
+                $hash = $row['source_hash'] ?: $this->rowHash($ledger, $row);
+                if (! empty($row['source_key'])) {
+                    $appBucketsByKey[$row['source_key']][] = $index;
+                }
+                $appBucketsByHash[$hash][] = $index;
             }
             $usedApp = [];
+            $ambiguousApp = [];
             $remainingExcel = [];
 
             foreach ($excelRows as $row) {
-                $hash = $this->rowHash($ledger, $row);
-                $appIndex = null;
-                while (! empty($appBuckets[$hash])) {
-                    $candidate = array_shift($appBuckets[$hash]);
-                    if (! isset($usedApp[$candidate])) {
-                        $appIndex = $candidate;
-                        break;
+                $hash = $row['source_hash'] ?? $this->rowHash($ledger, $row);
+                $appIndex = $this->selectCandidate(
+                    $row,
+                    $appRows,
+                    $usedApp,
+                    ! empty($row['source_key']) ? ($appBucketsByKey[$row['source_key']] ?? []) : [],
+                    'source_key'
+                );
+                $matchedBy = $appIndex !== null ? 'source_key' : null;
+                if ($appIndex === null) {
+                    $appIndex = $this->selectCandidate(
+                        $row,
+                        $appRows,
+                        $usedApp,
+                        $appBucketsByHash[$hash] ?? [],
+                        'source_hash'
+                    );
+                    $matchedBy = $appIndex !== null ? 'source_hash' : null;
+                }
+
+                if ($appIndex === 'ambiguous') {
+                    foreach (($appBucketsByHash[$hash] ?? []) as $candidate) {
+                        if (! isset($usedApp[$candidate])) {
+                            $ambiguousApp[$candidate] = true;
+                        }
                     }
+                    $summary['error']++;
+                    $items[] = $this->comparisonItem(
+                        $ledger,
+                        $row,
+                        null,
+                        'error',
+                        ['Beberapa baris aplikasi memiliki fingerprint yang sama; pasangan tidak dipilih otomatis.'],
+                        'ambiguous'
+                    );
+                    continue;
                 }
 
                 if ($appIndex === null) {
@@ -259,26 +329,45 @@ class SolarLedgerService
                 $differences = $this->balanceDifferences($ledger, $row, $appRows[$appIndex]);
                 $status = $differences === [] ? 'match' : 'different';
                 $summary[$status]++;
-                $items[] = $this->comparisonItem($ledger, $row, $appRows[$appIndex], $status, $differences);
+                $items[] = $this->comparisonItem($ledger, $row, $appRows[$appIndex], $status, $differences, $matchedBy);
+            }
+
+            foreach ($remainingExcel as $excelIndex => $excelRow) {
+                $candidates = [];
+                foreach ($appRows as $index => $appRow) {
+                    if (isset($usedApp[$index]) || (string) ($appRow['tanggal'] ?? '') !== (string) $excelRow['tanggal']) {
+                        continue;
+                    }
+                    $candidates[] = $index;
+                }
+                if (count($candidates) === 1) {
+                    $appIndex = $candidates[0];
+                    $usedApp[$appIndex] = true;
+                    $differences = $this->allDifferences($ledger, $excelRow, $appRows[$appIndex]);
+                    $summary['different']++;
+                    $items[] = $this->comparisonItem($ledger, $excelRow, $appRows[$appIndex], 'different', $differences, 'date');
+                    unset($remainingExcel[$excelIndex]);
+                } elseif (count($candidates) > 1) {
+                    foreach ($candidates as $candidate) {
+                        $ambiguousApp[$candidate] = true;
+                    }
+                    $summary['error']++;
+                    $items[] = $this->comparisonItem(
+                        $ledger,
+                        $excelRow,
+                        null,
+                        'error',
+                        ['Lebih dari satu kandidat pada tanggal yang sama; pasangan tidak dipilih otomatis.'],
+                        'ambiguous'
+                    );
+                    unset($remainingExcel[$excelIndex]);
+                }
             }
 
             $remainingApp = [];
             foreach ($appRows as $index => $row) {
-                if (! isset($usedApp[$index])) {
+                if (! isset($usedApp[$index]) && ! isset($ambiguousApp[$index])) {
                     $remainingApp[] = $row;
-                }
-            }
-
-            foreach ($remainingExcel as $excelIndex => $excelRow) {
-                $pairIndex = $this->findSameDate($remainingApp, (string) $excelRow['tanggal']);
-                if ($pairIndex !== null) {
-                    $appRow = $remainingApp[$pairIndex];
-                    unset($remainingApp[$pairIndex]);
-                    $remainingApp = array_values($remainingApp);
-                    $differences = $this->allDifferences($ledger, $excelRow, $appRow);
-                    $summary['different']++;
-                    $items[] = $this->comparisonItem($ledger, $excelRow, $appRow, 'different', $differences);
-                    unset($remainingExcel[$excelIndex]);
                 }
             }
 
@@ -297,6 +386,32 @@ class SolarLedgerService
         return compact('summary', 'items', 'onlyExcel') + [
             'opening' => $parsed['opening'] ?? [],
         ];
+    }
+
+    private function selectCandidate(array $excelRow, array $appRows, array $usedApp, array $candidates, string $mode)
+    {
+        $available = array_values(array_filter($candidates, fn ($index) => ! isset($usedApp[$index])));
+        if ($available === []) {
+            return null;
+        }
+        if (count($available) === 1 || $mode === 'source_key') {
+            return $available[0];
+        }
+
+        $excelSourceRow = (int) ($excelRow['source_row'] ?? 0);
+        usort($available, function ($left, $right) use ($appRows, $excelSourceRow) {
+            return abs((int) ($appRows[$left]['source_row'] ?? 0) - $excelSourceRow)
+                <=> abs((int) ($appRows[$right]['source_row'] ?? 0) - $excelSourceRow);
+        });
+        $leftDistance = abs((int) ($appRows[$available[0]]['source_row'] ?? 0) - $excelSourceRow);
+        $rightDistance = isset($available[1])
+            ? abs((int) ($appRows[$available[1]]['source_row'] ?? 0) - $excelSourceRow)
+            : null;
+        if ($rightDistance !== null && $leftDistance === $rightDistance) {
+            return 'ambiguous';
+        }
+
+        return $available[0];
     }
 
     private function databaseRow(string $ledger, object $row): array
@@ -434,7 +549,8 @@ class SolarLedgerService
         ?array $excel,
         ?array $app,
         string $status,
-        array $differences
+        array $differences,
+        ?string $matchedBy = null
     ): array {
         return [
             'ledger' => $ledger,
@@ -444,6 +560,25 @@ class SolarLedgerService
             'differences' => $differences,
             'excel' => $excel,
             'app' => $app,
+            'matched_by' => $matchedBy,
+            'balance_only' => $status === 'different' && $matchedBy !== null && $this->onlyBalanceDifferences($differences),
         ];
+    }
+
+    private function onlyBalanceDifferences(array $differences): bool
+    {
+        if ($differences === []) {
+            return false;
+        }
+
+        foreach ($differences as $difference) {
+            if (! str_contains($difference, 'stock_actual')
+                && ! str_contains($difference, 'stock_meteran')
+                && ! str_contains($difference, 'excel_current_stock')) {
+                return false;
+            }
+        }
+
+        return true;
     }
 }
