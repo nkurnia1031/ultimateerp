@@ -5173,25 +5173,49 @@ class TransactionUtil extends Util
      */
     public function getListPurchases($business_id)
     {
-        $purchases = Transaction::with('tags')->leftJoin('contacts', 'transactions.contact_id', '=', 'contacts.id')
+        // Product lines are eager loaded for only the DataTables page being
+        // rendered. This keeps the main purchase query free of a large
+        // GROUP_CONCAT/subquery while still allowing server-side product search.
+        $purchase_payment_query = DB::table('transaction_payments AS tp')
+            ->select('tp.transaction_id', DB::raw('SUM(tp.amount) as amount_paid'))
+            ->groupBy('tp.transaction_id');
+
+        $return_payment_query = DB::table('transaction_payments AS rtp')
+            ->select('rtp.transaction_id', DB::raw('SUM(rtp.amount) as return_paid'))
+            ->groupBy('rtp.transaction_id');
+
+        $purchase_return_query = DB::table('transactions AS pr')
+            ->leftJoinSub($return_payment_query, 'return_payment_aggregate', function ($join) {
+                $join->on('pr.id', '=', 'return_payment_aggregate.transaction_id');
+            })
+            ->whereNotNull('pr.return_parent_id')
+            ->select(
+                'pr.return_parent_id as parent_transaction_id',
+                DB::raw('MIN(pr.id) as return_transaction_id'),
+                DB::raw('COUNT(pr.id) as return_exists'),
+                DB::raw('SUM(COALESCE(pr.final_total, 0)) as amount_return'),
+                DB::raw('SUM(COALESCE(return_payment_aggregate.return_paid, 0)) as return_paid')
+            )
+            ->groupBy('pr.return_parent_id');
+
+        $purchases = Transaction::with([
+            'tags',
+            'purchase_lines.product',
+            'purchase_lines.variation.product_variation',
+        ])
+            ->leftJoin('contacts', 'transactions.contact_id', '=', 'contacts.id')
             ->join(
                 'business_locations AS BS',
                 'transactions.location_id',
                 '=',
                 'BS.id'
             )
-            ->leftJoin(
-                'transaction_payments AS TP',
-                'transactions.id',
-                '=',
-                'TP.transaction_id'
-            )
-            ->leftJoin(
-                'transactions AS PR',
-                'transactions.id',
-                '=',
-                'PR.return_parent_id'
-            )
+            ->leftJoinSub($purchase_payment_query, 'purchase_payment_aggregate', function ($join) {
+                $join->on('transactions.id', '=', 'purchase_payment_aggregate.transaction_id');
+            })
+            ->leftJoinSub($purchase_return_query, 'purchase_return_aggregate', function ($join) {
+                $join->on('transactions.id', '=', 'purchase_return_aggregate.parent_transaction_id');
+            })
             ->leftJoin('users as u', 'transactions.created_by', '=', 'u.id')
             ->where('transactions.business_id', $business_id)
             ->where('transactions.type', 'purchase')
@@ -5208,19 +5232,17 @@ class TransactionUtil extends Util
                 'BS.name as location_name',
                 'transactions.pay_term_number',
                 'transactions.pay_term_type',
-                'PR.id as return_transaction_id',
                 'transactions.custom_field_1',
                 'transactions.custom_field_2',
                 'transactions.custom_field_3',
                 'transactions.custom_field_4',
-                DB::raw('SUM(TP.amount) as amount_paid'),
-                DB::raw('(SELECT SUM(TP2.amount) FROM transaction_payments AS TP2 WHERE
-                        TP2.transaction_id=PR.id ) as return_paid'),
-                DB::raw('COUNT(PR.id) as return_exists'),
-                DB::raw('COALESCE(PR.final_total, 0) as amount_return'),
+                DB::raw('COALESCE(purchase_payment_aggregate.amount_paid, 0) as amount_paid'),
+                DB::raw('COALESCE(purchase_return_aggregate.return_paid, 0) as return_paid'),
+                DB::raw('COALESCE(purchase_return_aggregate.return_exists, 0) as return_exists'),
+                DB::raw('COALESCE(purchase_return_aggregate.amount_return, 0) as amount_return'),
+                'purchase_return_aggregate.return_transaction_id',
                 DB::raw("CONCAT(COALESCE(u.surname, ''),' ',COALESCE(u.first_name, ''),' ',COALESCE(u.last_name,'')) as added_by")
-            )
-            ->groupBy('transactions.id');
+            );
 
         return $purchases;
     }

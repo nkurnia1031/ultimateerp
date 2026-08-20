@@ -4,6 +4,7 @@ namespace App;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 
 class Media extends Model
 {
@@ -138,15 +139,58 @@ class Media extends Model
      */
     public static function uploadFile($file)
     {
-        $file_name = null;
-        if ($file->getSize() <= config('constants.document_size_limit')) {
-            $new_file_name = time().'_'.mt_rand().'_'.$file->getClientOriginalName();
-            if ($file->storeAs('/media', $new_file_name)) {
-                $file_name = $new_file_name;
-            }
+        if (! $file || ! $file->isValid()) {
+            return null;
         }
 
-        return $file_name;
+        if ($file->getSize() > config('constants.document_size_limit')) {
+            throw new \InvalidArgumentException('Uploaded file exceeds the document size limit.');
+        }
+
+        self::assertSafeUpload($file);
+
+        $originalName = pathinfo((string) $file->getClientOriginalName(), PATHINFO_FILENAME);
+        $safeOriginalName = preg_replace('/[^A-Za-z0-9_-]+/', '-', $originalName) ?: 'upload';
+        $extension = strtolower((string) $file->getClientOriginalExtension());
+        $new_file_name = time().'_'.Str::random(20).'_'.$safeOriginalName;
+        if ($extension !== '') {
+            $new_file_name .= '.'.$extension;
+        }
+
+        if ($file->storeAs('/media', $new_file_name)) {
+            return $new_file_name;
+        }
+
+        return null;
+    }
+
+    /**
+     * Uploads are public files, so executable and active-content formats must
+     * never be accepted into this directory. The client filename and MIME are
+     * both untrusted; the extension check is therefore backed by a MIME check.
+     */
+    private static function assertSafeUpload($file): void
+    {
+        $extension = strtolower((string) $file->getClientOriginalExtension());
+        $blockedExtensions = [
+            'php', 'php3', 'php4', 'php5', 'php7', 'php74', 'php8', 'phtml', 'phar',
+            'inc', 'cgi', 'pl', 'py', 'sh', 'bash', 'asp', 'aspx', 'jsp',
+            'htaccess', 'ini', 'html', 'htm', 'js', 'mjs', 'svg',
+        ];
+
+        if (in_array($extension, $blockedExtensions, true)) {
+            throw new \InvalidArgumentException('Executable or active-content uploads are not allowed.');
+        }
+
+        $mime = strtolower((string) $file->getMimeType());
+        $blockedMimes = [
+            'application/x-php', 'text/x-php', 'text/html', 'application/xhtml+xml',
+            'application/javascript', 'text/javascript', 'image/svg+xml',
+        ];
+
+        if (in_array($mime, $blockedMimes, true) || str_contains($mime, 'php')) {
+            throw new \InvalidArgumentException('The uploaded file type is not allowed.');
+        }
     }
 
     public static function uploadBase64Image($base64_string)

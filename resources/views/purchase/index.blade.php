@@ -1,6 +1,41 @@
 @extends('layouts.app')
 @section('title', __('purchase.purchases'))
 
+@section('css')
+    <style>
+        .purchase-index .purchase-product-list {
+            min-width: 190px;
+            max-width: 320px;
+            white-space: normal;
+        }
+
+        .purchase-index .purchase-product-list__item {
+            display: flex;
+            align-items: flex-start;
+            gap: 6px;
+            padding: 2px 0;
+            line-height: 1.35;
+        }
+
+        .purchase-index .purchase-product-list__item i {
+            flex: 0 0 auto;
+            margin-top: 3px;
+            font-size: 11px;
+        }
+
+        .purchase-index .purchase-product-list__more {
+            margin-top: 3px;
+            color: #64748b;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .purchase-index .select2-container--default .select2-selection--single {
+            min-height: 34px;
+        }
+    </style>
+@endsection
+
 @section('content')
 
     <!-- Content Header (Page header) -->
@@ -15,7 +50,7 @@
     </section>
 
     <!-- Main content -->
-    <section class="content no-print">
+    <section class="content no-print purchase-index">
         @component('components.filters', ['title' => __('report.filters')])
             <div class="col-md-3">
                 <div class="form-group">
@@ -35,6 +70,17 @@
                         'style' => 'width:100%',
                         'placeholder' => __('lang_v1.all'),
                     ]) !!}
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="form-group">
+                    {!! Form::label('purchase_list_filter_product_id', __('business.product') . ':') !!}
+                    {!! Form::select('purchase_list_filter_product_id', [], null, [
+                        'class' => 'form-control select2',
+                        'style' => 'width:100%',
+                        'placeholder' => __('lang_v1.all'),
+                    ]) !!}
+                    <small class="help-block">Cari nama barang atau SKU.</small>
                 </div>
             </div>
             <div class="col-md-3">

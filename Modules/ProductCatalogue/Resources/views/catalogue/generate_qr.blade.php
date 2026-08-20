@@ -72,7 +72,7 @@
 </section>
 @stop
 @section('javascript')
-<script src="{{ asset('modules/productcatalogue/plugins/easy.qrcode.min.js') }}"></script>
+<script src="{{ asset('modules/productcatalogue/plugins/easy.qrcode.min.js?v=' . $asset_v) }}"></script>
 <script type="text/javascript">
     (function($) {
         "use strict";

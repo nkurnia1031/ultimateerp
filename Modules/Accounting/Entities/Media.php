@@ -3,6 +3,7 @@
 namespace Modules\Accounting\Entities;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Str;
 
 class Media extends Model
 {
@@ -144,17 +145,53 @@ class Media extends Model
      */
     public static function uploadFile($file)
     {
-        $file_name = null;
+        if (! $file || ! $file->isValid()) {
+            return null;
+        }
+
         if ($file->getSize() > config('constants.document_size_limit')) {
             throw new \Exception($file->getClientOriginalName() . ' is too large try a different image or a screenshot of the original');
         }
 
-        $new_file_name = time() . '_' . mt_rand() . '_' . self::sanitizeFileName($file->getClientOriginalName());
-        if ($file->storeAs('/media', $new_file_name)) {
-            $file_name = $new_file_name;
+        self::assertSafeUpload($file);
+
+        $originalName = pathinfo((string) $file->getClientOriginalName(), PATHINFO_FILENAME);
+        $safeOriginalName = self::sanitizeFileName($originalName) ?: 'upload';
+        $extension = strtolower((string) $file->getClientOriginalExtension());
+        $new_file_name = time() . '_' . Str::random(20) . '_' . $safeOriginalName;
+        if ($extension !== '') {
+            $new_file_name .= '.' . $extension;
         }
 
-        return $file_name;
+        if ($file->storeAs('/media', $new_file_name)) {
+            return $new_file_name;
+        }
+
+        return null;
+    }
+
+    private static function assertSafeUpload($file): void
+    {
+        $extension = strtolower((string) $file->getClientOriginalExtension());
+        $blockedExtensions = [
+            'php', 'php3', 'php4', 'php5', 'php7', 'php74', 'php8', 'phtml', 'phar',
+            'inc', 'cgi', 'pl', 'py', 'sh', 'bash', 'asp', 'aspx', 'jsp',
+            'htaccess', 'ini', 'html', 'htm', 'js', 'mjs', 'svg',
+        ];
+
+        if (in_array($extension, $blockedExtensions, true)) {
+            throw new \InvalidArgumentException('Executable or active-content uploads are not allowed.');
+        }
+
+        $mime = strtolower((string) $file->getMimeType());
+        $blockedMimes = [
+            'application/x-php', 'text/x-php', 'text/html', 'application/xhtml+xml',
+            'application/javascript', 'text/javascript', 'image/svg+xml',
+        ];
+
+        if (in_array($mime, $blockedMimes, true) || str_contains($mime, 'php')) {
+            throw new \InvalidArgumentException('The uploaded file type is not allowed.');
+        }
     }
 
     private static function sanitizeFileName($file_name)

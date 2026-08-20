@@ -16,6 +16,7 @@ use App\Utils\ModuleUtil;
 use App\Utils\NotificationUtil;
 use App\Utils\TransactionUtil;
 use App\Utils\Util;
+use App\Services\ContactBusinessImportService;
 use DB;
 use Excel;
 use Illuminate\Http\Request;
@@ -35,6 +36,8 @@ class ContactController extends Controller
 
     protected $notificationUtil;
 
+    protected $businessContactImport;
+
     /**
      * Constructor
      *
@@ -46,13 +49,15 @@ class ContactController extends Controller
         ModuleUtil $moduleUtil,
         TransactionUtil $transactionUtil,
         NotificationUtil $notificationUtil,
-        ContactUtil $contactUtil
+        ContactUtil $contactUtil,
+        ContactBusinessImportService $businessContactImport
     ) {
         $this->commonUtil = $commonUtil;
         $this->contactUtil = $contactUtil;
         $this->moduleUtil = $moduleUtil;
         $this->transactionUtil = $transactionUtil;
         $this->notificationUtil = $notificationUtil;
+        $this->businessContactImport = $businessContactImport;
     }
 
     /**
@@ -91,8 +96,97 @@ class ContactController extends Controller
             $customer_groups = CustomerGroup::forDropdown($business_id);
         }
 
+        $canImportAcrossBusinesses = auth()->user()->can('superadmin') || auth()->user()->can('admin');
+        $import_businesses = Business::query()
+            ->when(! $canImportAcrossBusinesses, fn ($query) => $query->where('id', $business_id))
+            ->where('id', '!=', $business_id)
+            ->orderBy('name')
+            ->pluck('name', 'id');
+
         return view('contact.index')
-            ->with(compact('type', 'reward_enabled', 'customer_groups', 'users'));
+            ->with(compact('type', 'reward_enabled', 'customer_groups', 'users', 'import_businesses'));
+    }
+
+    /**
+     * Preview contacts from another business before copying them into the
+     * currently selected business. Only superadmins can choose a different
+     * source business; regular users are limited to their active business.
+     */
+    public function previewBusinessImport(Request $request)
+    {
+        $type = $request->validate([
+            'type' => ['required', 'in:customer,supplier'],
+            'source_business_id' => ['required', 'integer'],
+        ]);
+        $targetBusinessId = (int) $request->session()->get('user.business_id');
+        $sourceBusinessId = (int) $type['source_business_id'];
+        $this->authorizeBusinessContactImport($request, $targetBusinessId, $sourceBusinessId);
+
+        return response()->json($this->businessContactImport->preview(
+            $sourceBusinessId,
+            $targetBusinessId,
+            $type['type']
+        ));
+    }
+
+    /**
+     * Copy contacts from the selected source business. Existing contacts are
+     * skipped by default and the response contains an actionable summary.
+     */
+    public function importFromBusiness(Request $request)
+    {
+        $validated = $request->validate([
+            'type' => ['required', 'in:customer,supplier'],
+            'source_business_id' => ['required', 'integer'],
+            'skip_existing' => ['nullable', 'boolean'],
+        ]);
+        $targetBusinessId = (int) $request->session()->get('user.business_id');
+        $sourceBusinessId = (int) $validated['source_business_id'];
+        $this->authorizeBusinessContactImport($request, $targetBusinessId, $sourceBusinessId);
+
+        $result = $this->businessContactImport->import(
+            $sourceBusinessId,
+            $targetBusinessId,
+            (int) $request->session()->get('user.id'),
+            $validated['type'],
+            (bool) ($validated['skip_existing'] ?? true)
+        );
+
+        if ($request->expectsJson()) {
+            return response()->json([
+                'success' => true,
+                'message' => sprintf('%d kontak diimpor, %d dilewati karena sudah ada.', $result['created'], $result['skipped']),
+                'result' => $result,
+            ]);
+        }
+
+        return redirect()->route('contacts.index', ['type' => $validated['type']])
+            ->with('status', [
+                'success' => true,
+                'msg' => sprintf('%d kontak diimpor, %d dilewati karena sudah ada.', $result['created'], $result['skipped']),
+            ]);
+    }
+
+    private function authorizeBusinessContactImport(Request $request, int $targetBusinessId, int $sourceBusinessId): void
+    {
+        $type = $request->input('type');
+        $permission = $type === 'supplier' ? 'supplier.create' : 'customer.create';
+        abort_unless(
+            auth()->user()->can($permission)
+            || auth()->user()->can('admin')
+            || auth()->user()->can('superadmin'),
+            403,
+            'Anda tidak memiliki izin import kontak.'
+        );
+        abort_unless($sourceBusinessId !== $targetBusinessId, 422, 'Bisnis sumber dan tujuan harus berbeda.');
+        abort_unless(Business::whereKey($sourceBusinessId)->exists(), 404, 'Bisnis sumber tidak ditemukan.');
+        abort_unless(Business::whereKey($targetBusinessId)->exists(), 404, 'Bisnis tujuan tidak ditemukan.');
+
+        if ($sourceBusinessId !== $targetBusinessId
+            && ! auth()->user()->can('superadmin')
+            && ! auth()->user()->can('admin')) {
+            abort(403, 'Hanya admin atau superadmin yang dapat memilih bisnis sumber lain.');
+        }
     }
 
     /**

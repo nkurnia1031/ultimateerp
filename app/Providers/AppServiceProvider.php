@@ -71,7 +71,10 @@ class AppServiceProvider extends ServiceProvider
         });
 
 
-        $asset_v = config('constants.asset_version', 1);
+        // Keep a stable cache key until a local JS file changes. The helper
+        // combines the configured release version with the latest runtime JS
+        // modification time, so updated scripts are fetched automatically.
+        $asset_v = asset_cache_version();
         View::share('asset_v', $asset_v);
 
         // Share the list of modules enabled in sidebar

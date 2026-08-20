@@ -95,6 +95,66 @@ if (! function_exists('isFilePdf')) {
     }
 }
 
+/**
+ * Return a cache-busting version for local JavaScript assets.
+ *
+ * The configured base version gives deployments an explicit escape hatch,
+ * while the newest runtime JavaScript mtime changes the URL automatically
+ * whenever a file is updated. This keeps browser caching effective between
+ * releases without generating a new URL on every request.
+ */
+if (! function_exists('asset_cache_version')) {
+    function asset_cache_version(): string
+    {
+        static $version;
+
+        if ($version !== null) {
+            return $version;
+        }
+
+        $latestMtime = 0;
+
+        foreach ([public_path('js'), public_path('modules')] as $assetRoot) {
+            if (! is_dir($assetRoot)) {
+                continue;
+            }
+
+            try {
+                $iterator = new RecursiveIteratorIterator(
+                    new RecursiveDirectoryIterator($assetRoot, FilesystemIterator::SKIP_DOTS)
+                );
+
+                foreach ($iterator as $file) {
+                    if ($file->isFile() && strtolower($file->getExtension()) === 'js') {
+                        $latestMtime = max($latestMtime, (int) $file->getMTime());
+                    }
+                }
+            } catch (Throwable $exception) {
+                // A missing/inaccessible optional asset directory must not
+                // prevent the application from rendering.
+            }
+        }
+
+        $baseVersion = (string) config('constants.asset_version', 1);
+        $version = $latestMtime > 0 ? $baseVersion.'-'.$latestMtime : $baseVersion;
+
+        return $version;
+    }
+}
+
+/**
+ * Append the application asset version to an already generated asset URL.
+ */
+if (! function_exists('versioned_asset_url')) {
+    function versioned_asset_url(string $url, ?string $version = null): string
+    {
+        $version = $version ?: asset_cache_version();
+        $separator = str_contains($url, '?') ? '&' : '?';
+
+        return $url.$separator.'v='.rawurlencode($version);
+    }
+}
+
 function isAppInstalled()
 {
     $envPath = base_path('.env');

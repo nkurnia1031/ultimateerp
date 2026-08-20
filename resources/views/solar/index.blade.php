@@ -422,5 +422,5 @@
 @endsection
 
 @section('javascript')
-<script src="{{ asset('js/solar.js') }}"></script>
+<script src="{{ asset('js/solar.js?v=' . $asset_v) }}"></script>
 @endsection

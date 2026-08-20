@@ -65,6 +65,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\BonusAyakController;
 use App\Http\Controllers\BanController;
 use App\Http\Controllers\SolarController;
+use App\Http\Controllers\SecurityAuditController;
 
 /*
 |--------------------------------------------------------------------------
@@ -102,6 +103,14 @@ Route::middleware(['setData'])->group(function () {
 
 //Routes for authenticated users only
 Route::middleware(['setData', 'auth', 'SetSessionData', 'language', 'timezone', 'AdminSidebarMenu', 'CheckUserLogin'])->group(function () {
+    Route::prefix('security-audit')->name('security-audit.')->group(function () {
+        Route::get('/', [SecurityAuditController::class, 'index'])->name('index');
+        Route::post('/reports', [SecurityAuditController::class, 'upload'])->name('upload');
+        Route::post('/run', [SecurityAuditController::class, 'run'])->name('run');
+        Route::get('/reports/{report}/download', [SecurityAuditController::class, 'download'])->name('download');
+        Route::post('/reports/{report}/cleanup', [SecurityAuditController::class, 'cleanup'])->name('cleanup');
+    });
+
     Route::get('/tags/ledger', [TagController::class, 'getLedger']);
     Route::get('/tags/{tag}/similar', [TagController::class, 'similar']);
     Route::post('/tags/{tag}/merge', [TagController::class, 'merge']);
@@ -231,6 +240,8 @@ Route::middleware(['setData', 'auth', 'SetSessionData', 'language', 'timezone', 
     Route::post('/contacts/send-ledger', [ContactController::class, 'sendLedger']);
     Route::get('/contacts/import', [ContactController::class, 'getImportContacts'])->name('contacts.import');
     Route::post('/contacts/import', [ContactController::class, 'postImportContacts']);
+    Route::post('/contacts/import/business/preview', [ContactController::class, 'previewBusinessImport'])->name('contacts.import.business.preview');
+    Route::post('/contacts/import/business', [ContactController::class, 'importFromBusiness'])->name('contacts.import.business');
     Route::post('/contacts/check-contacts-id', [ContactController::class, 'checkContactId']);
 
     Route::post('/contacts/check-tax-number', [ContactController::class, 'checkTaxNumber']);

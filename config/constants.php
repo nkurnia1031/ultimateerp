@@ -33,7 +33,9 @@ return [
     'document_size_limit' => '5000000', //in Bytes,
     'image_size_limit' => '5000000', //in Bytes
 
-    'asset_version' => 670,
+    // Optional deployment override. The runtime JS modification timestamp is
+    // appended automatically by asset_cache_version().
+    'asset_version' => env('ASSET_VERSION', 670),
 
     'disable_purchase_in_other_currency' => true,
 

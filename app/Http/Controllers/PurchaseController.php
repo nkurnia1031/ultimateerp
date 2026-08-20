@@ -94,6 +94,15 @@ class PurchaseController extends Controller
             if (! empty(request()->supplier_id)) {
                 $purchases->where('contacts.id', request()->supplier_id);
             }
+            if (! empty(request()->product_id)) {
+                $product_id = (int) request()->product_id;
+                $purchases->whereExists(function ($query) use ($product_id) {
+                    $query->select(DB::raw(1))
+                        ->from('purchase_lines as filter_pl')
+                        ->whereColumn('filter_pl.transaction_id', 'transactions.id')
+                        ->where('filter_pl.product_id', $product_id);
+                });
+            }
             if (! empty(request()->location_id)) {
                 $purchases->where('transactions.location_id', request()->location_id);
             }
@@ -197,9 +206,58 @@ class PurchaseController extends Controller
 
                     return (string) view('purchase.partials.tags', ['tags' => $row->tags]);
                 })
+                ->editColumn('products', function ($row) {
+                    $products = $row->purchase_lines
+                        ->map(function ($line) {
+                            $product = $line->product;
+                            if (! $product) {
+                                return null;
+                            }
+
+                            $label = trim((string) $product->name);
+                            if ($product->type === 'variable') {
+                                $variation = $line->variation;
+                                $variationParts = [
+                                    optional($variation?->product_variation)->name,
+                                    optional($variation)->name,
+                                ];
+                                foreach ($variationParts as $variationPart) {
+                                    $variationPart = trim((string) $variationPart);
+                                    if ($variationPart !== '') {
+                                        $label .= ' - ' . $variationPart;
+                                    }
+                                }
+                            }
+
+                            return $label;
+                        })
+                        ->filter()
+                        ->unique()
+                        ->sort()
+                        ->implode('||');
+
+                    return (string) view('purchase.partials.products', ['products' => $products]);
+                })
                 ->filterColumn('tags', function ($query, $keyword) {
                     $query->whereHas('tags', function ($q) use ($keyword) {
                         $q->where('name', 'like', "%{$keyword}%");
+                    });
+                })
+                ->filterColumn('products', function ($query, $keyword) {
+                    $query->whereExists(function ($productQuery) use ($keyword) {
+                        $productQuery->select(DB::raw(1))
+                            ->from('purchase_lines as search_pl')
+                            ->join('products as search_p', 'search_p.id', '=', 'search_pl.product_id')
+                            ->leftJoin('variations as search_v', 'search_v.id', '=', 'search_pl.variation_id')
+                            ->leftJoin('product_variations as search_pv', 'search_pv.id', '=', 'search_v.product_variation_id')
+                            ->whereColumn('search_pl.transaction_id', 'transactions.id')
+                            ->where(function ($nameQuery) use ($keyword) {
+                                $nameQuery->where('search_p.name', 'like', "%{$keyword}%")
+                                    ->orWhere('search_p.sku', 'like', "%{$keyword}%")
+                                    ->orWhere('search_v.name', 'like', "%{$keyword}%")
+                                    ->orWhere('search_v.sub_sku', 'like', "%{$keyword}%")
+                                    ->orWhere('search_pv.name', 'like', "%{$keyword}%");
+                            });
                     });
                 })
                 ->orderColumn('tags', function ($query, $order) {
@@ -247,7 +305,7 @@ class PurchaseController extends Controller
                         }
                     },
                 ])
-                ->rawColumns(['final_total', 'action', 'payment_due', 'tags', 'payment_status', 'status', 'ref_no', 'name'])
+                ->rawColumns(['final_total', 'action', 'payment_due', 'tags', 'products', 'payment_status', 'status', 'ref_no', 'name'])
                 ->make(true);
         }
 

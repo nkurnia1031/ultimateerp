@@ -408,7 +408,7 @@
             $('#jangka_waktu').val('');
         }
     </script>
-    <script src="{{ asset('modules/crm/js/jQuery.print.js') }}"></script>
+    <script src="{{ asset('modules/crm/js/jQuery.print.js?v=' . $asset_v) }}"></script>
     <script>
         $(document).on('click', '.delete-batch', function () {
         

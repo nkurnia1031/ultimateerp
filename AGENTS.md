@@ -19,3 +19,10 @@ Rules:
 - Verify the publish command succeeds before finishing the task. The command copies the source without deleting it and verifies that the source and runtime copy are byte-identical.
 - JavaScript in `public/js/` may be edited directly only when it is an application-wide script and has no canonical source under a module.
 - Both `public/js/`, `public/modules/**/*.js`, and module JavaScript sources are included in Graphify so their relationships with Blade views remain discoverable. Generated dependency bundles remain excluded.
+
+## Local demo smoke test
+
+- URL: `http://localhost/2025/ultimateerp/public/`
+- Username: `direktur_cv`
+- Password: `cv123456`
+- For local UI smoke tests, use `agent-browser` (the in-app browser automation skill) and keep the test within this local URL.

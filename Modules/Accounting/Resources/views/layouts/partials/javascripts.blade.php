@@ -116,9 +116,9 @@ referrerpolicy="no-referrer"></script>
 </script>
 
 {{-- Datepicker --}}
-<script src="{{ Module::asset('accounting:js/plugins/datepicker.custom.js') }}"></script>
+<script src="{{ versioned_asset_url(Module::asset('accounting:js/plugins/datepicker.custom.js'), $asset_v ?? null) }}"></script>
 {{-- Sweetalert --}}
-<script src="{{ Module::asset('accounting:js/plugins/sweetalert.custom.js') }}"></script>
+<script src="{{ versioned_asset_url(Module::asset('accounting:js/plugins/sweetalert.custom.js'), $asset_v ?? null) }}"></script>
 
 
 <!-- TODO -->

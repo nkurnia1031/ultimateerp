@@ -106,7 +106,7 @@
 
 
 @section('sub-tab-javascript')
-    <script src="{{ Module::asset('accounting:js/accounting_transactions.js') }}"></script>
-    <script src="{{ Module::asset('accounting:js/purchase_payment.js?v=' . $asset_v) }}"></script>
+    <script src="{{ versioned_asset_url(Module::asset('accounting:js/accounting_transactions.js'), $asset_v ?? null) }}"></script>
+    <script src="{{ versioned_asset_url(Module::asset('accounting:js/purchase_payment.js'), $asset_v ?? null) }}"></script>
     <script src="{{ asset('js/payment.js?v=' . $asset_v) }}"></script>
 @endsection

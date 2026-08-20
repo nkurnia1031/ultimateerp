@@ -69,7 +69,7 @@
             </button>
             @endif
 
-            <script src="{{asset('vendor/myfatoorah/js/checkout.js')}}"></script>
+            <script src="{{asset('vendor/myfatoorah/js/checkout.js?v=' . $asset_v)}}"></script>
             <script>
                 function mfCallback(response) {
                     window.location.href = "{{url('myfatoorah')}}?sid=" + response.sessionId;

@@ -848,6 +848,14 @@ class AdminSidebarMenu
               </svg>', 'active' => request()->segment(1) == 'backup'])->order(60);
             }
 
+            if ($is_admin || auth()->user()->can('backup')) {
+                $menu->url(
+                    action([\App\Http\Controllers\SecurityAuditController::class, 'index']),
+                    'Audit Keamanan',
+                    ['icon' => '<svg aria-hidden="true" class="tw-size-5 tw-shrink-0" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"></path><path d="M12 3l8 4v5c0 5 -3.5 8 -8 9c-4.5 -1 -8 -4 -8 -9v-5l8 -4"></path><path d="M9 12l2 2l4 -4"></path></svg>', 'active' => request()->segment(1) == 'security-audit']
+                )->order(61);
+            }
+
             //Modules menu
             if (auth()->user()->can('manage_modules')) {
                 $menu->url(action([\App\Http\Controllers\Install\ModulesController::class, 'index']), __('lang_v1.modules'), ['icon' => '<svg aria-hidden="true" class="tw-size-5 tw-shrink-0" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">

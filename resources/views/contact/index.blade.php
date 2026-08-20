@@ -3,21 +3,145 @@
 @php
     $api_key = env('GOOGLE_MAP_API_KEY');
 @endphp
-@if (!empty($api_key))
-    @section('css')
+@section('css')
+    @if (!empty($api_key))
         @include('contact.partials.google_map_styles')
-    @endsection
-@endif
+    @endif
+    <style>
+        .contact-index-header {
+            padding-bottom: 14px;
+        }
+
+        .contact-index-header h1 {
+            margin-bottom: 0;
+            letter-spacing: -0.02em;
+        }
+
+        .contact-index-header h1 small {
+            display: block;
+            margin-top: 6px;
+            color: #64748b;
+            font-weight: 500;
+        }
+
+        .contact-index .box-header {
+            min-height: 62px;
+            padding: 16px 20px;
+            border-bottom: 1px solid #e9eef4;
+        }
+
+        .contact-index .box-title {
+            color: #1e293b;
+            font-size: 18px;
+            font-weight: 600;
+            line-height: 34px;
+        }
+
+        .contact-index .box-tools {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .contact-index .contact-action-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 34px;
+            padding: 7px 13px;
+            border-radius: 7px;
+            font-size: 13px;
+            font-weight: 600;
+            line-height: 18px;
+            box-shadow: none;
+            transition: background-color .2s ease, border-color .2s ease, box-shadow .2s ease, transform .2s ease;
+        }
+
+        .contact-index .contact-action-btn i,
+        .contact-index .contact-action-btn svg {
+            width: 16px;
+            height: 16px;
+            margin-right: 6px;
+        }
+
+        .contact-index .contact-action-btn:hover,
+        .contact-index .contact-action-btn:focus {
+            transform: translateY(-1px);
+            box-shadow: 0 3px 10px rgba(15, 23, 42, .12);
+        }
+
+        .contact-index .contact-action-btn:active {
+            transform: translateY(0);
+        }
+
+        .contact-index .contact-action-btn--import {
+            color: #1d4ed8;
+            background: #fff;
+            border: 1px solid #bfdbfe;
+        }
+
+        .contact-index .contact-action-btn--import:hover,
+        .contact-index .contact-action-btn--import:focus {
+            color: #1e40af;
+            background: #eff6ff;
+            border-color: #93c5fd;
+        }
+
+        .contact-index .table-responsive {
+            padding: 0 4px 4px;
+        }
+
+        #business_contact_import_modal .modal-header {
+            border-bottom-color: #e9eef4;
+        }
+
+        #business_contact_import_modal .modal-title {
+            color: #1e293b;
+            font-weight: 600;
+        }
+
+        #business_contact_import_modal .small-box {
+            min-height: 74px;
+            margin-bottom: 12px;
+            border-radius: 7px;
+            box-shadow: none;
+        }
+
+        #business_contact_import_modal .small-box .inner {
+            padding: 12px 14px;
+        }
+
+        #business_contact_import_modal .small-box h3 {
+            margin: 0 0 4px;
+            font-size: 22px;
+        }
+
+        @media (max-width: 767px) {
+            .contact-index .box-header {
+                padding: 14px 15px;
+            }
+
+            .contact-index .box-tools {
+                width: 100%;
+                margin-top: 10px;
+            }
+
+            .contact-index .contact-action-btn {
+                flex: 1 1 auto;
+            }
+        }
+    </style>
+@endsection
 @section('content')
     <!-- Content Header (Page header) -->
-    <section class="content-header">
+    <section class="content-header contact-index-header">
         <h1 class="tw-text-xl md:tw-text-3xl tw-font-bold tw-text-black"> @lang('lang_v1.' . $type . 's')
             <small class="tw-text-sm md:tw-text-base tw-text-gray-700 tw-font-semibold">@lang('contact.manage_your_contact', ['contacts' => __('lang_v1.' . $type . 's')])</small>
         </h1>
     </section>
 
     <!-- Main content -->
-    <section class="content">
+    <section class="content contact-index">
         @component('components.filters', ['title' => __('report.filters')])
             @if ($type == 'customer')
                 <div class="col-md-3">
@@ -121,11 +245,11 @@
                     auth()->user()->can('supplier.view_own') ||
                     auth()->user()->can('customer.view_own'))
                 @slot('tool')
-                    <div class="box-tools">
-                        <a class="tw-dw-btn tw-bg-gradient-to-r tw-from-indigo-600 tw-to-blue-500 tw-font-bold tw-text-white tw-border-none tw-rounded-full btn-modal"
+                    <div class="box-tools contact-actions">
+                        <a class="btn btn-primary btn-sm contact-action-btn btn-modal"
                                 data-href="{{ action([\App\Http\Controllers\ContactController::class, 'create'], ['type' => $type]) }}"
                                 data-container=".contact_modal">
-                                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
                                 class="icon icon-tabler icons-tabler-outline icon-tabler-plus">
                                 <path stroke="none" d="M0 0h24v24H0z" fill="none" />
@@ -133,6 +257,12 @@
                                 <path d="M5 12l14 0" />
                                 </svg> @lang('messages.add')
                         </a>
+                        @if (auth()->user()->can('superadmin') || auth()->user()->can('admin'))
+                            <button type="button" class="btn contact-action-btn contact-action-btn--import"
+                                    data-toggle="modal" data-target="#business_contact_import_modal">
+                                <i class="fa fa-exchange"></i> Import dari Bisnis
+                            </button>
+                        @endif
                     </div>
                 @endslot
             @endif
@@ -256,6 +386,59 @@
         <div class="modal fade pay_contact_due_modal" tabindex="-1" role="dialog" aria-labelledby="gridSystemModalLabel">
         </div>
 
+        <div class="modal fade" id="business_contact_import_modal" tabindex="-1" role="dialog" aria-labelledby="businessContactImportTitle">
+            <div class="modal-dialog modal-lg" role="document">
+                <div class="modal-content">
+                    <form id="business_contact_import_form" action="{{ route('contacts.import.business') }}" data-preview-url="{{ route('contacts.import.business.preview') }}" method="post">
+                        @csrf
+                        <input type="hidden" name="type" value="{{ $type }}">
+                        <div class="modal-header">
+                            <button type="button" class="close" data-dismiss="modal" aria-label="Tutup"><span aria-hidden="true">&times;</span></button>
+                            <h4 class="modal-title" id="businessContactImportTitle"><i class="fa fa-exchange"></i> Import {{ ucfirst($type) }} dari Bisnis</h4>
+                        </div>
+                        <div class="modal-body">
+                            <div class="alert alert-info">
+                                Pilih bisnis sumber untuk melihat cross-check terlebih dahulu. Kontak yang sudah ada tidak akan dibuat ulang saat opsi skip aktif.
+                            </div>
+                            <div class="form-group">
+                                <label for="business_contact_import_source">Bisnis sumber</label>
+                                <select class="form-control" id="business_contact_import_source" name="source_business_id" required>
+                                    <option value="">-- Pilih bisnis sumber --</option>
+                                    @foreach ($import_businesses as $businessId => $businessName)
+                                        <option value="{{ $businessId }}">{{ $businessName }}{{ (int) $businessId === (int) session('user.business_id') ? ' (bisnis aktif)' : '' }}</option>
+                                    @endforeach
+                                </select>
+                            </div>
+                            <label class="checkbox-inline" style="margin-bottom:15px">
+                                <input type="checkbox" name="skip_existing" value="1" checked> Lewati kontak yang sudah ada
+                            </label>
+                            <div id="business_contact_import_loading" class="alert alert-warning" style="display:none"><i class="fa fa-spinner fa-spin"></i> Memeriksa kontak sumber...</div>
+                            <div id="business_contact_import_error" class="alert alert-danger" style="display:none"></div>
+                            <div id="business_contact_import_preview" style="display:none">
+                                <div class="row">
+                                    <div class="col-sm-4"><div class="small-box bg-blue"><div class="inner"><h3 data-import-count="total">0</h3><p>Total sumber</p></div></div></div>
+                                    <div class="col-sm-4"><div class="small-box bg-green"><div class="inner"><h3 data-import-count="new">0</h3><p>Kontak baru</p></div></div></div>
+                                    <div class="col-sm-4"><div class="small-box bg-yellow"><div class="inner"><h3 data-import-count="existing">0</h3><p>Sudah ada / skip</p></div></div></div>
+                                </div>
+                                <div class="table-responsive">
+                                    <table class="table table-condensed table-bordered" id="business_contact_import_preview_table">
+                                        <thead><tr><th>Nama</th><th>Business name</th><th>Contact ID</th><th>Email</th><th>Mobile</th><th>Status</th></tr></thead>
+                                        <tbody></tbody>
+                                    </table>
+                                </div>
+                                <p class="text-muted" id="business_contact_import_truncated" style="display:none">Preview menampilkan maksimal 100 baris. Jumlah total tetap dihitung oleh server.</p>
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-default" data-dismiss="modal">Tutup</button>
+                            <button type="button" class="btn btn-primary" id="business_contact_import_preview_button"><i class="fa fa-search"></i> Cross-check</button>
+                            <button type="submit" class="btn btn-success" id="business_contact_import_submit" disabled><i class="fa fa-upload"></i> Import kontak baru</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
     </section>
     <!-- /.content -->
 @stop
@@ -359,4 +542,5 @@
             });
         </script>
     @endif
+        <script src="{{ asset('js/contact-business-import.js?v=' . $asset_v) }}"></script>
 @endsection

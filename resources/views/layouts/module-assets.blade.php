@@ -9,7 +9,7 @@
     {{-- Render JS files --}}
     @if(!empty($moduleAssets['js']))
         @foreach($moduleAssets['js'] as $js)
-            <script src="{{ Module::asset($js['path']) }}"></script>
+            <script src="{{ versioned_asset_url(Module::asset($js['path']), $asset_v ?? null) }}"></script>
         @endforeach
     @endif
 @endif

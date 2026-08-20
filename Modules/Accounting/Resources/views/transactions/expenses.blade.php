@@ -106,8 +106,8 @@
 
 @section('tab-javascript')
     {{-- For the mapping_modal --}}
-    <script src="{{ Module::asset('accounting:js/accounting_transactions.js') }}"></script>
+    <script src="{{ versioned_asset_url(Module::asset('accounting:js/accounting_transactions.js'), $asset_v ?? null) }}"></script>
     {{-- For Datatable --}}
-    <script src="{{ Module::asset('accounting:js/expense_transactions.js') }}"></script>
+    <script src="{{ versioned_asset_url(Module::asset('accounting:js/expense_transactions.js'), $asset_v ?? null) }}"></script>
     <script src="{{ asset('js/payment.js?v=' . $asset_v) }}"></script>
 @endsection

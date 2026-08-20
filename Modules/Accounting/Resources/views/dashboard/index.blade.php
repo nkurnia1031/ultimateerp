@@ -231,7 +231,7 @@
 
 @section('javascript')
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="{{ Module::asset('accounting:js/accounting.js') }}"></script>
+    <script src="{{ versioned_asset_url(Module::asset('accounting:js/accounting.js'), $asset_v ?? null) }}"></script>
     <script src="{{ asset('js/report.js?v=' . $asset_v) }}"></script>
     {!! $expense_chart->script() !!}
     {!! $current_financial_year_chart->script() !!}
