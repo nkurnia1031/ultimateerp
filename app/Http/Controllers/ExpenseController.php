@@ -17,6 +17,7 @@ use App\Utils\ModuleUtil;
 use App\Utils\TransactionUtil;
 use App\Utils\TagTransactionUtil;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Schema;
 
 use DB;
 use Excel;
@@ -28,6 +29,10 @@ use Illuminate\Support\Str;
 use Yajra\DataTables\Facades\DataTables;
 use App\Utils\ProductUtil;
 use App\Utils\BusinessUtil;
+use App\Jobs\ProcessExpenseImport;
+use App\Jobs\ProcessExpensePreview;
+use App\Services\ExpenseImportProcessService;
+use App\Services\ExpenseImportService;
 
 
 class ExpenseController extends Controller
@@ -38,6 +43,8 @@ class ExpenseController extends Controller
     protected $dummyPaymentLine;
     protected $cashRegisterUtil;
     protected $TagTransactionUtil;
+    protected $expenseImportService;
+    protected $expenseImportProcessService;
 
 
     /**
@@ -46,7 +53,7 @@ class ExpenseController extends Controller
      * @param  TransactionUtil  $transactionUtil
      * @return void
      */
-    public function __construct(TagTransactionUtil $TagTransactionUtil, AccountTransactionUtil $AccountTransactionUtil, TransactionUtil $transactionUtil, ModuleUtil $moduleUtil, CashRegisterUtil $cashRegisterUtil)
+    public function __construct(TagTransactionUtil $TagTransactionUtil, AccountTransactionUtil $AccountTransactionUtil, TransactionUtil $transactionUtil, ModuleUtil $moduleUtil, CashRegisterUtil $cashRegisterUtil, ExpenseImportService $expenseImportService, ExpenseImportProcessService $expenseImportProcessService)
     {
         $this->transactionUtil = $transactionUtil;
         $this->TagTransactionUtil = $TagTransactionUtil;
@@ -70,6 +77,8 @@ class ExpenseController extends Controller
             'transaction_no' => '',
         ];
         $this->cashRegisterUtil = $cashRegisterUtil;
+        $this->expenseImportService = $expenseImportService;
+        $this->expenseImportProcessService = $expenseImportProcessService;
     }
 
     public function revertImport($batch)
@@ -860,9 +869,13 @@ class ExpenseController extends Controller
         foreach ($imported_sales as $sale) {
             $imported_sales_array[$sale->import_batch]['import_time'] = $sale->import_time;
             $imported_sales_array[$sale->import_batch]['import_file'] = $sale->import_file;
-            $imported_sales_array[$sale->import_batch]['created_by'] = $sale->sales_person->user_full_name;
+            $imported_sales_array[$sale->import_batch]['created_by'] = optional($sale->sales_person)->user_full_name ?: '-';
             $imported_sales_array[$sale->import_batch]['invoices'][] = $sale->ref_no;
         }
+
+        $expense_import_batches = Schema::hasTable('expense_import_batches')
+            ? DB::table('expense_import_batches')->where('business_id', $business_id)->orderByDesc('created_at')->limit(25)->get()
+            : collect();
 
         //Check if zip extension it loaded or not.
         if ($zip_loaded === false) {
@@ -871,14 +884,157 @@ class ExpenseController extends Controller
                 'msg' => 'Please install/enable PHP Zip archive for import',
             ];
 
-            return view('expense.import', compact('payment_types', 'imported_sales_array'))
+            return view('expense.import', compact('payment_types', 'imported_sales_array', 'expense_import_batches'))
                 ->with('notification', $output);
         } else {
-            return view('expense.import', compact('payment_types', 'imported_sales_array'));
+            return view('expense.import', compact('payment_types', 'imported_sales_array', 'expense_import_batches'));
         }
     }
 
+    /**
+     * Accept an Expense workbook and create a durable preview batch. The
+     * actual parsing is performed by the queue worker so the browser is not
+     * held open while a large workbook is inspected.
+     */
     public function storeExpenseImport(Request $request)
+    {
+        if (! auth()->user()->can('expense.add')) {
+            abort(403, 'Unauthorized action.');
+        }
+
+        $request->validate([
+            'expense_csv' => ['required', 'file', 'mimes:xls,xlsx,csv', 'max:51200'],
+        ]);
+        $businessId = (int) $request->session()->get('user.business_id');
+        $batch = $this->expenseImportService->storeUploadedFile(
+            $request->file('expense_csv'),
+            $businessId,
+            (int) $request->session()->get('user.id')
+        );
+        ProcessExpensePreview::dispatch($batch->id, $businessId);
+
+        if ($request->expectsJson()) {
+            return response()->json([
+                'success' => true,
+                'batch_id' => $batch->id,
+                'status_url' => route('expenses.import.status', $batch->id),
+                'preview_url' => route('expenses.import.preview', $batch->id),
+                'message' => 'Upload diterima dan preview sedang diproses.',
+            ], 202);
+        }
+
+        return redirect()->route('expenses.import')->with('status', [
+            'success' => true,
+            'msg' => 'Upload diterima dan preview sedang diproses.',
+        ]);
+    }
+
+    public function expenseImportStatus(Request $request, string $batchId)
+    {
+        $businessId = $this->authorizeExpenseImport($request);
+        return response()->json($this->expenseImportProcessService->status($batchId, $businessId));
+    }
+
+    public function expenseImportPreviewSummary(Request $request, string $batchId)
+    {
+        $businessId = $this->authorizeExpenseImport($request);
+        return response()->json([
+            'summary' => $this->expenseImportService->summary($batchId, $businessId),
+        ]);
+    }
+
+    public function expenseImportPreviewRows(Request $request, string $batchId)
+    {
+        $businessId = $this->authorizeExpenseImport($request);
+        $sortColumns = ['source_row', 'group_key', 'group_key', 'group_key', 'status', 'status', 'source_row'];
+        $sortIndex = (int) $request->input('order.0.column', 0);
+        $result = $this->expenseImportService->previewRows(
+            $batchId,
+            $businessId,
+            (int) $request->input('start', 0),
+            (int) $request->input('length', 25),
+            (string) data_get($request->input('search'), 'value', ''),
+            $request->input('status'),
+            $sortColumns[$sortIndex] ?? 'source_row',
+            (string) $request->input('order.0.dir', 'asc')
+        );
+
+        return response()->json([
+            'draw' => (int) $request->input('draw', 0),
+            'recordsTotal' => $result['total'],
+            'recordsFiltered' => $result['filtered'],
+            'data' => $result['data'],
+            'summary' => $this->expenseImportService->summary($batchId, $businessId),
+        ]);
+    }
+
+    public function expenseImportUpdateDate(Request $request, string $batchId, int $rowId)
+    {
+        $businessId = $this->authorizeExpenseImport($request);
+        $validated = $request->validate([
+            'field' => ['required', 'in:expense_date,paid_on_date'],
+            'date' => ['required', 'date_format:Y-m-d'],
+        ]);
+        $result = $this->expenseImportService->updateDate($batchId, $rowId, $businessId, $validated['field'], $validated['date']);
+
+        return response()->json(['success' => true, 'summary' => $result, 'message' => 'Tanggal diperbarui dan preview dihitung ulang.']);
+    }
+
+    public function expenseImportConfirm(Request $request, string $batchId)
+    {
+        $businessId = $this->authorizeExpenseImport($request);
+        $batch = DB::transaction(function () use ($batchId, $businessId) {
+            $batch = DB::table('expense_import_batches')->where('id', $batchId)->where('business_id', $businessId)->lockForUpdate()->first();
+            abort_if(! $batch, 404, 'Batch import Expense tidak ditemukan.');
+            $processState = $batch->process_state ?: 'completed';
+            // A failed import is safe to retry because the import service wraps
+            // all transaction writes in one database transaction. This also
+            // makes batches that failed before the worker bug was fixed
+            // recoverable from the existing preview screen.
+            $canRetryImport = $processState === 'failed' && $batch->operation === 'import';
+            abort_unless($batch->status === 'preview' && ($processState === 'completed' || $canRetryImport), 409, 'Preview belum selesai atau sudah diproses.');
+            $summary = $this->expenseImportService->summary($batchId, $businessId);
+            abort_unless($summary['importable'] > 0, 422, 'Tidak ada baris valid untuk diimpor. Perbaiki error terlebih dahulu.');
+            DB::table('expense_import_batches')->where('id', $batchId)->update([
+                'operation' => 'import', 'process_state' => 'queued', 'stage' => 'uploading',
+                // Progress is reported per generated transaction (group), not
+                // per spreadsheet line. Multiple spreadsheet rows sharing a
+                // reference become one expense transaction.
+                'progress_current' => 0, 'progress_total' => max(1, (int) ($summary['groups'] ?? $summary['importable'])), 'progress_percent' => 0,
+                'progress_message' => 'Menunggu proses import.', 'error_message' => null,
+                'failed_at' => null, 'completed_at' => null, 'started_at' => null,
+                'cancel_requested_at' => null, 'heartbeat_at' => now(), 'updated_at' => now(),
+            ]);
+            return $batch;
+        });
+        ProcessExpenseImport::dispatch($batch->id, $businessId, (int) $request->session()->get('user.id'));
+
+        return response()->json([
+            'success' => true,
+            'batch_id' => $batch->id,
+            'status_url' => route('expenses.import.status', $batch->id),
+            'message' => 'Import diterima dan sedang diproses.',
+        ], 202);
+    }
+
+    public function expenseImportCancel(Request $request, string $batchId)
+    {
+        $businessId = $this->authorizeExpenseImport($request);
+        $cancelled = $this->expenseImportProcessService->cancel($batchId, $businessId);
+        return response()->json([
+            'success' => $cancelled,
+            'message' => $cancelled ? 'Proses dibatalkan.' : 'Proses sudah berjalan atau selesai.',
+            'status' => $this->expenseImportProcessService->status($batchId, $businessId),
+        ], $cancelled ? 200 : 409);
+    }
+
+    private function authorizeExpenseImport(Request $request): int
+    {
+        abort_unless(auth()->user()->can('expense.add'), 403, 'Unauthorized action.');
+        return (int) $request->session()->get('user.business_id');
+    }
+
+    public function storeExpenseImportLegacy(Request $request)
     {
 
         try {

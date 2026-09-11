@@ -19,7 +19,15 @@
 @section('content')
     <!-- Content Header (Page header) -->
     <section class="content-header">
-        <h1 class="tw-text-xl md:tw-text-3xl tw-font-bold tw-text-black">{{ $title }}</h1>
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <h1 class="tw-text-xl md:tw-text-3xl tw-font-bold tw-text-black">{{ $title }}</h1>
+            @if(auth()->user()->can('asset.fleet_trips.manage') || auth()->user()->can('asset.fleet_billing.manage') || auth()->user()->can('asset.fleet_trips.create') || auth()->user()->can('superadmin'))
+                <div>
+                    <a href="{{ route('asset.fleet.trips.sell.choose', ['return_context' => 'sell']) }}" class="btn btn-primary btn-sm"><i class="fa fa-truck-moving"></i> Angkutan dari SPB</a>
+                    <a href="{{ route('asset.fleet.trips.create', ['return_context' => 'sell']) }}" class="btn btn-success btn-sm"><i class="fa fa-plus"></i> Buat SPB</a>
+                </div>
+            @endif
+        </div>
     </section>
     <!-- Main content -->
     <section class="content no-print">

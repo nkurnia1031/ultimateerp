@@ -20,11 +20,12 @@
             <!-- Collect the nav links, forms, and other content for toggling -->
             <div class="collapse navbar-collapse" id="bs-example-navbar-collapse-1">
                 <ul class="nav navbar-nav">
-                    @can('asset.view')
+                    @if (auth()->user()->can('asset.view') || auth()->user()->can('asset.fleet_rates.manage') || auth()->user()->can('asset.fleet_trips.manage') || auth()->user()->can('asset.fleet_trips.create') || auth()->user()->can('asset.fleet_billing.manage') || auth()->user()->can('asset.fleet_settlements.manage') || auth()->user()->can('asset.fleet_payroll.manage'))
+                        @can('asset.view')
                         <li @if (request()->segment(2) == 'assets') class="active" @endif>
                             <a
                                 href="{{ action([\Modules\AssetManagement\Http\Controllers\AssetController::class, 'index']) }}">
-                                @lang('assetmanagement::lang.assets')
+                                Asset / Alat Berat
                             </a>
                         </li>
                         <li @if (request()->segment(2) == 'depreciation') class="active" @endif>
@@ -50,7 +51,41 @@
                                 @lang('assetmanagement::lang.revoked_asset')
                             </a>
                         </li>
-                    @endcan
+                        @endcan
+                        @if (auth()->user()->can('asset.view') || auth()->user()->can('asset.fleet_rates.manage'))
+                        <li @if (request()->segment(2) == 'fleet' && request()->segment(3) == 'rates') class="active" @endif>
+                            <a href="{{ route('asset.fleet.rates.index') }}">
+                                <i class="fas fa-road"></i> Tarif Angkutan
+                            </a>
+                        </li>
+                        @endif
+                        @if (auth()->user()->can('asset.view') || auth()->user()->can('asset.fleet_trips.manage') || auth()->user()->can('asset.fleet_trips.create') || auth()->user()->can('asset.fleet_billing.manage'))
+                        <li @if (request()->segment(2) == 'fleet' && request()->segment(3) == 'trips') class="active" @endif>
+                            <a href="{{ route('asset.fleet.trips.index') }}">
+                                <i class="fas fa-truck-moving"></i> SPB Angkutan
+                            </a>
+                        </li>
+                        <li @if (request()->segment(2) == 'fleet' && request()->segment(3) == 'trips' && request()->segment(4) == 'import') class="active" @endif>
+                            <a href="{{ route('asset.fleet.trips.import.form') }}">
+                                <i class="fas fa-file-import"></i> Import SPB Angkutan
+                            </a>
+                        </li>
+                        @endif
+                        @if (auth()->user()->can('asset.view') || auth()->user()->can('asset.fleet_settlements.manage') || auth()->user()->can('asset.fleet_payroll.manage'))
+                        <li @if (request()->segment(2) == 'fleet' && request()->segment(3) == 'settlements') class="active" @endif>
+                            <a href="{{ route('asset.fleet.settlements.index') }}">
+                                <i class="fas fa-money-check-alt"></i> Upah Sopir
+                            </a>
+                        </li>
+                        @endif
+                        @if (auth()->user()->can('asset.view') || auth()->user()->can('asset.fleet_trips.manage'))
+                        <li @if (request()->segment(2) == 'fleet' && request()->segment(3) == 'reports') class="active" @endif>
+                            <a href="{{ route('asset.fleet.reports.index') }}">
+                                <i class="fas fa-chart-line"></i> Rekap Alat &amp; Sopir
+                            </a>
+                        </li>
+                        @endif
+                    @endif
                     @if (auth()->user()->can('asset.view_all_maintenance') || auth()->user()->can('asset.view_own_maintenance'))
                         <li @if (request()->segment(2) == 'maintenance') class="active" @endif>
                             <a

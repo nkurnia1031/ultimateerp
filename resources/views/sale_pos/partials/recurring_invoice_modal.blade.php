@@ -12,9 +12,9 @@
 				        <div class="form-group">
 				        	{!! Form::label('recur_interval', __('lang_v1.subscription_interval') . ':*' ) !!}
 				        	<div class="input-group">
-				               {!! Form::number('recur_interval', !empty($transaction->recur_interval) ? $transaction->recur_interval : null, ['class' => 'form-control', 'required', 'style' => 'width: 50%;']); !!}
+				               {!! Form::number('recur_interval', !empty($transaction->recur_interval) ? $transaction->recur_interval : null, ['class' => 'form-control', 'style' => 'width: 50%;']); !!}
 				               
-				                {!! Form::select('recur_interval_type', ['days' => __('lang_v1.days'), 'months' => __('lang_v1.months'), 'years' => __('lang_v1.years')], !empty($transaction->recur_interval_type) ? $transaction->recur_interval_type : 'days', ['class' => 'form-control', 'required', 'style' => 'width: 50%;', 'id' => 'recur_interval_type']); !!}
+				                {!! Form::select('recur_interval_type', ['days' => __('lang_v1.days'), 'months' => __('lang_v1.months'), 'years' => __('lang_v1.years')], !empty($transaction->recur_interval_type) ? $transaction->recur_interval_type : 'days', ['class' => 'form-control', 'style' => 'width: 50%;', 'id' => 'recur_interval_type']); !!}
 				                
 				            </div>
 				        </div>

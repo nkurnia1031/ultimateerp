@@ -3,11 +3,16 @@
 namespace App\Http\Controllers;
 
 use App\ExpenseCategory;
+use App\Business;
+use App\Services\ExpenseCategoryBusinessImportService;
 use Illuminate\Http\Request;
 use Yajra\DataTables\Facades\DataTables;
 
 class ExpenseCategoryController extends Controller
 {
+    public function __construct(private ExpenseCategoryBusinessImportService $businessCategoryImport)
+    {
+    }
     /**
      * Display a listing of the resource.
      *
@@ -45,7 +50,93 @@ class ExpenseCategoryController extends Controller
                 ->make(false);
         }
 
-        return view('expense_category.index');
+        $business_id = (int) request()->session()->get('user.business_id');
+        $canImportAcrossBusinesses = auth()->user()->can('superadmin') || auth()->user()->can('admin');
+        $import_businesses = Business::query()
+            ->when(! $canImportAcrossBusinesses, fn ($query) => $query->where('id', $business_id))
+            ->where('id', '!=', $business_id)
+            ->orderBy('name')
+            ->pluck('name', 'id');
+
+        return view('expense_category.index')->with(compact('import_businesses'));
+    }
+
+    public function previewBusinessImport(Request $request)
+    {
+        $validated = $request->validate(['source_business_id' => ['required', 'integer']]);
+        $targetBusinessId = (int) $request->session()->get('user.business_id');
+        $sourceBusinessId = (int) $validated['source_business_id'];
+        $this->authorizeBusinessImport($sourceBusinessId, $targetBusinessId);
+
+        return response()->json($this->businessCategoryImport->preview($sourceBusinessId, $targetBusinessId));
+    }
+
+    public function importFromBusiness(Request $request)
+    {
+        $validated = $request->validate([
+            'source_business_id' => ['required', 'integer'],
+            'skip_existing' => ['nullable', 'boolean'],
+        ]);
+        $targetBusinessId = (int) $request->session()->get('user.business_id');
+        $sourceBusinessId = (int) $validated['source_business_id'];
+        $this->authorizeBusinessImport($sourceBusinessId, $targetBusinessId);
+        try {
+            $result = $this->businessCategoryImport->import(
+                $sourceBusinessId,
+                $targetBusinessId,
+                (int) $request->session()->get('user.id'),
+                (bool) ($validated['skip_existing'] ?? true)
+            );
+        } catch (\Throwable $exception) {
+            \Log::warning('Expense category business import failed.', [
+                'source_business_id' => $sourceBusinessId,
+                'target_business_id' => $targetBusinessId,
+                'user_id' => auth()->id(),
+                'exception' => $exception,
+            ]);
+
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $exception->getMessage() ?: 'Import kategori biaya gagal.',
+                ], 422);
+            }
+
+            return redirect()->route('expense-categories.index')->withErrors([
+                'import' => $exception->getMessage() ?: 'Import kategori biaya gagal.',
+            ]);
+        }
+
+        if ($request->expectsJson()) {
+            return response()->json([
+                'success' => true,
+                'message' => sprintf('%d kategori diimpor, %d dilewati karena sudah ada.', $result['created'], $result['skipped']),
+                'result' => $result,
+            ]);
+        }
+
+        return redirect()->route('expense-categories.index')->with('status', [
+            'success' => true,
+            'msg' => sprintf('%d kategori diimpor, %d dilewati karena sudah ada.', $result['created'], $result['skipped']),
+        ]);
+    }
+
+    private function authorizeBusinessImport(int $sourceBusinessId, int $targetBusinessId): void
+    {
+        abort_unless(
+            auth()->user()->can('expense.add')
+            || auth()->user()->can('expense.edit')
+            || auth()->user()->can('admin')
+            || auth()->user()->can('superadmin'),
+            403,
+            'Anda tidak memiliki izin import kategori biaya.'
+        );
+        abort_unless($sourceBusinessId !== $targetBusinessId, 422, 'Bisnis sumber dan tujuan harus berbeda.');
+        abort_unless(Business::whereKey($sourceBusinessId)->exists(), 404, 'Bisnis sumber tidak ditemukan.');
+        abort_unless(Business::whereKey($targetBusinessId)->exists(), 404, 'Bisnis tujuan tidak ditemukan.');
+        if (! auth()->user()->can('admin') && ! auth()->user()->can('superadmin')) {
+            abort(403, 'Hanya admin atau superadmin yang dapat memilih bisnis sumber lain.');
+        }
     }
 
     /**

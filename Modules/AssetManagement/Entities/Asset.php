@@ -102,6 +102,21 @@ class Asset extends Model
         return $this->hasMany(\Modules\AssetManagement\Entities\AssetExpiryReminder::class, 'asset_id');
     }
 
+    public function heavyEquipmentRateUnits()
+    {
+        return $this->hasMany(HeavyEquipmentRateUnit::class, 'asset_id');
+    }
+
+    public function heavyEquipmentTrips()
+    {
+        return $this->hasMany(HeavyEquipmentTrip::class, 'asset_id');
+    }
+
+    public function bonusAyakEntries()
+    {
+        return $this->hasMany(\App\BonusAyak::class, 'asset_id');
+    }
+
     public function getIsInWarrantyAttribute()
     {
         $now = \Carbon::now();

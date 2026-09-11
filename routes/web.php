@@ -111,6 +111,21 @@ Route::middleware(['setData', 'auth', 'SetSessionData', 'language', 'timezone', 
         Route::post('/reports/{report}/cleanup', [SecurityAuditController::class, 'cleanup'])->name('cleanup');
     });
 
+    Route::prefix('change-log')->name('change-log.')->group(function () {
+        Route::get('/', [\App\Http\Controllers\ChangeLogController::class, 'index'])->name('index');
+        Route::post('/read', [\App\Http\Controllers\ChangeLogController::class, 'markRead'])->name('read');
+        Route::get('/{slug}', [\App\Http\Controllers\ChangeLogController::class, 'show'])
+            ->where('slug', '[a-z0-9-]+')
+            ->name('show');
+    });
+
+    Route::prefix('panduan')->name('guides.')->group(function () {
+        Route::get('/', [\App\Http\Controllers\GuideController::class, 'index'])->name('index');
+        Route::get('/{slug}', [\App\Http\Controllers\GuideController::class, 'show'])
+            ->where('slug', '[a-z0-9-]+')
+            ->name('show');
+    });
+
     Route::get('/tags/ledger', [TagController::class, 'getLedger']);
     Route::get('/tags/{tag}/similar', [TagController::class, 'similar']);
     Route::post('/tags/{tag}/merge', [TagController::class, 'merge']);
@@ -121,9 +136,19 @@ Route::middleware(['setData', 'auth', 'SetSessionData', 'language', 'timezone', 
     // Kasbon Bonus Ayak
     Route::get('/bonus-ayak/kasbon', [BonusAyakController::class, 'kasbonForm'])->name('bonus-ayak.kasbon-form');
     Route::post('/bonus-ayak/kasbon', [BonusAyakController::class, 'kasbonStore'])->name('bonus-ayak.kasbon-store');
+    Route::get('/bonus-ayak/kasbon/{id}/edit', [BonusAyakController::class, 'kasbonEdit'])->name('bonus-ayak.kasbon-edit');
+    Route::put('/bonus-ayak/kasbon/{id}', [BonusAyakController::class, 'kasbonUpdate'])->name('bonus-ayak.kasbon-update');
     Route::delete('/bonus-ayak/kasbon/{id}', [BonusAyakController::class, 'kasbonDelete'])->name('bonus-ayak.kasbon-delete');
     Route::get('/bonus-ayak/export-excel', [BonusAyakController::class, 'exportExcel'])
     ->name('bonus-ayak.export-excel');
+    Route::post('/bonus-ayak/import', [BonusAyakController::class, 'importExcel'])
+    ->name('bonus-ayak.import');
+    Route::get('/bonus-ayak/import/preview/{token}', [BonusAyakController::class, 'importPreview'])
+    ->name('bonus-ayak.import-preview');
+    Route::post('/bonus-ayak/import/confirm/{token}', [BonusAyakController::class, 'importConfirm'])
+    ->name('bonus-ayak.import-confirm');
+    Route::post('/bonus-ayak/import/cancel/{token}', [BonusAyakController::class, 'importCancel'])
+    ->name('bonus-ayak.import-cancel');
 
     Route::resource('bonus-ayak', BonusAyakController::class);
   
@@ -410,13 +435,22 @@ Route::middleware(['setData', 'auth', 'SetSessionData', 'language', 'timezone', 
     Route::post('get-expense-sub-categories', [ExpenseCategoryController::class, 'getSubCategories']);
 
     //Expense Categories...
+    Route::post('expense-categories/import/business/preview', [ExpenseCategoryController::class, 'previewBusinessImport'])->name('expense-categories.import.business.preview');
+    Route::post('expense-categories/import/business', [ExpenseCategoryController::class, 'importFromBusiness'])->name('expense-categories.import.business');
     Route::resource('expense-categories', ExpenseCategoryController::class);
 
     //Expenses...
     Route::resource('expenses', ExpenseController::class)->except(['show']);
+    Route::get('import-expense', [ExpenseController::class, 'importExpense'])->name('expenses.import');
+    Route::post('import-expense/upload', [ExpenseController::class, 'storeExpenseImport'])->name('expenses.import.upload');
+    Route::get('import-expense/{batch}/status', [ExpenseController::class, 'expenseImportStatus'])->name('expenses.import.status');
+    Route::get('import-expense/{batch}/summary', [ExpenseController::class, 'expenseImportPreviewSummary'])->name('expenses.import.summary');
+    Route::get('import-expense/{batch}/preview', [ExpenseController::class, 'expenseImportPreviewRows'])->name('expenses.import.preview');
+    Route::patch('import-expense/{batch}/rows/{row}/date', [ExpenseController::class, 'expenseImportUpdateDate'])->name('expenses.import.rows.date');
+    Route::post('import-expense/{batch}/confirm', [ExpenseController::class, 'expenseImportConfirm'])->name('expenses.import.confirm');
+    Route::post('import-expense/{batch}/cancel', [ExpenseController::class, 'expenseImportCancel'])->name('expenses.import.cancel');
     Route::get('expenses/{id}/duplicate', [ExpenseController::class, 'duplicate'])
         ->name('expenses.duplicate');
-    Route::get('import-expense', [ExpenseController::class, 'importExpense']);
     Route::get('/revert-expense-import/{batch}', [ExpenseController::class, 'revertImport']);
 
     Route::post('store-import-expense', [ExpenseController::class, 'storeExpenseImport']);

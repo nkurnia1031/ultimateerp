@@ -2,17 +2,18 @@
 
 namespace App\Exports;
 
-use App\Models\BonusAyak;
+use App\BonusAyak;
 use Maatwebsite\Excel\Concerns\FromCollection;
 use Maatwebsite\Excel\Concerns\WithHeadings;
 
 class BonusAyakExport implements FromCollection, WithHeadings
 {
-    public function __construct(private ?string $from, private ?string $to) {}
+    public function __construct(private ?string $from, private ?string $to, private ?int $businessId = null) {}
 
     public function collection()
     {
         $q = BonusAyak::query();
+        if ($this->businessId) $q->where('business_id', $this->businessId);
         if ($this->from) $q->whereDate('tanggal','>=',$this->from);
         if ($this->to)   $q->whereDate('tanggal','<=',$this->to);
         if (!$this->from && !$this->to) {

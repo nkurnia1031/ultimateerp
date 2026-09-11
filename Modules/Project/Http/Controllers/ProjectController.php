@@ -3,6 +3,7 @@
 namespace Modules\Project\Http\Controllers;
 
 use App\Contact;
+use App\BonusAyak;
 use App\User;
 use App\Utils\ModuleUtil;
 use App\Utils\Util;
@@ -11,6 +12,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\View;
 use Modules\Project\Entities\Project;
 use Modules\Project\Entities\ProjectCategory;
@@ -20,6 +22,7 @@ use Modules\Project\Entities\ProjectTimeLog;
 use Modules\Project\Entities\ProjectTransaction;
 use Modules\Project\Utils\ProjectUtil;
 use Modules\AssetManagement\Entities\Asset;
+use Modules\AssetManagement\Entities\HeavyEquipmentTrip;
 
 class ProjectController extends Controller
 {
@@ -459,6 +462,40 @@ class ProjectController extends Controller
         $statuses = ProjectTask::taskStatuses();
         $priorities = ProjectTask::prioritiesDropdown();
 
+        $heavy_equipment_trips = collect();
+        $heavy_equipment_trip_count = 0;
+        $heavy_equipment_trip_total = ['tons' => 0, 'revenue' => 0, 'driver_pay' => 0, 'bonus_ayak' => 0, 'contribution' => 0];
+        $heavy_equipment_bonus_ayaks = collect();
+        $heavy_equipment_bonus_total = 0;
+        if (Schema::hasTable('heavy_equipment_trips')) {
+            $heavy_equipment_trip_query = HeavyEquipmentTrip::where('business_id', $business_id)
+                ->where('project_id', $id)
+                ->whereNotIn('status', ['cancelled']);
+            $heavy_equipment_trip_count = (clone $heavy_equipment_trip_query)->count();
+            $heavy_equipment_trips = (clone $heavy_equipment_trip_query)
+                ->with(['route', 'asset', 'driver'])
+                ->latest('trip_date')
+                ->latest('id')
+                ->limit(10)
+                ->get();
+            $heavy_equipment_trip_total = [
+                'tons' => (clone $heavy_equipment_trip_query)->sum('actual_tons'),
+                'revenue' => (clone $heavy_equipment_trip_query)->sum('revenue_total'),
+                'driver_pay' => (clone $heavy_equipment_trip_query)->sum('driver_pay_total'),
+                'bonus_ayak' => 0,
+                'contribution' => (clone $heavy_equipment_trip_query)->sum('gross_contribution'),
+            ];
+        }
+        if (Schema::hasTable('bonus_ayak')) {
+            $heavy_equipment_bonus_query = BonusAyak::where('business_id', $business_id)->where('project_id', $id);
+            $heavy_equipment_bonus_total = (clone $heavy_equipment_bonus_query)->sum('bonus');
+            $heavy_equipment_bonus_ayaks = (clone $heavy_equipment_bonus_query)
+                ->with(['driver', 'asset', 'trips'])
+                ->latest('tanggal')->latest('id')->limit(10)->get();
+            $heavy_equipment_trip_total['bonus_ayak'] = $heavy_equipment_bonus_total;
+            $heavy_equipment_trip_total['contribution'] -= $heavy_equipment_bonus_total;
+        }
+
         //if view is NULL, set default to overview
         if (is_null(request()->get('view'))) {
             $tab_view = 'overview';
@@ -467,7 +504,7 @@ class ProjectController extends Controller
         }
 
         return view('project::project.show')
-            ->with(compact('project', 'project_members', 'statuses', 'due_dates', 'priorities', 'timelog', 'can_crud_task', 'can_crud_docus_note', 'can_crud_timelog', 'is_lead_or_admin', 'transaction', 'invoice', 'tab_view'));
+            ->with(compact('project', 'project_members', 'statuses', 'due_dates', 'priorities', 'timelog', 'can_crud_task', 'can_crud_docus_note', 'can_crud_timelog', 'is_lead_or_admin', 'transaction', 'invoice', 'tab_view', 'heavy_equipment_trips', 'heavy_equipment_trip_count', 'heavy_equipment_trip_total', 'heavy_equipment_bonus_ayaks', 'heavy_equipment_bonus_total'));
     }
 
     /**

@@ -1,6 +1,117 @@
 @extends('layouts.app')
 @section('title', __('expense.import_expense'))
 
+@section('css')
+    <style>
+        /* Keep the preview usable on small screens and with large imports. The
+         * header/footer stay in the viewport while only the preview body scrolls. */
+        #expense_import_preview_modal .modal-dialog {
+            width: calc(100% - 24px);
+            max-width: 1220px;
+            height: calc(100vh - 24px);
+            height: calc(100dvh - 24px);
+            margin: 12px auto;
+            display: flex;
+            align-items: stretch;
+        }
+
+        #expense_import_preview_modal .modal-content {
+            width: 100%;
+            max-height: 100%;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        #expense_import_preview_modal .modal-header,
+        #expense_import_preview_modal .modal-footer {
+            flex: 0 0 auto;
+        }
+
+        #expense_import_preview_modal .modal-body {
+            flex: 1 1 auto;
+            min-height: 0;
+            overflow-x: hidden;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        #expense_import_preview_modal .table-responsive {
+            max-width: 100%;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        #expense_import_preview_modal #expense_import_preview_table {
+            min-width: 760px;
+        }
+
+        #expense_import_preview_modal #expense_import_preview_table th,
+        #expense_import_preview_modal #expense_import_preview_table td {
+            vertical-align: top;
+        }
+
+        #expense_import_preview_modal #expense_import_preview_table th:first-child,
+        #expense_import_preview_modal #expense_import_preview_table th:nth-child(5),
+        #expense_import_preview_modal #expense_import_preview_table th:last-child,
+        #expense_import_preview_modal #expense_import_preview_table td:first-child,
+        #expense_import_preview_modal #expense_import_preview_table td:nth-child(5),
+        #expense_import_preview_modal #expense_import_preview_table td:last-child {
+            white-space: nowrap;
+        }
+
+        #expense_import_preview_modal .modal-footer {
+            display: flex;
+            justify-content: flex-end;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        #expense_import_preview_modal .modal-footer .btn {
+            margin: 0;
+        }
+
+        @media (max-width: 767px) {
+            #expense_import_preview_modal .modal-dialog {
+                width: 100%;
+                height: 100vh;
+                height: 100dvh;
+                margin: 0;
+            }
+
+            #expense_import_preview_modal .modal-content {
+                border-radius: 0;
+            }
+
+            #expense_import_preview_modal .modal-body {
+                padding: 12px;
+            }
+
+            #expense_import_preview_modal #expense_import_summary {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                margin-left: -6px;
+                margin-right: -6px;
+            }
+
+            #expense_import_preview_modal #expense_import_summary > [class*="col-"] {
+                float: none;
+                width: auto;
+                padding-left: 6px;
+                padding-right: 6px;
+            }
+
+            #expense_import_preview_modal .small-box {
+                margin-bottom: 12px;
+            }
+
+            #expense_import_preview_modal .modal-footer .btn {
+                flex: 1 1 160px;
+            }
+        }
+    </style>
+@endsection
+
 @section('content')
 
     <!-- Content Header (Page header) -->
@@ -11,6 +122,13 @@
 
     <!-- Main content -->
     <section class="content">
+
+        @if (session('status'))
+            <div class="alert alert-{{ data_get(session('status'), 'success') ? 'success' : 'danger' }} alert-dismissible">
+                <button type="button" class="close" data-dismiss="alert" aria-hidden="true">&times;</button>
+                {{ data_get(session('status'), 'msg') }}
+            </div>
+        @endif
 
         @if (session('notification') || !empty($notification))
             <div class="row">
@@ -31,22 +149,23 @@
             <div class="col-sm-12">
                 @component('components.widget', ['class' => 'box-primary'])
                     {!! Form::open([
-                        'url' => action([\App\Http\Controllers\ExpenseController::class, 'storeExpenseImport']),
+                        'url' => route('expenses.import.upload'),
                         'method' => 'post',
                         'enctype' => 'multipart/form-data',
+                        'id' => 'expense_import_form',
                     ]) !!}
                     <div class="row">
                         <div class="col-sm-6">
                             <div class="col-sm-8">
                                 <div class="form-group">
                                     {!! Form::label('name', __('product.file_to_import') . ':') !!}
-                                    {!! Form::file('expense_csv', ['accept' => '.xls, .xlsx, .csv', 'required' => 'required']) !!}
+                                    {!! Form::file('expense_csv', ['accept' => '.xls, .xlsx, .csv', 'required' => 'required', 'id' => 'expense_import_file']) !!}
                                 </div>
                             </div>
                             <div class="col-sm-4">
                                 <br>
-                                <button type="submit"
-                                    class="tw-dw-btn tw-dw-btn-primary tw-text-white">@lang('messages.submit')</button>
+                                <button type="submit" id="expense_import_submit"
+                                    class="tw-dw-btn tw-dw-btn-primary tw-text-white"><i class="fa fa-upload"></i> @lang('messages.submit')</button>
                             </div>
                         </div>
                     </div>
@@ -60,6 +179,77 @@
                         </div>
                     </div>
                 @endcomponent
+            </div>
+        </div>
+
+        <div class="modal fade" id="expense_import_progress_modal" tabindex="-1" role="dialog" aria-labelledby="expenseImportProgressTitle" data-status-template="{{ route('expenses.import.status', ['batch' => '__BATCH__']) }}" data-preview-template="{{ route('expenses.import.preview', ['batch' => '__BATCH__']) }}" data-confirm-template="{{ route('expenses.import.confirm', ['batch' => '__BATCH__']) }}" data-cancel-template="{{ route('expenses.import.cancel', ['batch' => '__BATCH__']) }}">
+            <div class="modal-dialog" role="document">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h4 class="modal-title" id="expenseImportProgressTitle"><i class="fa fa-refresh"></i> Memproses import Expense</h4>
+                    </div>
+                    <div class="modal-body">
+                        <div id="expense_import_progress_error" class="alert alert-danger" style="display:none"></div>
+                        <p id="expense_import_progress_message">Menyiapkan file...</p>
+                        <div class="progress">
+                            <div id="expense_import_progress_bar" class="progress-bar progress-bar-primary progress-bar-striped active" role="progressbar" style="width:0%">0%</div>
+                        </div>
+                        <p class="text-muted"><span id="expense_import_progress_stage">uploading</span> - <span id="expense_import_progress_count">0 / 0</span> - durasi <span id="expense_import_progress_elapsed">-</span> - pembaruan terakhir <span id="expense_import_progress_heartbeat">-</span></p>
+                        <button type="button" id="expense_import_retry_status" class="btn btn-default" style="display:none"><i class="fa fa-refresh"></i> Coba cek lagi</button>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" id="expense_import_cancel" class="btn btn-warning"><i class="fa fa-ban"></i> Batalkan</button>
+                        <button type="button" id="expense_import_retry_preview" class="btn btn-primary" style="display:none"><i class="fa fa-table"></i> Buka preview &amp; coba lagi</button>
+                        <button type="button" id="expense_import_close_progress" class="btn btn-default" data-dismiss="modal" style="display:none">Tutup</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="modal fade" id="expense_import_preview_modal" tabindex="-1" role="dialog" aria-labelledby="expenseImportPreviewTitle" data-preview-template="{{ route('expenses.import.preview', ['batch' => '__BATCH__']) }}" data-confirm-template="{{ route('expenses.import.confirm', ['batch' => '__BATCH__']) }}" data-date-template="{{ route('expenses.import.rows.date', ['batch' => '__BATCH__', 'row' => '__ROW__']) }}">
+            <div class="modal-dialog modal-xl" role="document">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <button type="button" class="close" data-dismiss="modal" aria-label="Tutup"><span aria-hidden="true">&times;</span></button>
+                        <h4 class="modal-title" id="expenseImportPreviewTitle"><i class="fa fa-table"></i> Preview import Expense</h4>
+                    </div>
+                    <div class="modal-body">
+                        <div class="alert alert-info">Baris valid dapat diimpor. Baris error tidak membatalkan file; perbaiki tanggalnya atau biarkan dilewati.</div>
+                        <div class="form-inline tw-mb-3"><label for="expense_import_preview_status" class="tw-mr-2">Filter status</label><select id="expense_import_preview_status" class="form-control"><option value="">Semua</option><option value="valid">Valid</option><option value="error">Error</option><option value="skipped">Dilewati</option></select></div>
+                        <div class="row" id="expense_import_summary">
+                            <div class="col-sm-3"><div class="small-box bg-blue"><div class="inner"><h3 data-expense-summary="total">0</h3><p>Total baris</p></div></div></div>
+                            <div class="col-sm-3"><div class="small-box bg-green"><div class="inner"><h3 data-expense-summary="valid">0</h3><p>Valid / siap import</p></div></div></div>
+                            <div class="col-sm-3"><div class="small-box bg-red"><div class="inner"><h3 data-expense-summary="errors">0</h3><p>Perlu diperbaiki</p></div></div></div>
+                            <div class="col-sm-3"><div class="small-box bg-yellow"><div class="inner"><h3 data-expense-summary="skipped">0</h3><p>Dilewati</p></div></div></div>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="table table-bordered table-striped" id="expense_import_preview_table" style="width:100%">
+                                <thead><tr><th>Baris Excel</th><th>Referensi</th><th>Tanggal</th><th>Tanggal bayar</th><th>Status</th><th>Detail</th><th>Aksi</th></tr></thead>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-default" data-dismiss="modal">Tutup</button>
+                        <button type="button" id="expense_import_confirm" class="btn btn-success" disabled><i class="fa fa-check"></i> Import baris valid</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="modal fade" id="expense_import_date_modal" tabindex="-1" role="dialog" aria-labelledby="expenseImportDateTitle">
+            <div class="modal-dialog" role="document">
+                <div class="modal-content">
+                    <form id="expense_import_date_form">
+                        <div class="modal-header"><button type="button" class="close" data-dismiss="modal"><span aria-hidden="true">&times;</span></button><h4 class="modal-title" id="expenseImportDateTitle">Perbaiki tanggal</h4></div>
+                        <div class="modal-body">
+                            <div id="expense_import_date_error" class="alert alert-danger" style="display:none"></div>
+                            <input type="hidden" id="expense_import_date_row">
+                            <input type="hidden" id="expense_import_date_field">
+                            <div class="form-group"><label for="expense_import_date_value">Tanggal</label><input type="date" class="form-control" id="expense_import_date_value" required></div>
+                        </div>
+                        <div class="modal-footer"><button type="button" class="btn btn-default" data-dismiss="modal">Batal</button><button type="submit" class="btn btn-primary"><i class="fa fa-save"></i> Simpan dan validasi ulang</button></div>
+                    </form>
+                </div>
             </div>
         </div>
 
@@ -101,7 +291,7 @@
 
                         <tr>
                             <td>@lang('messages.date') <small class="text-muted">(@lang('lang_v1.optional'))</small></td>
-                            <td>@lang('expense.date_format_instruction')</td>
+                            <td>@lang('expense.date_format_instruction')<br><small class="text-muted">Tanggal serial Excel juga dibaca otomatis; jika tanggal tetap tidak valid, perbaiki dari preview sebelum import.</small></td>
                         </tr>
 
                         <tr>
@@ -139,7 +329,7 @@
 
                         <tr>
                             <td>@lang('lang_v1.paid_on') </td>
-                            <td>@lang('expense.date_format_instruction')</td>
+                            <td>@lang('expense.date_format_instruction')<br><small class="text-muted">Tanggal serial Excel juga didukung.</small></td>
                         </tr>
 
                         <tr>
@@ -200,26 +390,34 @@
                 @endcomponent
             </div>
         </div>
+        <div class="row">
+            <div class="col-md-12">
+                @component('components.widget', ['title' => 'Riwayat preview import Expense'])
+                    <div class="table-responsive">
+                        <table class="table table-striped" id="expense_import_batches_table">
+                            <thead><tr><th>File</th><th>Dibuat</th><th>Status</th><th>Progress</th><th>Ringkasan</th><th>Aksi</th></tr></thead>
+                            <tbody>
+                                @foreach ($expense_import_batches as $batch)
+                                    @php($batchSummary = json_decode((string) $batch->summary, true) ?: [])
+                                    <tr>
+                                        <td>{{ $batch->file_name }}</td>
+                                        <td>{{ @format_datetime($batch->created_at) }}</td>
+                                        <td><span class="label label-{{ $batch->status === 'imported' ? 'success' : ($batch->process_state === 'failed' ? 'danger' : 'warning') }}">{{ $batch->process_state ?: $batch->status }}</span></td>
+                                        <td>{{ (int) $batch->progress_percent }}%</td>
+                                        <td>{{ (int) ($batchSummary['valid'] ?? 0) }} valid - {{ (int) ($batchSummary['errors'] ?? 0) }} error</td>
+                                        <td><button type="button" class="btn btn-xs btn-primary expense-import-resume" data-batch="{{ $batch->id }}"><i class="fa fa-eye"></i> Buka</button></td>
+                                    </tr>
+                                @endforeach
+                            </tbody>
+                        </table>
+                    </div>
+                @endcomponent
+            </div>
+        </div>
     </section>
     <!-- /.content -->
 
 @endsection
 @section('javascript')
-    <script type="text/javascript">
-        $(document).on('click', 'a.revert_import', function(e) {
-            e.preventDefault();
-            swal({
-                title: LANG.sure,
-                icon: 'warning',
-                buttons: true,
-                dangerMode: true,
-            }).then(willDelete => {
-                if (willDelete) {
-                    window.location = $(this).attr('href');
-                } else {
-                    return false;
-                }
-            });
-        });
-    </script>
+    <script src="{{ versioned_asset_url(asset('js/expense-import.js'), $asset_v ?? null) }}"></script>
 @endsection

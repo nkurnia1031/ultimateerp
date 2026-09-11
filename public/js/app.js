@@ -523,14 +523,25 @@ $(document).ready(function () {
 
     //On display of add contact modal
     $('.contact_modal').on('shown.bs.modal', function (e) {
-        $('input[type=radio][name="contact_type_radio"]').on('change', function () {
+        var $contactModal = $(this);
+
+        function syncContactTypeRequirements() {
+            var isIndividual = $contactModal.find('input[type=radio][name="contact_type_radio"]:checked').val() === 'individual';
+            var isLead = $contactModal.find('select#contact_type').val() === 'lead';
+
+            $contactModal.find('#first_name').prop('required', isIndividual);
+            $contactModal.find('#user_id').prop('required', isLead);
+        }
+
+        $contactModal.find('input[type=radio][name="contact_type_radio"]').on('change', function () {
             if (this.value == 'individual') {
-                $('div.individual').show();
-                $('div.business').hide();
+                $contactModal.find('div.individual').show();
+                $contactModal.find('div.business').hide();
             } else if (this.value == 'business') {
-                $('div.individual').hide();
-                $('div.business').show();
+                $contactModal.find('div.individual').hide();
+                $contactModal.find('div.business').show();
             }
+            syncContactTypeRequirements();
         });
         if ($('#is_customer_export').is(':checked')) {
             $('div.export_div').show();
@@ -563,27 +574,30 @@ $(document).ready(function () {
             $('div.shipping_addr_div').hide();
         }
 
-        $('select#contact_type').change(function () {
+        $contactModal.find('select#contact_type').change(function () {
             var t = $(this).val();
 
             if (t == 'supplier') {
-                $('div.supplier_fields').fadeIn();
-                $('div.customer_fields').fadeOut();
+                $contactModal.find('div.supplier_fields').fadeIn();
+                $contactModal.find('div.customer_fields').fadeOut();
             } else if (t == 'both') {
-                $('div.supplier_fields').fadeIn();
-                $('div.customer_fields').fadeIn();
+                $contactModal.find('div.supplier_fields').fadeIn();
+                $contactModal.find('div.customer_fields').fadeIn();
             } else if (t == 'customer') {
-                $('div.customer_fields').fadeIn();
-                $('div.supplier_fields').fadeOut();
+                $contactModal.find('div.customer_fields').fadeIn();
+                $contactModal.find('div.supplier_fields').fadeOut();
             } else if (t == 'lead') {
-                $('div.customer_fields').fadeOut();
-                $('div.supplier_fields').fadeOut();
-                $('div.opening_balance').fadeOut();
-                $('div.pay_term').fadeOut();
-                $('div.lead_additional_div').fadeIn();
-                $('div.shipping_addr_div').hide();
+                $contactModal.find('div.customer_fields').fadeOut();
+                $contactModal.find('div.supplier_fields').fadeOut();
+                $contactModal.find('div.opening_balance').fadeOut();
+                $contactModal.find('div.pay_term').fadeOut();
+                $contactModal.find('div.lead_additional_div').fadeIn();
+                $contactModal.find('div.shipping_addr_div').hide();
             }
+            syncContactTypeRequirements();
         });
+
+        syncContactTypeRequirements();
 
         $(".contact_modal").find('.select2').each(function () {
             $(this).select2();
@@ -2452,6 +2466,65 @@ $(document).on('click', 'a.load_notifications', function (e) {
         },
     });
 });
+
+(function initChangeLogReadStatus() {
+    function markVisibleChangeLogsAsRead() {
+        var overview = document.querySelector('[data-change-log-overview="true"]');
+        var indicator = document.getElementById('change-log-indicator');
+
+        if (!overview || !indicator || indicator.dataset.unread !== '1' || indicator.dataset.changeLogReadStarted === '1') {
+            return;
+        }
+
+        var releaseIds;
+        try {
+            releaseIds = JSON.parse(indicator.dataset.releaseIds || '[]');
+        } catch (error) {
+            return;
+        }
+
+        if (!Array.isArray(releaseIds) || releaseIds.length === 0) {
+            return;
+        }
+
+        var csrfToken = document.querySelector('meta[name="csrf-token"]');
+        if (!csrfToken || !window.fetch) {
+            return;
+        }
+
+        indicator.dataset.changeLogReadStarted = '1';
+        window.fetch(indicator.dataset.readUrl, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'X-CSRF-TOKEN': csrfToken.getAttribute('content'),
+                'X-Requested-With': 'XMLHttpRequest',
+            },
+            body: JSON.stringify({ release_ids: releaseIds }),
+        }).then(function (response) {
+            if (!response.ok) {
+                throw new Error('Change Log read status request failed');
+            }
+
+            return response.json();
+        }).then(function (result) {
+            if (result && result.success === true) {
+                indicator.classList.remove('is-unread');
+                indicator.dataset.unread = '0';
+            }
+        }).catch(function () {
+            // Keep the pulse active so the user can retry on a later visit.
+        });
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', markVisibleChangeLogsAsRead);
+    } else {
+        markVisibleChangeLogsAsRead();
+    }
+})();
 
 $(document).on('click', 'a.delete_purchase_return', function (e) {
     e.preventDefault();

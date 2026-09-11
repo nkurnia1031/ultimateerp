@@ -55,7 +55,8 @@
 
             @foreach($data as $i => $d)
                 @php
-                    $kasbon = $kasbonData[$d->nama_operator] ?? 0;
+                    $kasbonKey = $d->driver_id ?: 'name:' . $d->nama_operator;
+                    $kasbon = $kasbonData[$kasbonKey] ?? 0;
                     $total_diterima = $d->total_bonus - $kasbon;
 
                     $grand_total_bonus += $d->total_bonus;

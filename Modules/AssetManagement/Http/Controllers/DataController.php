@@ -48,6 +48,41 @@ class DataController extends Controller
                 'default' => false,
             ],
             [
+                'value' => 'asset.fleet_rates.manage',
+                'label' => __('Kelola tarif angkutan alat berat'),
+                'default' => false,
+            ],
+            [
+                'value' => 'asset.fleet_trips.manage',
+                'label' => __('Kelola trip angkutan alat berat'),
+                'default' => false,
+            ],
+            [
+                'value' => 'asset.fleet_trips.create',
+                'label' => __('Buat/import SPB angkutan alat berat'),
+                'default' => false,
+            ],
+            [
+                'value' => 'asset.fleet_billing.manage',
+                'label' => __('Pilih SPB untuk invoice atau Sell'),
+                'default' => false,
+            ],
+            [
+                'value' => 'asset.fleet_settlements.manage',
+                'label' => __('Kelola settlement sopir alat berat'),
+                'default' => false,
+            ],
+            [
+                'value' => 'asset.fleet_payroll.manage',
+                'label' => __('Posting payroll SPB dan Bonus Ayak'),
+                'default' => false,
+            ],
+            [
+                'value' => 'bonus_ayak.manage',
+                'label' => __('Kelola Bonus Ayak dan sumber SPB'),
+                'default' => false,
+            ],
+            [
                 'value' => 'asset.view_all_maintenance',
                 'label' => __('assetmanagement::lang.view_all_maintenance'),
                 'default' => false,

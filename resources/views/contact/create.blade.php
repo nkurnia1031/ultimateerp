@@ -96,7 +96,7 @@
             <div class="col-md-3 individual" style="display: none;">
                 <div class="form-group">
                     {!! Form::label('first_name', __( 'business.first_name' ) . ':*') !!}
-                    {!! Form::text('first_name', null, ['class' => 'form-control', 'required', 'placeholder' => __( 'business.first_name' ) ]); !!}
+                    {!! Form::text('first_name', null, ['class' => 'form-control', 'placeholder' => __( 'business.first_name' ) ]); !!}
                 </div>
             </div>
             <div class="col-md-3 individual" style="display: none;">
@@ -205,7 +205,7 @@
                           <span class="input-group-addon">
                               <i class="fa fa-user"></i>
                           </span>
-                          {!! Form::select('user_id[]', $users ?? [], null , ['class' => 'form-control select2', 'id' => 'user_id', 'multiple', 'required', 'style' => 'width: 100%;']); !!}
+                           {!! Form::select('user_id[]', $users ?? [], null , ['class' => 'form-control select2', 'id' => 'user_id', 'multiple', 'style' => 'width: 100%;']); !!}
                       </div>
                   </div>
             </div>

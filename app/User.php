@@ -39,6 +39,11 @@ class User extends Authenticatable
     // change api guard to web
     protected $guard_name = 'web';
 
+    public function changeLogReads()
+    {
+        return $this->hasMany(ChangeLogRead::class);
+    }
+
     /**
      * The attributes that should be mutated to dates.
      *
@@ -55,6 +60,26 @@ class User extends Authenticatable
     public function account()
     {
         return $this->belongsTo(\App\Account::class, 'account_id');
+    }
+
+    public function heavyEquipmentTrips()
+    {
+        return $this->hasMany(\Modules\AssetManagement\Entities\HeavyEquipmentTrip::class, 'driver_id');
+    }
+
+    public function heavyEquipmentSettlements()
+    {
+        return $this->hasMany(\Modules\AssetManagement\Entities\HeavyEquipmentDriverSettlement::class, 'driver_id');
+    }
+
+    public function bonusAyakEntries()
+    {
+        return $this->hasMany(BonusAyak::class, 'driver_id');
+    }
+
+    public function bonusAyakKasbons()
+    {
+        return $this->hasMany(BonusAyakKasbon::class, 'driver_id');
     }
     public function scopeUser($query)
     {

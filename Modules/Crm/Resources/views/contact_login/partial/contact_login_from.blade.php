@@ -18,7 +18,7 @@
     <div class="col-md-5">
         <div class="form-group">
 			{!! Form::label("first_name$index", __( 'business.first_name' ) . ':*') !!}
-			{!! Form::text($index === '' ? 'first_name' : "contact_persons[$index][first_name]", null, ['class' => 'form-control', 'required', 'placeholder' => __( 'business.first_name' ), 'id' => "first_name$index" ]); !!}
+			{!! Form::text($index === '' ? 'first_name' : "contact_persons[$index][first_name]", null, ['class' => 'form-control', 'required' => $index === '', 'placeholder' => __( 'business.first_name' ), 'id' => "first_name$index" ]); !!}
         </div>
 	</div>
 	<div class="col-md-5">
@@ -86,19 +86,19 @@
 	<div class="col-md-6">
 		<div class="form-group">
 			{!! Form::label("username$index", __( 'business.username' ) . ':*') !!}
-			{!! Form::text($index ==='' ? 'username' : "contact_persons[$index][username]", null, ['class' => 'form-control', 'placeholder' => __( 'business.username' ), 'required', 'id'=>"username$index"]); !!}
+			{!! Form::text($index ==='' ? 'username' : "contact_persons[$index][username]", null, ['class' => 'form-control', 'placeholder' => __( 'business.username' ), 'required' => $index === '', 'id'=>"username$index"]); !!}
 		</div>
 	</div>
 	<div class="col-md-6">
 		<div class="form-group">
 			{!! Form::label("password$index", __( 'business.password' ) . ':*') !!}
-			{!! Form::password($index === '' ? 'password' : "contact_persons[$index][password]", ['class' => 'form-control', 'required', 'placeholder' => __( 'business.password' ), 'id'=>"password$index" ]); !!}
+			{!! Form::password($index === '' ? 'password' : "contact_persons[$index][password]", ['class' => 'form-control', 'required' => $index === '', 'placeholder' => __( 'business.password' ), 'id'=>"password$index" ]); !!}
 		</div>
 	</div>
 	<div class="col-md-6">
 		<div class="form-group">
 			{!! Form::label("confirm_password$index", __( 'business.confirm_password' ) . ':*') !!}
-			{!! Form::password($index === '' ? 'confirm_password' : "contact_persons[$index][confirm_password]", ['class' => 'form-control', 'required', 'placeholder' => __( 'business.confirm_password' ), 'id' => "confirm_password$index", 'data-rule-equalTo' => "#password$index" ]); !!}
+			{!! Form::password($index === '' ? 'confirm_password' : "contact_persons[$index][confirm_password]", ['class' => 'form-control', 'required' => $index === '', 'placeholder' => __( 'business.confirm_password' ), 'id' => "confirm_password$index", 'data-rule-equalTo' => "#password$index" ]); !!}
 		</div>
 	</div>
   	<div class="clearfix"></div>

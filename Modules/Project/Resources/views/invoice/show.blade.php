@@ -31,9 +31,9 @@
 			        	<br>
 			        @endif
 		    	</div>
-		    	<div class="col-md-4">
-		    		<b>{{ __('sale.customer_name') }}:</b>
-		    			{{ $transaction->contact->name }}<br>
+			<div class="col-md-4">
+				<b>{{ __('sale.customer_name') }}:</b>
+					{{ $transaction->contact->name ?: ($transaction->contact->supplier_business_name ?: $transaction->contact->contact_id) }}<br>
 			        <b>{{ __('business.address') }}:</b><br>
 			        @if(!empty($transaction->billing_address()))
 			          {{$transaction->billing_address()}}

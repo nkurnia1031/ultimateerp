@@ -100,6 +100,16 @@ class Project extends Model
         return $this->hasMany('Modules\Project\Entities\ProjectTimeLog');
     }
 
+    public function heavyEquipmentTrips()
+    {
+        return $this->hasMany(\Modules\AssetManagement\Entities\HeavyEquipmentTrip::class, 'project_id');
+    }
+
+    public function bonusAyakEntries()
+    {
+        return $this->hasMany(\App\BonusAyak::class, 'project_id');
+    }
+
     /**
      * Get the project categories.
      */

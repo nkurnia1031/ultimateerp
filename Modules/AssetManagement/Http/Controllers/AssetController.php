@@ -297,11 +297,19 @@ class AssetController extends Controller
                                 </a>
                             </li>';
 
-                    $html .= '
+                            $html .= '
                             <li>
                                 <a href="' . action([\Modules\Project\Http\Controllers\ProjectController::class, 'ledger'], ['asset_id' => $row->id]) . '">
                                     <i class="fas fa-tasks"></i>
                                     Project Ledger
+                                </a>
+                            </li>';
+
+                    $html .= '
+                            <li>
+                                <a href="' . route('asset.fleet.trips.asset-ledger', ['assetId' => $row->id]) . '">
+                                    <i class="fas fa-truck-moving"></i>
+                                    Ledger Trip Angkutan
                                 </a>
                             </li>';
 

@@ -590,7 +590,7 @@ class AdminSidebarMenu
                 $menu->dropdown(
                     __('Pool'),
                     function ($sub) {
-                        if (auth()->user()->can('bonus_ayak.access')) {
+                        if (auth()->user()->can('bonus_ayak.access') || auth()->user()->can('bonus_ayak.manage')) {
                             $sub->url(
                                 action([\App\Http\Controllers\BonusAyakController::class, 'index']),
                                 __('Bonus Ayak'),

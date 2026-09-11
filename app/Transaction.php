@@ -70,6 +70,16 @@ class Transaction extends Model
     {
         return $this->hasMany(\App\TransactionPayment::class, 'transaction_id');
     }
+
+    public function heavyEquipmentBillings()
+    {
+        return $this->hasMany(\Modules\AssetManagement\Entities\HeavyEquipmentTripBilling::class, 'transaction_id');
+    }
+
+    public function heavyEquipmentSettlements()
+    {
+        return $this->hasMany(\Modules\AssetManagement\Entities\HeavyEquipmentDriverSettlement::class, 'payroll_transaction_id');
+    }
     public function expense_lines()
     {
         return $this->hasMany(\App\ExpenseLine::class, 'transaction_id');

@@ -2465,8 +2465,23 @@ $('div#product_list_body').on('scroll', function () {
     }
 });
 
+function sync_recurring_invoice_required_fields() {
+    var is_recurring = $('#is_recurring').is(':checked');
+    $('#recurringInvoiceModal input[name="recur_interval"]').prop('required', is_recurring);
+    $('#recurringInvoiceModal select[name="recur_interval_type"]').prop('required', is_recurring);
+}
+
 $(document).on('ifChecked', '#is_recurring', function () {
+    sync_recurring_invoice_required_fields();
     $('#recurringInvoiceModal').modal('show');
+});
+
+$(document).on('ifUnchecked', '#is_recurring', function () {
+    sync_recurring_invoice_required_fields();
+});
+
+$(function () {
+    sync_recurring_invoice_required_fields();
 });
 
 $(document).on('shown.bs.modal', '#recurringInvoiceModal', function () {

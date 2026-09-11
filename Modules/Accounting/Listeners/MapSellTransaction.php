@@ -29,7 +29,7 @@ class MapSellTransaction
     {
         //get location setting and check if default is set or not, if set the proceed.
         $business_location = BusinessLocation::find($event->transaction->location_id);
-        $accounting_default_map = json_decode($business_location->accounting_default_map, true);
+        $accounting_default_map = json_decode($business_location?->accounting_default_map ?: '{}', true);
 
         $deposit_to = isset($accounting_default_map['sale']['deposit_to']) ? $accounting_default_map['sale']['deposit_to'] : null;
         $payment_account = isset($accounting_default_map['sale']['payment_account']) ? $accounting_default_map['sale']['payment_account'] : null;

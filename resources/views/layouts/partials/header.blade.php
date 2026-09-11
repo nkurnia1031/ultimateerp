@@ -190,6 +190,8 @@
                 </button>
 
                 @include('layouts.partials.header-notifications')
+                @include('layouts.partials.change-log-indicator')
+                @include('layouts.partials.guide-link')
 
 
 

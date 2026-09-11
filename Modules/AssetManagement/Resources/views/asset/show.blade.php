@@ -118,6 +118,9 @@
             <a href="{{action([\Modules\AssetManagement\Http\Controllers\AssetController::class, 'tagLedger'], [$asset->id])}}" class="btn btn-info">
                 <i class="fas fa-scroll"></i> Tag Ledger
             </a>
+            <a href="{{ route('asset.fleet.trips.asset-ledger', ['assetId' => $asset->id]) }}" class="btn btn-primary">
+                <i class="fas fa-truck-moving"></i> Ledger Trip Angkutan
+            </a>
             <button type="button" class="btn btn-default" data-dismiss="modal">
                 @lang('messages.close')
             </button>

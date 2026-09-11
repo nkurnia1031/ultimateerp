@@ -112,7 +112,8 @@ class InvoiceController extends Controller
                                 {{@format_date($transaction_date)}}
                         ')
                         ->editColumn('contact_id', function ($row) {
-                            return $row->contact->name;
+                            return $row->contact->name
+                                ?: ($row->contact->supplier_business_name ?: $row->contact->contact_id);
                         })
                         ->editColumn('invoice_no', '
                             <a data-href="{{action([\Modules\Project\Http\Controllers\InvoiceController::class, \'show\'], [$id, "project_id" => $pjt_project_id])}}" class="cursor-pointer view_a_project_invoice text-black">

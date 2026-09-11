@@ -1,6 +1,7 @@
 @extends('layouts.app')
 @section('title', __('project::lang.view_project'))
 @section('content')
+@include('layouts.partials.fleet-datatables')
 <section class="content-header">
     <a href="{{ action([\Modules\Project\Http\Controllers\ProjectImportController::class, 'export'], [$project->id]) }}" class="btn btn-success pull-right">
         <i class="fas fa-file-excel"></i> @lang('project::lang.export_project_excel')
@@ -92,6 +93,20 @@
                         <a href="#project_invoices" data-toggle="tab" aria-expanded="true">
                             <i class="fa fa-file"></i>
                             @lang('project::lang.invoices')
+                        </a>
+                    </li>
+                    @endif
+
+                    @if(auth()->user()->can('asset.view') || auth()->user()->can('asset.fleet_trips.manage') || auth()->user()->can('asset.fleet_trips.create') || auth()->user()->can('asset.fleet_billing.manage') || auth()->user()->can('bonus_ayak.manage') || auth()->user()->can('bonus_ayak.access') || auth()->user()->can('superadmin'))
+                    <li class="
+                        @if($tab_view == 'heavy_equipment_trips')
+                            active
+                        @else
+                            ''
+                        @endif">
+                        <a href="#heavy_equipment_trips" data-toggle="tab" aria-expanded="true" data-url="{{ action([\Modules\Project\Http\Controllers\ProjectController::class, 'show'], [$project->id]).'?view=heavy_equipment_trips' }}">
+                            <i class="fas fa-truck-moving"></i>
+                            Trip Angkutan ({{ $heavy_equipment_trip_count }})
                         </a>
                     </li>
                     @endif
@@ -210,6 +225,37 @@
                             @includeif('project::invoice.index')
                         </div>
                     @endif
+                    @if(auth()->user()->can('asset.view') || auth()->user()->can('asset.fleet_trips.manage') || auth()->user()->can('asset.fleet_trips.create') || auth()->user()->can('asset.fleet_billing.manage') || auth()->user()->can('bonus_ayak.manage') || auth()->user()->can('bonus_ayak.access') || auth()->user()->can('superadmin'))
+                        <div class="tab-pane
+                            @if($tab_view == 'heavy_equipment_trips')
+                                active
+                            @else
+                                ''
+                            @endif" id="heavy_equipment_trips">
+                            <div class="row">
+                                <div class="col-md-2"><strong>Total ton</strong><br>{{ number_format($heavy_equipment_trip_total['tons'], 2, ',', '.') }}</div>
+                                <div class="col-md-2"><strong>Pendapatan</strong><br>@format_currency($heavy_equipment_trip_total['revenue'])</div>
+                                <div class="col-md-2"><strong>Upah sopir</strong><br>@format_currency($heavy_equipment_trip_total['driver_pay'])</div>
+                                <div class="col-md-2"><strong>Bonus Ayak</strong><br>@format_currency($heavy_equipment_trip_total['bonus_ayak'])</div>
+                                <div class="col-md-4"><strong>Kontribusi setelah Bonus</strong><br>@format_currency($heavy_equipment_trip_total['contribution'])</div>
+                            </div>
+                            <br>
+                            @if(auth()->user()->can('asset.fleet_trips.manage') || auth()->user()->can('asset.fleet_trips.create') || auth()->user()->can('superadmin'))
+                                <a class="btn btn-success" href="{{ route('asset.fleet.trips.create', ['project_id' => $project->id, 'customer_id' => $project->contact_id, 'return_context' => 'project', 'return_id' => $project->id]) }}"><i class="fa fa-plus"></i> Buat SPB</a>
+                            @endif
+                            @if(auth()->user()->can('asset.fleet_trips.manage') || auth()->user()->can('asset.fleet_billing.manage') || auth()->user()->can('superadmin'))
+                                <a class="btn btn-primary" href="{{ route('asset.fleet.trips.project-invoice.choose', ['project_id' => $project->id]) }}"><i class="fa fa-file-invoice"></i> Pilih SPB untuk Invoice</a>
+                            @endif
+                            @if(auth()->user()->can('bonus_ayak.access') || auth()->user()->can('superadmin'))
+                                <a class="btn btn-warning" href="{{ route('bonus-ayak.index', ['project_id' => $project->id]) }}"><i class="fa fa-gift"></i> Tambah Bonus Ayak</a>
+                            @endif
+                            <a class="btn btn-default" href="{{ route('asset.fleet.trips.index', ['project_id' => $project->id]) }}">Kelola semua SPB Project</a>
+                            <br><br>
+                            <div class="table-responsive fleet-datatable-wrap"><table id="project-heavy-equipment-trips-table" class="table table-bordered table-striped fleet-datatable"><thead><tr><th>Trip</th><th>Tanggal</th><th>Rute</th><th>Unit</th><th>Sopir</th><th>Ton</th><th>Total</th><th>Status</th></tr></thead><tbody>@forelse($heavy_equipment_trips as $heavyTrip)<tr><td><a href="{{ route('asset.fleet.trips.show', $heavyTrip->id) }}">{{ $heavyTrip->trip_no }}</a></td><td>{{ optional($heavyTrip->trip_date)->format('d-m-Y') }}</td><td>{{ $heavyTrip->route->name }}</td><td>{{ $heavyTrip->asset->name }}</td><td>{{ $heavyTrip->driver->user_full_name }}</td><td>{{ $heavyTrip->actual_tons }}</td><td>@format_currency($heavyTrip->revenue_total)</td><td>{{ strtoupper($heavyTrip->status) }}</td></tr>@empty<tr><td colspan="8" class="text-center">Belum ada trip untuk project ini.</td></tr>@endforelse</tbody></table></div>
+                            <div class="well well-sm"><strong>Bonus Ayak Project:</strong> @format_currency($heavy_equipment_bonus_total) <span class="text-muted">(bukan line invoice pelanggan)</span></div>
+                            <div class="table-responsive fleet-datatable-wrap"><table id="project-heavy-equipment-bonus-table" class="table table-bordered table-striped fleet-datatable"><thead><tr><th>Tanggal</th><th>Sopir</th><th>Unit</th><th>SPB sumber</th><th>Trip</th><th>Bonus</th></tr></thead><tbody>@forelse($heavy_equipment_bonus_ayaks as $bonusAyak)<tr><td>{{ optional($bonusAyak->tanggal)->format('d-m-Y') }}</td><td>{{ optional($bonusAyak->driver)->user_full_name ?: $bonusAyak->nama_operator }}</td><td>{{ optional($bonusAyak->asset)->name ?: $bonusAyak->unit }}</td><td>{{ $bonusAyak->trips->pluck('trip_no')->implode(', ') ?: 'Manual' }}</td><td>{{ $bonusAyak->trip }}</td><td>@format_currency($bonusAyak->bonus)</td></tr>@empty<tr><td colspan="6" class="text-center">Belum ada Bonus Ayak untuk project ini.</td></tr>@endforelse</tbody></table></div>
+                        </div>
+                    @endif
                     @if($is_lead_or_admin)
                         <div class="tab-pane
                             @if($tab_view == 'project_settings')
@@ -253,3 +299,11 @@
     }
 </script>
 @endsection
+@push('scripts')
+<script>
+$(function () {
+    initFleetDataTable('#project-heavy-equipment-trips-table', { order: [[1, 'desc']], columnDefs: [{ targets: [0, 2, 3, 4, 5, 6, 7], orderable: false }] });
+    initFleetDataTable('#project-heavy-equipment-bonus-table', { order: [[0, 'desc']], columnDefs: [{ targets: [1, 2, 3, 4, 5], orderable: false }] });
+});
+</script>
+@endpush

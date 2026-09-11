@@ -5370,9 +5370,9 @@
     "semantic_hash": "52ed9cf2f89b59e72491a3ecaf9efe76"
   },
   "app/Http/Middleware/AdminSidebarMenu.php": {
-    "mtime": 1762624297.0,
-    "ast_hash": "e24222000e04a0e22e3328ff0bab3265",
-    "semantic_hash": "e24222000e04a0e22e3328ff0bab3265"
+    "mtime": 1787215465.5450482,
+    "ast_hash": "cf161a668fafa13228e5bf106a1130ad",
+    "semantic_hash": ""
   },
   "app/Http/Middleware/Authenticate.php": {
     "mtime": 1762624297.0,
@@ -10995,8 +10995,8 @@
     "semantic_hash": "e604e8c82a6bc445c9785a4567a1ebeb"
   },
   "routes/web.php": {
-    "mtime": 1787046010.2109413,
-    "ast_hash": "ad72734e4930764e6df3d3be4bcbf0bb",
+    "mtime": 1787215465.5417445,
+    "ast_hash": "f8d97837893ad3041f094d0c2b341de1",
     "semantic_hash": ""
   },
   "Modules/Manufacturing/License.txt": {
@@ -11622,6 +11622,26 @@
   "resources/views/purchase/partials/products.blade.php": {
     "mtime": 1787204876.9861488,
     "ast_hash": "b3665f258da3fc2aadd6d8299f096d3b",
+    "semantic_hash": ""
+  },
+  "app/Http/Controllers/SecurityAuditController.php": {
+    "mtime": 1787215465.5397253,
+    "ast_hash": "2afb72d5cf95e8b9f0e0008e59347dc6",
+    "semantic_hash": ""
+  },
+  "app/Services/SecurityAuditService.php": {
+    "mtime": 1787216409.5422213,
+    "ast_hash": "d1cfd7748ffbcb728b0e8fee36f327d6",
+    "semantic_hash": ""
+  },
+  "public/js/security-audit.js": {
+    "mtime": 1787215651.7506835,
+    "ast_hash": "bd602a74762cb4c9bcd79668b8c02a93",
+    "semantic_hash": ""
+  },
+  "resources/views/security-audit/index.blade.php": {
+    "mtime": 1787215961.7639632,
+    "ast_hash": "b4fa035b3c9fdcf9df1fb9e8c9a4cd5c",
     "semantic_hash": ""
   }
 }
