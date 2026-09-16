@@ -1,5 +1,7 @@
 # Revisi 01 — Bonus Ayak dan panduan yang dapat ditemukan
 
+> Paket lanjutan: keputusan relasi Surat Kontrak ke Project, SPB, billing, payroll, dan laporan berada di [Revisi 02 — Peta relasi kontrak](../Revisi-02/00-MULAI-DAN-PETA-TAHAP.md). Jangan menambahkan keputusan kontrak baru di paket ini.
+
 ## Tujuan dan status
 
 Paket lanjutan ini dibuat atas tiga revisi pengguna: perbaiki UI Bonus Ayak dengan Taste Skill, perluas panduan setingkat tutorial terstruktur, dan pastikan gambar berpenanda serta detail bisa ditemukan dari Change Log dan Panduan. Paket instruksi ini tetap dapat dijalankan satu tahap per permintaan. Status eksekusi terbaru dicatat di folder `hasil/`; status awal di dokumen tahap tidak diubah agar sejarah instruksi tetap jelas.

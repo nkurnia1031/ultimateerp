@@ -11,6 +11,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
 use Modules\Crm\Entities\SuratKontrak;
+use Modules\Crm\Services\SuratKontrakTemplateService;
 use Modules\Crm\Utils\CrmUtil;
 use Excel;
 use Yajra\DataTables\Facades\DataTables;
@@ -26,17 +27,20 @@ class SuratKontrakController extends Controller
 
     protected $crmUtil;
 
+    protected $templateService;
+
     /**
      * Constructor
      *
      * @param  Util  $commonUtil
      * @return void
      */
-    public function __construct(Util $commonUtil, ModuleUtil $moduleUtil, CrmUtil $crmUtil)
+    public function __construct(Util $commonUtil, ModuleUtil $moduleUtil, CrmUtil $crmUtil, SuratKontrakTemplateService $templateService)
     {
         $this->commonUtil = $commonUtil;
         $this->moduleUtil = $moduleUtil;
         $this->crmUtil = $crmUtil;
+        $this->templateService = $templateService;
     }
 
     /**
@@ -60,7 +64,11 @@ class SuratKontrakController extends Controller
 
         if (request()->ajax()) {
 
-            $surat_kontrak = SuratKontrak::leftJoin('contacts', 'surat_kontrak.contact_id', '=', 'contacts.id')
+            $surat_kontrak = SuratKontrak::leftJoin('contacts', function ($join) use ($business_id) {
+                    $join->on('surat_kontrak.contact_id', '=', 'contacts.id')
+                        ->where('contacts.business_id', $business_id);
+                })
+                ->where('surat_kontrak.business_id', $business_id)
                 ->select(
                     'surat_kontrak.*',
                     'contacts.supplier_business_name as contact_name'
@@ -218,13 +226,17 @@ class SuratKontrakController extends Controller
         return view('crm::surat_kontrak.import')
             ->with(compact('business_id', 'listBatch'));
     }
-    public function prosesContactId($contactId)
+    public function prosesContactId($contactId, ?int $businessId = null)
     {
         if (empty($contactId)) {
             return null;
         }
 
-        $contact = Contact::where('supplier_business_name', $contactId)->first();
+        $businessId = $businessId ?: (int) request()->session()->get('user.business_id');
+
+        $contact = Contact::where('business_id', $businessId)
+            ->where('supplier_business_name', $contactId)
+            ->first();
 
         if ($contact) {
             return $contact->id;
@@ -232,12 +244,12 @@ class SuratKontrakController extends Controller
             // Jika tidak ditemukan, buat kontak baru
             $newContact = Contact::create([
                 'supplier_business_name' => $contactId,
-                'business_id' => auth()->user()->business_id,
+                'business_id' => $businessId,
                 'type' => 'customer',
                 'name' => $contactId,
                 'email' => '-',
                 'mobile' => '-',
-                'created_by' => auth()->user()->id,
+                'created_by' => auth()->id(),
             ]);
 
             return $newContact->id;
@@ -245,6 +257,13 @@ class SuratKontrakController extends Controller
     }
     public function importProses(Request $request)
     {
+        $business_id = (int) $request->session()->get('user.business_id');
+
+        if (!(auth()->user()->can('superadmin') ||
+            $this->moduleUtil->hasThePermissionInSubscription($business_id, 'crm_module'))) {
+            abort(403, 'Unauthorized action.');
+        }
+
         $request->validate([
             'import_file' => 'required|file|mimes:xlsx,xls'
         ]);
@@ -259,7 +278,7 @@ class SuratKontrakController extends Controller
             $header = array_shift($rows);
 
             // ambil batch terakhir
-            $lastBatch = SuratKontrak::max('import_batch');
+            $lastBatch = SuratKontrak::where('business_id', $business_id)->max('import_batch');
             $currentBatch = $lastBatch ? $lastBatch + 1 : 1;
 
             $dataInsert = [];
@@ -283,7 +302,7 @@ class SuratKontrakController extends Controller
                     ? Date::excelToDateTimeObject($item['Mulai Kerja'])->format('Y-m-d')
                     : null;
 
-                $item['Contact ID'] = $this->prosesContactId($item['Contact ID'] ?? null);
+                $item['Contact ID'] = $this->prosesContactId($item['Contact ID'] ?? null, $business_id);
 
                 $dataInsert[] = [
                     'nomor' => $item['Nomor'] ?? null,
@@ -411,6 +430,13 @@ class SuratKontrakController extends Controller
                 'notes'
             ]);
 
+            if (! empty($input['contact_id'])) {
+                $input['contact_id'] = Contact::where('business_id', $business_id)
+                    ->whereKey($input['contact_id'])
+                    ->findOrFail($input['contact_id'])
+                    ->id;
+            }
+
             // Convert date format jika pakai format bisnis
             // $input['mulai_kerja'] = $this->commonUtil->uf_date($input['mulai_kerja']);
             // $input['selesai'] = $this->commonUtil->uf_date($input['selesai']);
@@ -449,8 +475,6 @@ class SuratKontrakController extends Controller
                 'msg' => 'Surat kontrak berhasil ditambahkan'
             ];
         } catch (\Exception $e) {
-            dd($e);
-
             \Log::emergency('File:' . $e->getFile()
                 . 'Line:' . $e->getLine()
                 . 'Message:' . $e->getMessage());
@@ -479,13 +503,28 @@ class SuratKontrakController extends Controller
             abort(403, 'Unauthorized action.');
         }
 
-        $surat_kontrak = SuratKontrak::leftJoin('contacts', 'surat_kontrak.contact_id', '=', 'contacts.id')
+        $surat_kontrak = SuratKontrak::leftJoin('contacts', function ($join) use ($business_id) {
+                $join->on('surat_kontrak.contact_id', '=', 'contacts.id')
+                    ->where('contacts.business_id', $business_id);
+            })
+            ->where('surat_kontrak.business_id', $business_id)
             ->select('surat_kontrak.*', 'contacts.name', 'contacts.supplier_business_name', 'contacts.address_line_1', 'contacts.address_line_2')
             ->findOrFail($id);
 
 
+        $business = \App\Business::with('locations')->findOrFail($business_id);
+        $template = $this->templateService->getActiveForBusiness($business_id);
+        if (empty($template)) {
+            $template = new \Modules\Crm\Entities\SuratKontrakTemplate([
+                'components' => $this->templateService->defaultComponents(),
+                'body_html' => $this->templateService->defaultBodyHtml(),
+                'letterhead_mode' => 'components',
+            ]);
+        }
+        $rendered_components = $this->templateService->prepareComponents($template, $business, $surat_kontrak);
+
         return view('crm::surat_kontrak.view')
-            ->with(compact('surat_kontrak'));
+            ->with(compact('surat_kontrak', 'business', 'template', 'rendered_components'));
     }
 
     /**
@@ -496,8 +535,14 @@ class SuratKontrakController extends Controller
      */
     public function edit($id)
     {
-        $surat_kontrak = SuratKontrak::findOrFail($id);
         $business_id = request()->session()->get('user.business_id');
+
+        if (!(auth()->user()->can('superadmin') ||
+            $this->moduleUtil->hasThePermissionInSubscription($business_id, 'crm_module'))) {
+            abort(403, 'Unauthorized action.');
+        }
+
+        $surat_kontrak = SuratKontrak::where('business_id', $business_id)->findOrFail($id);
         $contacts  = Contact::customersDropdown($business_id, false);
 
         return view('crm::surat_kontrak.create')
@@ -539,6 +584,13 @@ class SuratKontrakController extends Controller
                 'jangka_waktu',
                 'notes'
             ]);
+
+            if (! empty($input['contact_id'])) {
+                $input['contact_id'] = Contact::where('business_id', $business_id)
+                    ->whereKey($input['contact_id'])
+                    ->findOrFail($input['contact_id'])
+                    ->id;
+            }
 
             // Convert tanggal
             // if (!empty($input['mulai_kerja'])) {

@@ -37,6 +37,11 @@
                                 href="{{ action([\Modules\Crm\Http\Controllers\SuratKontrakController::class, 'index']) }}">@lang('Surat Kontrak')</a>
                         </li>
                     @endif
+                    @if (auth()->user()->can('superadmin') || auth()->user()->can('crm.access_surat_kontrak_template') || auth()->user()->hasRole('Admin#' . session('user.business_id')))
+                        <li @if (request()->segment(2) == 'surat-kontrak-templates') class="active" @endif><a
+                                href="{{ route('crm.surat-kontrak-templates.index') }}"><i class="fa fa-file-alt"></i> Kop Surat Kontrak</a>
+                        </li>
+                    @endif
                     @if (auth()->user()->can('crm.access_all_leads') || auth()->user()->can('crm.access_own_leads'))
                         <li @if (request()->segment(2) == 'leads') class="active" @endif><a
                                 href="{{ action([\Modules\Crm\Http\Controllers\LeadController::class, 'index']) . '?lead_view=list_view' }}">@lang('crm::lang.leads')</a>

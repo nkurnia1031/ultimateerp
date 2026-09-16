@@ -4,6 +4,8 @@
 
 Untuk perbaikan UI Bonus Ayak dengan Taste Skill, pendalaman artikel, serta akses gambar berpenanda dari Change Log dan Panduan, mulai dari [Revisi 01 — Peta tahap](Revisi-01/00-MULAI-DAN-PETA-TAHAP.md). Paket lanjutan dipecah per halaman dan per artikel. Status penyusunannya tidak berarti implementasi atau pengujiannya sudah dijalankan. Hasil historis paket ini tetap disimpan; klaim publikasi panduan harus dibuktikan ulang sesuai revisi.
 
+Untuk integrasi Surat Kontrak dengan Project, SPB, billing, payroll, dan laporan, gunakan [Revisi 02 — Peta relasi kontrak](Revisi-02/00-MULAI-DAN-PETA-TAHAP.md). Revisi 02 menetapkan seluruh relasi dibangun sejak awal, tetapi kolom `status` kontrak tetap nullable agar migrasi dan pemakaian dapat dilakukan bertahap.
+
 ## Tujuan
 
 Paket ini adalah instruksi pekerjaan bertahap untuk Change Log, panduan pengguna, dan pembuktian fitur angkutan. Paket inti dipecah menjadi 45 dokumen pelaksanaan kecil; tujuh dokumen utama menjadi petunjuk dan indeks. Dokumen [07 — Remediasi blocker final](07-REMEDIASI-BLOCKER-FINAL.md) adalah lampiran handoff opsional untuk blocker teknis yang ditemukan saat serah-terima. Penyusunan paket hanya mengubah dokumen. Tidak ada tahap di bawah yang otomatis dianggap sudah dijalankan.

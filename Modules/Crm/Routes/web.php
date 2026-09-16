@@ -46,6 +46,23 @@ Route::middleware('web', 'authh', 'auth', 'SetSessionData', 'language', 'timezon
     Route::delete('surat-kontrak/destroy-batch/{batch}', [Modules\Crm\Http\Controllers\SuratKontrakController::class, 'destroyBatch']);
     Route::get('surat-kontrak/download-sample', [Modules\Crm\Http\Controllers\SuratKontrakController::class, 'downloadSample']);
 
+    Route::get('surat-kontrak-templates', [Modules\Crm\Http\Controllers\SuratKontrakTemplateController::class, 'index'])
+        ->name('crm.surat-kontrak-templates.index');
+    Route::get('surat-kontrak-templates/create', [Modules\Crm\Http\Controllers\SuratKontrakTemplateController::class, 'create'])
+        ->name('crm.surat-kontrak-templates.create');
+    Route::post('surat-kontrak-templates', [Modules\Crm\Http\Controllers\SuratKontrakTemplateController::class, 'store'])
+        ->name('crm.surat-kontrak-templates.store');
+    Route::get('surat-kontrak-templates/{id}/edit', [Modules\Crm\Http\Controllers\SuratKontrakTemplateController::class, 'edit'])
+        ->name('crm.surat-kontrak-templates.edit');
+    Route::put('surat-kontrak-templates/{id}', [Modules\Crm\Http\Controllers\SuratKontrakTemplateController::class, 'update'])
+        ->name('crm.surat-kontrak-templates.update');
+    Route::delete('surat-kontrak-templates/{id}', [Modules\Crm\Http\Controllers\SuratKontrakTemplateController::class, 'destroy'])
+        ->name('crm.surat-kontrak-templates.destroy');
+    Route::post('surat-kontrak-templates/{id}/default', [Modules\Crm\Http\Controllers\SuratKontrakTemplateController::class, 'setDefault'])
+        ->name('crm.surat-kontrak-templates.default');
+    Route::get('surat-kontrak-templates/{id}/preview', [Modules\Crm\Http\Controllers\SuratKontrakTemplateController::class, 'preview'])
+        ->name('crm.surat-kontrak-templates.preview');
+
     Route::resource('surat-kontrak', 'Modules\Crm\Http\Controllers\SuratKontrakController');
 
 

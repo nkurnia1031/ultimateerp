@@ -28,6 +28,13 @@
     .fleet-rate-index .rate-actions { display: flex; align-items: center; justify-content: center; gap: 6px; flex-wrap: wrap; min-width: 160px; }
     .fleet-rate-index .rate-actions form { display: inline-flex; margin: 0; }
     .fleet-rate-index .rate-actions .btn { min-height: 40px; white-space: nowrap; }
+    .fleet-rate-index .rate-file-picker { display: flex; align-items: center; gap: 10px; min-height: 44px; }
+    .fleet-rate-index .rate-file-trigger { position: relative; display: inline-flex; flex: 0 0 auto; min-height: 44px; }
+    .fleet-rate-index .rate-file-input { position: absolute; inset: 0; z-index: 2; width: 100%; height: 100%; padding: 0; margin: 0; opacity: 0; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+    .fleet-rate-index .rate-file-input:focus-visible { outline: 3px solid #f0b85b; outline-offset: 3px; }
+    .fleet-rate-index .rate-file-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 44px; padding: 9px 13px; border: 1px solid #9fb8bf; border-radius: 6px; background: #f7fafb; color: #294653; cursor: pointer; font-weight: 600; white-space: nowrap; pointer-events: none; }
+    .fleet-rate-index .rate-file-button:hover, .fleet-rate-index .rate-file-button:focus { background: #e8f0f1; border-color: #6f9da8; }
+    .fleet-rate-index .rate-file-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #60717b; font-size: 13px; }
     .fleet-rate-index .rate-locked { display: inline-flex; align-items: center; gap: 5px; min-height: 32px; padding: 5px 9px; border: 1px solid #d5dde0; border-radius: 999px; background: #eef1f2; color: #53616a; font-size: 11px; font-weight: 700; white-space: nowrap; }
     .fleet-rate-index a:focus-visible, .fleet-rate-index button:focus-visible, .fleet-rate-index input:focus-visible, .fleet-rate-index select:focus-visible { outline: 3px solid #f0b85b !important; outline-offset: 3px; }
     @media (max-width: 700px) { .fleet-rate-index__header { display: block; } .fleet-rate-index__actions { justify-content: flex-start; margin-top: 14px; } .fleet-rate-index__actions .btn { width: 100%; } .fleet-rate-index .box-body { padding: 15px; } .fleet-rate-index .table-responsive { margin: 0 -3px; } }
@@ -60,8 +67,15 @@
                 @csrf
                 <div class="row">
                     <div class="col-md-5 form-group">
-                        <label>File Excel tarif *</label>
-                        <input type="file" name="file" class="form-control" accept=".xlsx,.xls,.csv" required>
+                        <label for="fleet-rate-file">File Excel tarif *</label>
+                        <div class="rate-file-picker">
+                            <span class="rate-file-trigger">
+                                <input id="fleet-rate-file" type="file" name="file" class="rate-file-input" accept=".xlsx,.xls,.csv" aria-describedby="fleet-rate-file-help" required>
+                                <label for="fleet-rate-file" class="rate-file-button"><i class="fas fa-folder-open" aria-hidden="true"></i> Pilih file</label>
+                            </span>
+                            <span id="fleet-rate-file-name" class="rate-file-name" aria-live="polite">Belum ada file dipilih</span>
+                        </div>
+                        <small id="fleet-rate-file-help" class="text-muted">Ketuk Pilih file untuk membuka aplikasi Files di iPad.</small>
                     </div>
                     <div class="col-md-3 form-group">
                         <label for="rate_effective_from_display">Berlaku mulai *</label>
@@ -242,6 +256,10 @@ $(function () {
     }
 
     $('.rate-date-display').on('input blur change', syncRateDate);
+    $('#fleet-rate-file').on('change', function () {
+        const name = this.files && this.files.length ? this.files[0].name : 'Belum ada file dipilih';
+        $('#fleet-rate-file-name').text(name);
+    });
     $('#fleet-rate-upload-form').on('submit', function (event) {
         if (!syncRateDate()) {
             event.preventDefault();

@@ -344,6 +344,11 @@ class DataController extends Controller
                 'label' => __('crm::lang.access_proposal'),
                 'default' => false,
             ],
+            [
+                'value' => 'crm.access_surat_kontrak_template',
+                'label' => 'Kelola template kop surat kontrak',
+                'default' => false,
+            ],
         ];
 
         if (config('constants.enable_crm_call_log')) {
