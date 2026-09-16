@@ -7,6 +7,7 @@
         <a href="{{ route('crm.surat-kontrak-templates.index') }}" class="btn btn-default"><i class="fa fa-arrow-left"></i> Kembali</a>
         <button type="button" class="btn btn-primary" onclick="window.print()"><i class="fa fa-print"></i> Cetak Preview</button>
         <span class="text-muted ml-1">Contoh data, bukan transaksi pelanggan.</span>
+        <span class="text-muted ml-1">Ukuran kertas dipilih di More settings pada dialog Chrome.</span>
     </div>
 
     <div class="surat-kontrak-preview-page">
@@ -22,8 +23,13 @@
 
 @section('css')
     <style>
-        @media print { .no-print { display: none !important; } body { background: #fff !important; } .surat-kontrak-preview-page { padding: 0 !important; } }
+        @media print {
+            html, body { margin: 0 !important; padding: 0 !important; background: #fff !important; }
+            .no-print { display: none !important; }
+            .surat-kontrak-preview-page { padding: 0 !important; background: #fff !important; }
+            .surat-kontrak-preview-page .surat-kontrak-document { width: 100%; max-width: none; min-height: auto; margin: 0 !important; box-sizing: border-box; }
+        }
         .surat-kontrak-preview-page { background: #e9eef2; padding: 20px; }
-        .surat-kontrak-preview-page .surat-kontrak-document { max-width: 900px; margin: 0 auto; }
+        .surat-kontrak-preview-page .surat-kontrak-document { width: 210mm; max-width: 100%; margin: 0 auto; }
     </style>
 @endsection

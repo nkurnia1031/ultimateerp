@@ -109,6 +109,7 @@
                                 @endif
                             </div>
                             <div class="skt-check-row">
+                                <input type="hidden" name="is_active" value="0">
                                 <label><input type="checkbox" name="is_active" value="1" @checked(old('is_active', $template->exists ? $template->is_active : true))> <span>Template aktif</span></label>
                                 <label><input type="checkbox" name="is_default" value="1" @checked(old('is_default', $template->exists ? $template->is_default : false))> <span>Jadikan default</span></label>
                             </div>
@@ -245,6 +246,18 @@
                                             </select>
                                         </div>
                                     </div>
+                                    <div class="col-sm-3 component-field-font-family" hidden>
+                                        <div class="form-group">
+                                            <label for="component_font_family">Jenis huruf</label>
+                                            <select id="component_font_family" class="form-control">
+                                                <option value="Arial">Arial</option>
+                                                <option value="Georgia">Georgia</option>
+                                                <option value="Times New Roman">Times New Roman</option>
+                                                <option value="Verdana">Verdana</option>
+                                            </select>
+                                            <p class="help-block">Georgia atau Times New Roman cocok untuk kop bergaya formal.</p>
+                                        </div>
+                                    </div>
                                 </div>
                                 <div class="row">
                                     <div class="col-sm-8 component-field-text">
@@ -313,15 +326,16 @@
                                             <input type="number" id="component_max_height" class="form-control" min="20" max="240">
                                         </div>
                                     </div>
-                                    <div class="col-sm-4 component-field-logo-column" hidden>
+                                    <div class="col-sm-4 component-field-layout-column" hidden>
                                         <div class="form-group">
-                                            <label for="component_layout_column">Kolom logo</label>
+                                            <label for="component_layout_column">Kolom header</label>
                                             <select id="component_layout_column" class="form-control">
                                                 <option value="left">Kiri</option>
                                                 <option value="center">Tengah</option>
                                                 <option value="right">Kanan</option>
+                                                <option value="full">Lebar penuh</option>
                                             </select>
-                                            <p class="help-block">Pilih sisi logo pada area kop.</p>
+                                            <p class="help-block">Logo dapat ditempatkan di sisi tertentu; garis dan kontak dapat memakai lebar penuh.</p>
                                         </div>
                                     </div>
                                     <div class="col-sm-4 component-field-row-span" hidden>
@@ -492,8 +506,9 @@
         .skt-preview-paper { width: 100%; max-width: 760px; min-height: 460px; margin: 0 auto; padding: 34px 42px 44px; background: #fff; box-shadow: 0 10px 28px rgba(32, 54, 74, .15); color: #111; font-family: Arial, sans-serif; line-height: 1.45; outline: none; }
         .skt-preview-paper:focus { box-shadow: 0 0 0 3px rgba(23, 105, 170, .16), 0 10px 28px rgba(32, 54, 74, .15); }
         .skt-preview-letterhead { border-bottom: 0; }
-        .skt-preview-header-grid { display: grid; grid-template-columns: minmax(72px, 1fr) minmax(0, 2.8fr) minmax(72px, 1fr); grid-auto-rows: minmax(28px, auto); column-gap: 8px; align-items: stretch; }
-        .skt-preview-header-grid .skt-preview-header-component { justify-self: stretch; }
+        .skt-preview-header-grid { display: grid; grid-template-columns: minmax(72px, 1fr) minmax(0, 2.8fr) minmax(72px, 1fr); grid-auto-rows: auto; column-gap: 8px; align-items: stretch; }
+        .skt-preview-header-grid .skt-preview-header-component { justify-self: stretch; padding-top: 0; padding-bottom: 0; min-height: 0; }
+        .skt-preview-header-grid .skt-preview-text { line-height: 1.15; white-space: nowrap; }
         .skt-preview-header-grid .skt-preview-logo { min-width: 0; }
         .skt-preview-header-grid .skt-preview-logo img { max-width: 100%; }
         .skt-preview-body { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: center; }
@@ -653,6 +668,16 @@
                 return /^#[0-9a-f]{6}$/i.test(candidate) ? candidate : fallback;
             }
 
+            function fontFamilyValue(value) {
+                var families = {
+                    'Arial': 'Arial, sans-serif',
+                    'Georgia': 'Georgia, serif',
+                    'Times New Roman': 'Times New Roman, Times, serif',
+                    'Verdana': 'Verdana, sans-serif'
+                };
+                return families[String(value || '')] || families.Arial;
+            }
+
             function replacePlaceholders(value) {
                 var values = {
                     'business.name': previewData.businessName,
@@ -686,6 +711,7 @@
                 var style = 'text-align:' + (a.align || 'left') + ';' +
                     'font-size:' + number(a.font_size, 12, 8, 48) + 'px;' +
                     'font-weight:' + (a.font_weight || '400') + ';' +
+                    'font-family:' + fontFamilyValue(a.font_family) + ';' +
                     'color:' + colorValue(a.color, '#333333') + ';' +
                     'width:' + number(a.width, 100, 10, 100) + '%;' +
                     'margin-bottom:' + number(a.margin_bottom, 8, 0, 64) + 'px;';
@@ -708,7 +734,7 @@
             }
 
             function defaultAttributes(type) {
-                var attributes = { text: '', source: 'logo_1', content_key: null, heading: '', label: 'Nomor', align: 'left', font_size: 12, font_weight: '400', width: 100, max_height: 80, margin_bottom: 8, color: '#333333', layout_column: 'center', row_span: 1 };
+                var attributes = { text: '', source: 'logo_1', content_key: null, heading: '', label: 'Nomor', align: 'left', font_size: 12, font_weight: '400', font_family: 'Arial', width: 100, max_height: 112, margin_bottom: 8, color: '#333333', layout_column: 'center', row_span: 1 };
                 if (type === 'text') attributes.text = placeholderBusinessName;
                 if (type === 'contact_info') attributes.text = placeholderBusinessAddress + '\n' + placeholderBusinessContact;
                 if (type === 'document_title') { attributes.text = 'SURAT PERJANJIAN KERJA (SPK)'; attributes.align = 'center'; attributes.font_weight = '700'; }
@@ -752,7 +778,7 @@
                 var text = componentText(component);
                 if (type === 'logo') {
                     var source = a.source === 'logo_2' ? previewData.logo2 : previewData.logo1;
-                    return source ? '<img src="' + escapeHtml(source) + '" alt="' + escapeHtml(component.label) + '" style="max-height:' + number(a.max_height, 80, 20, 240) + 'px;">' : '<span class="skt-preview-empty"><i class="fa fa-picture-o"></i><br>' + escapeHtml(a.source === 'logo_2' ? 'Logo 2 belum diunggah' : 'Logo 1 belum diunggah') + '</span>';
+                    return source ? '<img src="' + escapeHtml(source) + '" alt="' + escapeHtml(component.label) + '" style="max-height:' + number(a.max_height, 112, 20, 240) + 'px;">' : '<span class="skt-preview-empty"><i class="fa fa-picture-o"></i><br>' + escapeHtml(a.source === 'logo_2' ? 'Logo 2 belum diunggah' : 'Logo 1 belum diunggah') + '</span>';
                 }
                 if (type === 'text' || type === 'document_title' || type === 'contact_info') {
                     if (type === 'contact_info' && !text.trim()) text = previewData.businessAddress + (previewData.businessContact ? '\n' + previewData.businessContact : '');
@@ -772,7 +798,7 @@
                 ensureComponent(component);
                 var selected = index === selectedIndex ? ' is-selected' : '';
                 var hidden = component.visible === false ? ' is-hidden' : '';
-                var headerClass = isHeader ? ' skt-preview-header-component skt-preview-' + escapeHtml(component.type) : '';
+                var headerClass = isHeader ? ' skt-preview-header-component skt-preview-' + escapeHtml(component.type) + (component.type === 'text' ? ' skt-preview-text' : '') : '';
                 return '<div class="skt-preview-component' + headerClass + selected + hidden + '" data-index="' + index + '" style="' + styleFor(component, isHeader) + '" tabindex="0" role="group" draggable="true" aria-grabbed="false" aria-label="Pilih ' + escapeHtml(component.label) + '. Tarik untuk mengubah urutan.">' +
                     '<button type="button" class="skt-preview-edit" data-edit-index="' + index + '" draggable="false" aria-label="Edit ' + escapeHtml(component.label) + '" title="Edit komponen"><i class="fa fa-pencil" aria-hidden="true"></i> Edit</button>' + previewInner(component) + '</div>';
             }
@@ -811,6 +837,7 @@
                 component.attributes.width = document.getElementById('component_width').value;
                 component.attributes.font_size = document.getElementById('component_font_size').value;
                 component.attributes.font_weight = document.getElementById('component_font_weight').value;
+                component.attributes.font_family = document.getElementById('component_font_family').value;
                 component.attributes.margin_bottom = document.getElementById('component_margin_bottom').value;
                 component.attributes.text = document.getElementById('component_text').value;
                 component.attributes.source = document.getElementById('component_source').value;
@@ -842,6 +869,7 @@
                 document.getElementById('component_width').value = attr(component, 'width', 100);
                 document.getElementById('component_font_size').value = attr(component, 'font_size', 12);
                 document.getElementById('component_font_weight').value = attr(component, 'font_weight', '400');
+                document.getElementById('component_font_family').value = ['Arial', 'Georgia', 'Times New Roman', 'Verdana'].indexOf(attr(component, 'font_family', 'Arial')) !== -1 ? attr(component, 'font_family', 'Arial') : 'Arial';
                 document.getElementById('component_text').value = attr(component, 'text', '');
                 document.getElementById('component_source').value = attr(component, 'source', 'logo_1') === 'business_logo' ? 'logo_1' : attr(component, 'source', 'logo_1');
                 document.getElementById('component_heading').value = attr(component, 'heading', '');
@@ -849,11 +877,13 @@
                 var componentColor = colorValue(attr(component, 'color', '#333333'), '#333333');
                 document.getElementById('component_color').value = componentColor;
                 document.getElementById('component_color_hex').value = componentColor;
-                document.getElementById('component_max_height').value = attr(component, 'max_height', 80);
+                document.getElementById('component_max_height').value = attr(component, 'max_height', 112);
                 document.getElementById('component_layout_column').value = attr(component, 'layout_column', component.type === 'logo' && attr(component, 'source', 'logo_1') === 'logo_2' ? 'right' : 'center');
                 document.getElementById('component_row_span').value = attr(component, 'row_span', component.type === 'logo' ? 3 : 1);
                 document.getElementById('component_margin_bottom').value = attr(component, 'margin_bottom', 8);
                 var type = component.type;
+                var firstBodyIndex = state.findIndex(function (item) { return (item.type || '') === 'document_title'; });
+                var isHeader = firstBodyIndex === -1 || selectedIndex < firstBodyIndex;
                 setFieldVisible('.component-field-text', ['text', 'document_title', 'rich_text', 'contact_info'].indexOf(type) !== -1);
                 var logoSource = attr(component, 'source', 'logo_1') === 'business_logo' ? 'logo_1' : attr(component, 'source', 'logo_1');
                 setFieldVisible('.component-field-logo-upload', type === 'logo');
@@ -863,8 +893,9 @@
                 setFieldVisible('.component-field-heading', ['rich_text', 'details_table'].indexOf(type) !== -1);
                 setFieldVisible('.component-field-content-key', type === 'rich_text');
                 setFieldVisible('.component-field-color', type !== 'logo');
+                setFieldVisible('.component-field-font-family', type !== 'logo');
                 setFieldVisible('.component-field-max-height', type === 'logo');
-                setFieldVisible('.component-field-logo-column', type === 'logo');
+                setFieldVisible('.component-field-layout-column', isHeader);
                 setFieldVisible('.component-field-row-span', type === 'logo');
                 document.getElementById('component_text').placeholder = type === 'document_title'
                     ? 'Contoh: SURAT PERJANJIAN KERJA (SPK)'

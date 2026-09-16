@@ -3120,9 +3120,9 @@
     "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
   },
   "Modules/Crm/Routes/web.php": {
-    "mtime": 1789551780.8267064,
-    "seen": 1789554464.638654,
-    "ast_hash": "c00b52cb77c3495b2b0a0066b7ce5bff",
+    "mtime": 1789592292.1218908,
+    "seen": 1789593191.1020308,
+    "ast_hash": "16c36178ebfd7fd309c0b0255774e8a7",
     "semantic_hash": ""
   },
   "Modules/Crm/Utils/CrmUtil.php": {
@@ -14364,39 +14364,39 @@
     "semantic_hash": ""
   },
   "Modules/Crm/Http/Controllers/SuratKontrakTemplateController.php": {
-    "mtime": 1789578661.6730814,
-    "seen": 1789579978.5466132,
-    "ast_hash": "0d49ac7f20828b32c2e9c3182d3fe11f",
+    "mtime": 1789592285.748052,
+    "seen": 1789593191.0338514,
+    "ast_hash": "857292eb3fda9a315796bbc58ca72db4",
     "semantic_hash": ""
   },
   "Modules/Crm/Resources/views/surat_kontrak/partials/document.blade.php": {
-    "mtime": 1789581325.0910656,
-    "seen": 1789581577.1032562,
-    "ast_hash": "663fcb6a12cf5d39e7b5982b4997ccf2",
+    "mtime": 1789594815.3780763,
+    "seen": 1789595671.480071,
+    "ast_hash": "f7fc8088497df232cb5050b5ff0fea17",
     "semantic_hash": ""
   },
   "Modules/Crm/Resources/views/surat_kontrak/template/form.blade.php": {
-    "mtime": 1789580977.8563192,
-    "seen": 1789581577.1042712,
-    "ast_hash": "5069a265ecf9e72487d251171e9cc708",
+    "mtime": 1789594815.380231,
+    "seen": 1789595671.480071,
+    "ast_hash": "a687027a9f9b8b6427491af6928952b5",
     "semantic_hash": ""
   },
   "Modules/Crm/Resources/views/surat_kontrak/template/index.blade.php": {
-    "mtime": 1789551891.1581838,
-    "seen": 1789554464.6375942,
-    "ast_hash": "29fad4bef7bdc14efdae4ad7a1969779",
+    "mtime": 1789593835.5364194,
+    "seen": 1789594510.4132137,
+    "ast_hash": "842e9cff4ff1a754fe3efd535d3277d9",
     "semantic_hash": ""
   },
   "Modules/Crm/Resources/views/surat_kontrak/template/preview.blade.php": {
-    "mtime": 1789551891.1607215,
-    "seen": 1789554464.6375942,
-    "ast_hash": "348681f16029a80f156fb443d94f98ee",
+    "mtime": 1789591347.2467592,
+    "seen": 1789591763.6302764,
+    "ast_hash": "d41dd65cd5e66f2eeb80055a2cca5be2",
     "semantic_hash": ""
   },
   "Modules/Crm/Services/SuratKontrakTemplateService.php": {
-    "mtime": 1789580653.2460277,
-    "seen": 1789581577.1067765,
-    "ast_hash": "906964d48630200f98c7d54b4eee659f",
+    "mtime": 1789595234.108649,
+    "seen": 1789595671.4831245,
+    "ast_hash": "cc0034d760b0e5f26a55f2b0214c631c",
     "semantic_hash": ""
   },
   "Modules/Crm/Database/Migrations/2026_09_17_100000_add_logo_1_to_surat_kontrak_templates_table.php": {

@@ -20,9 +20,10 @@
 @endphp
 
 <style>
-    .surat-kontrak-document { background: #fff; color: #111; font-family: Arial, sans-serif; padding: 28px 38px; line-height: 1.45; }
-    .surat-kontrak-letterhead { display: grid; grid-template-columns: minmax(72px, 1fr) minmax(0, 2.8fr) minmax(72px, 1fr); grid-auto-rows: minmax(28px, auto); column-gap: 8px; align-items: stretch; border-bottom: 0; }
-    .surat-kontrak-letterhead .skt-header-component { box-sizing: border-box; padding: 3px 6px; }
+    .surat-kontrak-document { box-sizing: border-box; background: #fff; color: #111; font-family: Arial, sans-serif; padding: 28px 38px; line-height: 1.45; }
+    .surat-kontrak-letterhead { display: grid; grid-template-columns: minmax(72px, 1fr) minmax(0, 2.8fr) minmax(72px, 1fr); grid-auto-rows: auto; column-gap: 8px; align-items: stretch; border-bottom: 0; }
+    .surat-kontrak-letterhead .skt-header-component { box-sizing: border-box; padding: 0 6px; }
+    .surat-kontrak-letterhead .skt-header-text { line-height: 1.15; white-space: nowrap; }
     .surat-kontrak-letterhead .skt-header-logo { display: flex; align-items: center; }
     .surat-kontrak-letterhead img { max-width: 100%; object-fit: contain; }
     .surat-kontrak-document-title { margin: 4px 0 0; }
@@ -32,6 +33,15 @@
     .surat-kontrak-document .skt-rich-text ol, .surat-kontrak-document .skt-rich-text ul { padding-left: 24px; }
     .surat-kontrak-document .skt-rich-text p { margin: 0 0 8px; }
     .surat-kontrak-document .skt-heading { margin: 0 0 5px; }
+    .surat-kontrak-letterhead .skt-header-component hr { border-top-width: 2px !important; }
+    @media print {
+        html, body { margin: 0 !important; padding: 0 !important; background: #fff !important; }
+        .surat-kontrak-document { width: 100%; min-width: 0; min-height: auto; margin: 0 !important; padding: 12mm 15mm; line-height: 1.45; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+        .surat-kontrak-letterhead { grid-template-columns: minmax(72px, 1fr) minmax(0, 2.8fr) minmax(72px, 1fr); grid-auto-rows: auto; column-gap: 8px; }
+        .surat-kontrak-letterhead .skt-header-component { padding: 0 6px; }
+        .surat-kontrak-document table { page-break-inside: avoid; }
+        .surat-kontrak-body .skt-body-component { page-break-inside: avoid; }
+    }
     @media (max-width: 600px) { .surat-kontrak-document { padding: 18px 14px; font-size: 12px; } .surat-kontrak-letterhead { grid-template-columns: minmax(60px, 1fr) minmax(0, 2.8fr) minmax(60px, 1fr); column-gap: 4px; } }
 </style>
 
@@ -58,7 +68,7 @@
                         $layout_style .= ' width: 100%; justify-self: stretch;';
                     }
                 @endphp
-                <div class="skt-header-component{{ $type === 'logo' ? ' skt-header-logo' : '' }}" style="{{ $component['style'] }}{{ $layout_style }}">
+                <div class="skt-header-component{{ $type === 'logo' ? ' skt-header-logo' : '' }}{{ $type === 'text' ? ' skt-header-text' : '' }}" style="{{ $component['style'] }}{{ $layout_style }}">
                     @if ($type === 'logo' && !empty($component['asset_url']))
                         <img src="{{ $component['asset_url'] }}" alt="{{ e($component['label']) }}" style="max-height: {{ (int) $attributes['max_height'] }}px;">
                     @elseif ($type === 'text')
@@ -68,7 +78,7 @@
                     @elseif ($type === 'contact_info')
                         {!! nl2br(e($component['text_value'])) !!}
                     @elseif ($type === 'separator')
-                        <hr style="border: 0; border-top: 1px solid {{ e($attributes['color']) }}; margin: 0;">
+                        <hr style="border: 0; border-top: 2px solid {{ e($attributes['color']) }}; margin: 0;">
                     @endif
                 </div>
             @endforeach

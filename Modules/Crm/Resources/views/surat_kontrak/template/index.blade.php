@@ -5,6 +5,32 @@
 @section('content')
     @include('crm::layouts.nav')
 
+    <style>
+        .skt-builtin-library { margin-bottom: 20px; }
+        .skt-builtin-card { height: 100%; border: 1px solid #d8e1e8; border-radius: 6px; background: #fff; box-shadow: 0 2px 8px rgba(25, 55, 80, .06); }
+        .skt-builtin-card .box-header { min-height: 76px; }
+        .skt-builtin-card .box-title { font-weight: 600; }
+        .skt-builtin-preview { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 6px 10px; align-items: center; min-height: 134px; padding: 12px; border: 1px solid #e5ebef; background: #fff; overflow: hidden; }
+        .skt-builtin-preview-logo { display: flex; align-items: center; justify-content: center; height: 88px; }
+        .skt-builtin-preview-logo img { max-width: 72px; max-height: 88px; object-fit: contain; }
+        .skt-builtin-preview-head { display: flex; min-width: 0; min-height: 88px; flex-direction: column; justify-content: center; }
+        .skt-builtin-preview-title { color: #e85d65; font: 400 20px/1.08 Georgia, serif; overflow-wrap: anywhere; }
+        .skt-builtin-preview-subtitle { margin-top: 5px; color: #5d78ab; font: 400 13px/1.1 Georgia, serif; overflow-wrap: anywhere; }
+        .skt-builtin-preview-line, .skt-builtin-preview-line-bottom, .skt-builtin-preview-contact { grid-column: 1 / -1; width: 100%; }
+        .skt-builtin-preview-line { border-top: 2px solid #111; }
+        .skt-builtin-preview-contact { color: #111; font: 700 8px/1.2 Arial, sans-serif; overflow-wrap: anywhere; text-align: center; }
+        .skt-builtin-preview-line-bottom { border-top: 2px solid #111; }
+        .skt-builtin-meta { min-height: 48px; margin-top: 12px; color: #66788a; font-size: 13px; line-height: 1.5; }
+        .skt-builtin-actions { margin-top: 14px; }
+        @media (max-width: 600px) {
+            .skt-builtin-preview { grid-template-columns: 58px minmax(0, 1fr); min-height: 126px; padding: 8px; }
+            .skt-builtin-preview-logo img { max-width: 54px; }
+            .skt-builtin-preview-title { font-size: 15px; }
+            .skt-builtin-preview-subtitle { font-size: 10px; }
+            .skt-builtin-preview-contact { font-size: 6px; }
+        }
+    </style>
+
     <section class="content-header no-print">
         <div class="d-flex justify-content-between align-items-center">
             <div>
@@ -26,6 +52,52 @@
         @if ($errors->has('template'))
             <div class="alert alert-danger no-print">{{ $errors->first('template') }}</div>
         @endif
+
+        <div class="box box-solid skt-builtin-library no-print">
+            <div class="box-header with-border">
+                <h3 class="box-title"><i class="fa fa-book"></i> Pustaka template bawaan</h3>
+            </div>
+            <div class="box-body">
+                <p class="text-muted" style="margin-bottom: 16px;">
+                    Pilih kop siap pakai berikut untuk menyalinnya ke bisnis aktif. Logo dan tulisan kop ini adalah bawaan tetap,
+                    bukan diambil dari identitas bisnis, dan masih dapat diedit setelah disalin.
+                </p>
+                <div class="row">
+                    @foreach ($builtins as $key => $builtin)
+                        <div class="col-md-6" style="margin-bottom: 16px;">
+                            <div class="skt-builtin-card">
+                                <div class="box-header with-border">
+                                    <h4 class="box-title">{{ $builtin['name'] }}</h4>
+                                </div>
+                                <div class="box-body">
+                                    <div class="skt-builtin-preview" aria-label="Pratinjau {{ $builtin['name'] }}">
+                                        <div class="skt-builtin-preview-logo">
+                                            <img src="{{ asset($builtin['logo_asset']) }}" alt="Logo bawaan template">
+                                        </div>
+                                        <div class="skt-builtin-preview-head">
+                                            <div class="skt-builtin-preview-title">{{ $builtin['title'] }}</div>
+                                            <div class="skt-builtin-preview-subtitle">{{ $builtin['subtitle'] }}</div>
+                                        </div>
+                                        <div class="skt-builtin-preview-line"></div>
+                                        <div class="skt-builtin-preview-contact">{{ $builtin['contact'] }}</div>
+                                        <div class="skt-builtin-preview-line-bottom"></div>
+                                    </div>
+                                    <div class="skt-builtin-meta">{{ $builtin['description'] }}</div>
+                                    <div class="skt-builtin-actions">
+                                        <form method="post" action="{{ route('crm.surat-kontrak-templates.builtins.copy', $key) }}">
+                                            @csrf
+                                            <button type="submit" class="btn btn-info" onclick="return confirm('Salin template ini ke bisnis aktif? Template baru akan dibuat nonaktif agar dapat diperiksa terlebih dahulu.')">
+                                                <i class="fa fa-copy"></i> Salin sebagai template baru
+                                            </button>
+                                        </form>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    @endforeach
+                </div>
+            </div>
+        </div>
 
         <div class="box box-solid">
             <div class="box-header with-border">

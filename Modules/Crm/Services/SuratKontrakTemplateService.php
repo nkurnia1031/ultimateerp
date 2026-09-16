@@ -43,6 +43,166 @@ class SuratKontrakTemplateService
             '</ol>';
     }
 
+    /**
+     * Template kop bawaan yang dapat disalin ke business mana pun.
+     *
+     * Header pada definisi ini sengaja tidak memakai placeholder business.
+     * Setelah disalin, komponen tetap dapat diedit melalui editor template,
+     * sedangkan isi kontraknya tetap memakai komponen operasional standar.
+     */
+    public function builtinTemplates()
+    {
+        return [
+            'cv-bm-transport' => [
+                'key' => 'cv-bm-transport',
+                'name' => 'Kop CV BM Transport (Bawaan)',
+                'description' => 'Kop CV BM Transport dengan logo, judul, subjudul, dan kontak tetap seperti referensi.',
+                'title' => 'CV BM TRANSPORT',
+                'subtitle' => 'JASA ANGKUTAN & CONTRACTOR',
+                'contact' => 'JL. JERUK No. 48 A TELP. (0765) 38552 E-mail: cv.bmtransport@ymail.com – DUMAI',
+                'logo_asset' => 'images/surat_kontrak_builtin/bmt-logo.png',
+                'components' => $this->builtinLetterheadComponents(
+                    'CV BM TRANSPORT',
+                    'JASA ANGKUTAN & CONTRACTOR',
+                    'JL. JERUK No. 48 A TELP. (0765) 38552 E-mail: cv.bmtransport@ymail.com – DUMAI'
+                ),
+                'body_html' => $this->defaultBodyHtml(),
+            ],
+            'pt-bintang-makmur-terus' => [
+                'key' => 'pt-bintang-makmur-terus',
+                'name' => 'Kop PT Bintang Makmur Terus (Bawaan)',
+                'description' => 'Kop PT Bintang Makmur Terus dengan logo, judul, subjudul, dan kontak tetap seperti referensi.',
+                'title' => 'PT. BINTANG MAKMUR TERUS',
+                'subtitle' => 'JASA ANGKUTAN & CONTRACTOR',
+                'contact' => 'JL. JERUK No. 48 A TELP. 0852-6557-3888 E-mail: bintangmakmurterus@gmail.com – DUMAI',
+                'logo_asset' => 'images/surat_kontrak_builtin/bmt-logo.png',
+                'components' => $this->builtinLetterheadComponents(
+                    'PT. BINTANG MAKMUR TERUS',
+                    'JASA ANGKUTAN & CONTRACTOR',
+                    'JL. JERUK No. 48 A TELP. 0852-6557-3888 E-mail: bintangmakmurterus@gmail.com – DUMAI'
+                ),
+                'body_html' => $this->defaultBodyHtml(),
+            ],
+        ];
+    }
+
+    public function getBuiltinTemplate($key)
+    {
+        return $this->builtinTemplates()[$key] ?? null;
+    }
+
+    private function builtinLetterheadComponents($title, $subtitle, $contact)
+    {
+        $components = [
+            [
+                'id' => 'builtin-logo-1',
+                'type' => 'logo',
+                'label' => 'Logo BMT bawaan',
+                'visible' => true,
+                'attributes' => [
+                    'source' => 'logo_1',
+                    'width' => 100,
+                    'align' => 'center',
+                    'max_height' => 118,
+                    'layout_column' => 'left',
+                    // Logo membentang melewati judul dan subjudul. Grid akan
+                    // menempatkan ruang sisa di bawah subjudul sehingga jarak
+                    // antar teks tetap rapat, sementara garis tetap berada di
+                    // bawah area logo.
+                    'row_span' => 3,
+                    'margin_bottom' => 0,
+                ],
+            ],
+            [
+                'id' => 'builtin-title',
+                'type' => 'text',
+                'label' => 'Nama perusahaan bawaan',
+                'visible' => true,
+                'attributes' => [
+                    'text' => $title,
+                    'width' => 100,
+                    'align' => 'center',
+                    'font_size' => 38,
+                    'font_weight' => '400',
+                    'font_family' => 'Georgia',
+                    'color' => '#e85d65',
+                    'layout_column' => 'center',
+                    'margin_bottom' => 0,
+                ],
+            ],
+            [
+                'id' => 'builtin-subtitle',
+                'type' => 'text',
+                'label' => 'Bidang usaha bawaan',
+                'visible' => true,
+                'attributes' => [
+                    'text' => $subtitle,
+                    'width' => 100,
+                    'align' => 'center',
+                    'font_size' => 25,
+                    'font_weight' => '400',
+                    'font_family' => 'Georgia',
+                    'color' => '#5d78ab',
+                    'layout_column' => 'center',
+                    'margin_bottom' => 0,
+                ],
+            ],
+            [
+                'id' => 'builtin-separator-top',
+                'type' => 'separator',
+                'label' => 'Garis atas kop bawaan',
+                'visible' => true,
+                'attributes' => [
+                    'width' => 100,
+                    'color' => '#111111',
+                    'layout_column' => 'full',
+                    'margin_bottom' => 0,
+                ],
+            ],
+            [
+                'id' => 'builtin-contact',
+                'type' => 'text',
+                'label' => 'Alamat dan kontak bawaan',
+                'visible' => true,
+                'attributes' => [
+                    'text' => $contact,
+                    'width' => 100,
+                    'align' => 'center',
+                    'font_size' => 12,
+                    'font_weight' => '700',
+                    'font_family' => 'Arial',
+                    'color' => '#111111',
+                    'layout_column' => 'center',
+                    'margin_bottom' => 0,
+                ],
+            ],
+            [
+                'id' => 'builtin-separator-bottom',
+                'type' => 'separator',
+                'label' => 'Garis bawah kop bawaan',
+                'visible' => true,
+                'attributes' => [
+                    'width' => 100,
+                    'color' => '#111111',
+                    'layout_column' => 'full',
+                    'margin_bottom' => 0,
+                ],
+            ],
+        ];
+
+        $in_body = false;
+        foreach ($this->defaultComponents() as $component) {
+            if (($component['type'] ?? '') === 'document_title') {
+                $in_body = true;
+            }
+            if ($in_body) {
+                $components[] = $component;
+            }
+        }
+
+        return $components;
+    }
+
     public function defaultComponents()
     {
         return [
@@ -51,42 +211,42 @@ class SuratKontrakTemplateService
                 'type' => 'logo',
                 'label' => 'Logo 1',
                 'visible' => true,
-                'attributes' => ['source' => 'logo_1', 'width' => 18, 'align' => 'center', 'max_height' => 80, 'layout_column' => 'left', 'row_span' => 3],
+                'attributes' => ['source' => 'logo_1', 'width' => 18, 'align' => 'center', 'max_height' => 112, 'layout_column' => 'left', 'row_span' => 3],
             ],
             [
                 'id' => 'logo-2',
                 'type' => 'logo',
                 'label' => 'Logo 2',
                 'visible' => false,
-                'attributes' => ['source' => 'logo_2', 'width' => 18, 'align' => 'center', 'max_height' => 80, 'layout_column' => 'right', 'row_span' => 3],
+                'attributes' => ['source' => 'logo_2', 'width' => 18, 'align' => 'center', 'max_height' => 112, 'layout_column' => 'right', 'row_span' => 3],
             ],
             [
                 'id' => 'business-name',
                 'type' => 'text',
                 'label' => 'Nama bisnis',
                 'visible' => true,
-                'attributes' => ['text' => '{{business.name}}', 'width' => 100, 'align' => 'center', 'font_size' => 22, 'font_weight' => '700', 'layout_column' => 'center'],
+                'attributes' => ['text' => '{{business.name}}', 'width' => 100, 'align' => 'center', 'font_size' => 36, 'font_weight' => '700', 'font_family' => 'Georgia', 'color' => '#e85d65', 'layout_column' => 'center'],
             ],
             [
                 'id' => 'business-subtitle',
                 'type' => 'text',
                 'label' => 'Subjudul/bidang usaha',
                 'visible' => true,
-                'attributes' => ['text' => 'JASA ANGKUTAN & CONTRACTOR', 'width' => 100, 'align' => 'center', 'font_size' => 14, 'font_weight' => '600', 'layout_column' => 'center'],
+                'attributes' => ['text' => 'JASA ANGKUTAN & CONTRACTOR', 'width' => 100, 'align' => 'center', 'font_size' => 24, 'font_weight' => '400', 'font_family' => 'Georgia', 'color' => '#5d78ab', 'layout_column' => 'center'],
             ],
             [
                 'id' => 'business-contact',
                 'type' => 'contact_info',
                 'label' => 'Alamat dan kontak',
                 'visible' => true,
-                'attributes' => ['text' => "{{business.address}}\n{{business.contact}}", 'width' => 100, 'align' => 'center', 'font_size' => 11, 'layout_column' => 'center'],
+                'attributes' => ['text' => "{{business.address}}\n{{business.contact}}", 'width' => 100, 'align' => 'center', 'font_size' => 10, 'font_family' => 'Arial', 'color' => '#111111', 'layout_column' => 'center'],
             ],
             [
                 'id' => 'header-separator',
                 'type' => 'separator',
                 'label' => 'Garis kop surat',
                 'visible' => true,
-                'attributes' => ['width' => 100, 'color' => '#333333', 'margin_bottom' => 18, 'layout_column' => 'full'],
+                'attributes' => ['width' => 100, 'color' => '#111111', 'margin_bottom' => 18, 'layout_column' => 'full'],
             ],
             [
                 'id' => 'document-title',
@@ -198,6 +358,7 @@ class SuratKontrakTemplateService
             $default_column = $type === 'logo'
                 ? (($attributes['source'] ?? '') === 'logo_2' ? 'right' : 'left')
                 : ($type === 'separator' ? 'full' : 'center');
+            $font_weight = (string) ($attributes['font_weight'] ?? '400');
             $item = [
                 'id' => $id,
                 'type' => $type,
@@ -213,9 +374,10 @@ class SuratKontrakTemplateService
                     'label' => Str::limit(strip_tags((string) ($attributes['label'] ?? 'Nomor')), 100, ''),
                     'align' => in_array(($attributes['align'] ?? ''), $alignments, true) ? $attributes['align'] : 'left',
                     'font_size' => $this->number($attributes['font_size'] ?? 12, 8, 48),
-                    'font_weight' => in_array((string) ($attributes['font_weight'] ?? '400'), $weights, true) ? (string) $attributes['font_weight'] : '400',
+                    'font_weight' => in_array($font_weight, $weights, true) ? $font_weight : '400',
+                    'font_family' => $this->fontFamilyKey($attributes['font_family'] ?? 'Arial'),
                     'width' => $this->number($attributes['width'] ?? 100, 10, 100),
-                    'max_height' => $this->number($attributes['max_height'] ?? 80, 20, 240),
+                    'max_height' => $this->number($attributes['max_height'] ?? ($type === 'logo' ? 112 : 80), 20, 240),
                     'margin_bottom' => $this->number($attributes['margin_bottom'] ?? 8, 0, 64),
                     'color' => $this->color($attributes['color'] ?? '#333333'),
                     'layout_column' => in_array(($attributes['layout_column'] ?? ''), ['left', 'center', 'right', 'full'], true)
@@ -368,9 +530,10 @@ class SuratKontrakTemplateService
     {
         $styles = [
             'text-align:' . ($attributes['align'] ?? 'left'),
-            'font-size:' . $this->number($attributes['font_size'] ?? 12, 8, 48) . 'px',
-            'font-weight:' . ($attributes['font_weight'] ?? '400'),
-            'color:' . $this->color($attributes['color'] ?? '#333333'),
+            'font-size:' . $this->number($attributes['font_size'] ?? 12, 8, 48) . 'px !important',
+            'font-weight:' . ($attributes['font_weight'] ?? '400') . ' !important',
+            'font-family:' . $this->fontFamilyCss($attributes['font_family'] ?? 'Arial') . ' !important',
+            'color:' . $this->color($attributes['color'] ?? '#333333') . ' !important',
             'width:' . $this->number($attributes['width'] ?? 100, 10, 100) . '%',
             'margin-bottom:' . $this->number($attributes['margin_bottom'] ?? 8, 0, 64) . 'px',
         ];
@@ -388,6 +551,23 @@ class SuratKontrakTemplateService
     private function color($value)
     {
         return preg_match('/^#[0-9a-f]{6}$/i', (string) $value) ? $value : '#333333';
+    }
+
+    private function fontFamilyKey($value)
+    {
+        $allowed = ['Arial', 'Georgia', 'Times New Roman', 'Verdana'];
+
+        return in_array((string) $value, $allowed, true) ? (string) $value : 'Arial';
+    }
+
+    private function fontFamilyCss($value)
+    {
+        return [
+            'Arial' => 'Arial, sans-serif',
+            'Georgia' => 'Georgia, serif',
+            'Times New Roman' => "'Times New Roman', Times, serif",
+            'Verdana' => 'Verdana, sans-serif',
+        ][$this->fontFamilyKey($value)];
     }
 
     private function formatDate($value)

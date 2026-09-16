@@ -48,6 +48,8 @@ Route::middleware('web', 'authh', 'auth', 'SetSessionData', 'language', 'timezon
 
     Route::get('surat-kontrak-templates', [Modules\Crm\Http\Controllers\SuratKontrakTemplateController::class, 'index'])
         ->name('crm.surat-kontrak-templates.index');
+    Route::post('surat-kontrak-templates/built-in/{key}/copy', [Modules\Crm\Http\Controllers\SuratKontrakTemplateController::class, 'copyBuiltin'])
+        ->name('crm.surat-kontrak-templates.builtins.copy');
     Route::get('surat-kontrak-templates/create', [Modules\Crm\Http\Controllers\SuratKontrakTemplateController::class, 'create'])
         ->name('crm.surat-kontrak-templates.create');
     Route::post('surat-kontrak-templates', [Modules\Crm\Http\Controllers\SuratKontrakTemplateController::class, 'store'])

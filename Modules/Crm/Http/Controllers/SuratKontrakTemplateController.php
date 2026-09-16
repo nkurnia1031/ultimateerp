@@ -8,6 +8,8 @@ use App\Utils\Util;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\File;
+use Illuminate\Support\Str;
 use Modules\Crm\Entities\SuratKontrak;
 use Modules\Crm\Entities\SuratKontrakTemplate;
 use Modules\Crm\Services\SuratKontrakTemplateService;
@@ -31,8 +33,50 @@ class SuratKontrakTemplateController extends Controller
     {
         $business_id = $this->assertAccess();
         $templates = $this->templateService->getForBusiness($business_id);
+        $builtins = $this->templateService->builtinTemplates();
 
-        return view('crm::surat_kontrak.template.index', compact('templates'));
+        return view('crm::surat_kontrak.template.index', compact('templates', 'builtins'));
+    }
+
+    public function copyBuiltin($key)
+    {
+        $business_id = $this->assertAccess();
+        $builtin = $this->templateService->getBuiltinTemplate($key);
+
+        abort_if(empty($builtin), 404, 'Template kop bawaan tidak ditemukan.');
+
+        $copied_logo = null;
+
+        try {
+            DB::beginTransaction();
+
+            $copied_logo = $this->copyBuiltinLogo($builtin);
+            $template = new SuratKontrakTemplate();
+            $template->business_id = $business_id;
+            $template->created_by = auth()->id();
+            $template->name = $builtin['name'];
+            $template->letterhead_mode = 'components';
+            $template->components = $this->templateService->normalizeComponents($builtin['components']);
+            $template->body_html = $this->templateService->sanitizeHtml($builtin['body_html']);
+            $template->logo_1 = $copied_logo;
+            $template->is_active = false;
+            $template->is_default = false;
+            $template->schema_version = SuratKontrakTemplateService::SCHEMA_VERSION;
+            $template->save();
+
+            DB::commit();
+
+            return redirect()->route('crm.surat-kontrak-templates.edit', $template->id)->with('status', [
+                'success' => 1,
+                'msg' => 'Template bawaan berhasil disalin. Periksa dan aktifkan jika sudah sesuai.',
+            ]);
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            $this->deleteUploadedFile($copied_logo, 'surat_kontrak_logos');
+            \Log::error('Gagal menyalin template kop bawaan: ' . $e->getMessage(), ['exception' => $e, 'builtin' => $key]);
+
+            return back()->withErrors(['template' => 'Template bawaan tidak dapat disalin. Periksa file logo bawaan dan coba lagi.']);
+        }
     }
 
     public function create()
@@ -273,5 +317,26 @@ class SuratKontrakTemplateController extends Controller
         if (is_file($path)) {
             @unlink($path);
         }
+    }
+
+    private function copyBuiltinLogo(array $builtin)
+    {
+        $source = public_path($builtin['logo_asset'] ?? '');
+        if (! is_file($source)) {
+            throw new \RuntimeException('File logo template bawaan tidak tersedia.');
+        }
+
+        $directory = public_path('uploads/surat_kontrak_logos');
+        if (! is_dir($directory) && ! @mkdir($directory, 0755, true) && ! is_dir($directory)) {
+            throw new \RuntimeException('Folder penyimpanan logo tidak dapat dibuat.');
+        }
+
+        $target_name = 'builtin_' . $builtin['key'] . '_' . Str::lower(Str::random(20)) . '.png';
+        $target = $directory . DIRECTORY_SEPARATOR . $target_name;
+        if (! File::copy($source, $target)) {
+            throw new \RuntimeException('File logo template bawaan tidak dapat disalin.');
+        }
+
+        return $target_name;
     }
 }
