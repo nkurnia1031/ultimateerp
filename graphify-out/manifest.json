@@ -1980,9 +1980,9 @@
     "semantic_hash": "d40afe11f7dda1c3ec82030ddc153f72"
   },
   "Modules/AssetManagement/Http/Controllers/AssetController.php": {
-    "mtime": 1788970148.8442826,
-    "seen": 1788970597.7085507,
-    "ast_hash": "fb13c2b3d6058c86dcbdd71d55221c6a",
+    "mtime": 1789980014.2669208,
+    "seen": 1789980769.5154743,
+    "ast_hash": "19fa7d1cbd390cc86d31e60931d99175",
     "semantic_hash": ""
   },
   "Modules/AssetManagement/Http/Controllers/AssetDepreciationController.php": {
@@ -2058,10 +2058,10 @@
     "semantic_hash": "dfb7cb2b50d2edd8eec2391eaeca9f83"
   },
   "Modules/AssetManagement/Resources/views/asset/edit.blade.php": {
-    "mtime": 1778651707.8138342,
-    "seen": 1788970597.7085507,
-    "ast_hash": "a73799595a2df044dca7f7acd8eb7886",
-    "semantic_hash": "a73799595a2df044dca7f7acd8eb7886"
+    "mtime": 1789980014.2690976,
+    "seen": 1789980769.5226924,
+    "ast_hash": "181527870fa7af1c2e728325b2b3d922",
+    "semantic_hash": ""
   },
   "Modules/AssetManagement/Resources/views/asset/index.blade.php": {
     "mtime": 1778654089.4578745,
@@ -2190,9 +2190,9 @@
     "semantic_hash": "9ba24c56c51f09683ef6fb5193f327ac"
   },
   "Modules/AssetManagement/Routes/web.php": {
-    "mtime": 1789141636.3253036,
-    "seen": 1789143829.0923452,
-    "ast_hash": "99206f2b6a17c9033adaa8981f827620",
+    "mtime": 1789992467.4871602,
+    "seen": 1789992742.404179,
+    "ast_hash": "6359a57fa9af8cd11915730c517e01f1",
     "semantic_hash": ""
   },
   "Modules/AssetManagement/Services/AssetExpiryReminderService.php": {
@@ -14076,9 +14076,9 @@
     "semantic_hash": ""
   },
   "Modules/AssetManagement/Http/Controllers/HeavyEquipmentRateController.php": {
-    "mtime": 1789159748.7074203,
-    "seen": 1789160921.511061,
-    "ast_hash": "369f38b3d648ad7473e365131fe8b944",
+    "mtime": 1789993371.1103714,
+    "seen": 1789994793.0922134,
+    "ast_hash": "1f4ead4a269b1ff05093ff9cb333fc79",
     "semantic_hash": ""
   },
   "Modules/AssetManagement/Http/Controllers/HeavyEquipmentReportController.php": {
@@ -14112,9 +14112,9 @@
     "semantic_hash": ""
   },
   "Modules/AssetManagement/Resources/views/fleet/rates/index.blade.php": {
-    "mtime": 1789374857.3652337,
-    "seen": 1789375631.0547278,
-    "ast_hash": "eea8a6a5137aa9369b2301b281672c63",
+    "mtime": 1789994643.5302446,
+    "seen": 1789994793.1093867,
+    "ast_hash": "d1a6683b769582b46ad880ebaa192255",
     "semantic_hash": ""
   },
   "Modules/AssetManagement/Resources/views/fleet/reports/asset_ledger.blade.php": {
@@ -14334,9 +14334,9 @@
     "semantic_hash": ""
   },
   "Modules/AssetManagement/Resources/views/fleet/rates/form.blade.php": {
-    "mtime": 1789158979.1900449,
-    "seen": 1789160921.5517874,
-    "ast_hash": "75a800d5464d8b6dddb85b9f216cfeb0",
+    "mtime": 1789993439.909951,
+    "seen": 1789994793.1093867,
+    "ast_hash": "ee8c9f488b4078f53696e067fcb11f19",
     "semantic_hash": ""
   },
   "resources/views/layouts/partials/fleet-datatables.blade.php": {
@@ -14409,6 +14409,12 @@
     "mtime": 1789595777.2016275,
     "seen": 1789595996.792106,
     "ast_hash": "866fbfd29465cd7df396b9e03217b839",
+    "semantic_hash": ""
+  },
+  "Modules/AssetManagement/Resources/views/fleet/rates/partials/rate-cell.blade.php": {
+    "mtime": 1789993383.6807313,
+    "seen": 1789994793.1093867,
+    "ast_hash": "07b137dbd0cb2e78c8ac3e813e974579",
     "semantic_hash": ""
   }
 }

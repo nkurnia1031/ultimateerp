@@ -12,6 +12,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 use Modules\AssetManagement\Entities\Asset;
 use Modules\AssetManagement\Entities\AssetTransaction;
 use Modules\AssetManagement\Entities\AssetWarranty;
@@ -674,8 +675,23 @@ class AssetController extends Controller
             abort(403, 'Unauthorized action.');
         }
 
+        $request->validate([
+            'asset_code' => [
+                'required',
+                'string',
+                'max:255',
+                Rule::unique('assets', 'asset_code')
+                    ->where(fn ($query) => $query->where('business_id', $business_id))
+                    ->ignore($id),
+            ],
+        ], [
+            'asset_code.required' => 'Kode aset wajib diisi.',
+            'asset_code.unique' => 'Kode aset sudah digunakan pada business ini.',
+        ]);
+
         try {
             $input = $request->only(
+                'asset_code',
                 'name',
                 'quantity',
                 'model',
@@ -693,6 +709,7 @@ class AssetController extends Controller
                 'tbpkp',
                 'tbpkp_expired_at'
             );
+            $input['asset_code'] = trim($input['asset_code']);
             $input['is_allocatable'] = ! empty($input['is_allocatable']) ? 1 : 0;
 
             DB::beginTransaction();

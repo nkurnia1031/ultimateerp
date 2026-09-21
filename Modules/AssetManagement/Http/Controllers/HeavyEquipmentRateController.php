@@ -25,15 +25,226 @@ class HeavyEquipmentRateController extends Controller
         $this->authorizeView();
         $businessId = $this->businessId();
         $batches = HeavyEquipmentRateBatch::where('business_id', $businessId)->with('uploader')->latest()->get();
-        $rates = HeavyEquipmentRouteRate::where('business_id', $businessId)
-            ->whereIn('status', ['active', 'expired', 'draft'])
-            ->with(['route', 'units.asset', 'batch', 'trips'])
-            ->orderByDesc('effective_from')
-            ->orderBy('route_id')
-            ->get();
-        $allAssets = Asset::where('business_id', $businessId)->orderBy('name')->pluck('name', 'id');
+        $batchIssues = $batches->mapWithKeys(function (HeavyEquipmentRateBatch $batch) {
+            return [$batch->id => $this->parseBatchIssues($batch->error_message)];
+        })->all();
+        $hasPreviewIssues = collect($batchIssues)
+            ->contains(fn (array $issues) => count($issues) > 0)
+            || HeavyEquipmentRouteRate::where('business_id', $businessId)
+                ->where('status', 'draft')
+                ->whereHas('units', fn ($query) => $query->whereNull('asset_id'))
+                ->exists();
 
-        return view('assetmanagement::fleet.rates.index', compact('batches', 'rates', 'allAssets'));
+        return view('assetmanagement::fleet.rates.index', compact('batches', 'batchIssues', 'hasPreviewIssues'));
+    }
+
+    /**
+     * Return the transport-rate table through DataTables server-side AJAX.
+     * The initial page must not render every rate and every Asset option.
+     */
+    public function data(Request $request)
+    {
+        $this->authorizeView();
+
+        $query = HeavyEquipmentRouteRate::query()
+            ->where('business_id', $this->businessId())
+            ->whereIn('status', ['active', 'expired', 'draft']);
+        $recordsTotal = (clone $query)->count();
+        $search = trim((string) $request->input('search.value', ''));
+
+        if ($search !== '') {
+            $like = '%' . addcslashes($search, '%_\\') . '%';
+            $query->where(function ($builder) use ($like) {
+                $builder
+                    ->where('notes', 'like', $like)
+                    ->orWhere('status', 'like', $like)
+                    ->orWhereHas('route', function ($routeQuery) use ($like) {
+                        $routeQuery->where('name', 'like', $like)
+                            ->orWhere('origin', 'like', $like)
+                            ->orWhere('destination', 'like', $like);
+                    })
+                    ->orWhereHas('units', function ($unitQuery) use ($like) {
+                        $unitQuery->where('unit_label', 'like', $like)
+                            ->orWhereHas('asset', function ($assetQuery) use ($like) {
+                                $assetQuery->where('name', 'like', $like)
+                                    ->orWhere('asset_code', 'like', $like);
+                            });
+                    });
+            });
+        }
+
+        $recordsFiltered = (clone $query)->count();
+        $orderColumn = (int) $request->input('order.0.column', 2);
+        $orderDirection = strtolower((string) $request->input('order.0.dir', 'desc')) === 'asc' ? 'asc' : 'desc';
+        $orderMap = [
+            0 => 'route_id',
+            2 => 'effective_from',
+            3 => 'driver_rate_per_ton',
+            4 => 'travel_allowance',
+            5 => 'sale_rate_per_ton',
+            7 => 'status',
+        ];
+        $orderBy = $orderMap[$orderColumn] ?? 'effective_from';
+        $start = max(0, (int) $request->input('start', 0));
+        $length = (int) $request->input('length', 25);
+        $length = $length < 1 ? 100 : min($length, 100);
+
+        $rates = $query
+            ->with(['route', 'units.asset', 'batch'])
+            ->withCount('trips')
+            ->orderBy($orderBy, $orderDirection)
+            ->orderBy('route_id')
+            ->skip($start)
+            ->take($length)
+            ->get();
+        $canManageRates = $this->canManageRates();
+
+        $data = $rates->map(function (HeavyEquipmentRouteRate $rate) use ($canManageRates) {
+            $rowIssue = $this->rateIssueData($rate);
+            $columns = [];
+            foreach (['route', 'unit', 'effective', 'driver_rate', 'travel_allowance', 'sale_rate', 'notes', 'status', 'actions'] as $column) {
+                $columns[] = view('assetmanagement::fleet.rates.partials.rate-cell', [
+                    'rate' => $rate,
+                    'column' => $column,
+                    'rowIssue' => $rowIssue,
+                    'canManageRates' => $canManageRates,
+                ])->render();
+            }
+
+            return $columns;
+        })->values();
+
+        return response()->json([
+            'draw' => (int) $request->input('draw', 0),
+            'recordsTotal' => $recordsTotal,
+            'recordsFiltered' => $recordsFiltered,
+            'data' => $data,
+        ]);
+    }
+
+    /**
+     * Search Asset options only when a user opens the multi-select.
+     */
+    public function assetOptions(Request $request)
+    {
+        $this->authorizeView();
+
+        $search = trim((string) $request->input('q', ''));
+        $page = max(1, (int) $request->input('page', 1));
+        $perPage = 20;
+        $like = '%' . addcslashes($search, '%_\\') . '%';
+
+        $assets = Asset::query()
+            ->where('business_id', $this->businessId())
+            ->when($search !== '', function ($query) use ($like) {
+                $query->where(function ($builder) use ($like) {
+                    $builder->where('name', 'like', $like)->orWhere('asset_code', 'like', $like);
+                });
+            })
+            ->orderBy('name')
+            ->paginate($perPage, ['id', 'name', 'asset_code'], 'page', $page);
+
+        return response()->json([
+            'results' => $assets->getCollection()->map(function (Asset $asset) {
+                return [
+                    'id' => $asset->id,
+                    'text' => $asset->name . ($asset->asset_code ? ' (' . $asset->asset_code . ')' : ''),
+                ];
+            })->values(),
+            'pagination' => ['more' => $assets->hasMorePages()],
+        ]);
+    }
+
+    /**
+     * Return draft-import errors and unmatched units through DataTables AJAX.
+     * Error messages are stored as batch JSON, so filtering/pagination is kept
+     * in this endpoint instead of making the initial page render every row.
+     */
+    public function issuesData(Request $request)
+    {
+        $this->authorizeView();
+        $businessId = $this->businessId();
+
+        $batches = HeavyEquipmentRateBatch::query()
+            ->where('business_id', $businessId)
+            ->where('status', 'draft')
+            ->get(['id', 'file_name', 'error_message']);
+        $batchNames = $batches->pluck('file_name', 'id');
+        $issues = collect();
+
+        foreach ($batches as $batch) {
+            foreach ($this->parseBatchIssues($batch->error_message) as $issue) {
+                $issues->push([
+                    'batch_id' => $batch->id,
+                    'file_name' => $batch->file_name,
+                    'row' => $issue['row'] ?? null,
+                    'message' => $issue['message'],
+                ]);
+            }
+        }
+
+        $draftRates = HeavyEquipmentRouteRate::query()
+            ->where('business_id', $businessId)
+            ->where('status', 'draft')
+            ->with('units')
+            ->get(['id', 'batch_id', 'source_row']);
+
+        foreach ($draftRates as $rate) {
+            foreach ($rate->units->whereNull('asset_id') as $unit) {
+                $issues->push([
+                    'batch_id' => $rate->batch_id,
+                    'file_name' => $batchNames->get($rate->batch_id, 'Tarif manual'),
+                    'row' => $rate->source_row,
+                    'message' => "Unit '{$unit->unit_label}' belum dicocokkan ke master Asset. Pilih Asset pada kolom Unit.",
+                ]);
+            }
+        }
+
+        $issues = $issues->unique(function (array $issue) {
+            return ($issue['batch_id'] ?? 'batch') . '|' . ($issue['row'] ?? 'general') . '|' . $issue['message'];
+        })->values();
+        $recordsTotal = $issues->count();
+        $search = trim((string) $request->input('search.value', ''));
+        if ($search !== '') {
+            $needle = mb_strtolower($search);
+            $issues = $issues->filter(function (array $issue) use ($needle) {
+                return str_contains(mb_strtolower((string) $issue['batch_id']), $needle)
+                    || str_contains(mb_strtolower((string) $issue['file_name']), $needle)
+                    || str_contains(mb_strtolower((string) ($issue['row'] ?? '')), $needle)
+                    || str_contains(mb_strtolower((string) $issue['message']), $needle);
+            })->values();
+        }
+
+        $recordsFiltered = $issues->count();
+        $issues = $issues->sortBy(function (array $issue) {
+            return [(int) ($issue['row'] ?? PHP_INT_MAX), (int) ($issue['batch_id'] ?? 0), $issue['message']];
+        })->values();
+        if (strtolower((string) $request->input('order.0.dir', 'asc')) === 'desc') {
+            $issues = $issues->reverse()->values();
+        }
+
+        $start = max(0, (int) $request->input('start', 0));
+        $length = (int) $request->input('length', 10);
+        $length = $length < 1 ? 100 : min($length, 100);
+        $pageIssues = $issues->slice($start, $length);
+
+        $data = $pageIssues->map(function (array $issue) {
+            $rowLabel = $issue['row'] ? 'Baris ' . $issue['row'] : 'Umum';
+
+            return [
+                '#' . e($issue['batch_id']) . '<br><small>' . e($issue['file_name']) . '</small>',
+                e($rowLabel),
+                e($issue['message']),
+                'Periksa baris tersebut di Excel. Jika masalahnya unit, pilih Asset yang sesuai pada tabel tarif sebelum konfirmasi.',
+            ];
+        })->values();
+
+        return response()->json([
+            'draw' => (int) $request->input('draw', 0),
+            'recordsTotal' => $recordsTotal,
+            'recordsFiltered' => $recordsFiltered,
+            'data' => $data,
+        ]);
     }
 
     public function create(Request $request)
@@ -51,19 +262,28 @@ class HeavyEquipmentRateController extends Controller
     public function store(Request $request)
     {
         $this->authorizeManage();
-        $validated = $this->validateRate($request);
 
         try {
+            $validated = $this->validateRate($request);
             $rate = $this->saveRate($validated);
 
-            return redirect()->route('asset.fleet.rates.index')
-                ->with('status', ['success' => true, 'msg' => "Tarif manual #{$rate->id} berhasil dibuat dan langsung aktif."]);
+            return $this->respond($request, true, "Tarif manual #{$rate->id} berhasil dibuat dan langsung aktif.", [
+                'rate_id' => $rate->id,
+            ], 200, 'asset.fleet.rates.index');
         } catch (ValidationException $e) {
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'success' => false,
+                    'msg' => $e->getMessage() ?: 'Periksa data tarif.',
+                    'errors' => $e->errors(),
+                ], 422);
+            }
+
             return back()->withInput()->withErrors($e->errors());
         } catch (\Throwable $e) {
             report($e);
 
-            return back()->withInput()->with('status', ['success' => false, 'msg' => 'Tarif belum disimpan. Periksa data dan coba lagi.']);
+            return $this->respond($request, false, 'Tarif belum disimpan. Periksa data dan coba lagi.', [], 422, 'asset.fleet.rates.index');
         }
     }
 
@@ -92,42 +312,44 @@ class HeavyEquipmentRateController extends Controller
         $this->authorizeManage();
         $rate = $this->rate($id)->load(['units', 'trips', 'batch']);
         if ($rate->status === 'cancelled') {
-            throw ValidationException::withMessages(['rate' => 'Tarif yang sudah dibatalkan tidak dapat diedit. Buat tarif atau revisi baru.']);
+            return $this->respond($request, false, 'Tarif yang sudah dibatalkan tidak dapat diedit. Buat tarif atau revisi baru.', [], 422);
         }
         if ($rate->trips->isNotEmpty()) {
-            throw ValidationException::withMessages(['rate' => 'Tarif yang sudah dipakai SPB tidak dapat diedit. Gunakan Buat Revisi Tarif.']);
+            return $this->respond($request, false, 'Tarif yang sudah dipakai SPB tidak dapat diedit. Gunakan Buat Revisi Tarif.', [], 422);
         }
-        $validated = $this->validateRate($request);
-
         try {
+            $validated = $this->validateRate($request);
             $this->saveRate($validated, $rate);
 
-            return redirect()->route('asset.fleet.rates.index')
-                ->with('status', ['success' => true, 'msg' => "Tarif #{$rate->id} berhasil diperbarui."]);
+            return $this->respond($request, true, "Tarif #{$rate->id} berhasil diperbarui.", [
+                'rate_id' => $rate->id,
+            ], 200, 'asset.fleet.rates.index');
         } catch (ValidationException $e) {
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'success' => false,
+                    'msg' => $e->getMessage() ?: 'Periksa data tarif.',
+                    'errors' => $e->errors(),
+                ], 422);
+            }
+
             return back()->withInput()->withErrors($e->errors());
         } catch (\Throwable $e) {
             report($e);
 
-            return back()->withInput()->with('status', ['success' => false, 'msg' => 'Tarif belum diperbarui. Periksa data dan coba lagi.']);
+            return $this->respond($request, false, 'Tarif belum diperbarui. Periksa data dan coba lagi.', [], 422, 'asset.fleet.rates.index');
         }
     }
 
-    public function destroy($id)
+    public function destroy(Request $request, $id)
     {
         $this->authorizeManage();
         $rate = $this->rate($id)->load(['trips', 'batch']);
         if ($rate->status === 'cancelled') {
-            return back()->with('status', [
-                'success' => false,
-                'msg' => 'Tarif tersebut sudah dibatalkan.',
-            ]);
+            return $this->respond($request, false, 'Tarif tersebut sudah dibatalkan.', [], 422);
         }
         if ($rate->trips->isNotEmpty()) {
-            return back()->with('status', [
-                'success' => false,
-                'msg' => 'Tarif tidak dapat dihapus karena sudah dipakai SPB. Histori transaksi harus dipertahankan; gunakan Buat Revisi Tarif.',
-            ]);
+            return $this->respond($request, false, 'Tarif tidak dapat dihapus karena sudah dipakai SPB. Histori transaksi harus dipertahankan; gunakan Buat Revisi Tarif.', [], 422);
         }
 
         if (! $this->isManualRate($rate)) {
@@ -140,7 +362,7 @@ class HeavyEquipmentRateController extends Controller
                 ]);
             });
 
-            return back()->with('status', ['success' => true, 'msg' => 'Tarif hasil import dibatalkan dan tetap tersimpan sebagai histori sumber.']);
+            return $this->respond($request, true, 'Tarif hasil import dibatalkan dan tetap tersimpan sebagai histori sumber.');
         }
 
         DB::transaction(function () use ($rate) {
@@ -152,7 +374,7 @@ class HeavyEquipmentRateController extends Controller
             }
         });
 
-        return back()->with('status', ['success' => true, 'msg' => 'Tarif berhasil dihapus.']);
+        return $this->respond($request, true, 'Tarif berhasil dihapus.');
     }
 
     public function upload(Request $request)
@@ -170,19 +392,23 @@ class HeavyEquipmentRateController extends Controller
                 $this->businessId(),
                 auth()->id()
             );
+            $issueCount = count($this->parseBatchIssues($batch->error_message))
+                + $batch->rates->flatMap(fn ($rate) => $rate->units)->filter(fn ($unit) => ! $unit->asset_id)->count();
+            $message = $issueCount > 0
+                ? "Preview batch #{$batch->id} dibuat. {$issueCount} baris atau unit perlu diperiksa pada tabel preview."
+                : "Preview batch #{$batch->id} dibuat. Periksa datanya sebelum konfirmasi.";
 
-            return redirect()->route('asset.fleet.rates.index')->with('status', [
-                'success' => true,
-                'msg' => "Preview batch {$batch->id} dibuat. Periksa pencocokan unit lalu konfirmasi.",
-            ]);
+            return $this->respond($request, true, $message, [
+                'batch_id' => $issueCount > 0 ? $batch->id : null,
+            ], 200, 'asset.fleet.rates.index');
         } catch (\Throwable $e) {
             report($e);
 
-            return back()->withInput()->with('status', ['success' => false, 'msg' => $e->getMessage()]);
+            return $this->respond($request, false, $this->friendlyRateExceptionMessage($e), [], 422, 'asset.fleet.rates.index');
         }
     }
 
-    public function confirm($id)
+    public function confirm(Request $request, $id)
     {
         $this->authorizeManage();
         $batch = HeavyEquipmentRateBatch::where('business_id', $this->businessId())->findOrFail($id);
@@ -190,15 +416,21 @@ class HeavyEquipmentRateController extends Controller
         try {
             $this->rateService->confirm($batch);
 
-            return back()->with('status', ['success' => true, 'msg' => 'Tarif berhasil diaktifkan.']);
+            return $this->respond($request, true, 'Tarif berhasil diaktifkan.');
         } catch (\Throwable $e) {
             report($e);
 
-            return back()->with('status', ['success' => false, 'msg' => $e->getMessage()]);
+            $failedBatch = $batch->fresh();
+            $issueCount = count($this->parseBatchIssues($failedBatch?->error_message));
+            $message = $issueCount > 0
+                ? "Batch belum diaktifkan. {$issueCount} masalah ditandai pada tabel preview; perbaiki atau cocokkan baris tersebut lalu coba lagi."
+                : 'Batch belum diaktifkan. Periksa data preview dan coba lagi.';
+
+            return $this->respond($request, false, $message, ['batch_id' => $batch->id], 422);
         }
     }
 
-    public function cancel($id)
+    public function cancel(Request $request, $id)
     {
         $this->authorizeManage();
         $batch = HeavyEquipmentRateBatch::where('business_id', $this->businessId())->findOrFail($id);
@@ -206,11 +438,11 @@ class HeavyEquipmentRateController extends Controller
         try {
             $this->rateService->cancel($batch);
 
-            return back()->with('status', ['success' => true, 'msg' => 'Batch tarif dibatalkan.']);
+            return $this->respond($request, true, 'Batch tarif dibatalkan.');
         } catch (\Throwable $e) {
             report($e);
 
-            return back()->with('status', ['success' => false, 'msg' => $e->getMessage()]);
+            return $this->respond($request, false, $e->getMessage(), [], 422);
         }
     }
 
@@ -224,7 +456,76 @@ class HeavyEquipmentRateController extends Controller
         Asset::where('business_id', $this->businessId())->findOrFail($request->input('asset_id'));
         $unit->update(['asset_id' => $request->input('asset_id')]);
 
-        return back()->with('status', ['success' => true, 'msg' => "Unit {$unit->unit_label} berhasil dicocokkan ke Asset."]);
+        return $this->respond($request, true, "Unit {$unit->unit_label} berhasil dicocokkan ke Asset.");
+    }
+
+    public function mapUnits(Request $request, $id)
+    {
+        $this->authorizeManage();
+        $validated = $request->validate([
+            'asset_ids' => ['required', 'array', 'min:1'],
+            'asset_ids.*' => ['required', 'integer', 'distinct'],
+        ], [
+            'asset_ids.required' => 'Pilih minimal satu Asset.',
+            'asset_ids.min' => 'Pilih minimal satu Asset.',
+            'asset_ids.*.distinct' => 'Asset yang sama tidak boleh dipilih dua kali.',
+        ]);
+
+        $assetIds = array_values(array_map('intval', $validated['asset_ids']));
+        $businessId = $this->businessId();
+        $assets = Asset::where('business_id', $businessId)
+            ->whereIn('id', $assetIds)
+            ->get(['id', 'name', 'asset_code'])
+            ->keyBy('id');
+
+        if ($assets->count() !== count($assetIds)) {
+            return $this->respond($request, false, 'Sebagian Asset tidak berasal dari business aktif. Pilih ulang Asset yang tersedia.', [], 422);
+        }
+
+        try {
+            $mappingLabels = [];
+            DB::transaction(function () use ($id, $businessId, $assetIds, $assets, &$mappingLabels) {
+                $rate = HeavyEquipmentRouteRate::where('business_id', $businessId)
+                    ->where('status', 'draft')
+                    ->findOrFail($id);
+                $units = HeavyEquipmentRateUnit::where('route_rate_id', $rate->id)
+                    ->whereNull('asset_id')
+                    ->orderBy('id')
+                    ->lockForUpdate()
+                    ->get();
+
+                if ($units->isEmpty()) {
+                    throw new \RuntimeException('Semua unit pada baris ini sudah dicocokkan atau baris tidak lagi berstatus draft.');
+                }
+                if (count($assetIds) > $units->count()) {
+                    throw new \RuntimeException('Pilih maksimal ' . $units->count() . ' Asset, sesuai jumlah unit yang belum cocok.');
+                }
+
+                $usedAssetIds = HeavyEquipmentRateUnit::where('route_rate_id', $rate->id)
+                    ->whereNotNull('asset_id')
+                    ->whereIn('asset_id', $assetIds)
+                    ->pluck('asset_id')
+                    ->all();
+                if ($usedAssetIds !== []) {
+                    throw new \RuntimeException('Salah satu Asset yang dipilih sudah dipakai oleh unit lain pada baris tarif ini.');
+                }
+
+                foreach ($assetIds as $index => $assetId) {
+                    $unit = $units[$index];
+                    $asset = $assets->get($assetId);
+                    $unit->update(['asset_id' => $assetId]);
+                    $mappingLabels[] = $unit->unit_label . ' → ' . $asset->name;
+                }
+            });
+
+            return $this->respond($request, true, count($mappingLabels) . ' unit berhasil dicocokkan ke Asset: ' . implode(', ', $mappingLabels));
+        } catch (\Throwable $e) {
+            report($e);
+
+            return $this->respond($request, false, $e instanceof \RuntimeException
+                ? $e->getMessage()
+                : 'Pemetaan Asset belum berhasil. Muat ulang preview lalu coba lagi.', [], 422);
+        }
     }
 
     public function export()
@@ -242,6 +543,104 @@ class HeavyEquipmentRateController extends Controller
     private function businessId(): int
     {
         return (int) request()->session()->get('user.business_id');
+    }
+
+    private function rateIssueData(HeavyEquipmentRouteRate $rate): array
+    {
+        $issues = collect($this->parseBatchIssues(optional($rate->batch)->error_message))
+            ->filter(fn (array $issue) => (int) ($issue['row'] ?? 0) === (int) $rate->source_row)
+            ->pluck('message')
+            ->all();
+
+        foreach ($rate->units as $unit) {
+            if (! $unit->asset_id) {
+                $issues[] = "Unit '{$unit->unit_label}' belum dicocokkan ke master Asset. Pilih Asset pada kolom Unit.";
+            }
+        }
+
+        return [
+            'errors' => array_values(array_unique($issues)),
+            'warnings' => $rate->sale_rate_per_ton === null
+                ? ['Harga/Ton belum diisi; tarif ini belum siap dipakai untuk tagihan pelanggan.']
+                : [],
+        ];
+    }
+
+    private function canManageRates(): bool
+    {
+        return auth()->user()->can('superadmin')
+            || auth()->user()->can('asset.fleet_rates.manage')
+            || auth()->user()->can('asset.create')
+            || auth()->user()->can('asset.update');
+    }
+
+    private function parseBatchIssues(?string $errorMessage): array
+    {
+        if (! $errorMessage) {
+            return [];
+        }
+
+        $errors = json_decode($errorMessage, true);
+        $errors = is_array($errors) ? $errors : [$errorMessage];
+
+        return collect($errors)
+            ->filter(fn ($error) => is_string($error) && trim($error) !== '')
+            ->map(function (string $error) {
+                $row = null;
+                $detail = trim($error);
+                if (preg_match('/^Baris\s+(\d+):\s*(.+)$/u', $detail, $matches)) {
+                    $row = (int) $matches[1];
+                    $detail = $matches[2];
+                }
+
+                return [
+                    'row' => $row,
+                    'message' => $this->friendlyRateIssue($detail),
+                    'raw' => $error,
+                ];
+            })
+            ->unique(fn (array $issue) => ($issue['row'] ?? 'general') . '|' . $issue['message'])
+            ->values()
+            ->all();
+    }
+
+    private function friendlyRateIssue(string $message): string
+    {
+        $message = trim($message);
+        $message = preg_replace(
+            "/unit '([^']+)' belum cocok dengan Assets\./u",
+            "Unit '$1' belum dicocokkan ke master Asset. Pilih Asset pada kolom Unit.",
+            $message
+        );
+
+        return str_replace([
+            'Rute dan Unit wajib diisi.',
+            'Unit tidak valid.',
+            'Borongan Supir/Ton dan Uang Jalan harus berupa angka.',
+            'tarif tidak boleh negatif.',
+            'tidak memiliki unit.',
+        ], [
+            'Lengkapi kolom Rute dan Unit pada file Excel.',
+            'Isi Unit dengan nama unit yang valid.',
+            'Isi Borongan Supir/Ton dan Uang Jalan dengan angka.',
+            'Nilai tarif tidak boleh negatif.',
+            'Baris ini belum memiliki unit.',
+        ], $message);
+    }
+
+    private function friendlyRateExceptionMessage(\Throwable $exception): string
+    {
+        $message = trim($exception->getMessage());
+        if ($message === '') {
+            return 'File tarif belum dapat diproses. Periksa format file dan coba lagi.';
+        }
+
+        $parts = preg_split('/\s+(?=Baris\s+\d+:|Duplikasi pada workbook:|Tarif sudah ada untuk rute)/u', $message);
+        if (count($parts) > 1) {
+            return 'File tarif belum dapat diproses. Periksa baris yang ditandai pada tabel preview.';
+        }
+
+        return mb_strlen($message) > 240 ? mb_substr($message, 0, 237) . '...' : $message;
     }
 
     private function formData(array $extra = []): array
@@ -432,6 +831,25 @@ class HeavyEquipmentRateController extends Controller
     private function isManualRate(HeavyEquipmentRouteRate $rate): bool
     {
         return str_starts_with((string) optional($rate->batch)->file_name, 'Manual - ');
+    }
+
+    private function respond(Request $request, bool $success, string $message, array $extra = [], int $status = 200, ?string $redirectRoute = null)
+    {
+        if ($request->expectsJson()) {
+            return response()->json(array_merge([
+                'success' => $success,
+                'msg' => $message,
+            ], $extra), $status);
+        }
+
+        $flash = array_merge([
+            'success' => $success,
+            'msg' => $message,
+        ], $extra);
+
+        return $redirectRoute
+            ? redirect()->route($redirectRoute)->with('status', $flash)
+            : back()->withInput()->with('status', $flash);
     }
 
     private function authorizeView(): void

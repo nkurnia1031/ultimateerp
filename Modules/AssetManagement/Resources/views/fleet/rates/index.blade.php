@@ -10,6 +10,13 @@
         || auth()->user()->can('asset.fleet_rates.manage')
         || auth()->user()->can('asset.create')
         || auth()->user()->can('asset.update');
+    // The rate rows are loaded by server-side DataTables. Keep these empty
+    // fallbacks so the legacy empty-state markup remains harmless.
+    $rates = collect();
+    $allAssets = collect();
+    $rateIssues = [];
+    $batchIssues = $batchIssues ?? [];
+    $hasPreviewIssues = (bool) ($hasPreviewIssues ?? false);
 @endphp
 <style>
     .fleet-rate-index { max-width: 1480px; margin: 0 auto; padding-bottom: 40px; }
@@ -35,9 +42,67 @@
     .fleet-rate-index .rate-file-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 44px; padding: 9px 13px; border: 1px solid #9fb8bf; border-radius: 6px; background: #f7fafb; color: #294653; cursor: pointer; font-weight: 600; white-space: nowrap; pointer-events: none; }
     .fleet-rate-index .rate-file-button:hover, .fleet-rate-index .rate-file-button:focus { background: #e8f0f1; border-color: #6f9da8; }
     .fleet-rate-index .rate-file-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #60717b; font-size: 13px; }
+    /* The Tailwind bundle follows the OS dark-mode preference. Keep the
+       native asset matcher readable because this page uses the light AdminLTE
+       shell and the dropdown contains business data. */
+    .fleet-rate-index .rate-asset-select { color-scheme: light !important; color: #243746; background-color: #fff; border: 1px solid #b8cbd0; border-radius: 4px; min-height: 34px; padding: 5px 28px 5px 8px; font: inherit; }
+    .fleet-rate-index .rate-asset-select option { color: #243746; background-color: #fff; }
+    .fleet-rate-index .rate-asset-select:hover { border-color: #6f9da8; }
+    .fleet-rate-index .rate-asset-select:focus { border-color: #0f8b8d; outline: 3px solid rgba(240,184,91,.45); outline-offset: 2px; }
+    .fleet-rate-index .rate-bulk-map { margin-top: 8px; padding: 9px; border: 1px solid #cfe3e4; border-radius: 6px; background: #f7fbfb; min-width: 250px; }
+    .fleet-rate-index .rate-bulk-map__label { display: block; margin-bottom: 5px; color: #294653; font-size: 12px; font-weight: 700; }
+    .fleet-rate-index .rate-bulk-map .select2-container { width: 100% !important; max-width: 100%; color-scheme: light; }
+    .fleet-rate-index .rate-bulk-map .select2-container--bootstrap-5 .select2-selection--multiple { min-height: 42px; padding: 4px 6px; border: 1px solid #b8cbd0; border-radius: 6px; background: #fff; color: #243746; box-shadow: none; }
+    .fleet-rate-index .rate-bulk-map .select2-container--bootstrap-5 .select2-selection--multiple:focus,
+    .fleet-rate-index .rate-bulk-map .select2-container--bootstrap-5.select2-container--focus .select2-selection--multiple { border-color: #0f8b8d; box-shadow: 0 0 0 3px rgba(15,139,141,.14); }
+    .fleet-rate-index .rate-bulk-map .select2-selection__rendered { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin: 0; padding: 0; list-style: none; }
+    .fleet-rate-index .rate-bulk-map .select2-selection__choice { position: relative; display: inline-flex; align-items: center; min-height: 28px; margin: 0 !important; padding: 4px 9px 4px 25px !important; border: 1px solid #c1dfe2 !important; border-radius: 999px; background: #edf8f8 !important; color: #1f4450 !important; font-size: 12px; line-height: 1.25; }
+    .fleet-rate-index .rate-bulk-map .select2-selection__choice__remove { position: absolute; left: 8px; top: 50%; display: inline-flex; align-items: center; justify-content: center; width: 13px; height: 13px; margin: 0; transform: translateY(-50%); border: 0; color: #0f7278; font-size: 15px; font-weight: 700; line-height: 1; }
+    .fleet-rate-index .rate-bulk-map .select2-selection__choice__remove:hover { background: transparent; color: #a52a2a; }
+    .fleet-rate-index .rate-bulk-map .select2-search--inline { flex: 1 1 90px; min-width: 80px; margin: 0 !important; padding: 0 !important; }
+    .fleet-rate-index .rate-bulk-map .select2-search__field { width: 100% !important; min-height: 28px; margin: 0 !important; padding: 4px 3px !important; border: 0 !important; border-radius: 4px; background: #fff !important; color: #243746 !important; box-shadow: none !important; font: inherit; }
+    .fleet-rate-index .rate-bulk-map .select2-search__field::placeholder { color: #758891; opacity: 1; }
+    .fleet-rate-index .rate-bulk-map .select2-dropdown { overflow: hidden; border: 1px solid #b8cbd0; border-radius: 6px; background: #fff; color: #243746; color-scheme: light; box-shadow: 0 8px 20px rgba(36,55,70,.14); }
+    .fleet-rate-index .rate-bulk-map .select2-results__options { max-height: 240px; }
+    .fleet-rate-index .rate-bulk-map .select2-results__option { padding: 8px 10px; background: #fff; color: #243746; font-size: 13px; }
+    .fleet-rate-index .rate-bulk-map .select2-results__option--highlighted[aria-selected] { background: #e8f5f5; color: #0b6066; }
+    .fleet-rate-index .rate-bulk-map .select2-results__option[aria-selected="true"] { background: #f3f7f7; color: #536b74; }
+    .fleet-rate-index .rate-bulk-map__order { display: block; margin-top: 5px; color: #60717b; font-size: 11px; line-height: 1.45; }
+    .fleet-rate-index .rate-bulk-map__limit { display: block; margin-top: 3px; color: #60717b; font-size: 11px; line-height: 1.45; }
+    .fleet-rate-index .rate-bulk-map__button { margin-top: 7px; min-height: 38px; border: 1px solid #0d6efd; background: #0d6efd; color: #fff; white-space: nowrap; }
+    .fleet-rate-index .rate-bulk-map__button:disabled { border-color: #b8c5cc; background: #d9e1e5; color: #5e6d75; opacity: 1; cursor: not-allowed; }
     .fleet-rate-index .rate-locked { display: inline-flex; align-items: center; gap: 5px; min-height: 32px; padding: 5px 9px; border: 1px solid #d5dde0; border-radius: 999px; background: #eef1f2; color: #53616a; font-size: 11px; font-weight: 700; white-space: nowrap; }
+    .fleet-rate-index .rate-flash { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 16px; padding: 12px 14px; border: 1px solid #c8dfe2; border-left: 4px solid #0f8b8d; border-radius: 5px; background: #f2fbfb; color: #294653; }
+    .fleet-rate-index .rate-flash--error { border-color: #efb4b0; border-left-color: #c0392b; background: #fff5f4; color: #7f1d1d; }
+    .fleet-rate-index .rate-flash__content { min-width: 0; flex: 1; }
+    .fleet-rate-index .rate-flash__content strong { display: block; margin-bottom: 2px; }
+    .fleet-rate-index .rate-flash__link { margin-left: 8px; color: #086f73; font-weight: 700; white-space: nowrap; }
+    .fleet-rate-index .rate-row--problem { background: #fff4f2 !important; box-shadow: inset 4px 0 0 #d64545; }
+    .fleet-rate-index .rate-row--warning { background: #fffaf0 !important; box-shadow: inset 4px 0 0 #e5a11a; }
+    .fleet-rate-index .rate-issue-badge { display: inline-flex; align-items: center; gap: 4px; margin-top: 5px; padding: 3px 7px; border-radius: 4px; background: #fde3e1; color: #9d2626; font-size: 11px; font-weight: 700; }
+    .fleet-rate-index .rate-warning-badge { display: inline-flex; align-items: center; gap: 4px; margin-top: 5px; padding: 3px 7px; border-radius: 4px; background: #fff0c2; color: #765300; font-size: 11px; font-weight: 700; }
+    .fleet-rate-index .rate-issue-list { margin: 6px 0 0; padding-left: 18px; color: #7f1d1d; font-size: 12px; line-height: 1.45; }
+    .fleet-rate-index .rate-issue-list li + li { margin-top: 3px; }
+    .fleet-rate-index .rate-issue-table tr.rate-issue-table__row { background: #fff4f2; }
+    .fleet-rate-index .rate-issue-table td:first-child { font-weight: 700; white-space: nowrap; }
+    .fleet-rate-index .rate-issue-help { color: #7f1d1d; }
     .fleet-rate-index a:focus-visible, .fleet-rate-index button:focus-visible, .fleet-rate-index input:focus-visible, .fleet-rate-index select:focus-visible { outline: 3px solid #f0b85b !important; outline-offset: 3px; }
-    @media (max-width: 700px) { .fleet-rate-index__header { display: block; } .fleet-rate-index__actions { justify-content: flex-start; margin-top: 14px; } .fleet-rate-index__actions .btn { width: 100%; } .fleet-rate-index .box-body { padding: 15px; } .fleet-rate-index .table-responsive { margin: 0 -3px; } }
+    @media (max-width: 700px) {
+        .fleet-rate-index__header { display: block; }
+        .fleet-rate-index__actions { justify-content: flex-start; margin-top: 14px; }
+        .fleet-rate-index__actions .btn { width: 100%; }
+        .fleet-rate-index .box-body { padding: 15px; }
+        .fleet-rate-index .table-responsive { margin: 0 -3px; }
+        .fleet-rate-index #fleet-rates-table tr.child,
+        .fleet-rate-index #fleet-rates-table tr.child > td,
+        .fleet-rate-index #fleet-rates-table .dtr-details,
+        .fleet-rate-index #fleet-rates-table .dtr-details > li,
+        .fleet-rate-index #fleet-rates-table .dtr-data { width: 100% !important; max-width: 100%; box-sizing: border-box; }
+        .fleet-rate-index #fleet-rates-table tr.child > td { padding: 8px !important; }
+        .fleet-rate-index .rate-bulk-map { width: calc(100vw - 48px); max-width: calc(100vw - 48px); min-width: 0; padding: 10px; box-sizing: border-box; }
+        .fleet-rate-index .rate-bulk-map__button { width: 100%; }
+        .fleet-rate-index .rate-bulk-map .select2-selection__choice { max-width: 100%; overflow-wrap: anywhere; }
+    }
 </style>
 <main class="fleet-rate-index">
 <section class="content-header">
@@ -55,15 +120,22 @@
 </section>
 <section class="content">
     @if(session('status'))
-        <div class="alert {{ session('status.success') ? 'alert-success' : 'alert-danger' }}" role="alert">
-            <i class="fas {{ session('status.success') ? 'fa-check-circle' : 'fa-exclamation-triangle' }} me-2" aria-hidden="true"></i>{{ session('status.msg') }}
+        <div class="rate-flash {{ session('status.success') ? '' : 'rate-flash--error' }}" role="status">
+            <i class="fas {{ session('status.success') ? 'fa-check-circle' : 'fa-exclamation-triangle' }}" aria-hidden="true"></i>
+            <div class="rate-flash__content">
+                <strong>{{ session('status.success') ? 'Informasi import tarif' : 'Import tarif belum selesai' }}</strong>
+                <span>{{ session('status.msg') }}</span>
+                @if(session('status.batch_id'))
+                    <a class="rate-flash__link" href="#fleet-rate-issues-panel">Lihat baris bermasalah</a>
+                @endif
+            </div>
         </div>
     @endif
     <div class="box box-primary">
         <div class="box-header with-border"><h3 class="box-title"><i class="fas fa-file-import me-2" aria-hidden="true"></i>Import Workbook Tarif</h3></div>
         <div class="box-body">
             <p class="text-muted">Workbook akan menjadi draft preview. <strong>Berlaku mulai</strong> wajib diisi manual; tanggal pada keterangan Excel tidak ditebak oleh sistem. Untuk satu atau beberapa unit, gunakan <strong>Tambah Tarif Manual</strong>.</p>
-            <form id="fleet-rate-upload-form" method="POST" action="{{ route('asset.fleet.rates.upload') }}" enctype="multipart/form-data">
+            <form id="fleet-rate-upload-form" method="POST" action="{{ route('asset.fleet.rates.upload') }}" enctype="multipart/form-data" class="rate-ajax-form" data-reload-page="true">
                 @csrf
                 <div class="row">
                     <div class="col-md-5 form-group">
@@ -100,26 +172,32 @@
                 <thead><tr><th>ID</th><th>File</th><th>Berlaku mulai</th><th>Baris</th><th>Rute</th><th>Unit</th><th>Status</th><th>Aksi</th></tr></thead>
                 <tbody>
                 @forelse($batches as $batch)
-                    <tr>
+                    @php($issues = $batchIssues[$batch->id] ?? [])
+                    <tr class="{{ count($issues) ? 'rate-row--problem' : '' }}">
                         <td>{{ $batch->id }}</td><td>{{ $batch->file_name }}</td>
                         <td>{{ optional($batch->effective_from)->format('d/m/Y') }}</td>
                         <td>{{ $batch->valid_row_count }}/{{ $batch->source_row_count }}</td>
                         <td>{{ $batch->route_count }}</td><td>{{ $batch->unit_count }}</td>
                         <td><span class="label label-{{ $batch->status === 'active' ? 'success' : ($batch->status === 'draft' ? 'warning' : 'default') }}">{{ strtoupper($batch->status) }}</span>
-                            @if($batch->error_message)
-                                @php
-                                    $batchErrors = json_decode($batch->error_message, true);
-                                    $batchErrors = is_array($batchErrors) ? $batchErrors : [$batch->error_message];
-                                    $batchErrorId = 'fleet-rate-batch-error-'.$batch->id;
-                                @endphp
+                            @if(count($issues))
+                                @php($batchErrorId = 'fleet-rate-batch-error-'.$batch->id)
+                                <span class="label label-danger">{{ count($issues) }} masalah</span>
                                 <button type="button" class="fleet-table-detail-toggle" aria-expanded="false" aria-controls="{{ $batchErrorId }}">Lihat detail</button>
-                                <div id="{{ $batchErrorId }}" class="fleet-table-detail" hidden>{{ implode(' ', $batchErrors) }}</div>
+                                <div id="{{ $batchErrorId }}" class="fleet-table-detail" hidden>
+                                    <ul class="rate-issue-list">
+                                        @foreach($issues as $issue)
+                                            <li>
+                                                @if($issue['row'])<strong>Baris {{ $issue['row'] }}:</strong> @endif{{ $issue['message'] }}
+                                            </li>
+                                        @endforeach
+                                    </ul>
+                                </div>
                             @endif
                         </td>
                         <td>
                             @if($batch->status === 'draft')
-                                <form method="POST" action="{{ route('asset.fleet.rates.confirm', $batch->id) }}" style="display:inline" onsubmit="return confirm('Aktifkan batch tarif ini?')">@csrf<button class="btn btn-success rate-crud-btn" aria-label="Konfirmasi batch tarif">Konfirmasi Aktif</button></form>
-                                <form method="POST" action="{{ route('asset.fleet.rates.cancel', $batch->id) }}" style="display:inline" onsubmit="return confirm('Batalkan batch ini?')">@csrf<button class="btn btn-danger rate-crud-btn" aria-label="Batalkan batch tarif">Batal</button></form>
+                                <form method="POST" action="{{ route('asset.fleet.rates.confirm', $batch->id) }}" class="rate-ajax-form" data-reload-page="true" style="display:inline" onsubmit="return confirm('Aktifkan batch tarif ini?')">@csrf<button class="btn btn-success rate-crud-btn" aria-label="Konfirmasi batch tarif">Konfirmasi Aktif</button></form>
+                                <form method="POST" action="{{ route('asset.fleet.rates.cancel', $batch->id) }}" class="rate-ajax-form" data-reload-page="true" style="display:inline" onsubmit="return confirm('Batalkan batch ini?')">@csrf<button class="btn btn-danger rate-crud-btn" aria-label="Batalkan batch tarif">Batal</button></form>
                             @endif
                         </td>
                     </tr>
@@ -131,6 +209,21 @@
         </div>
     </div>
 
+    @if($hasPreviewIssues)
+        <div class="box box-warning" id="fleet-rate-issues-panel">
+            <div class="box-header with-border">
+                <h3 class="box-title"><i class="fas fa-list-check me-2" aria-hidden="true"></i>Baris yang perlu diperiksa</h3>
+                <p class="text-muted" style="margin:6px 0 0">Tabel ini membantu menemukan masalah tanpa membaca satu pesan panjang. Setelah diperbaiki, ulangi preview atau cocokkan Asset dari tabel tarif.</p>
+            </div>
+            <div class="box-body table-responsive fleet-datatable-wrap">
+                <table id="fleet-rate-issues-table" class="table table-bordered table-striped fleet-datatable rate-issue-table">
+                    <thead><tr><th>Batch</th><th>Baris Excel</th><th>Masalah</th><th>Langkah berikutnya</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+    @endif
+
     <div class="box box-solid">
         <div class="box-header with-border"><h3 class="box-title">Tarif Aktif, Preview, dan Histori</h3></div>
         <div class="box-body table-responsive fleet-datatable-wrap">
@@ -138,9 +231,13 @@
                 <thead><tr><th>Rute</th><th>Unit</th><th>Berlaku</th><th>Supir/Ton</th><th>Uang Jalan</th><th>Harga/Ton</th><th>Keterangan</th><th>Status</th><th>Aksi</th></tr></thead>
                 <tbody>
                 @forelse($rates as $rate)
-                    <tr>
+                    @php($rowIssue = $rateIssues[$rate->id] ?? ['errors' => [], 'warnings' => []])
+                    @php($hasRowError = count($rowIssue['errors']) > 0)
+                    @php($hasRowWarning = ! $hasRowError && count($rowIssue['warnings']) > 0)
+                    <tr class="{{ $hasRowError ? 'rate-row--problem' : ($hasRowWarning ? 'rate-row--warning' : '') }}">
                         <td>{{ optional($rate->route)->name ?: '-' }}<br><small class="text-muted">{{ optional($rate->route)->origin }}{{ optional($rate->route)->origin && optional($rate->route)->destination ? ' → ' : '' }}{{ optional($rate->route)->destination }}</small></td>
                         <td>
+                            @php($unmatchedUnits = $rate->status === 'draft' ? $rate->units->filter(fn ($unit) => ! $unit->asset_id) : collect())
                             @foreach($rate->units as $unit)
                                 <div>
                                     {{ $unit->unit_label }}
@@ -148,20 +245,31 @@
                                         → {{ $unit->asset->name }}
                                     @elseif($rate->status === 'draft')
                                         <span class="label label-danger">Belum cocok</span>
-                                        <form method="POST" action="{{ route('asset.fleet.rates.units.map', $unit->id) }}" style="display:inline;margin-left:5px">
-                                            @csrf
-                                            <select name="asset_id" onchange="this.form.submit()" style="max-width:180px">
-                                                <option value="">Pilih Asset</option>
-                                                @foreach($allAssets as $assetId => $assetName)
-                                                    <option value="{{ $assetId }}">{{ $assetName }}</option>
-                                                @endforeach
-                                            </select>
-                                        </form>
                                     @else
                                         → BELUM COCOK
                                     @endif
                                 </div>
                             @endforeach
+                            @if($unmatchedUnits->isNotEmpty())
+                                <div class="rate-bulk-map">
+                                    <form method="POST" action="{{ route('asset.fleet.rates.units.bulk-map', $rate->id) }}" class="rate-bulk-map__form rate-ajax-form">
+                                        @csrf
+                                        <label class="rate-bulk-map__label" for="rate-assets-{{ $rate->id }}">Cocokkan beberapa unit sekaligus</label>
+                                        <select id="rate-assets-{{ $rate->id }}" name="asset_ids[]" class="rate-bulk-asset-select" multiple required data-placeholder="Pilih Asset" data-max-units="{{ $unmatchedUnits->count() }}">
+                                            @foreach($allAssets as $assetOption)
+                                                <option value="{{ $assetOption->id }}">
+                                                    {{ $assetOption->name }}{{ $assetOption->asset_code ? ' ('.$assetOption->asset_code.')' : '' }}
+                                                </option>
+                                            @endforeach
+                                        </select>
+                                        <small class="rate-bulk-map__order">
+                                            Urutan pencocokan: {{ $unmatchedUnits->pluck('unit_label')->implode(' → ') }}. Asset pilihan pertama akan dipasangkan dengan unit pertama.
+                                        </small>
+                                        <small class="rate-bulk-map__limit" aria-live="polite">Maksimal {{ $unmatchedUnits->count() }} Asset dapat dipilih pada baris ini.</small>
+                                        <button type="submit" class="btn btn-primary rate-bulk-map__button" disabled>Cocokkan Asset</button>
+                                    </form>
+                                </div>
+                            @endif
                         </td>
                         <td>{{ optional($rate->effective_from)->format('d/m/Y') }} s/d {{ optional($rate->effective_to)->format('d/m/Y') ?: 'sekarang' }}</td>
                         <td>@format_currency($rate->driver_rate_per_ton)</td>
@@ -170,6 +278,11 @@
                         <td>{{ $rate->notes }}</td>
                         <td>
                             <span class="label label-{{ $rate->status === 'active' ? 'success' : ($rate->status === 'draft' ? 'warning' : ($rate->status === 'cancelled' ? 'default' : 'info')) }}">{{ strtoupper($rate->status) }}</span>
+                            @if($hasRowError)
+                                <br><span class="rate-issue-badge" title="Baris ini perlu diperiksa"><i class="fas fa-triangle-exclamation" aria-hidden="true"></i> Perlu diperiksa</span>
+                            @elseif($hasRowWarning)
+                                <br><span class="rate-warning-badge" title="Baris ini memiliki catatan"><i class="fas fa-circle-info" aria-hidden="true"></i> Ada catatan</span>
+                            @endif
                             @if($rate->source_status === 'modified')
                                 <br><span class="label label-warning" title="Nilai pernah dikoreksi dari sumber import">Diedit dari import</span>
                             @endif
@@ -186,7 +299,7 @@
                                     @endif
                                 @elseif($canManageRates)
                                     <a href="{{ route('asset.fleet.rates.edit', $rate->id) }}" class="btn btn-warning rate-crud-btn" aria-label="Edit tarif {{ $rate->id }}"><i class="fas fa-edit" aria-hidden="true"></i> Edit</a>
-                                    <form method="POST" action="{{ route('asset.fleet.rates.destroy', $rate->id) }}">
+                                <form method="POST" action="{{ route('asset.fleet.rates.destroy', $rate->id) }}" class="rate-ajax-form">
                                         @csrf
                                         @method('DELETE')
                                         <button type="submit" class="btn btn-danger rate-crud-btn" aria-label="{{ $isManualRate ? 'Hapus' : 'Batalkan' }} tarif {{ $rate->id }}" onclick="return confirm('{{ $isManualRate ? 'Hapus tarif manual ini?' : 'Batalkan tarif hasil import ini? Data sumber tetap disimpan sebagai histori.' }}')"><i class="fas {{ $isManualRate ? 'fa-trash' : 'fa-ban' }}" aria-hidden="true"></i> {{ $isManualRate ? 'Hapus' : 'Batalkan' }}</button>
@@ -216,9 +329,119 @@ $(function () {
         order: [[2, 'desc']],
         columnDefs: [{ targets: [0, 3, 4, 5, 6, 7], orderable: false }]
     });
-    initFleetDataTable('#fleet-rates-table', {
+    initFleetDataTable('#fleet-rate-issues-table', {
+        processing: true,
+        serverSide: true,
+        searchDelay: 350,
+        ajax: {
+            url: "{{ route('asset.fleet.rates.issues') }}",
+            dataSrc: 'data'
+        },
+        order: [[1, 'asc']],
+        pageLength: 10,
+        lengthMenu: [[10, 25, 50, 100], [10, 25, 50, 100]],
+        columns: [
+            { data: 0, name: 'batch', orderable: false },
+            { data: 1, name: 'row' },
+            { data: 2, name: 'message', orderable: false },
+            { data: 3, name: 'help', orderable: false, searchable: false }
+        ]
+    });
+    const ratesTable = initFleetDataTable('#fleet-rates-table', {
+        processing: true,
+        serverSide: true,
+        searchDelay: 350,
+        ajax: {
+            url: "{{ route('asset.fleet.rates.data') }}",
+            dataSrc: 'data'
+        },
         order: [[2, 'desc']],
-        columnDefs: [{ targets: [1, 6, 7, 8], orderable: false }]
+        lengthMenu: [[10, 25, 50, 100], [10, 25, 50, 100]],
+        columns: [
+            { data: 0, name: 'route_id' },
+            { data: 1, name: 'units', orderable: false, searchable: false },
+            { data: 2, name: 'effective_from' },
+            { data: 3, name: 'driver_rate_per_ton' },
+            { data: 4, name: 'travel_allowance' },
+            { data: 5, name: 'sale_rate_per_ton' },
+            { data: 6, name: 'notes', orderable: false },
+            { data: 7, name: 'status' },
+            { data: 8, name: 'actions', orderable: false, searchable: false }
+        ],
+        columnDefs: [{ targets: [1, 6, 8], orderable: false }],
+        createdRow: function (row, data) {
+            const statusCell = String(data[7] || '');
+            $(row).toggleClass('rate-row--problem', statusCell.indexOf('rate-issue-badge') !== -1);
+            $(row).toggleClass('rate-row--warning', statusCell.indexOf('rate-warning-badge') !== -1);
+        }
+    });
+
+    function initRateBulkAssetSelects(scope) {
+        const $scope = scope ? $(scope) : $(document);
+        $scope.find('.rate-bulk-asset-select').addBack('.rate-bulk-asset-select').each(function () {
+            const $select = $(this);
+            if ($select.hasClass('select2-hidden-accessible')) return;
+
+            const $form = $select.closest('form');
+            const $button = $form.find('button[type="submit"]');
+            const $limit = $form.find('.rate-bulk-map__limit');
+            const maxUnits = Number($select.attr('data-max-units')) || 0;
+            $select.select2({
+                theme: 'bootstrap-5',
+                width: '100%',
+                placeholder: $select.attr('data-placeholder'),
+                closeOnSelect: false,
+                allowClear: false,
+                maximumSelectionLength: maxUnits,
+                minimumResultsForSearch: 0,
+                ajax: {
+                    url: $select.attr('data-ajax-url'),
+                    dataType: 'json',
+                    delay: 200,
+                    data: function (params) {
+                        return {
+                            q: params.term || '',
+                            page: params.page || 1
+                        };
+                    },
+                    processResults: function (data) {
+                        return data;
+                    },
+                    cache: true
+                },
+                dropdownParent: $form,
+            });
+
+            function syncBulkMapButton() {
+                let values = $select.val() || [];
+                if (maxUnits > 0 && values.length > maxUnits) {
+                    values = values.slice(0, maxUnits);
+                    $select.val(values).trigger('change.select2');
+                }
+                const count = values.length;
+                $button.prop('disabled', count === 0).text(count ? 'Cocokkan ' + count + ' Asset' : 'Pilih Asset');
+                if ($limit.length) {
+                    $limit.text('Maksimal ' + maxUnits + ' Asset dapat dipilih pada baris ini.' + (count ? ' Saat ini ' + count + ' dipilih.' : ''));
+                }
+            }
+
+            $select.on('change', syncBulkMapButton);
+            syncBulkMapButton();
+        });
+    }
+
+    initRateBulkAssetSelects(document);
+    $('#fleet-rates-table').on('draw.dt', function () {
+        window.setTimeout(function () {
+            initRateBulkAssetSelects('#fleet-rates-table');
+        }, 0);
+    });
+    $('#fleet-rates-table').on('responsive-display.dt', function (event, datatable, row, show) {
+        if (show) {
+            window.setTimeout(function () {
+                initRateBulkAssetSelects(row.child());
+            }, 0);
+        }
     });
 
     function syncRateDate() {
@@ -266,6 +489,69 @@ $(function () {
             event.stopImmediatePropagation();
             $('#rate_effective_from_display').trigger('focus');
         }
+    });
+
+    function notifyRateAction(message, success) {
+        if (window.toastr) {
+            (success ? toastr.success : toastr.error)(message);
+            return;
+        }
+        window.alert(message);
+    }
+
+    function reloadRateTables() {
+        ['#fleet-rates-table', '#fleet-rate-issues-table'].forEach(function (selector) {
+            const table = $(selector);
+            if (table.length && $.fn.DataTable.isDataTable(table[0])) {
+                table.DataTable().ajax.reload(null, false);
+            }
+        });
+    }
+
+    $(document).on('submit', '.rate-ajax-form', function (event) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+
+        const form = this;
+        if (form.dataset.submitting === 'true') return;
+        form.dataset.submitting = 'true';
+        const submitButtons = $(form).find('button[type="submit"]');
+        const originalLabels = submitButtons.map(function () { return $(this).text(); }).get();
+        submitButtons.prop('disabled', true).each(function () { $(this).text('Memproses...'); });
+
+        fetch(form.action, {
+            method: (form.getAttribute('method') || 'POST').toUpperCase(),
+            body: new FormData(form),
+            headers: {
+                'Accept': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest'
+            },
+            credentials: 'same-origin'
+        }).then(function (response) {
+            return response.json().catch(function () {
+                return { success: false, msg: 'Server mengembalikan respons yang tidak dapat dibaca.' };
+            }).then(function (data) {
+                return { response: response, data: data };
+            });
+        }).then(function (result) {
+            const data = result.data || {};
+            if (!result.response.ok || data.success === false) {
+                const errors = data.errors ? Object.values(data.errors).flat().join(' ') : '';
+                throw new Error(errors || data.msg || 'Permintaan belum berhasil diproses.');
+            }
+
+            notifyRateAction(data.msg || 'Perubahan berhasil disimpan.', true);
+            if (form.dataset.reloadPage === 'true') {
+                window.setTimeout(function () { window.location.reload(); }, 450);
+            } else {
+                reloadRateTables();
+            }
+        }).catch(function (error) {
+            notifyRateAction(error.message || 'Permintaan belum berhasil diproses.', false);
+        }).finally(function () {
+            form.dataset.submitting = 'false';
+            submitButtons.prop('disabled', false).each(function (index) { $(this).text(originalLabels[index]); });
+        });
     });
 });
 </script>

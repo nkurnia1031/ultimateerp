@@ -21,6 +21,7 @@
     .fleet-rate-form .select2-container { width: 100% !important; }
     .fleet-rate-form .select2-selection--multiple { min-height: 40px; padding: 4px 7px; }
     .fleet-rate-form .select2-selection__choice { margin-top: 3px !important; }
+    .fleet-rate-form .asset-selection-summary { display: block; margin-top: 7px; color: #536971; font-size: 12px; font-weight: 600; }
     .fleet-rate-form .date-hint { display: block; margin-top: 6px; color: #6b7d85; font-size: 12px; }
     .fleet-rate-form .date-error { display: none; margin-top: 6px; color: #b42318; font-size: 12px; }
     .fleet-rate-form .date-display.is-invalid { border-color: #d64545 !important; box-shadow: 0 0 0 3px rgba(214,69,69,.12); }
@@ -74,7 +75,8 @@
                 <div class="alert alert-info" role="alert"><i class="fas fa-file-import me-2" aria-hidden="true"></i>Tarif ini berasal dari batch import. Perubahan hanya diizinkan karena belum dipakai SPB. Sumber Excel dan nomor baris asal tetap dipertahankan sebagai histori.</div>
             @endif
 
-            <form method="POST" action="{{ $rate ? route('asset.fleet.rates.update', $rate->id) : route('asset.fleet.rates.store') }}">
+            <div id="rate-form-ajax-status" class="alert" role="alert" hidden></div>
+            <form id="fleet-rate-form" method="POST" action="{{ $rate ? route('asset.fleet.rates.update', $rate->id) : route('asset.fleet.rates.store') }}" class="rate-ajax-form">
                 @csrf
                 @if($rate) @method('PUT') @endif
                 <div class="row">
@@ -98,12 +100,13 @@
 
                     <div class="col-md-12 form-group">
                         <label for="asset_ids">Unit yang memakai tarif *</label>
-                        <select id="asset_ids" name="asset_ids[]" class="form-control select2" multiple required data-placeholder="Pilih satu atau beberapa unit">
+                        <select id="asset_ids" name="asset_ids[]" class="form-control select2" multiple required data-placeholder="Pilih satu atau beberapa unit" aria-describedby="asset_ids_help asset_ids_summary">
                             @foreach($assets as $asset)
                                 <option value="{{ $asset->id }}" @selected(in_array($asset->id, $selectedAssetIds))>{{ $asset->name }}</option>
                             @endforeach
                         </select>
-                        <small class="text-muted">Unit dipilih dari Asset/Alat Berat pada business aktif.</small>
+                        <small id="asset_ids_help" class="text-muted">Bisa memilih beberapa unit sekaligus. Unit dipilih dari Asset/Alat Berat pada business aktif.</small>
+                        <small id="asset_ids_summary" class="asset-selection-summary" aria-live="polite"></small>
                     </div>
 
                     <div class="col-md-3 form-group">
@@ -150,12 +153,26 @@
 @push('scripts')
 <script>
 $(function () {
-    $('#asset_ids').select2({
+    const $assetSelect = $('#asset_ids');
+    const $assetSummary = $('#asset_ids_summary');
+
+    $assetSelect.select2({
         theme: 'bootstrap-5',
         width: '100%',
-        placeholder: $('#asset_ids').data('placeholder'),
+        placeholder: $assetSelect.data('placeholder'),
+        closeOnSelect: false,
+        allowClear: true,
+        minimumResultsForSearch: 0,
         dropdownParent: $('.fleet-rate-form'),
     });
+
+    function updateAssetSummary() {
+        const count = $assetSelect.val() ? $assetSelect.val().length : 0;
+        $assetSummary.text(count ? count + ' unit dipilih' : 'Belum ada unit dipilih');
+    }
+
+    $assetSelect.on('change', updateAssetSummary);
+    updateAssetSummary();
 
     function syncDate(displayId, hiddenId) {
         const display = document.getElementById(displayId);
@@ -210,6 +227,52 @@ $(function () {
             event.stopImmediatePropagation();
             $('.date-display.is-invalid').first().trigger('focus');
         }
+    });
+
+    $('#fleet-rate-form').on('submit', function (event) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+
+        const form = this;
+        if (form.dataset.submitting === 'true') return;
+        form.dataset.submitting = 'true';
+        const $button = $(form).find('button[type="submit"]');
+        const originalLabel = $button.text();
+        const $status = $('#rate-form-ajax-status');
+        $button.prop('disabled', true).text('Menyimpan...');
+        $status.prop('hidden', true).removeClass('alert-success alert-danger').text('');
+
+        fetch(form.action, {
+            method: (form.getAttribute('method') || 'POST').toUpperCase(),
+            body: new FormData(form),
+            headers: {
+                'Accept': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest'
+            },
+            credentials: 'same-origin'
+        }).then(function (response) {
+            return response.json().catch(function () {
+                return { success: false, msg: 'Server mengembalikan respons yang tidak dapat dibaca.' };
+            }).then(function (data) {
+                return { response: response, data: data };
+            });
+        }).then(function (result) {
+            const data = result.data || {};
+            if (!result.response.ok || data.success === false) {
+                const errors = data.errors ? Object.values(data.errors).flat().join(' ') : '';
+                throw new Error(errors || data.msg || 'Tarif belum berhasil disimpan.');
+            }
+
+            $status.addClass('alert-success').text(data.msg || 'Tarif berhasil disimpan.').prop('hidden', false);
+            window.setTimeout(function () {
+                window.location.href = "{{ route('asset.fleet.rates.index') }}";
+            }, 450);
+        }).catch(function (error) {
+            $status.addClass('alert-danger').text(error.message || 'Tarif belum berhasil disimpan.').prop('hidden', false);
+        }).finally(function () {
+            form.dataset.submitting = 'false';
+            $button.prop('disabled', false).text(originalLabel);
+        });
     });
 });
 </script>

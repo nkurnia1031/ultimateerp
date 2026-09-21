@@ -19,6 +19,9 @@ Route::middleware('web', 'authh', 'auth', 'SetSessionData', 'language', 'timezon
 
     Route::prefix('fleet')->name('asset.fleet.')->group(function () {
         Route::get('rates', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentRateController::class, 'index'])->name('rates.index');
+        Route::get('rates/data', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentRateController::class, 'data'])->name('rates.data');
+        Route::get('rates/issues', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentRateController::class, 'issuesData'])->name('rates.issues');
+        Route::get('rates/assets/options', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentRateController::class, 'assetOptions'])->name('rates.assets.options');
         Route::get('rates/create', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentRateController::class, 'create'])->name('rates.create');
         Route::post('rates', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentRateController::class, 'store'])->name('rates.store');
         Route::get('rates/{id}/edit', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentRateController::class, 'edit'])->name('rates.edit');
@@ -27,6 +30,7 @@ Route::middleware('web', 'authh', 'auth', 'SetSessionData', 'language', 'timezon
         Route::post('rates/upload', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentRateController::class, 'upload'])->name('rates.upload');
         Route::post('rates/{id}/confirm', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentRateController::class, 'confirm'])->name('rates.confirm');
         Route::post('rates/{id}/cancel', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentRateController::class, 'cancel'])->name('rates.cancel');
+        Route::post('rates/{id}/units/map', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentRateController::class, 'mapUnits'])->name('rates.units.bulk-map');
         Route::post('rates/units/{unitId}/map', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentRateController::class, 'mapUnit'])->name('rates.units.map');
         Route::get('rates/export', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentRateController::class, 'export'])->name('rates.export');
 

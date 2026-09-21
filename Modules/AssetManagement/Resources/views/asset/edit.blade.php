@@ -31,6 +31,18 @@
                 </div>
                 <div class="col-md-4">
                     <div class="form-group">
+                        {!! Form::label('asset_code', __('assetmanagement::lang.asset_code') . ':*') !!}
+                        {!! Form::text('asset_code', $asset->asset_code, [
+                            'class' => 'form-control',
+                            'placeholder' => __('assetmanagement::lang.asset_code'),
+                            'required',
+                            'maxlength' => 255,
+                        ]) !!}
+                        <small class="help-block">Kode ini digunakan saat mencocokkan unit dengan Tarif Angkutan.</small>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="form-group">
                         {!! Form::label('name', __('assetmanagement::lang.asset_name') . ':*') !!}
                         {!! Form::text('name', $asset->name, [
                             'class' => 'form-control',
