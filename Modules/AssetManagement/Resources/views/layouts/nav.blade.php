@@ -20,7 +20,7 @@
             <!-- Collect the nav links, forms, and other content for toggling -->
             <div class="collapse navbar-collapse" id="bs-example-navbar-collapse-1">
                 <ul class="nav navbar-nav">
-                    @if (auth()->user()->can('asset.view') || auth()->user()->can('asset.fleet_rates.manage') || auth()->user()->can('asset.fleet_trips.manage') || auth()->user()->can('asset.fleet_trips.create') || auth()->user()->can('asset.fleet_billing.manage') || auth()->user()->can('asset.fleet_settlements.manage') || auth()->user()->can('asset.fleet_payroll.manage'))
+                    @if (auth()->user()->can('asset.view') || auth()->user()->can('asset.fleet_rates.manage') || auth()->user()->can('asset.fleet_trips.manage') || auth()->user()->can('asset.fleet_trips.create') || auth()->user()->can('asset.fleet_billing.manage') || auth()->user()->can('asset.fleet_settlements.manage') || auth()->user()->can('asset.fleet_payroll.manage') || auth()->user()->can('asset.fleet_vendor_loadings.view') || auth()->user()->can('asset.fleet_vendor_loadings.manage'))
                         @can('asset.view')
                         <li @if (request()->segment(2) == 'assets') class="active" @endif>
                             <a
@@ -65,9 +65,11 @@
                                 <i class="fas fa-truck-moving"></i> SPB Angkutan
                             </a>
                         </li>
-                        <li @if (request()->segment(2) == 'fleet' && request()->segment(3) == 'trips' && request()->segment(4) == 'import') class="active" @endif>
-                            <a href="{{ route('asset.fleet.trips.import.form') }}">
-                                <i class="fas fa-file-import"></i> Import SPB Angkutan
+                        @endif
+                        @if (auth()->user()->can('asset.view') || auth()->user()->can('asset.fleet_vendor_loadings.view') || auth()->user()->can('asset.fleet_vendor_loadings.manage'))
+                        <li @if (request()->segment(2) == 'fleet' && request()->segment(3) == 'vendor-loadings') class="active" @endif>
+                            <a href="{{ route('asset.fleet.vendor-loadings.index') }}">
+                                <i class="fas fa-truck-loading"></i> Loading Vendor
                             </a>
                         </li>
                         @endif

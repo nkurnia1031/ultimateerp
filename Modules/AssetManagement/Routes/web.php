@@ -49,6 +49,22 @@ Route::middleware('web', 'authh', 'auth', 'SetSessionData', 'language', 'timezon
         Route::get('trips/sell', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentTripController::class, 'sellForm'])->name('trips.sell.form');
         Route::post('trips/sell', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentTripController::class, 'sell'])->name('trips.sell');
         Route::get('trips/assets/{assetId}/ledger', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentReportController::class, 'assetLedger'])->name('trips.asset-ledger');
+
+        Route::get('vendor-loadings', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController::class, 'index'])->name('vendor-loadings.index');
+        Route::get('vendor-loadings/data', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController::class, 'data'])->name('vendor-loadings.data');
+        Route::get('vendor-loadings/create', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController::class, 'create'])->name('vendor-loadings.create');
+        Route::post('vendor-loadings', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController::class, 'store'])->name('vendor-loadings.store');
+        Route::get('vendor-loadings/import', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController::class, 'importForm'])->name('vendor-loadings.import.form');
+        Route::post('vendor-loadings/import/preview', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController::class, 'importPreview'])->name('vendor-loadings.import.preview');
+        Route::post('vendor-loadings/import/confirm', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController::class, 'importConfirm'])->name('vendor-loadings.import.confirm');
+        Route::get('vendor-loadings/suppliers', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController::class, 'supplierOptions'])->name('vendor-loadings.suppliers');
+        Route::post('vendor-loadings/suppliers/minimal', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController::class, 'createSupplier'])->name('vendor-loadings.suppliers.minimal');
+        Route::get('vendor-loadings/{id}/edit', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController::class, 'edit'])->name('vendor-loadings.edit');
+        Route::get('vendor-loadings/{id}', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController::class, 'show'])->name('vendor-loadings.show');
+        Route::put('vendor-loadings/{id}', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController::class, 'update'])->name('vendor-loadings.update');
+        Route::delete('vendor-loadings/{id}', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController::class, 'destroy'])->name('vendor-loadings.destroy');
+        Route::post('vendor-loadings/{id}/status', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController::class, 'status'])->name('vendor-loadings.status');
+
         Route::get('trips/{id}', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentTripController::class, 'show'])->name('trips.show');
         Route::post('trips/{id}/status', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentTripController::class, 'status'])->name('trips.status');
 

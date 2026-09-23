@@ -2004,9 +2004,9 @@
     "semantic_hash": "a08836676a933a9f07006ef7bb0f90f7"
   },
   "Modules/AssetManagement/Http/Controllers/DataController.php": {
-    "mtime": 1788977746.6292765,
-    "seen": 1788977923.3103645,
-    "ast_hash": "a5ba705333425ab1d2b8f825bb2bd902",
+    "mtime": 1790159771.2864094,
+    "seen": 1790160087.121383,
+    "ast_hash": "8e97cd68ecda917311efa62712037622",
     "semantic_hash": ""
   },
   "Modules/AssetManagement/Http/Controllers/InstallController.php": {
@@ -2160,9 +2160,9 @@
     "semantic_hash": "eea5d509a47d5afba7e2474570531dc0"
   },
   "Modules/AssetManagement/Resources/views/layouts/nav.blade.php": {
-    "mtime": 1788977243.4568448,
-    "seen": 1788977562.3206902,
-    "ast_hash": "f23764b425885bfef30c1112426d5679",
+    "mtime": 1790156357.819384,
+    "seen": 1790160087.1485095,
+    "ast_hash": "f44e06700ea5bec39a0aa262336bb9a6",
     "semantic_hash": ""
   },
   "Modules/AssetManagement/Resources/views/settings/index.blade.php": {
@@ -2190,9 +2190,9 @@
     "semantic_hash": "9ba24c56c51f09683ef6fb5193f327ac"
   },
   "Modules/AssetManagement/Routes/web.php": {
-    "mtime": 1789992467.4871602,
-    "seen": 1789992742.404179,
-    "ast_hash": "6359a57fa9af8cd11915730c517e01f1",
+    "mtime": 1790156328.860301,
+    "seen": 1790160087.1509147,
+    "ast_hash": "0f65f21928063cf28fa4fc00f233d28a",
     "semantic_hash": ""
   },
   "Modules/AssetManagement/Services/AssetExpiryReminderService.php": {
@@ -14415,6 +14415,60 @@
     "mtime": 1789993383.6807313,
     "seen": 1789994793.1093867,
     "ast_hash": "07b137dbd0cb2e78c8ac3e813e974579",
+    "semantic_hash": ""
+  },
+  "Modules/AssetManagement/Database/Migrations/2026_09_23_000001_create_heavy_equipment_vendor_loadings_table.php": {
+    "mtime": 1790155502.135252,
+    "seen": 1790160087.1093898,
+    "ast_hash": "846165b64841ce63923f01bc0094476a",
+    "semantic_hash": ""
+  },
+  "Modules/AssetManagement/Entities/HeavyEquipmentVendorLoading.php": {
+    "mtime": 1790155502.136759,
+    "seen": 1790160087.1183848,
+    "ast_hash": "de1b6e4edf7fe552ad78fe1e04b7eac0",
+    "semantic_hash": ""
+  },
+  "Modules/AssetManagement/Http/Controllers/HeavyEquipmentVendorLoadingController.php": {
+    "mtime": 1790159771.2885497,
+    "seen": 1790160087.124382,
+    "ast_hash": "41123ce0ccb6923b8302bdbb8ed76a87",
+    "semantic_hash": ""
+  },
+  "Modules/AssetManagement/Resources/views/fleet/vendor_loadings/form.blade.php": {
+    "mtime": 1790159806.3121643,
+    "seen": 1790160087.1475103,
+    "ast_hash": "93c75724340e50903203e6bf8de41f5d",
+    "semantic_hash": ""
+  },
+  "Modules/AssetManagement/Resources/views/fleet/vendor_loadings/import.blade.php": {
+    "mtime": 1790159493.5587046,
+    "seen": 1790160087.1475103,
+    "ast_hash": "e58bdfb2ba100368db604980d14f60b1",
+    "semantic_hash": ""
+  },
+  "Modules/AssetManagement/Resources/views/fleet/vendor_loadings/index.blade.php": {
+    "mtime": 1790157335.1935787,
+    "seen": 1790160087.1475103,
+    "ast_hash": "f40f3a3f8d97abd56bba3ff5e64f3f03",
+    "semantic_hash": ""
+  },
+  "Modules/AssetManagement/Resources/views/fleet/vendor_loadings/show.blade.php": {
+    "mtime": 1790156530.631402,
+    "seen": 1790160087.1475103,
+    "ast_hash": "ea272aaa2f7b7a535913f3657cb93ae6",
+    "semantic_hash": ""
+  },
+  "Modules/AssetManagement/Services/HeavyEquipmentVendorLoadingImportService.php": {
+    "mtime": 1790156652.6845882,
+    "seen": 1790160087.1529722,
+    "ast_hash": "011ad485f06b213e03bac55c49e77eb4",
+    "semantic_hash": ""
+  },
+  "Modules/AssetManagement/Services/HeavyEquipmentVendorLoadingService.php": {
+    "mtime": 1790156616.4522586,
+    "seen": 1790160087.1529722,
+    "ast_hash": "039ae1bef257d08a44c04881f9ca862d",
     "semantic_hash": ""
   }
 }
