@@ -93,16 +93,6 @@ class DataController extends Controller
                 'default' => false,
             ],
             [
-                'value' => 'asset.fleet_vendor_loadings.verify',
-                'label' => __('Verifikasi Loading Vendor'),
-                'default' => false,
-            ],
-            [
-                'value' => 'asset.fleet_vendor_loadings.expense',
-                'label' => __('Mengaitkan Loading Vendor ke Expense'),
-                'default' => false,
-            ],
-            [
                 'value' => 'bonus_ayak.manage',
                 'label' => __('Kelola Bonus Ayak dan sumber SPB'),
                 'default' => false,

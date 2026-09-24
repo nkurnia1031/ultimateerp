@@ -29,7 +29,7 @@ Rules:
 
 ## Session handoff / operational context
 
-This section is the canonical starting point for a new coding session. Read it before changing the application. It was refreshed on 2026-09-07.
+This section is the canonical starting point for a new coding session. Read it before changing the application. It was refreshed on 2026-09-24.
 
 ### Repository and environment
 
@@ -38,6 +38,22 @@ This section is the canonical starting point for a new coding session. Read it b
 - This is a Laravel application with module code under `Modules/`, Blade views under `resources/views/`, application JavaScript under `public/js/`, and published module JavaScript under `public/modules/`.
 - The worktree is intentionally dirty and contains several related feature changes. Preserve existing user changes; do not use `git reset --hard`, `git checkout --`, or broad destructive cleanup.
 - `graphify-out/` is generated state and may be dirty after hooks or `graphify update .`; that is expected.
+
+### Current session handoff — 2026-09-24
+
+- Loading Vendor from the latest client request is implemented in commit `78c49d0` (`update`). The alias fix for the `Tiket` import header and the two handoff documents are changes made after that commit and are intentionally left for the next session to review/commit; Graphify output may also be dirty.
+- Loading Vendor is separate from internal SPB. Its entry point is `Asset Management → Loading Vendor`; the separate `Import SPB Angkutan` navigation item was removed, while the import button remains on the SPB page.
+- Main files are `Modules/AssetManagement/Entities/HeavyEquipmentVendorLoading.php`, `Modules/AssetManagement/Services/HeavyEquipmentVendorLoadingService.php`, `Modules/AssetManagement/Services/HeavyEquipmentVendorLoadingImportService.php`, `Modules/AssetManagement/Http/Controllers/HeavyEquipmentVendorLoadingController.php`, views under `Modules/AssetManagement/Resources/views/fleet/vendor_loadings/`, migration `2026_09_23_000001_create_heavy_equipment_vendor_loadings_table.php`, `Modules/AssetManagement/Routes/web.php`, `DataController.php`, and the Asset Management navigation partial.
+- Routes use the `asset.fleet.vendor-loadings.*` names. The list and import preview use AJAX/DataTables; create, update, delete, status changes, supplier lookup, and minimal supplier creation use CSRF-protected AJAX with server-side business and permission checks.
+- Supplier lookup is limited to the active business and accepts supplier/both contacts. A minimal supplier can be added from the form or import preview when the user has `supplier.create`. Vendor unit and driver values are Select2 tags and remain snapshot text; they never create or select internal `assets` or `users`.
+- Current unit/driver suggestions are distinct values from previous Loading Vendor records in the active business. They are not yet filtered by supplier; supplier-specific history is the next UX enhancement.
+- Loading Vendor has nullable `route_id`, `project_id`, `customer_id`, and `expense_transaction_id`; `expense_status` starts as `not_linked`. No Expense, invoice, Sell, payroll, asset ledger, or internal settlement is created automatically.
+- Verified and cancelled records are locked from edit/delete. Status flow is `draft → loading → in_transit → completed → verified`, with cancellation allowed before finalization. Verification has `asset.fleet_vendor_loadings.verify`; existing fleet management fallbacks remain.
+- Browser verification with `agent-browser` covered create, detail, edit/reload, cancel edit, delete cancel/confirm, Select2 tagging, matched/unmatched supplier import, minimal supplier checkbox, duplicate import detection, status progression, verified locking, desktop, and 390px mobile.
+- Local test data intentionally left behind: business `2`, Loading Vendor ID `3`, loading number `LV-202609-0002`, supplier ID `1806` (`SUPPLIER-BARU-UI-20260923`), status `verified`, `expense_status=not_linked`, source `vendor-loading-ui-test.csv`. It is final/locked and must not be deleted casually. Other draft test rows were removed through the browser UI. Ignored test files and screenshots may remain under `storage/app/`.
+- The first import test happened before the `Tiket` alias fix, so the retained record has a blank ticket. The importer now recognizes `Tiket`, `Nomor Tiket`, `No Tiket`, and related aliases; a post-fix browser preview confirmed `IMP-UI-20260923-01`, `IMP-UI-20260923-02`, and `IMP-UI-20260923-03`.
+- Completed checks: `migrate --pretend`, `view:cache`, `route:cache`, PHP lint, `php artisan test --filter=ContactSupplierLabelTest` (8 passed), `git diff --check`, and `graphify update .`. No canonical module JavaScript changed, so no module JavaScript publish was needed.
+- For the next session, read `Rencana/HANDOFF-LOADING-VENDOR-2026-09-24.md`, run `git status --short`, inspect `.env`, and use the browser before changing code. Do not repeat the migration or import the test workbook into production. Production deployment was not performed.
 
 ### First actions in a new session
 

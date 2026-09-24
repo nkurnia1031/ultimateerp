@@ -2,19 +2,21 @@
 
 @php
     $isEdit = isset($loading);
+    $isDocumentLine = isset($loadingDocument);
     $value = fn ($key, $default = null) => old($key, $isEdit ? $loading->{$key} : (request($key) ?: $default));
     $dateValue = fn ($key, $default = null) => old($key, $isEdit && $loading->{$key} ? $loading->{$key}->format('Y-m-d') : $default);
 @endphp
 
-@section('title', $isEdit ? 'Edit Loading Vendor' : 'Tambah Loading Vendor')
+@section('title', $isEdit ? 'Edit Loading Vendor' : ($isDocumentLine ? 'Tambah Tiket Angkutan' : 'Tambah Loading Vendor'))
 
 @section('content')
 @includeIf('assetmanagement::layouts.nav')
-<section class="content-header"><a href="{{ route('asset.fleet.vendor-loadings.index') }}" class="btn btn-default pull-right">Kembali</a><h1><i class="fas fa-truck-loading"></i> {{ $isEdit ? 'Edit Loading Vendor '.$loading->loading_no : 'Tambah Loading Vendor' }}</h1><p class="text-muted">Unit dan sopir vendor disimpan sebagai teks perjalanan, bukan sebagai Asset atau User internal.</p></section>
+<section class="content-header"><a href="{{ $isDocumentLine ? route('asset.fleet.vendor-loadings.documents.show', $loadingDocument->id) : route('asset.fleet.vendor-loadings.index') }}" class="btn btn-default pull-right">Kembali</a><h1><i class="fas fa-truck-loading"></i> {{ $isEdit ? 'Edit Loading Vendor '.$loading->loading_no : ($isDocumentLine ? 'Tambah Tiket ke '.$loadingDocument->document_no : 'Tambah Dokumen Loading Vendor') }}</h1><p class="text-muted">Unit dan sopir vendor disimpan sebagai teks perjalanan, bukan sebagai Asset atau User internal.</p></section>
 <section class="content">
     <div id="vendor-loading-form-feedback" class="alert" role="alert" hidden></div>
     @if ($errors->any())<div class="alert alert-danger"><ul>@foreach ($errors->all() as $error)<li>{{ $error }}</li>@endforeach</ul></div>@endif
-    <form id="vendor-loading-form" method="POST" action="{{ $isEdit ? route('asset.fleet.vendor-loadings.update', $loading->id) : route('asset.fleet.vendor-loadings.store') }}">
+    @if($isDocumentLine)<div class="alert alert-info"><strong>Dokumen:</strong> {{ $loadingDocument->document_no }} · <strong>Sheet:</strong> {{ $loadingDocument->source_sheet ?: 'Manual' }} · <strong>Bendera:</strong> {{ $loadingDocument->supplier_label }} · <strong>Customer:</strong> {{ $loadingDocument->customer_label }}. Identitas ini mengikuti header dokumen.</div>@endif
+    <form id="vendor-loading-form" method="POST" action="{{ $isEdit ? route('asset.fleet.vendor-loadings.update', $loading->id) : ($isDocumentLine ? route('asset.fleet.vendor-loadings.documents.lines.store', $loadingDocument->id) : route('asset.fleet.vendor-loadings.store')) }}">
         @csrf
         @if($isEdit)<input type="hidden" name="_method" value="PUT">@endif
         <div class="box box-primary"><div class="box-header with-border"><h3 class="box-title">Informasi Loading</h3></div><div class="box-body">
@@ -24,19 +26,26 @@
                 <div class="col-md-3 form-group"><label>Tanggal Loading *</label><input type="date" name="loading_date" class="form-control" value="{{ $dateValue('loading_date', now()->format('Y-m-d')) }}" required></div>
                 <div class="col-md-3 form-group"><label>Tanggal Muat</label><input type="date" name="load_date" class="form-control" value="{{ $dateValue('load_date', now()->format('Y-m-d')) }}"></div>
             </div>
+            @unless($isDocumentLine)<div class="row">
+                <div class="col-md-3 form-group"><label>Nama Barang</label><input name="goods_name" class="form-control" maxlength="191" value="{{ $value('goods_name') }}" placeholder="Contoh: Loading Cangkang"></div>
+                <div class="col-md-3 form-group"><label>Jenis Barang</label><input name="goods_type" class="form-control" maxlength="191" value="{{ $value('goods_type') }}" placeholder="Opsional"></div>
+                <div class="col-md-3 form-group"><label>Nama Kapal</label><input name="vessel_name" class="form-control" maxlength="191" value="{{ $value('vessel_name') }}" placeholder="Contoh: MV. Bright King"></div>
+                <div class="col-md-3 form-group"><label>Tujuan</label><input name="destination" class="form-control" maxlength="191" value="{{ $value('destination') }}" placeholder="Contoh: Pelabuhan Pelindo"></div>
+            </div>@endunless
             <div class="row">
                 <div class="col-md-3 form-group"><label>Tanggal Bongkar</label><input type="date" name="unload_date" class="form-control" value="{{ $dateValue('unload_date') }}"></div>
+                @unless($isDocumentLine)
                 @php
                     $selectedSupplierId = $value('supplier_id');
                     $selectedSupplier = $isEdit && $loading->supplier_id == $selectedSupplierId ? $loading->supplier : null;
                     $selectedSupplierLabel = $selectedSupplier ? \App\Contact::supplierDisplayName($selectedSupplier, true) : null;
                 @endphp
-                <div class="col-md-3 form-group"><label>Bendera / Supplier</label><select name="supplier_id" id="vendor_supplier_id" class="form-control"><option value="">Belum dipilih</option>@if($selectedSupplierId && $selectedSupplierLabel)<option value="{{ $selectedSupplierId }}" selected>{{ $selectedSupplierLabel }}</option>@endif</select><small class="text-muted">Cari supplier dari business aktif. Wajib sebelum verifikasi.</small>@if(auth()->user()->can('superadmin') || auth()->user()->can('supplier.create'))<button type="button" class="btn btn-link btn-xs vendor-add-supplier" data-toggle="modal" data-target="#vendor-minimal-supplier-modal"><i class="fas fa-plus"></i> Tambah supplier minimal</button>@endif</div>
-                <div class="col-md-3 form-group"><label>Rute</label><select name="route_id" class="form-control"><option value="">Tidak terkait rute master</option>@foreach($routes as $id => $name)<option value="{{ $id }}" @selected($value('route_id') == $id)>{{ $name }}</option>@endforeach</select></div>
+                <div class="col-md-3 form-group"><label>Bendera / Supplier</label><select name="supplier_id" id="vendor_supplier_id" class="form-control"><option value="">Belum dipilih</option>@if($selectedSupplierId && $selectedSupplierLabel)<option value="{{ $selectedSupplierId }}" selected>{{ $selectedSupplierLabel }}</option>@endif</select><small class="text-muted">Cari supplier dari business aktif.</small>@if(auth()->user()->can('superadmin') || auth()->user()->can('supplier.create'))<button type="button" class="btn btn-link btn-xs vendor-add-supplier" data-toggle="modal" data-target="#vendor-minimal-supplier-modal"><i class="fas fa-plus"></i> Tambah supplier minimal</button>@endif</div>
+                @endunless
                 <div class="col-md-3 form-group"><label>Project</label><select name="project_id" class="form-control"><option value="">Tidak terkait Project</option>@foreach($projects as $id => $name)<option value="{{ $id }}" @selected($value('project_id') == $id)>{{ $name }}</option>@endforeach</select></div>
             </div>
             <div class="row">
-                <div class="col-md-3 form-group"><label>Customer</label><select name="customer_id" class="form-control"><option value="">Tidak terkait Customer</option>@foreach($customers as $id => $name)<option value="{{ $id }}" @selected($value('customer_id') == $id)>{{ $name }}</option>@endforeach</select></div>
+                @unless($isDocumentLine)<div class="col-md-3 form-group"><label>Customer</label><select name="customer_id" class="form-control"><option value="">Tidak terkait Customer</option>@foreach($customers as $id => $name)<option value="{{ $id }}" @selected($value('customer_id') == $id)>{{ $name }}</option>@endforeach</select></div>@endunless
                 @php
                     $unitOptions = $vendorUnits->values();
                     $driverOptions = $vendorDrivers->values();
@@ -56,24 +65,24 @@
             <div class="row">
                 <div class="col-md-2 form-group"><label>Gross (Ton)</label><input type="number" step="0.0001" min="0" id="vendor_gross_tons" name="gross_tons" class="form-control" value="{{ $value('gross_tons') }}"></div>
                 <div class="col-md-2 form-group"><label>Tare (Ton)</label><input type="number" step="0.0001" min="0" id="vendor_tare_tons" name="tare_tons" class="form-control" value="{{ $value('tare_tons') }}"></div>
-                <div class="col-md-2 form-group"><label>Netto (Ton)</label><input type="number" step="0.0001" min="0" id="vendor_net_tons" name="net_tons" class="form-control" value="{{ $value('net_tons') }}"><small class="text-muted">Otomatis dari Gross - Tare.</small></div>
+                <div class="col-md-2 form-group"><label>Netto (Ton)</label><input type="number" step="0.0001" min="0" id="vendor_net_tons" name="net_tons" class="form-control" value="{{ $value('net_tons') }}" readonly><small class="text-muted">Otomatis dari Gross - Tare.</small></div>
                 <div class="col-md-2 form-group"><label>Diterima (Ton)</label><input type="number" step="0.0001" min="0" name="received_tons" class="form-control" value="{{ $value('received_tons') }}"></div>
                 <div class="col-md-2 form-group"><label>Tonase Tagihan</label><input type="number" step="0.0001" min="0" id="vendor_billable_tons" name="billable_tons" class="form-control" value="{{ $value('billable_tons') }}"></div>
-                <div class="col-md-2 form-group"><label>Tarif Vendor/Ton</label><input type="number" step="0.01" min="0" id="vendor_rate_per_ton" name="vendor_rate_per_ton" class="form-control" value="{{ $value('vendor_rate_per_ton') }}"></div>
+                <div class="col-md-2 form-group"><label>Tarif Vendor/Ton (Rp)</label><input type="number" step="0.01" min="0" id="vendor_rate_per_ton" name="vendor_rate_per_ton" class="form-control" value="{{ $value('vendor_rate_per_ton') }}"></div>
             </div>
             <div class="row">
-                <div class="col-md-3 form-group"><label>Penyesuaian Klaim</label><input type="number" step="0.01" name="claim_adjustment" id="vendor_claim_adjustment" class="form-control" value="{{ $value('claim_adjustment', 0) }}"></div>
-                <div class="col-md-3 form-group"><label>Potongan Lain</label><input type="number" step="0.01" min="0" name="other_deduction" id="vendor_other_deduction" class="form-control" value="{{ $value('other_deduction', 0) }}"></div>
-                <div class="col-md-3 form-group"><label>Nilai Dasar</label><input type="text" id="vendor_base_amount_preview" class="form-control" readonly></div>
-                <div class="col-md-3 form-group"><label>Nilai Akhir Vendor</label><input type="text" id="vendor_total_amount_preview" class="form-control" readonly></div>
+                <div class="col-md-3 form-group"><label>Penyesuaian Klaim (Rp)</label><input type="number" step="0.01" name="claim_adjustment" id="vendor_claim_adjustment" class="form-control" value="{{ $value('claim_adjustment', 0) }}"></div>
+                <div class="col-md-3 form-group"><label>Potongan Lain (Rp)</label><input type="number" step="0.01" min="0" name="other_deduction" id="vendor_other_deduction" class="form-control" value="{{ $value('other_deduction', 0) }}"></div>
+                <div class="col-md-3 form-group"><label>Nilai Dasar (Rp)</label><input type="text" id="vendor_base_amount_preview" class="form-control" readonly></div>
+                <div class="col-md-3 form-group"><label>Nilai Akhir Vendor (Rp)</label><input type="text" id="vendor_total_amount_preview" class="form-control" readonly></div>
             </div>
             <div class="form-group"><label>Catatan</label><textarea name="notes" class="form-control" rows="3">{{ $value('notes') }}</textarea></div>
-            <div class="alert alert-info"><strong>Catatan:</strong> Loading Vendor akan tersimpan sebagai biaya vendor. Belum dibuat menjadi Expense, invoice, atau payroll otomatis.</div>
-            <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> {{ $isEdit ? 'Simpan Perubahan' : 'Simpan Loading Vendor' }}</button>
-            <a href="{{ route('asset.fleet.vendor-loadings.index') }}" class="btn btn-default">Batal</a>
+            <div class="alert alert-info"><strong>Catatan:</strong> Nilai biaya dihitung dari tonase tagihan, tarif, potongan, dan klaim.</div>
+            <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> {{ $isEdit ? 'Simpan Perubahan' : ($isDocumentLine ? 'Tambahkan Tiket' : 'Simpan Loading Vendor') }}</button>
+            <a href="{{ $isDocumentLine ? route('asset.fleet.vendor-loadings.documents.show', $loadingDocument->id) : route('asset.fleet.vendor-loadings.index') }}" class="btn btn-default">Batal</a>
         </div></div>
     </form>
-    @if(auth()->user()->can('superadmin') || auth()->user()->can('supplier.create'))
+    @if(!$isDocumentLine && (auth()->user()->can('superadmin') || auth()->user()->can('supplier.create')))
     <div class="modal fade" id="vendor-minimal-supplier-modal" tabindex="-1" role="dialog" aria-labelledby="vendor-minimal-supplier-title">
         <div class="modal-dialog" role="document"><div class="modal-content">
             <div class="modal-header"><button type="button" class="close" data-dismiss="modal" aria-label="Tutup"><span aria-hidden="true">&times;</span></button><h4 class="modal-title" id="vendor-minimal-supplier-title">Tambah Supplier Minimal</h4></div>
@@ -83,15 +92,18 @@
     </div>
     @endif
 </section>
-@push('styles')
 <style>
     .select2-container { width: 100% !important; }
     #vendor_base_amount_preview, #vendor_total_amount_preview { font-weight: 600; background: #f7fafb; }
 </style>
-@endpush
 @push('scripts')
 <script>
 $(function () {
+    function notify(success, text, $fallback) {
+        var message = text || 'Aksi tidak dapat diselesaikan.';
+        if (window.toastr && typeof window.toastr[success ? 'success' : 'error'] === 'function') { window.toastr[success ? 'success' : 'error'](message); return; }
+        if ($fallback && $fallback.length) $fallback.removeAttr('hidden').removeClass('alert-success alert-danger').addClass(success ? 'alert-success' : 'alert-danger').text(message);
+    }
     if ($.fn.select2) {
         $('#vendor_supplier_id').select2({
             width: '100%',
@@ -139,12 +151,12 @@ $(function () {
         var $form = $(this), $feedback = $('#vendor-loading-form-feedback'), $button = $form.find('[type="submit"]');
         $button.prop('disabled', true);
         $.ajax({ url: $form.attr('action'), type: 'POST', data: $form.serialize(), headers: { Accept: 'application/json' } })
-            .done(function (response) { $feedback.removeAttr('hidden').removeClass('alert-danger').addClass('alert-success').text(response.msg || 'Tersimpan.'); window.location.href = response.redirect || @json(route('asset.fleet.vendor-loadings.index')); })
-            .fail(function (xhr) { var body = xhr.responseJSON || {}; $feedback.removeAttr('hidden').removeClass('alert-success').addClass('alert-danger').text(body.msg || body.message || 'Data belum tersimpan.'); $button.prop('disabled', false); });
+            .done(function (response) { notify(true, response.msg || 'Line angkutan tersimpan.', $feedback); window.setTimeout(function () { window.location.href = response.redirect || @json(route('asset.fleet.vendor-loadings.index')); }, 500); })
+            .fail(function (xhr) { var body = xhr.responseJSON || {}; notify(false, body.msg || body.message || 'Data belum tersimpan.', $feedback); $button.prop('disabled', false); });
     });
     $('#vendor-minimal-supplier-save').on('click', function () {
         var $button = $(this), $name = $('#vendor-minimal-supplier-name'), $modalFeedback = $('#vendor-minimal-supplier-feedback'), name = $.trim($name.val() || '');
-        if (!name) { $modalFeedback.removeAttr('hidden').removeClass('alert-success').addClass('alert-danger').text('Nama supplier wajib diisi.'); return; }
+        if (!name) { notify(false, 'Nama supplier wajib diisi.', $modalFeedback); return; }
         $button.prop('disabled', true);
         $.ajax({ url: @json(route('asset.fleet.vendor-loadings.suppliers.minimal')), type: 'POST', data: { _token: $('meta[name="csrf-token"]').attr('content'), name: name }, headers: { Accept: 'application/json' } })
             .done(function (response) {
@@ -156,8 +168,9 @@ $(function () {
                 $('#vendor-minimal-supplier-modal').modal('hide');
                 $name.val('');
                 $modalFeedback.attr('hidden', true);
+                notify(true, 'Supplier berhasil dibuat.');
             })
-            .fail(function (xhr) { var body = xhr.responseJSON || {}; $modalFeedback.removeAttr('hidden').removeClass('alert-success').addClass('alert-danger').text(body.msg || body.message || 'Supplier belum dapat dibuat.'); })
+            .fail(function (xhr) { var body = xhr.responseJSON || {}; notify(false, body.msg || body.message || 'Supplier belum dapat dibuat.', $modalFeedback); })
             .always(function () { $button.prop('disabled', false); });
     });
 });

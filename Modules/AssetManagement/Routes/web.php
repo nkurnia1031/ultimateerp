@@ -52,18 +52,30 @@ Route::middleware('web', 'authh', 'auth', 'SetSessionData', 'language', 'timezon
 
         Route::get('vendor-loadings', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController::class, 'index'])->name('vendor-loadings.index');
         Route::get('vendor-loadings/data', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController::class, 'data'])->name('vendor-loadings.data');
+        Route::get('vendor-loadings/print', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController::class, 'print'])->name('vendor-loadings.print');
+        Route::get('vendor-loadings/documents/{id}/print', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController::class, 'printDocument'])->name('vendor-loadings.documents.print');
+        Route::get('vendor-loadings/documents/{id}', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController::class, 'showDocument'])->name('vendor-loadings.documents.show');
+        Route::put('vendor-loadings/documents/{id}/header', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController::class, 'updateDocumentHeader'])->name('vendor-loadings.documents.header.update');
+        Route::get('vendor-loadings/documents/{id}/lines/create', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController::class, 'createDocumentLine'])->name('vendor-loadings.documents.lines.create');
+        Route::post('vendor-loadings/documents/{id}/lines', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController::class, 'storeDocumentLine'])->name('vendor-loadings.documents.lines.store');
+        Route::delete('vendor-loadings/documents/{id}', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController::class, 'destroyDocument'])->name('vendor-loadings.documents.destroy');
         Route::get('vendor-loadings/create', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController::class, 'create'])->name('vendor-loadings.create');
         Route::post('vendor-loadings', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController::class, 'store'])->name('vendor-loadings.store');
         Route::get('vendor-loadings/import', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController::class, 'importForm'])->name('vendor-loadings.import.form');
+        Route::get('vendor-loadings/import/template', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController::class, 'importTemplate'])->name('vendor-loadings.import.template');
         Route::post('vendor-loadings/import/preview', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController::class, 'importPreview'])->name('vendor-loadings.import.preview');
         Route::post('vendor-loadings/import/confirm', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController::class, 'importConfirm'])->name('vendor-loadings.import.confirm');
+        Route::get('vendor-loadings/import/batches/{id}/status', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController::class, 'importBatchStatus'])->name('vendor-loadings.import.batches.status');
+        Route::get('vendor-loadings/import/batches/{id}/preview', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController::class, 'importBatchPreview'])->name('vendor-loadings.import.batches.preview');
+        Route::post('vendor-loadings/import/batches/{id}/reverse', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController::class, 'reverseImportBatch'])->name('vendor-loadings.import.batches.reverse');
         Route::get('vendor-loadings/suppliers', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController::class, 'supplierOptions'])->name('vendor-loadings.suppliers');
+        Route::get('vendor-loadings/customers', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController::class, 'customerOptions'])->name('vendor-loadings.customers');
         Route::post('vendor-loadings/suppliers/minimal', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController::class, 'createSupplier'])->name('vendor-loadings.suppliers.minimal');
+        Route::post('vendor-loadings/customers/minimal', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController::class, 'createCustomer'])->name('vendor-loadings.customers.minimal');
         Route::get('vendor-loadings/{id}/edit', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController::class, 'edit'])->name('vendor-loadings.edit');
         Route::get('vendor-loadings/{id}', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController::class, 'show'])->name('vendor-loadings.show');
         Route::put('vendor-loadings/{id}', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController::class, 'update'])->name('vendor-loadings.update');
         Route::delete('vendor-loadings/{id}', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController::class, 'destroy'])->name('vendor-loadings.destroy');
-        Route::post('vendor-loadings/{id}/status', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController::class, 'status'])->name('vendor-loadings.status');
 
         Route::get('trips/{id}', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentTripController::class, 'show'])->name('trips.show');
         Route::post('trips/{id}/status', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentTripController::class, 'status'])->name('trips.status');

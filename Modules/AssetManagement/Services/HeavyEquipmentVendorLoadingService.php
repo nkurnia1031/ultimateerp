@@ -4,84 +4,45 @@ namespace Modules\AssetManagement\Services;
 
 use App\Contact;
 use Carbon\Carbon;
-use Illuminate\Support\Facades\DB;
-use Modules\AssetManagement\Entities\HeavyEquipmentRoute;
 use Modules\AssetManagement\Entities\HeavyEquipmentVendorLoading;
+use Modules\AssetManagement\Entities\HeavyEquipmentVendorLoadingDocument;
 use Modules\Project\Entities\Project;
 
 class HeavyEquipmentVendorLoadingService
 {
-    public function create(array $input, int $businessId, int $userId): HeavyEquipmentVendorLoading
+    public function create(array $input, int $businessId, int $userId, ?HeavyEquipmentVendorLoadingDocument $document = null, bool $preserveImportedAmounts = false): HeavyEquipmentVendorLoading
     {
-        $data = $this->normalise($input, $businessId);
+        $data = $this->normalise($input, $businessId, $preserveImportedAmounts);
         $data['loading_no'] = $data['loading_no'] ?: $this->nextNumber($businessId, $data['loading_date']);
         $this->assertUnique($data, $businessId);
 
+        if (! $document || (int) $document->business_id !== $businessId) {
+            throw new \RuntimeException('Line Loading Vendor wajib berada pada dokumen dalam business aktif.');
+        }
+
         $loading = HeavyEquipmentVendorLoading::create(array_merge($data, [
-            'business_id' => $businessId,
+            'loading_document_id' => $document->id,
             'created_by' => $userId,
-            'status' => 'draft',
-            'expense_status' => 'not_linked',
         ]));
 
-        return $loading->fresh(['supplier', 'route', 'project', 'customer']);
+        return $loading->fresh(['loadingDocument.supplier', 'loadingDocument.customer', 'loadingDocument.route', 'project']);
     }
 
     public function update(HeavyEquipmentVendorLoading $loading, array $input, int $businessId): HeavyEquipmentVendorLoading
     {
         $this->assertBusiness($loading, $businessId);
-        $this->assertEditable($loading);
         $data = $this->normalise($input, $businessId);
         $data['loading_no'] = $data['loading_no'] ?: $loading->loading_no;
         $this->assertUnique($data, $businessId, $loading->id);
         $loading->update($data);
 
-        return $loading->fresh(['supplier', 'route', 'project', 'customer']);
+        return $loading->fresh(['loadingDocument.supplier', 'loadingDocument.customer', 'loadingDocument.route', 'project']);
     }
 
     public function delete(HeavyEquipmentVendorLoading $loading, int $businessId): void
     {
         $this->assertBusiness($loading, $businessId);
-        $this->assertEditable($loading);
         $loading->delete();
-    }
-
-    public function transition(HeavyEquipmentVendorLoading $loading, string $status, int $businessId, int $userId): HeavyEquipmentVendorLoading
-    {
-        $this->assertBusiness($loading, $businessId);
-        $allowed = [
-            'loading' => ['draft'],
-            'in_transit' => ['draft', 'loading'],
-            'completed' => ['draft', 'loading', 'in_transit'],
-            'verified' => ['completed'],
-            'cancelled' => ['draft', 'loading', 'in_transit', 'completed'],
-        ];
-        if (! isset($allowed[$status]) || ! in_array($loading->status, $allowed[$status], true)) {
-            throw new \RuntimeException("Loading Vendor {$loading->loading_no} tidak dapat dipindahkan ke status tersebut.");
-        }
-        if ($status === 'verified') {
-            if (! $loading->supplier_id) {
-                throw new \RuntimeException('Supplier/Bendera wajib dipilih sebelum verifikasi.');
-            }
-            if (trim((string) $loading->vendor_unit_name) === '' || trim((string) $loading->vendor_driver_name) === '') {
-                throw new \RuntimeException('Unit dan sopir vendor wajib diisi sebelum verifikasi.');
-            }
-            if ((float) ($loading->billable_tons ?: $loading->net_tons) <= 0) {
-                throw new \RuntimeException('Tonase tagihan harus lebih besar dari nol sebelum verifikasi.');
-            }
-        }
-        if (in_array($loading->status, ['verified', 'cancelled'], true)) {
-            throw new \RuntimeException('Loading Vendor yang sudah final tidak dapat diubah.');
-        }
-
-        $loading->status = $status;
-        if ($status === 'verified') {
-            $loading->verified_at = now();
-            $loading->verified_by = $userId;
-        }
-        $loading->save();
-
-        return $loading->fresh(['supplier', 'route', 'project', 'customer']);
     }
 
     public function createMinimalSupplier(string $label, int $businessId, int $userId): Contact
@@ -130,6 +91,49 @@ class HeavyEquipmentVendorLoadingService
         return $matches->first();
     }
 
+    public function findCustomer(int $businessId, string $label): ?Contact
+    {
+        $needle = $this->normaliseIdentityText($label);
+        if ($needle === '') {
+            return null;
+        }
+
+        return Contact::where('business_id', $businessId)
+            ->whereIn('type', ['customer', 'both'])
+            ->where('contact_status', 'active')
+            ->get()
+            ->first(function (Contact $contact) use ($needle) {
+                return in_array($needle, array_filter([
+                    $this->normaliseIdentityText($contact->name),
+                    $this->normaliseIdentityText($contact->supplier_business_name),
+                    $this->normaliseIdentityText($contact->contact_id),
+                ]), true);
+            });
+    }
+
+    public function createMinimalCustomer(string $label, int $businessId, int $userId): Contact
+    {
+        $label = trim($label);
+        if ($label === '') {
+            throw new \InvalidArgumentException('Nama customer baru wajib diisi.');
+        }
+
+        $existing = $this->findCustomer($businessId, $label);
+        if ($existing) {
+            return $existing;
+        }
+
+        return Contact::create([
+            'business_id' => $businessId,
+            'type' => 'customer',
+            'name' => $label,
+            'supplier_business_name' => null,
+            'mobile' => '-',
+            'created_by' => $userId,
+            'contact_status' => 'active',
+        ]);
+    }
+
     public function supplierMatches(int $businessId, string $term = '')
     {
         $query = Contact::where('business_id', $businessId)
@@ -151,7 +155,28 @@ class HeavyEquipmentVendorLoadingService
         ])->values();
     }
 
-    private function normalise(array $input, int $businessId): array
+    public function customerMatches(int $businessId, string $term = '')
+    {
+        $query = Contact::where('business_id', $businessId)
+            ->whereIn('type', ['customer', 'both'])
+            ->where('contact_status', 'active')
+            ->orderBy('name');
+        if (trim($term) !== '') {
+            $like = '%'.trim($term).'%';
+            $query->where(function ($q) use ($like) {
+                $q->where('name', 'like', $like)
+                    ->orWhere('supplier_business_name', 'like', $like)
+                    ->orWhere('contact_id', 'like', $like);
+            });
+        }
+
+        return $query->limit(30)->get()->map(fn ($customer) => [
+            'id' => $customer->id,
+            'text' => trim((string) $customer->supplier_business_name) ?: $customer->name,
+        ])->values();
+    }
+
+    private function normalise(array $input, int $businessId, bool $preserveImportedAmounts = false): array
     {
         $loadingDate = Carbon::parse($input['loading_date'] ?? $input['load_date'] ?? now())->toDateString();
         $loadDate = ! empty($input['load_date']) ? Carbon::parse($input['load_date'])->toDateString() : $loadingDate;
@@ -160,30 +185,15 @@ class HeavyEquipmentVendorLoadingService
             throw new \InvalidArgumentException('Tanggal bongkar tidak boleh sebelum tanggal muat.');
         }
 
-        $supplierId = ! empty($input['supplier_id']) ? (int) $input['supplier_id'] : null;
-        $supplier = null;
-        if ($supplierId) {
-            $supplier = Contact::where('business_id', $businessId)
-                ->whereIn('type', ['supplier', 'both'])
-                ->where('contact_status', 'active')
-                ->findOrFail($supplierId);
-        }
-
-        $routeId = ! empty($input['route_id']) ? (int) $input['route_id'] : null;
-        $route = $routeId ? HeavyEquipmentRoute::where('business_id', $businessId)->findOrFail($routeId) : null;
         $projectId = ! empty($input['project_id']) ? (int) $input['project_id'] : null;
         $project = $projectId ? Project::where('business_id', $businessId)->findOrFail($projectId) : null;
-        $customerId = ! empty($input['customer_id']) ? (int) $input['customer_id'] : null;
-        if ($customerId) {
-            Contact::where('business_id', $businessId)->findOrFail($customerId);
-        }
-        if ($project && ! $customerId) {
-            $customerId = $project->contact_id ?: null;
-        }
 
         $gross = $this->number($input['gross_tons'] ?? null);
         $tare = $this->number($input['tare_tons'] ?? null);
-        $net = $this->number($input['net_tons'] ?? null);
+        $net = $preserveImportedAmounts ? $this->number($input['net_tons'] ?? null) : null;
+        if ($gross !== null && $tare !== null && $gross < $tare) {
+            throw new \InvalidArgumentException('Gross tidak boleh lebih kecil dari Tare.');
+        }
         if (($net === null || $net <= 0) && $gross !== null && $tare !== null) {
             $net = round($gross - $tare, 4);
         }
@@ -209,16 +219,11 @@ class HeavyEquipmentVendorLoadingService
             'loading_date' => $loadingDate,
             'load_date' => $loadDate,
             'unload_date' => $unloadDate,
-            'supplier_id' => $supplier?->id,
-            'supplier_name_snapshot' => $supplier ? Contact::supplierDisplayName($supplier, false) : (trim((string) ($input['supplier_name_snapshot'] ?? '')) ?: null),
             'vendor_driver_name' => trim((string) ($input['vendor_driver_name'] ?? '')) ?: null,
             'vendor_unit_name' => trim((string) ($input['vendor_unit_name'] ?? '')) ?: null,
             'vendor_driver_code' => trim((string) ($input['vendor_driver_code'] ?? '')) ?: null,
             'vendor_unit_code' => trim((string) ($input['vendor_unit_code'] ?? '')) ?: null,
-            'route_id' => $route?->id,
-            'route_name_snapshot' => $route?->name ?: (trim((string) ($input['route_name_snapshot'] ?? '')) ?: null),
             'project_id' => $project?->id,
-            'customer_id' => $customerId,
             'gross_tons' => $gross,
             'tare_tons' => $tare,
             'net_tons' => $net,
@@ -228,9 +233,7 @@ class HeavyEquipmentVendorLoadingService
             'vendor_base_amount' => $base,
             'claim_adjustment' => $claim,
             'other_deduction' => $deduction,
-            'vendor_total_amount' => $total,
-            'source_workbook' => $input['source_workbook'] ?? null,
-            'source_sheet' => $input['source_sheet'] ?? null,
+            'vendor_total_amount' => ($preserveImportedAmounts ? $this->number($input['vendor_total_amount'] ?? null) : null) ?? $total,
             'source_row' => $input['source_row'] ?? null,
             'source_fingerprint' => $input['source_fingerprint'] ?? null,
             'notes' => trim((string) ($input['notes'] ?? '')) ?: null,
@@ -239,35 +242,29 @@ class HeavyEquipmentVendorLoadingService
 
     private function assertUnique(array $data, int $businessId, ?int $exceptId = null): void
     {
-        if (! empty($data['loading_no']) && HeavyEquipmentVendorLoading::where('business_id', $businessId)->where('loading_no', $data['loading_no'])->when($exceptId, fn ($q) => $q->where('id', '<>', $exceptId))->exists()) {
+        $inBusiness = fn ($query) => $query->whereHas('loadingDocument', fn ($documentQuery) => $documentQuery->where('business_id', $businessId));
+        if (! empty($data['loading_no']) && HeavyEquipmentVendorLoading::where($inBusiness)->where('loading_no', $data['loading_no'])->when($exceptId, fn ($q) => $q->where('id', '<>', $exceptId))->exists()) {
             throw new \RuntimeException('Nomor Loading Vendor tersebut sudah digunakan.');
         }
-        if (! empty($data['ticket_no']) && HeavyEquipmentVendorLoading::where('business_id', $businessId)->where('ticket_no', $data['ticket_no'])->when($exceptId, fn ($q) => $q->where('id', '<>', $exceptId))->exists()) {
+        if (! empty($data['ticket_no']) && HeavyEquipmentVendorLoading::where($inBusiness)->where('ticket_no', $data['ticket_no'])->when($exceptId, fn ($q) => $q->where('id', '<>', $exceptId))->exists()) {
             throw new \RuntimeException('Nomor tiket tersebut sudah digunakan pada Loading Vendor lain.');
         }
-        if (! empty($data['source_fingerprint']) && HeavyEquipmentVendorLoading::where('business_id', $businessId)->where('source_fingerprint', $data['source_fingerprint'])->when($exceptId, fn ($q) => $q->where('id', '<>', $exceptId))->exists()) {
+        if (! empty($data['source_fingerprint']) && HeavyEquipmentVendorLoading::where($inBusiness)->where('source_fingerprint', $data['source_fingerprint'])->when($exceptId, fn ($q) => $q->where('id', '<>', $exceptId))->exists()) {
             throw new \RuntimeException('Baris workbook tersebut sudah pernah diimpor.');
         }
     }
 
     private function assertBusiness(HeavyEquipmentVendorLoading $loading, int $businessId): void
     {
-        if ((int) $loading->business_id !== $businessId) {
+        if ((int) $loading->loadingDocument?->business_id !== $businessId) {
             throw new \RuntimeException('Loading Vendor tidak berada pada business aktif.');
-        }
-    }
-
-    private function assertEditable(HeavyEquipmentVendorLoading $loading): void
-    {
-        if (in_array($loading->status, ['verified', 'cancelled'], true) || $loading->expense_transaction_id) {
-            throw new \RuntimeException('Loading Vendor yang sudah terverifikasi, dibatalkan, atau dikaitkan Expense tidak dapat diubah.');
         }
     }
 
     private function nextNumber(int $businessId, string $date): string
     {
         $prefix = 'LV-'.Carbon::parse($date)->format('Ym').'-';
-        $last = HeavyEquipmentVendorLoading::where('business_id', $businessId)
+        $last = HeavyEquipmentVendorLoading::whereHas('loadingDocument', fn ($query) => $query->where('business_id', $businessId))
             ->where('loading_no', 'like', $prefix.'%')
             ->orderByDesc('id')->value('loading_no');
         $sequence = $last && preg_match('/(\d+)$/', $last, $match) ? ((int) $match[1]) + 1 : 1;
@@ -304,5 +301,10 @@ class HeavyEquipmentVendorLoadingService
     private function normaliseText($value): string
     {
         return strtolower(trim((string) preg_replace('/\s+/', ' ', $value)));
+    }
+
+    private function normaliseIdentityText($value): string
+    {
+        return strtolower((string) preg_replace('/[^a-z0-9]+/', '', trim((string) $value)));
     }
 }

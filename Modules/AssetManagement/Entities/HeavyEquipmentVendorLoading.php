@@ -13,7 +13,6 @@ class HeavyEquipmentVendorLoading extends Model
         'loading_date' => 'date',
         'load_date' => 'date',
         'unload_date' => 'date',
-        'verified_at' => 'datetime',
         'gross_tons' => 'decimal:4',
         'tare_tons' => 'decimal:4',
         'net_tons' => 'decimal:4',
@@ -26,19 +25,9 @@ class HeavyEquipmentVendorLoading extends Model
         'vendor_total_amount' => 'decimal:4',
     ];
 
-    public function business()
+    public function loadingDocument()
     {
-        return $this->belongsTo(\App\Business::class);
-    }
-
-    public function supplier()
-    {
-        return $this->belongsTo(\App\Contact::class, 'supplier_id');
-    }
-
-    public function route()
-    {
-        return $this->belongsTo(HeavyEquipmentRoute::class, 'route_id');
+        return $this->belongsTo(HeavyEquipmentVendorLoadingDocument::class, 'loading_document_id');
     }
 
     public function project()
@@ -46,35 +35,108 @@ class HeavyEquipmentVendorLoading extends Model
         return $this->belongsTo(\Modules\Project\Entities\Project::class, 'project_id');
     }
 
-    public function customer()
-    {
-        return $this->belongsTo(\App\Contact::class, 'customer_id');
-    }
-
-    public function expenseTransaction()
-    {
-        return $this->belongsTo(\App\Transaction::class, 'expense_transaction_id');
-    }
-
     public function creator()
     {
         return $this->belongsTo(\App\User::class, 'created_by');
     }
 
-    public function verifier()
+    public function getBusinessAttribute()
     {
-        return $this->belongsTo(\App\User::class, 'verified_by');
+        return $this->loadingDocument?->business;
+    }
+
+    public function getSupplierAttribute()
+    {
+        return $this->loadingDocument?->supplier;
+    }
+
+    public function getRouteAttribute()
+    {
+        return $this->loadingDocument?->route;
+    }
+
+    public function getCustomerAttribute()
+    {
+        return $this->loadingDocument?->customer;
+    }
+
+    public function getExpenseTransactionAttribute()
+    {
+        return $this->loadingDocument?->expenseTransaction;
+    }
+
+    public function getSupplierIdAttribute()
+    {
+        return $this->loadingDocument?->supplier_id;
+    }
+
+    public function getSupplierNameSnapshotAttribute()
+    {
+        return $this->loadingDocument?->supplier_name_snapshot;
+    }
+
+    public function getCustomerIdAttribute()
+    {
+        return $this->loadingDocument?->customer_id;
+    }
+
+    public function getGoodsNameAttribute()
+    {
+        return $this->loadingDocument?->goods_name;
+    }
+
+    public function getGoodsTypeAttribute()
+    {
+        return $this->loadingDocument?->goods_type;
+    }
+
+    public function getVesselNameAttribute()
+    {
+        return $this->loadingDocument?->vessel_name;
+    }
+
+    public function getDestinationAttribute()
+    {
+        return $this->loadingDocument?->destination;
+    }
+
+    public function getRouteIdAttribute()
+    {
+        return $this->loadingDocument?->route_id;
+    }
+
+    public function getRouteNameSnapshotAttribute()
+    {
+        return $this->loadingDocument?->route_name_snapshot;
+    }
+
+    public function getExpenseStatusAttribute()
+    {
+        return $this->loadingDocument?->expense_status ?: 'not_linked';
+    }
+
+    public function getExpenseTransactionIdAttribute()
+    {
+        return $this->loadingDocument?->expense_transaction_id;
+    }
+
+    public function getSourceWorkbookAttribute()
+    {
+        return $this->loadingDocument?->source_workbook;
+    }
+
+    public function getSourceSheetAttribute()
+    {
+        return $this->loadingDocument?->source_sheet;
     }
 
     public function getSupplierLabelAttribute(): string
     {
-        return $this->supplier
-            ? \App\Contact::supplierDisplayName($this->supplier, false)
-            : (trim((string) $this->supplier_name_snapshot) ?: '-');
+        return $this->loadingDocument?->supplier_label ?: '-';
     }
 
     public function getRouteLabelAttribute(): string
     {
-        return $this->route?->name ?: (trim((string) $this->route_name_snapshot) ?: '-');
+        return $this->loadingDocument?->route_label ?: '-';
     }
 }

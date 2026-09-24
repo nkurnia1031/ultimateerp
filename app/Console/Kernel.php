@@ -15,6 +15,7 @@ class Kernel extends ConsoleKernel
      */
     protected function schedule(Schedule $schedule)
     {
+        $schedule->command('vendor-loadings:cleanup-import-files')->dailyAt('02:10')->withoutOverlapping();
         $env = config('app.env');
         $email = config('mail.username');
 
