@@ -17,7 +17,7 @@
     </div>
     <div class="box box-primary"><div class="box-body table-responsive fleet-datatable-wrap">
         <table id="fleet-asset-ledger-trips-table" class="table table-bordered table-striped fleet-datatable">
-            <thead><tr><th>Tanggal</th><th>Trip</th><th>Rute</th><th>Sopir</th><th>Project</th><th>Ton</th><th>Pendapatan</th><th>Upah</th><th>Bonus Ayak</th><th>Kontribusi setelah Bonus</th><th>Invoice</th><th>Settlement Payroll</th><th>Status</th></tr></thead>
+            <thead><tr><th>Tanggal</th><th>Trip</th><th>Rute</th><th>Sopir</th><th>Project</th><th>Ton</th><th>Pendapatan</th><th>Upah</th><th>Kontribusi</th><th>Invoice</th><th>Settlement Payroll</th><th>Status</th></tr></thead>
             <tbody>
             @forelse($trips as $trip)
                 <tr>
@@ -29,24 +29,23 @@
                     <td>{{ number_format($trip->actual_tons, 2, ',', '.') }}</td>
                     <td>@format_currency($trip->revenue_total)</td>
                     <td>@format_currency($trip->driver_pay_total)</td>
-                    <td>@format_currency($trip->bonusAyaks->sum('bonus'))</td>
-                    <td>@format_currency($trip->gross_contribution - $trip->bonusAyaks->sum('bonus'))</td>
+                    <td>@format_currency($trip->gross_contribution)</td>
                     <td>{{ $trip->billing ? strtoupper($trip->billing->billing_type) : 'Belum' }}</td>
                     <td>{{ $trip->settlements->isNotEmpty() ? $trip->settlements->pluck('settlement_no')->implode(', ') : 'Belum' }}</td>
                     <td>{{ strtoupper($trip->status) }}</td>
                 </tr>
             @empty
-                <tr><td colspan="13" class="text-center">Belum ada trip untuk unit ini.</td></tr>
+                <tr><td colspan="12" class="text-center">Belum ada trip untuk unit ini.</td></tr>
             @endforelse
             </tbody>
         </table>
     </div></div>
-    <div class="box box-warning"><div class="box-header with-border"><h3 class="box-title">Bonus Ayak manual unit ini</h3></div><div class="box-body"><p class="text-muted">Bonus berikut sudah masuk total biaya unit, tetapi belum ditautkan ke satu SPB tertentu. Bonus tetap masuk payroll sesuai settlement.</p><div class="table-responsive fleet-datatable-wrap"><table id="fleet-asset-ledger-bonus-table" class="table table-bordered fleet-datatable"><thead><tr><th>Tanggal</th><th>Sopir</th><th>Project</th><th>Trip</th><th>Bonus</th><th>Status Payroll</th></tr></thead><tbody>@forelse($manualBonusAyaks as $bonus)<tr><td>{{ optional($bonus->tanggal)->format('d-m-Y') }}</td><td>{{ optional($bonus->driver)->user_full_name ?: $bonus->nama_operator }}</td><td>{{ optional($bonus->project)->name ?: '-' }}</td><td>{{ $bonus->trip }}</td><td>@format_currency($bonus->bonus)</td><td>{{ $bonus->settlements()->exists() ? 'Sudah settlement' : 'Belum settlement' }}</td></tr>@empty<tr><td colspan="6" class="text-center">Tidak ada Bonus Ayak manual yang belum ditautkan ke SPB.</td></tr>@endforelse</tbody></table></div></div></div>
+    <div class="box box-warning"><div class="box-header with-border"><h3 class="box-title">Bonus Ayak unit ini</h3></div><div class="box-body"><p class="text-muted">Bonus dicatat per sopir dan unit, tanpa ditautkan ke SPB tertentu. Nilainya masuk ke ringkasan biaya unit dan tetap diproses melalui settlement payroll.</p><div class="table-responsive fleet-datatable-wrap"><table id="fleet-asset-ledger-bonus-table" class="table table-bordered fleet-datatable"><thead><tr><th>Tanggal</th><th>Sopir</th><th>Project</th><th>Trip</th><th>Bonus</th><th>Status Payroll</th></tr></thead><tbody>@forelse($assetBonusAyaks as $bonus)<tr><td>{{ optional($bonus->tanggal)->format('d-m-Y') }}</td><td>{{ optional($bonus->driver)->user_full_name ?: $bonus->nama_operator }}</td><td>{{ optional($bonus->project)->name ?: 'Tanpa Project' }}</td><td>{{ $bonus->trip }}</td><td>@format_currency($bonus->bonus)</td><td>{{ $bonus->settlements()->exists() ? 'Sudah settlement' : 'Belum settlement' }}</td></tr>@empty<tr><td colspan="6" class="text-center">Belum ada Bonus Ayak untuk unit ini.</td></tr>@endforelse</tbody></table></div></div></div>
 </section>
 @push('scripts')
 <script>
 $(function () {
-    initFleetDataTable('#fleet-asset-ledger-trips-table', { order: [[0, 'desc']], columnDefs: [{ targets: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], orderable: false }] });
+    initFleetDataTable('#fleet-asset-ledger-trips-table', { order: [[0, 'desc']], columnDefs: [{ targets: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], orderable: false }] });
     initFleetDataTable('#fleet-asset-ledger-bonus-table', { order: [[0, 'desc']], columnDefs: [{ targets: [1, 2, 3, 4, 5], orderable: false }] });
 });
 </script>

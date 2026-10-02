@@ -67,10 +67,4 @@ class HeavyEquipmentTrip extends Model
         return $this->belongsToMany(HeavyEquipmentDriverSettlement::class, 'heavy_equipment_settlement_trips', 'trip_id', 'settlement_id')->withTimestamps();
     }
 
-    public function bonusAyaks()
-    {
-        return $this->belongsToMany(\App\BonusAyak::class, 'bonus_ayak_trip', 'trip_id', 'bonus_ayak_id')
-            ->withPivot('business_id')
-            ->withTimestamps();
-    }
 }

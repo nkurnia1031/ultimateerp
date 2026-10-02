@@ -20,9 +20,25 @@ class SolarImportPreviewService
             $this->workbookService->parse($path, $dateOverrides)
         );
         $progress && $progress('matching', 'Mencocokkan transaksi dengan aplikasi.', 55);
-        $result = $this->ledgerService->reconciliation($businessId, $parsed);
+        $usageRows = $parsed['rows']['usage'] ?? [];
+        $usageErrors = array_values(array_filter($parsed['errors'] ?? [], fn ($error) => ($error['ledger'] ?? '') === 'usage'));
+        $standardParsed = $parsed;
+        unset($standardParsed['rows']['usage']);
+        $standardParsed['errors'] = array_values(array_filter($parsed['errors'] ?? [], fn ($error) => ($error['ledger'] ?? '') !== 'usage'));
+        $result = $this->ledgerService->reconciliation($businessId, $standardParsed);
+        $usageResult = $this->ledgerService->usageReconciliation($businessId, $usageRows, $usageErrors);
+        foreach ($usageResult['summary'] as $key => $count) {
+            $result['summary'][$key] = ($result['summary'][$key] ?? 0) + $count;
+        }
+        $result['items'] = array_merge($result['items'], $usageResult['items']);
+        $result['onlyExcel']['usage'] = $usageResult['onlyExcel']['usage'] ?? [];
+        $result['sheets'] = $parsed['sheets'] ?? [];
         $progress && $progress('saving', 'Menyimpan hasil preview.', 90);
         $this->replaceRows($businessId, $batchId, $result);
+        DB::table('solar_import_batches')->where('id', $batchId)->where('business_id', $businessId)->update([
+            'source_sheets' => json_encode($result['sheets'], JSON_UNESCAPED_UNICODE),
+            'updated_at' => now(),
+        ]);
 
         return $result;
     }
@@ -36,16 +52,60 @@ class SolarImportPreviewService
             ->groupBy('status')
             ->pluck('aggregate', 'status');
 
-        return [
-            'match' => (int) ($counts['match'] ?? 0),
-            'only_excel' => (int) DB::table('solar_import_preview_rows')
+        $grouped = DB::table('solar_import_preview_rows')
+            ->where('batch_id', $batchId)
+            ->where('business_id', $businessId)
+            ->select('ledger', 'source_sheet', 'status', DB::raw('COUNT(*) as aggregate'))
+            ->groupBy('ledger', 'source_sheet', 'status')
+            ->get()
+            ->groupBy(fn ($row) => ($row->source_sheet ?: strtoupper($row->ledger)));
+        $batch = DB::table('solar_import_batches')->where('id', $batchId)->where('business_id', $businessId)->first();
+        $definitions = json_decode((string) ($batch->source_sheets ?? '[]'), true) ?: [];
+        $knownNames = array_column($definitions, 'sheet_key');
+        foreach ($grouped as $name => $items) {
+            if (! in_array((string) $name, $knownNames, true)) {
+                $definitions[] = ['sheet_key' => (string) $name, 'title' => (string) $name, 'ledger' => $items->first()->ledger];
+            }
+        }
+        $sheets = collect($definitions)->map(function ($definition) use ($grouped, $batchId, $businessId) {
+            $sheet = (string) ($definition['sheet_key'] ?? $definition['title'] ?? '');
+            $items = $grouped->get($sheet, collect());
+            $counts = $items->groupBy('status')->map(fn ($rows) => (int) $rows->sum('aggregate'));
+            $importable = DB::table('solar_import_preview_rows')
                 ->where('batch_id', $batchId)
                 ->where('business_id', $businessId)
+                ->where('source_sheet', $sheet)
                 ->where('is_importable', true)
-                ->count(),
+                ->count();
+            return [
+                'sheet_key' => $sheet,
+                'title' => (string) ($definition['title'] ?? $sheet),
+                'ledger' => (string) ($definition['ledger'] ?? $items->first()->ledger ?? '-'),
+                'match' => (int) ($counts['match'] ?? 0),
+                'only_excel' => (int) ($counts['only_excel'] ?? 0),
+                'only_app' => (int) ($counts['only_app'] ?? 0),
+                'different' => (int) ($counts['different'] ?? 0),
+                'error' => (int) ($counts['error'] ?? 0),
+                'importable' => (int) $importable,
+                'total' => (int) $items->sum('aggregate'),
+                'needs_check' => (int) ($counts['only_app'] ?? 0) + (int) ($counts['different'] ?? 0) + (int) ($counts['error'] ?? 0),
+            ];
+        })->values()->all();
+
+        $total = array_sum(array_column($sheets, 'total'));
+        $needsCheck = array_sum(array_column($sheets, 'needs_check'));
+        $importable = array_sum(array_column($sheets, 'importable'));
+
+        return [
+            'match' => (int) ($counts['match'] ?? 0),
+            'only_excel' => (int) $importable,
             'only_app' => (int) ($counts['only_app'] ?? 0),
             'different' => (int) ($counts['different'] ?? 0),
             'error' => (int) ($counts['error'] ?? 0),
+            'total' => (int) $total,
+            'importable' => (int) $importable,
+            'needs_check' => (int) $needsCheck,
+            'sheets' => $sheets,
         ];
     }
 
@@ -61,6 +121,8 @@ class SolarImportPreviewService
             ->map(function ($row) {
                 $payload = json_decode((string) $row->excel_payload, true) ?: [];
                 $payload['ledger'] = $row->ledger;
+                $payload['source_sheet'] = $row->source_sheet ?: ($payload['source_sheet'] ?? null);
+                $payload['source_row'] = $row->source_row ?: ($payload['source_row'] ?? null);
                 return $payload;
             })
             ->all();
@@ -77,6 +139,7 @@ class SolarImportPreviewService
             ->map(function ($row) {
                 return [
                     'ledger' => $row->ledger,
+                    'source_sheet' => $row->source_sheet,
                     'row' => $row->source_row,
                     'date' => $row->normalized_date,
                     'status' => $row->status,
@@ -92,7 +155,7 @@ class SolarImportPreviewService
 
         $summary = $this->summary($batchId, $businessId);
         return ['summary' => $summary, 'items' => $items, 'onlyExcel' => [
-            'stock' => [], 'pool' => [], 'mess' => [],
+            'stock' => [], 'pool' => [], 'mess' => [], 'usage' => [],
         ]];
     }
 
@@ -114,16 +177,21 @@ class SolarImportPreviewService
                 }
                 $isImportable = $status === 'only_excel'
                     && is_array($excel)
-                    && (($item['ledger'] ?? '') === 'stock'
-                        ? array_key_exists('stock_in', $excel)
-                        : array_key_exists('qty_in', $excel));
+                    && match (($item['ledger'] ?? '')) {
+                        'stock' => array_key_exists('stock_in', $excel),
+                        'pool', 'mess' => array_key_exists('qty_in', $excel),
+                        'usage' => array_key_exists('quantity_gln', $excel),
+                        default => false,
+                    };
                 $payloads[] = [
                     'batch_id' => $batchId,
                     'business_id' => $businessId,
                     'ledger' => $item['ledger'] ?? '-',
-                    'source_row' => $item['row'] ?? null,
+                    'source_sheet' => $item['source_sheet'] ?? ($excel['source_sheet'] ?? null),
+                    'source_row' => $item['row'] ?? ($excel['source_row'] ?? null),
+                    'source_column' => $excel['source_column'] ?? ($item['source_column'] ?? ''),
                     'raw_date' => is_scalar($rawDate) ? (string) $rawDate : null,
-                    'normalized_date' => $item['date'] ?: null,
+                    'normalized_date' => $item['date'] ?: ($excel['tanggal'] ?? null),
                     'status' => $status,
                     'matched_by' => $item['matched_by'] ?? null,
                     'balance_only' => (bool) ($item['balance_only'] ?? false),
@@ -172,6 +240,8 @@ class SolarImportPreviewService
                             'ledger' => $ledger,
                             'row' => $row['source_row'],
                             'raw_date' => $row['tanggal'] ?? null,
+                            'source_sheet' => $row['source_sheet'] ?? strtoupper($ledger),
+                            'excel' => $row,
                             'message' => "Customer \"{$reference}\" tidak ditemukan pada business ini.",
                         ];
                         unset($parsed['rows'][$ledger][$index]);
@@ -182,6 +252,25 @@ class SolarImportPreviewService
                 unset($parsed['rows'][$ledger][$index]['customer_ref']);
             }
             $parsed['rows'][$ledger] = array_values($parsed['rows'][$ledger]);
+        }
+
+        $assets = DB::table('assets')
+            ->where('business_id', $businessId)
+            ->select('id', 'name', 'asset_code')
+            ->get();
+        foreach ($parsed['rows']['usage'] ?? [] as $index => $row) {
+            $needle = mb_strtolower(trim(preg_replace('/\s+/', ' ', (string) ($row['equipment_name'] ?? ''))));
+            $matches = $assets->filter(function ($asset) use ($needle) {
+                return in_array($needle, array_map(
+                    fn ($value) => mb_strtolower(trim(preg_replace('/\s+/', ' ', (string) $value))),
+                    [$asset->name, $asset->asset_code]
+                ), true);
+            })->values();
+
+            $parsed['rows']['usage'][$index]['asset_id'] = $matches->count() === 1 ? (int) $matches->first()->id : null;
+            $parsed['rows']['usage'][$index]['asset_match_status'] = $matches->count() === 1
+                ? 'matched'
+                : ($matches->count() > 1 ? 'ambiguous' : 'unmatched');
         }
 
         return $this->ledgerService->decorateSourceKeys($parsed);

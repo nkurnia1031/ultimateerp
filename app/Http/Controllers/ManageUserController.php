@@ -3,10 +3,12 @@
 namespace App\Http\Controllers;
 
 use App\BusinessLocation;
+use App\Business;
 use App\Account;
 
 use App\Transaction;
 use App\User;
+use App\Services\UserBusinessImportService;
 use App\Utils\ModuleUtil;
 use DB;
 use Illuminate\Http\Request;
@@ -25,9 +27,10 @@ class ManageUserController extends Controller
      * @param  Util  $commonUtil
      * @return void
      */
-    public function __construct(ModuleUtil $moduleUtil)
+    public function __construct(ModuleUtil $moduleUtil, UserBusinessImportService $userBusinessImport)
     {
         $this->moduleUtil = $moduleUtil;
+        $this->userBusinessImport = $userBusinessImport;
     }
 
     /**
@@ -57,7 +60,6 @@ class ManageUserController extends Controller
                 ]);
 
             return Datatables::of($users)
-                ->editColumn('username', '{{$username}} @if(empty($allow_login)) <span class="label bg-gray">@lang("lang_v1.login_not_allowed")</span>@endif')
                 ->addColumn(
                     'role',
                     function ($row) {
@@ -66,6 +68,11 @@ class ManageUserController extends Controller
                         return $role_name;
                     }
                 )
+                ->addColumn('login_status', function ($row) {
+                    return $row->allow_login
+                        ? '<span class="label bg-green">Login aktif</span>'
+                        : '<span class="label bg-gray">Login nonaktif</span>';
+                })
                 ->addColumn(
                     'action',
                     '@can("user.update")
@@ -88,11 +95,11 @@ class ManageUserController extends Controller
                     $query->whereRaw("CONCAT(COALESCE(surname, ''), ' ', COALESCE(first_name, ''), ' ', COALESCE(last_name, '')) like ?", ["%{$keyword}%"]);
                 })
                 ->removeColumn('id')
-                ->rawColumns(['action', 'username'])
+                ->rawColumns(['action', 'login_status'])
                 ->make(true);
         }
 
-        return view('manage_user.index');
+        return view('manage_user.index', ['can_import_users' => $this->canImportAcrossBusinesses()]);
     }
 
     /**
@@ -117,6 +124,7 @@ class ManageUserController extends Controller
 
         $roles = $this->getRolesArray($business_id);
         $username_ext = $this->moduleUtil->getUsernameExtension();
+        $can_import_users = $this->canImportAcrossBusinesses();
         $locations = BusinessLocation::where('business_id', $business_id)
             ->Active()
             ->get();
@@ -125,7 +133,7 @@ class ManageUserController extends Controller
         $form_partials = $this->moduleUtil->getModuleData('moduleViewPartials', ['view' => 'manage_user.create']);
 
         return view('manage_user.create')
-            ->with(compact('roles', 'username_ext', 'locations', 'form_partials'));
+            ->with(compact('roles', 'username_ext', 'locations', 'form_partials', 'can_import_users'));
     }
 
     /**
@@ -138,6 +146,37 @@ class ManageUserController extends Controller
     {
         if (! auth()->user()->can('user.create')) {
             abort(403, 'Unauthorized action.');
+        }
+
+        $request->validate(['first_name' => ['required', 'string']]);
+
+        if (! empty($request->input('allow_login')) && filled($request->input('username'))) {
+            $finalUsername = trim($request->input('username')) . ($this->moduleUtil->getUsernameExtension() ?: '');
+            if (mb_strlen($finalUsername) > 191) {
+                return back()->withInput()->withErrors(['username' => 'Username beserta suffix business maksimal 191 karakter.']);
+            }
+
+            $existingUsername = User::withTrashed()
+                ->where('username', $finalUsername)
+                ->with('business:id,name')
+                ->first();
+            if ($existingUsername) {
+                $message = 'Username sudah digunakan.';
+                if (auth()->user()->can('admin') || auth()->user()->can('superadmin')) {
+                    $fullName = trim(implode(' ', array_filter([
+                        $existingUsername->surname,
+                        $existingUsername->first_name,
+                        $existingUsername->last_name,
+                    ])));
+                    $businessName = optional($existingUsername->business)->name ?: 'Business tidak diketahui';
+                    $accountStatus = $existingUsername->deleted_at
+                        ? 'akun dihapus; username tetap terpakai'
+                        : ($existingUsername->allow_login ? 'login aktif' : 'login nonaktif');
+                    $message .= ' Dipakai oleh ' . ($fullName ?: 'user tanpa nama') . ' di ' . $businessName . ' (' . $accountStatus . ').';
+                }
+
+                return back()->withInput()->withErrors(['username' => $message]);
+            }
         }
 
         try {
@@ -167,6 +206,162 @@ class ManageUserController extends Controller
         }
 
         return redirect('users')->with('status', $output);
+    }
+
+    /**
+     * Return username availability with business details for authorized user managers.
+     */
+    public function checkUsernameAvailability(Request $request)
+    {
+        abort_unless(auth()->user()->can('user.create'), 403, 'Unauthorized action.');
+
+        $validated = $request->validate([
+            'username' => ['nullable', 'string', 'max:191'],
+        ]);
+        $username = trim((string) ($validated['username'] ?? ''));
+        if ($username === '') {
+            return response()->json(['available' => true, 'username' => '', 'matches' => []]);
+        }
+
+        $query = User::withTrashed()
+            ->where('username', $username)
+            ->with('business:id,name');
+        $matches = $query->get(['id', 'username', 'surname', 'first_name', 'last_name', 'business_id', 'status', 'allow_login', 'deleted_at']);
+        $canSeeBusinessDetails = auth()->user()->can('admin') || auth()->user()->can('superadmin');
+
+        return response()->json([
+            'available' => $matches->isEmpty(),
+            'username' => $username,
+            'matches' => $canSeeBusinessDetails ? $matches->map(function (User $user) {
+                return [
+                    'name' => trim(implode(' ', array_filter([$user->surname, $user->first_name, $user->last_name]))),
+                    'business' => optional($user->business)->name ?: 'Business tidak diketahui',
+                    'status' => $user->deleted_at
+                        ? 'Akun dihapus (username tetap terpakai)'
+                        : (($user->allow_login ? 'Login aktif' : 'Login nonaktif') . ' · ' . ($user->status ?: 'status tidak diketahui')),
+                ];
+            })->values() : [],
+            'message' => $matches->isEmpty() ? 'Username tersedia.' : 'Username sudah digunakan.',
+        ]);
+    }
+
+    /** Show the business-to-business user import screen. */
+    public function importUsers()
+    {
+        $this->authorizeBusinessUserImport();
+
+        $targetBusinessId = (int) request()->session()->get('user.business_id');
+        if (! $this->moduleUtil->isSubscribed($targetBusinessId)) {
+            return $this->moduleUtil->expiredResponse();
+        } elseif (! $this->moduleUtil->isQuotaAvailable('users', $targetBusinessId)) {
+            return $this->moduleUtil->quotaExpiredResponse('users', $targetBusinessId, action([self::class, 'index']));
+        }
+
+        $sourceBusinesses = $this->userBusinessImport->businessesForImport($targetBusinessId);
+        $targetBusiness = Business::findOrFail($targetBusinessId);
+
+        return view('manage_user.import', compact('sourceBusinesses', 'targetBusinessId', 'targetBusiness'));
+    }
+
+    /** Search users within the selected source business. */
+    public function searchImportSourceUsers(Request $request)
+    {
+        $this->authorizeBusinessUserImport();
+        $validated = $request->validate([
+            'source_business_id' => ['required', 'integer', 'exists:business,id'],
+            'q' => ['required', 'string', 'min:2', 'max:100'],
+        ]);
+        $targetBusinessId = (int) $request->session()->get('user.business_id');
+
+        return response()->json($this->userBusinessImport->searchSourceUsers(
+            (int) $validated['source_business_id'],
+            $targetBusinessId,
+            $validated['q']
+        ));
+    }
+
+    /** Return profile and access mappings for the selected source user. */
+    public function previewImportedUser(Request $request)
+    {
+        $this->authorizeBusinessUserImport();
+        $validated = $request->validate([
+            'source_business_id' => ['required', 'integer', 'exists:business,id'],
+            'source_user_id' => ['required', 'integer'],
+        ]);
+        $targetBusinessId = (int) $request->session()->get('user.business_id');
+
+        return response()->json($this->userBusinessImport->preview(
+            (int) $validated['source_business_id'],
+            $targetBusinessId,
+            (int) $validated['source_user_id']
+        ));
+    }
+
+    /** Search contacts only within the active destination business. */
+    public function searchImportTargetContacts(Request $request)
+    {
+        $this->authorizeBusinessUserImport();
+        $validated = $request->validate(['q' => ['required', 'string', 'min:1', 'max:100']]);
+
+        return response()->json($this->userBusinessImport->searchTargetContacts(
+            (int) $request->session()->get('user.business_id'),
+            $validated['q']
+        ));
+    }
+
+    /** Import a user after all target-business mappings are confirmed. */
+    public function storeImportedUser(Request $request)
+    {
+        $this->authorizeBusinessUserImport();
+        $validated = $request->validate([
+            'source_business_id' => ['required', 'integer', 'exists:business,id'],
+            'source_user_id' => ['required', 'integer'],
+            'username' => ['nullable', 'string', 'max:191'],
+            'role_map' => ['nullable', 'array'],
+            'location_map' => ['nullable', 'array'],
+            'contact_map' => ['nullable', 'array'],
+        ]);
+
+        $targetBusinessId = (int) $request->session()->get('user.business_id');
+        if (! $this->moduleUtil->isSubscribed($targetBusinessId)) {
+            return response()->json(['success' => false, 'message' => 'Business tujuan tidak memiliki langganan aktif.'], 422);
+        } elseif (! $this->moduleUtil->isQuotaAvailable('users', $targetBusinessId)) {
+            return response()->json(['success' => false, 'message' => 'Kuota user business tujuan telah habis.'], 422);
+        }
+
+        $user = $this->userBusinessImport->import(
+            (int) $validated['source_business_id'],
+            $targetBusinessId,
+            (int) $validated['source_user_id'],
+            $validated
+        );
+        $this->moduleUtil->activityLog($user, 'imported', null, [
+            'source_business_id' => (int) $validated['source_business_id'],
+            'source_user_id' => (int) $validated['source_user_id'],
+        ], true, $targetBusinessId);
+        event(new UserCreatedOrModified($user, 'added'));
+
+        return response()->json([
+            'success' => true,
+            'message' => 'User berhasil diimpor ke business ini.',
+            'redirect' => action([self::class, 'index']),
+        ]);
+    }
+
+    private function authorizeBusinessUserImport(): void
+    {
+        abort_unless(
+            auth()->user()->can('user.create')
+            && (auth()->user()->can('admin') || auth()->user()->can('superadmin')),
+            403,
+            'Hanya admin dengan izin membuat user yang dapat mengimpor user lintas business.'
+        );
+    }
+
+    private function canImportAcrossBusinesses(): bool
+    {
+        return auth()->user()->can('user.create')
+            && (auth()->user()->can('admin') || auth()->user()->can('superadmin'));
     }
 
     /**

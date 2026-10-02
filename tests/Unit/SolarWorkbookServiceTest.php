@@ -3,6 +3,7 @@
 namespace Tests\Unit;
 
 use App\Services\SolarWorkbookService;
+use PhpOffice\PhpSpreadsheet\Writer\Xls;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use PHPUnit\Framework\TestCase;
 
@@ -106,5 +107,34 @@ class SolarWorkbookServiceTest extends TestCase
 
         $this->assertSame([], $corrected['errors']);
         $this->assertSame('2024-12-20', $corrected['rows']['stock'][0]['tanggal']);
+    }
+
+    public function test_usage_template_round_trips_daily_gallons_and_ignores_formula_totals(): void
+    {
+        $service = new SolarWorkbookService();
+        foreach (['xlsx', 'xls'] as $format) {
+            $workbook = $service->buildUsageTemplate('2026-06', ['Excavator A']);
+            $workbook->getSheet(0)->setCellValue('C6', 2.5);
+            $this->assertSame('=SUM(C6:AG6)', $workbook->getSheet(0)->getCell('AH6')->getValue());
+            $this->assertSame('=AH6*30', $workbook->getSheet(0)->getCell('AI6')->getValue());
+
+            $path = sys_get_temp_dir().DIRECTORY_SEPARATOR.'solar-usage-'.uniqid('', true).'.'.$format;
+            $writer = $format === 'xls' ? new Xls($workbook) : new Xlsx($workbook);
+            $writer->save($path);
+            $workbook->disconnectWorksheets();
+
+            try {
+                $parsed = $service->parse($path);
+            } finally {
+                @unlink($path);
+            }
+
+            $this->assertSame([], $parsed['errors'], $format);
+            $this->assertCount(1, $parsed['sheets'], $format);
+            $this->assertCount(1, $parsed['rows']['usage'], $format);
+            $this->assertSame('2026-06-01', $parsed['rows']['usage'][0]['tanggal'], $format);
+            $this->assertSame('Excavator A', $parsed['rows']['usage'][0]['equipment_name'], $format);
+            $this->assertSame(2.5, $parsed['rows']['usage'][0]['quantity_gln'], $format);
+        }
     }
 }

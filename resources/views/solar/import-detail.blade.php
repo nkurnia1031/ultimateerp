@@ -16,20 +16,21 @@
             <p><strong>Batch:</strong> {{ $batch->id }}</p>
             <p><strong>File hash:</strong> <code>{{ $batch->file_hash }}</code></p>
             @foreach ($rows as $ledger => $records)
-                <h4>{{ strtoupper($ledger) }} ({{ $records->count() }} baris)</h4>
+                <h4>{{ $ledger === 'usage' ? 'PEMAKAIAN ALAT' : strtoupper($ledger) }} ({{ $records->count() }} baris)</h4>
                 @if ($records->isEmpty())
                     <p class="text-muted">Tidak ada transaksi dari batch ini.</p>
                 @else
                     <div class="table-responsive">
                         <table class="table table-condensed table-bordered">
-                            <thead><tr><th>ID</th><th>Tanggal</th><th>Source row</th><th>Keterangan</th></tr></thead>
+                            <thead><tr><th>ID</th><th>Tanggal</th><th>Alat / Keterangan</th><th>Pemakaian</th><th>Source row</th></tr></thead>
                             <tbody>
                                 @foreach ($records as $record)
                                     <tr>
                                         <td>{{ $record->id }}</td>
-                                        <td>{{ $record->tanggal }}</td>
+                                        <td>{{ $ledger === 'usage' ? $record->usage_date : $record->tanggal }}</td>
+                                        <td>{{ $ledger === 'usage' ? $record->equipment_name : ($record->keterangan ?: '—') }}</td>
+                                        <td>{{ $ledger === 'usage' ? number_format((float) $record->quantity_gln, 2, ',', '.').' Gln / '.number_format((float) $record->quantity_gln * 30, 2, ',', '.').' L' : '—' }}</td>
                                         <td>{{ $record->source_row ?: '—' }}</td>
-                                        <td>{{ $record->keterangan ?: '—' }}</td>
                                     </tr>
                                 @endforeach
                             </tbody>

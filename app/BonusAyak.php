@@ -41,13 +41,6 @@ class BonusAyak extends Model
         return $this->belongsTo(\Modules\Project\Entities\Project::class, 'project_id');
     }
 
-    public function trips()
-    {
-        return $this->belongsToMany(\Modules\AssetManagement\Entities\HeavyEquipmentTrip::class, 'bonus_ayak_trip', 'bonus_ayak_id', 'trip_id')
-            ->withPivot('business_id')
-            ->withTimestamps();
-    }
-
     public function settlements()
     {
         return $this->belongsToMany(\Modules\AssetManagement\Entities\HeavyEquipmentDriverSettlement::class, 'heavy_equipment_settlement_bonus_ayak', 'bonus_ayak_id', 'settlement_id')

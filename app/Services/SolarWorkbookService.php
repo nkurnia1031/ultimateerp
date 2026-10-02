@@ -73,22 +73,28 @@ class SolarWorkbookService
         $reader->setReadDataOnly(true);
         $workbook = $reader->load($path);
         $result = [
-            'rows' => ['stock' => [], 'pool' => [], 'mess' => []],
+            'rows' => ['stock' => [], 'pool' => [], 'mess' => [], 'usage' => []],
             'opening' => [],
             'errors' => [],
+            'sheets' => [],
         ];
 
         try {
+            $transactionSheetsPresent = false;
+            $usageSheetFound = false;
+            foreach ($workbook->getWorksheetIterator() as $sheet) {
+                if (in_array(mb_strtoupper(trim($sheet->getTitle())), ['SOLAR', 'POOL', 'MESS'], true)) {
+                    $transactionSheetsPresent = true;
+                    break;
+                }
+            }
+
             foreach (self::DEFINITIONS as $ledger => $definition) {
                 $sheet = $this->findSheet($workbook, $definition['sheet']);
                 if (! $sheet) {
-                    $result['errors'][] = [
-                        'ledger' => $ledger,
-                        'row' => null,
-                        'message' => "Sheet {$definition['sheet']} tidak ditemukan.",
-                    ];
                     continue;
                 }
+                $transactionSheetsPresent = true;
 
                 $headerError = $this->headerError($sheet, $ledger);
                 if ($headerError !== null) {
@@ -102,11 +108,253 @@ class SolarWorkbookService
 
                 $this->parseSheet($sheet, $ledger, $result, $dateOverrides);
             }
+
+            foreach ($workbook->getWorksheetIterator() as $sheet) {
+                if ($this->isUsageSheet($sheet)) {
+                    $usageSheetFound = true;
+                    $this->parseUsageSheet($sheet, $result);
+                }
+            }
+
+            if ($transactionSheetsPresent) {
+                foreach (self::DEFINITIONS as $ledger => $definition) {
+                    if (! $this->findSheet($workbook, $definition['sheet'])) {
+                        $result['errors'][] = [
+                            'ledger' => $ledger,
+                            'row' => null,
+                            'message' => "Sheet {$definition['sheet']} tidak ditemukan.",
+                        ];
+                    }
+                }
+            }
+
+            if (! $transactionSheetsPresent && ! $usageSheetFound) {
+                $result['errors'][] = [
+                    'ledger' => 'workbook',
+                    'row' => null,
+                    'message' => 'Workbook tidak berisi sheet transaksi Solar atau matriks pemakaian alat yang dikenali.',
+                ];
+            }
+
+            foreach ($workbook->getWorksheetIterator() as $sheet) {
+                if ($this->isUsageSheet($sheet)) {
+                    $result['sheets'][] = ['sheet_key' => trim($sheet->getTitle()), 'title' => trim($sheet->getTitle()), 'ledger' => 'usage'];
+                    continue;
+                }
+                foreach (self::DEFINITIONS as $ledger => $definition) {
+                    if (mb_strtoupper(trim($sheet->getTitle())) === $definition['sheet']
+                        && $this->headerError($sheet, $ledger) === null) {
+                        $result['sheets'][] = ['sheet_key' => trim($sheet->getTitle()), 'title' => trim($sheet->getTitle()), 'ledger' => $ledger];
+                        break;
+                    }
+                }
+            }
         } finally {
             $workbook->disconnectWorksheets();
         }
 
         return $result;
+    }
+
+    private function isUsageSheet(Worksheet $sheet): bool
+    {
+        $read = fn (string $cell) => mb_strtolower(trim((string) $sheet->getCell($cell)->getValue()));
+
+        return $read('A4') === 'no'
+            && in_array($read('B4'), ['alat berat', 'alat'], true)
+            && $read('C4') === 'tanggal'
+            && in_array($read('AH4'), ['jumlah', 'jumlah (gln)'], true)
+            && in_array($read('AI4'), ['l', 'liter', 'liter (gln × 30)', 'liter (gln x 30)'], true);
+    }
+
+    private function parseUsageSheet(Worksheet $sheet, array &$result): void
+    {
+        $dates = [];
+        for ($columnIndex = 3; $columnIndex <= 33; $columnIndex++) {
+            $column = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($columnIndex);
+            $rawDate = $sheet->getCell("{$column}5")->getValue();
+            if ($rawDate === null || trim((string) $rawDate) === '') {
+                continue;
+            }
+            try {
+                $dates[$column] = $this->parseDate($rawDate);
+            } catch (InvalidArgumentException $exception) {
+                $dates[$column] = null;
+                $result['errors'][] = [
+                    'ledger' => 'usage',
+                    'source_sheet' => trim($sheet->getTitle()),
+                    'row' => 5,
+                    'source_column' => $column,
+                    'raw_date' => $rawDate,
+                    'message' => $exception->getMessage(),
+                ];
+            }
+        }
+
+        for ($rowNumber = 6; $rowNumber <= $sheet->getHighestDataRow(); $rowNumber++) {
+            $equipmentName = trim((string) $sheet->getCell("B{$rowNumber}")->getValue());
+            if ($equipmentName === '' || preg_match('/^(total|jumlah|grand total|total pemakaian)$/i', $equipmentName)) {
+                continue;
+            }
+
+            for ($columnIndex = 3; $columnIndex <= 33; $columnIndex++) {
+                $column = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($columnIndex);
+                $rawValue = $sheet->getCell("{$column}{$rowNumber}")->getCalculatedValue();
+                if ($rawValue === null || trim((string) $rawValue) === '') {
+                    continue;
+                }
+                try {
+                    $quantity = $this->number($rawValue);
+                    if ($quantity === 0.0) {
+                        continue;
+                    }
+                    if ($quantity < 0) {
+                        throw new InvalidArgumentException('Pemakaian tidak boleh negatif.');
+                    }
+                    $usageDate = $dates[$column] ?? null;
+                    if ($usageDate === null) {
+                        throw new InvalidArgumentException('Header tanggal untuk kolom '.$column.' tidak valid atau kosong.');
+                    }
+                    $result['rows']['usage'][] = [
+                        'tanggal' => $usageDate,
+                        'equipment_name' => $equipmentName,
+                        'asset_id' => null,
+                        'quantity_gln' => $quantity,
+                        'source_sheet' => trim($sheet->getTitle()),
+                        'source_row' => $rowNumber,
+                        'source_column' => $column,
+                        'excel_total_gln' => $this->number($sheet->getCell("AH{$rowNumber}")->getCalculatedValue(), true),
+                        'excel_total_liter' => $this->number($sheet->getCell("AI{$rowNumber}")->getCalculatedValue(), true),
+                    ];
+                } catch (InvalidArgumentException $exception) {
+                    $result['errors'][] = [
+                        'ledger' => 'usage',
+                        'source_sheet' => trim($sheet->getTitle()),
+                        'row' => $rowNumber,
+                        'source_column' => $column,
+                        'equipment_name' => $equipmentName,
+                        'tanggal' => $dates[$column] ?? null,
+                        'quantity_gln' => is_numeric($rawValue) ? (float) $rawValue : null,
+                        'raw_value' => is_scalar($rawValue) ? (string) $rawValue : null,
+                        'raw_date' => $sheet->getCell("{$column}5")->getValue(),
+                        'message' => $exception->getMessage(),
+                    ];
+                }
+            }
+        }
+    }
+
+    private function writeUsageFormula(Worksheet $sheet, int $row): void
+    {
+        $sheet->setCellValue("AH{$row}", "=SUM(C{$row}:AG{$row})");
+        $sheet->setCellValue("AI{$row}", "=AH{$row}*30");
+    }
+
+    private function styleUsageSheet(Worksheet $sheet, int $lastRow): void
+    {
+        $sheet->getStyle('A2:AI2')->getFont()->setBold(true)->setSize(14)->getColor()->setARGB('FFFFFFFF');
+        $sheet->getStyle('A2:AI2')->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setARGB('FF1F4E78');
+        $sheet->getStyle('A2:AI2')->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+        $sheet->getStyle('A4:AI4')->getFont()->setBold(true)->getColor()->setARGB('FFFFFFFF');
+        $sheet->getStyle('A4:AI4')->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setARGB('FF4472C4');
+        $sheet->getStyle('A4:AI5')->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+        $sheet->getStyle("A6:AI{$lastRow}")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN)->setColor(new \PhpOffice\PhpSpreadsheet\Style\Color('FFD9E2F3'));
+        $sheet->getStyle("C6:AI{$lastRow}")->getNumberFormat()->setFormatCode('#,##0.00');
+        $sheet->getStyle("AH6:AI{$lastRow}")->getFont()->setBold(true);
+        $sheet->freezePane('C6');
+        $sheet->setAutoFilter("A4:AI{$lastRow}");
+        $sheet->getColumnDimension('A')->setWidth(7);
+        $sheet->getColumnDimension('B')->setWidth(24);
+        for ($columnIndex = 3; $columnIndex <= 33; $columnIndex++) {
+            $sheet->getColumnDimension(\PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($columnIndex))->setWidth(9);
+        }
+        $sheet->getColumnDimension('AH')->setWidth(15);
+        $sheet->getColumnDimension('AI')->setWidth(18);
+    }
+
+    public function buildUsageTemplate(string $month, array $equipmentNames = []): Spreadsheet
+    {
+        $date = Carbon::createFromFormat('!Y-m', $month);
+        if (! $date) {
+            throw new InvalidArgumentException('Bulan template tidak valid.');
+        }
+
+        $workbook = new Spreadsheet();
+        $sheet = $workbook->getActiveSheet();
+        $sheet->setTitle($date->locale('id')->translatedFormat('F Y'));
+        $sheet->mergeCells('A2:AI2');
+        $sheet->setCellValue('A2', 'DATA PEMAKAIAN SOLAR STOKPILE - '.$date->locale('id')->translatedFormat('F Y'));
+        $sheet->mergeCells('C4:AG4');
+        $sheet->setCellValue('A4', 'No');
+        $sheet->setCellValue('B4', 'Alat Berat');
+        $sheet->setCellValue('C4', 'Tanggal');
+        $sheet->setCellValue('AH4', 'JUMLAH (Gln)');
+        $sheet->setCellValue('AI4', 'LITER (Gln × 30)');
+        $lastDay = (int) $date->copy()->endOfMonth()->format('j');
+        for ($day = 1; $day <= 31; $day++) {
+            $column = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($day + 2);
+            if ($day <= $lastDay) {
+                $dayDate = $date->copy()->day($day);
+                $sheet->setCellValue("{$column}5", ExcelDate::PHPToExcel($dayDate));
+                $sheet->getStyle("{$column}5")->getNumberFormat()->setFormatCode('d/m');
+            }
+        }
+
+        $equipmentNames = array_values(array_unique(array_filter(array_map('trim', $equipmentNames))));
+        $row = 6;
+        foreach ($equipmentNames as $name) {
+            $sheet->setCellValue("A{$row}", $row - 5);
+            $sheet->setCellValueExplicit("B{$row}", $name, DataType::TYPE_STRING);
+            $this->writeUsageFormula($sheet, $row);
+            $row++;
+        }
+        if ($row === 6) {
+            $sheet->setCellValue('A6', 1);
+            $sheet->setCellValue('B6', 'Isi nama alat di sini');
+            $this->writeUsageFormula($sheet, 6);
+        }
+
+        $this->styleUsageSheet($sheet, max(6, $row - 1));
+        $sheet->getComment('AH4')->getText()->createTextRun('Jumlah seluruh pemakaian harian dalam Gln. Dihitung otomatis oleh Excel; aplikasi menghitung ulang saat import.');
+        $sheet->getComment('AI4')->getText()->createTextRun('Konversi liter mengikuti referensi: jumlah Gln × 30. Aplikasi menghitung ulang saat import.');
+        $workbook->setActiveSheetIndex(0);
+        $this->setProperties($workbook, 'Template Pemakaian Solar Alat Berat');
+
+        return $workbook;
+    }
+
+    public function buildUsageExport(string $month, array $rows): Spreadsheet
+    {
+        $equipmentNames = array_values(array_unique(array_map(fn ($row) => trim((string) $row->equipment_name), $rows)));
+        $workbook = $this->buildUsageTemplate($month, $equipmentNames);
+        $sheet = $workbook->getSheet(0);
+        $date = Carbon::createFromFormat('!Y-m', $month);
+        $byNameDate = [];
+        foreach ($rows as $record) {
+            $byNameDate[mb_strtolower(trim((string) $record->equipment_name))][$record->usage_date] = (float) $record->quantity_gln;
+        }
+        $rowNumber = 6;
+        foreach ($equipmentNames as $index => $name) {
+            $sheet->setCellValue("A{$rowNumber}", $index + 1);
+            $sheet->setCellValueExplicit("B{$rowNumber}", $name, DataType::TYPE_STRING);
+            for ($day = 1; $day <= 31; $day++) {
+                if ($day > (int) $date->copy()->endOfMonth()->format('j')) {
+                    continue;
+                }
+                $column = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($day + 2);
+                $usageDate = $date->copy()->day($day)->format('Y-m-d');
+                $value = $byNameDate[mb_strtolower($name)][$usageDate] ?? null;
+                if ($value !== null) {
+                    $sheet->setCellValue("{$column}{$rowNumber}", $value);
+                }
+            }
+            $this->writeUsageFormula($sheet, $rowNumber);
+            $rowNumber++;
+        }
+        $this->styleUsageSheet($sheet, max(6, $rowNumber - 1));
+        $this->setProperties($workbook, 'Export Pemakaian Solar Alat Berat');
+
+        return $workbook;
     }
 
     public function buildTemplate(array $customers = []): Spreadsheet
@@ -232,7 +480,9 @@ class SolarWorkbookService
                 $result['errors'][] = [
                     'ledger' => $ledger,
                     'row' => $rowNumber,
+                    'source_sheet' => trim($sheet->getTitle()),
                     'raw_date' => $rawCellDate,
+                    'excel' => $this->rawRowValues($sheet, $ledger, $rowNumber, $rawCellDate),
                     'message' => $exception->getMessage(),
                 ];
                 continue;
@@ -240,13 +490,17 @@ class SolarWorkbookService
             if ($this->isEmptyRow($values)) {
                 continue;
             }
+            $values['source_sheet'] = trim($sheet->getTitle());
+            $values['source_row'] = $rowNumber;
             $rawDate = $rawCellDate;
             if ($values['tanggal'] === null || trim((string) $values['tanggal']) === '') {
                 if ($this->hasMeaningfulTransaction($ledger, $values)) {
                     $result['errors'][] = [
                         'ledger' => $ledger,
+                        'source_sheet' => trim($sheet->getTitle()),
                         'row' => $rowNumber,
                         'raw_date' => $rawDate,
+                        'excel' => $values,
                         'message' => 'Tanggal wajib diisi untuk baris yang memiliki transaksi atau keterangan.',
                     ];
                 }
@@ -255,8 +509,6 @@ class SolarWorkbookService
 
             try {
                 $values['tanggal'] = $this->parseDate($values['tanggal']);
-                $values['source_sheet'] = trim($sheet->getTitle());
-                $values['source_row'] = $rowNumber;
                 $this->validateNumbers($ledger, $values);
 
                 if (! $firstTransactionFound && $this->isOpeningRow($ledger, $values)) {
@@ -284,8 +536,10 @@ class SolarWorkbookService
             } catch (InvalidArgumentException $exception) {
                 $result['errors'][] = [
                     'ledger' => $ledger,
+                    'source_sheet' => trim($sheet->getTitle()),
                     'row' => $rowNumber,
                     'raw_date' => $rawDate,
+                    'excel' => $values,
                     'message' => $exception->getMessage(),
                 ];
             }
@@ -326,6 +580,45 @@ class SolarWorkbookService
         }
 
         return $base + [
+            'nama_kapal' => $this->text($sheet->getCell("F{$row}")->getValue()),
+            'unit' => $this->text($sheet->getCell("G{$row}")->getValue()),
+            'operator' => $this->text($sheet->getCell("H{$row}")->getValue()),
+            'customer_ref' => $this->text($sheet->getCell("I{$row}")->getValue()),
+            'lokasi' => $this->text($sheet->getCell("J{$row}")->getValue()),
+        ];
+    }
+
+    private function rawRowValues(Worksheet $sheet, string $ledger, int $row, mixed $tanggal): array
+    {
+        if ($ledger === 'stock') {
+            return [
+                'tanggal' => $tanggal,
+                'stock_in' => $sheet->getCell("B{$row}")->getValue(),
+                'out_actual' => $sheet->getCell("C{$row}")->getValue(),
+                'out_meteran' => $sheet->getCell("E{$row}")->getValue(),
+                'keterangan' => $this->text($sheet->getCell("G{$row}")->getValue()),
+                'source_sheet' => trim($sheet->getTitle()),
+                'source_row' => $row,
+            ];
+        }
+
+        $values = [
+            'tanggal' => $tanggal,
+            'qty_in' => $sheet->getCell("B{$row}")->getValue(),
+            'qty_out' => $sheet->getCell("C{$row}")->getValue(),
+            'keterangan' => $this->text($sheet->getCell("E{$row}")->getValue()),
+            'source_sheet' => trim($sheet->getTitle()),
+            'source_row' => $row,
+        ];
+        if ($ledger === 'pool') {
+            return $values + [
+                'unit' => $this->text($sheet->getCell("F{$row}")->getValue()),
+                'operator' => $this->text($sheet->getCell("G{$row}")->getValue()),
+                'customer_ref' => $this->text($sheet->getCell("H{$row}")->getValue()),
+            ];
+        }
+
+        return $values + [
             'nama_kapal' => $this->text($sheet->getCell("F{$row}")->getValue()),
             'unit' => $this->text($sheet->getCell("G{$row}")->getValue()),
             'operator' => $this->text($sheet->getCell("H{$row}")->getValue()),

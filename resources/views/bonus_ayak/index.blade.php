@@ -83,7 +83,7 @@
         <div>
             <p class="bonus-eyebrow">Pool · upah sopir</p>
             <h1 id="bonus-page-title"><i class="fa fa-money-bill me-2" aria-hidden="true"></i>Bonus Ayak</h1>
-            <p>Catat tambahan hak sopir, hubungkan sumber SPB bila ada, dan siapkan data untuk rekap pembayaran. Bonus Ayak tidak menjadi baris tagihan pelanggan.</p>
+            <p>Catat tambahan hak sopir untuk rekap pembayaran. Project bersifat opsional dan Bonus Ayak tidak menjadi baris tagihan pelanggan.</p>
         </div>
         <nav class="bonus-page-actions" aria-label="Aksi Bonus Ayak">
             <a href="#bonus-form" class="btn btn-success"><i class="fa fa-plus me-1" aria-hidden="true"></i>Tambah Bonus</a>
@@ -125,7 +125,7 @@
             <i class="fa fa-edit me-2" aria-hidden="true"></i><span id="bonus-form-title">Tambah data Bonus Ayak</span>
         </div>
                 <div class="card-body">
-                    <p class="bonus-help"><strong>Isi satu catatan bonus.</strong> Pilih sopir, unit dan Project dari data yang tersedia. Bila bonus berasal dari perjalanan, pilih satu atau beberapa SPB yang sudah verified dan cocok dengan sopir serta unit.</p>
+                    <p class="bonus-help"><strong>Isi satu catatan bonus.</strong> Pilih sopir dan unit, isi jumlah trip, lalu pilih Project jika catatan ini perlu dikelompokkan ke sebuah Project.</p>
                     <form class="bonus-form-grid" action="{{ route('bonus-ayak.store') }}" method="POST">
                         @csrf
                         <div class="bonus-field">
@@ -154,22 +154,13 @@
                     </select>
                 </div>
                 <div class="bonus-field">
-                    <label class="form-label" for="project_id">Project</label>
+                    <label class="form-label" for="project_id">Project <span class="text-muted">(opsional)</span></label>
                     <select id="project_id" name="project_id" class="form-select select2">
-                        <option value="">-- Pilih Project --</option>
+                        <option value="">Tanpa Project</option>
                         @foreach($projects as $projectId => $projectName)
-                            <option value="{{ $projectId }}" @selected(request('project_id') == $projectId)>{{ $projectName }}</option>
+                            <option value="{{ $projectId }}" @selected(old('project_id', request('project_id')) == $projectId)>{{ $projectName }}</option>
                         @endforeach
                     </select>
-                </div>
-                <div class="bonus-field bonus-field--wide">
-                    <label class="form-label" for="trip_ids">Sumber SPB (opsional)</label>
-                    <select id="trip_ids" name="trip_ids[]" class="form-select select2" multiple data-placeholder="Pilih SPB">
-                        @foreach($availableTrips as $sourceTrip)
-                            <option value="{{ $sourceTrip->id }}">{{ $sourceTrip->trip_no }} &middot; {{ optional($sourceTrip->trip_date)->format('d/m/Y') }} &middot; {{ optional($sourceTrip->asset)->name ?: '-' }} &middot; {{ number_format($sourceTrip->actual_tons, 2, ',', '.') }} ton</option>
-                        @endforeach
-                    </select>
-                    <small class="text-muted">SPB harus verified, sopir dan unit sama.</small>
                 </div>
                 <div class="bonus-field">
                     <label class="form-label" for="trip">Trip</label>
@@ -273,7 +264,7 @@
                         <th>Tanggal</th>
                         <th>Sopir</th>
                         <th>Unit</th>
-                        <th>Project/SPB</th>
+                        <th>Project</th>
                         <th>Trip</th>
                         <th>Bonus</th>
                         <th>Status payroll</th>
@@ -286,7 +277,7 @@
                             <td class="text-center">{{ $row->tanggal->format('d/m/Y') }}</td>
                             <td>{{ optional($row->driver)->user_full_name ?: $row->nama_operator }} @if(!$row->driver)<span class="badge bg-warning">legacy</span>@endif</td>
                             <td class="text-center">{{ optional($row->asset)->name ?: $row->unit }} @if(!$row->asset)<span class="badge bg-warning">legacy</span>@endif</td>
-                            <td>{{ optional($row->project)->name ?: '-' }}<br><small>{{ $row->trips->pluck('trip_no')->implode(', ') ?: 'Manual' }}</small></td>
+                            <td>{{ optional($row->project)->name ?: 'Tanpa Project' }}</td>
                             <td class="text-center">{{ $row->trip }}</td>
                             <td class="bonus-number">Rp {{ number_format($row->bonus, 0, ',', '.') }}</td>
                             <td class="text-center">
@@ -340,7 +331,7 @@
                             <div><span class="bonus-mobile-card__label">Tanggal</span><span class="bonus-mobile-card__value">{{ $row->tanggal->format('d/m/Y') }}</span></div>
                             <div><span class="bonus-mobile-card__label">Sopir</span><span class="bonus-mobile-card__value">{{ optional($row->driver)->user_full_name ?: $row->nama_operator }}</span></div>
                             <div><span class="bonus-mobile-card__label">Unit</span><span class="bonus-mobile-card__value">{{ optional($row->asset)->name ?: $row->unit }}</span></div>
-                            <div><span class="bonus-mobile-card__label">Project/SPB</span><span class="bonus-mobile-card__value">{{ optional($row->project)->name ?: 'Manual' }}<br><small>{{ $row->trips->pluck('trip_no')->implode(', ') ?: 'Tanpa SPB' }}</small></span></div>
+                            <div><span class="bonus-mobile-card__label">Project</span><span class="bonus-mobile-card__value">{{ optional($row->project)->name ?: 'Tanpa Project' }}</span></div>
                             <div><span class="bonus-mobile-card__label">Trip</span><span class="bonus-mobile-card__value">{{ number_format($row->trip, 0, ',', '.') }}</span></div>
                             <div><span class="bonus-mobile-card__label">Bonus</span><span class="bonus-mobile-card__value"><strong>Rp {{ number_format($row->bonus, 0, ',', '.') }}</strong></span></div>
                             <div><span class="bonus-mobile-card__label">Status payroll</span><span class="bonus-mobile-card__value">@if($row->settlements->isNotEmpty())<span class="bonus-locked-state"><i class="fa fa-lock" aria-hidden="true"></i> Terkunci payroll</span>@else<span class="badge bg-success">Siap dipilih</span>@endif</span></div>

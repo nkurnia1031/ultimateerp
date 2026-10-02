@@ -9,6 +9,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Log;
 use RuntimeException;
 use Throwable;
 
@@ -34,7 +35,7 @@ class ProcessSolarImport implements ShouldQueue
             $processService->complete(
                 $this->batchId,
                 $this->businessId,
-                sprintf('Import selesai: %d Stock, %d Pool, %d Mess.', $inserted['stock'], $inserted['pool'], $inserted['mess'])
+                sprintf('Import selesai: %d Stock, %d Pool, %d Mess, %d pemakaian alat.', $inserted['stock'], $inserted['pool'], $inserted['mess'], $inserted['usage'] ?? 0)
             );
         } catch (RuntimeException $exception) {
             if ($exception->getMessage() === 'solar_import_cancelled') {
@@ -49,6 +50,16 @@ class ProcessSolarImport implements ShouldQueue
 
     public function failed(Throwable $exception): void
     {
-        app(SolarImportProcessService::class)->fail($this->batchId, $this->businessId, $exception->getMessage());
+        Log::error('Solar import job failed.', [
+            'batch_id' => $this->batchId,
+            'business_id' => $this->businessId,
+            'exception' => $exception,
+        ]);
+
+        app(SolarImportProcessService::class)->fail(
+            $this->batchId,
+            $this->businessId,
+            'Import gagal karena kesalahan sistem. Periksa riwayat batch sebelum mencoba ulang. Jika masih gagal, hubungi administrator dengan ID batch.'
+        );
     }
 }

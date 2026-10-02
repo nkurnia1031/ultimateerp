@@ -41,7 +41,7 @@
 
         {{-- HEADER --}}
         <div class="bonus-editor__header">
-            <div><p class="text-uppercase text-info small fw-bold mb-2">Perubahan data</p><h1 id="bonus-edit-title"><i class="fa fa-edit me-2" aria-hidden="true"></i>Edit Bonus Ayak</h1><p>Periksa kembali relasi sopir, unit, Project dan sumber SPB sebelum menyimpan.</p></div>
+            <div><p class="text-uppercase text-info small fw-bold mb-2">Perubahan data</p><h1 id="bonus-edit-title"><i class="fa fa-edit me-2" aria-hidden="true"></i>Edit Bonus Ayak</h1><p>Periksa kembali sopir dan unit. Project boleh dikosongkan.</p></div>
             <a href="{{ route('bonus-ayak.index') }}" class="btn bonus-btn-secondary" aria-label="Kembali ke daftar Bonus Ayak">
                 <i class="fa fa-arrow-left" aria-hidden="true"></i> Kembali
             </a>
@@ -68,7 +68,7 @@
             </div>
 
             <div class="card-body p-4">
-                <p class="bonus-help"><strong>Data terkunci?</strong> Bonus yang sudah masuk settlement payroll tidak dapat diedit. Jika masih tersedia, perubahan akan dihitung ulang sesuai jumlah trip dan sumber SPB.</p>
+                <p class="bonus-help"><strong>Data terkunci?</strong> Bonus yang sudah masuk settlement payroll tidak dapat diedit. Jika masih tersedia, perubahan bonus dihitung ulang sesuai jumlah trip.</p>
                 @if($isLocked)
                     <div class="alert alert-warning" role="status"><i class="fa fa-lock me-2" aria-hidden="true"></i><strong>Data terkunci payroll.</strong> Bonus ini sudah masuk rekap pembayaran dan hanya dapat dilihat.</div>
                 @endif
@@ -111,7 +111,7 @@
                     </div>
 
                     <div class="col-sm-4 col-md-4">
-                        <label class="form-label" for="project_id">Project</label>
+                        <label class="form-label" for="project_id">Project <span class="text-muted">(opsional)</span></label>
                         <select id="project_id" name="project_id" class="form-select select2" {{ $isLocked ? 'disabled' : '' }}>
                             <option value="">-- Manual / tanpa Project --</option>
                             @foreach ($projects as $projectId => $projectName)
@@ -132,19 +132,6 @@
                             value="Rp {{ number_format(old('bonus', $bonus->bonus), 0, ',', '.') }}" readonly
                             style="background-color:#f8f9fa;" {{ $isLocked ? 'disabled' : '' }}>
                         <input type="hidden" name="bonus" id="bonus_hidden" value="{{ old('bonus', $bonus->bonus) }}">
-                    </div>
-
-                    <div class="col-sm-12">
-                        <label class="form-label" for="trip_ids">SPB sumber (opsional)</label>
-                        @php($selectedTripIds = old('trip_ids', $bonus->trips->pluck('id')->all()))
-                        <select id="trip_ids" name="trip_ids[]" class="form-select select2" multiple data-placeholder="Pilih SPB yang menjadi sumber Bonus Ayak" {{ $isLocked ? 'disabled' : '' }}>
-                            @foreach ($availableTrips as $sourceTrip)
-                                <option value="{{ $sourceTrip->id }}" @selected(in_array($sourceTrip->id, $selectedTripIds))>
-                                    {{ $sourceTrip->trip_no }} &mdash; {{ optional($sourceTrip->trip_date)->format('d/m/Y') }} &mdash; {{ optional($sourceTrip->asset)->name ?: '-' }} &mdash; {{ number_format((float) $sourceTrip->actual_tons, 2, ',', '.') }} ton
-                                </option>
-                            @endforeach
-                        </select>
-                        <small class="text-muted">SPB harus verified dan menggunakan sopir serta unit yang sama. Satu SPB hanya boleh menjadi sumber satu Bonus Ayak.</small>
                     </div>
 
                     {{-- ✅ Tombol di bawah, terlihat penuh dan sejajar --}}

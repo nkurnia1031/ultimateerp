@@ -66,7 +66,7 @@ class HeavyEquipmentReportController extends Controller
         $businessId = (int) $request->session()->get('user.business_id');
         $trips = HeavyEquipmentTrip::where('business_id', $businessId)
             ->whereNotIn('status', ['cancelled'])
-            ->with(['route', 'asset', 'driver', 'project', 'bonusAyaks'])
+            ->with(['route', 'asset', 'driver', 'project'])
             ->when($request->input('asset_id'), fn ($q, $value) => $q->where('asset_id', $value))
             ->when($request->input('driver_id'), fn ($q, $value) => $q->where('driver_id', $value))
             ->when($request->input('project_id'), fn ($q, $value) => $q->where('project_id', $value))
@@ -77,7 +77,7 @@ class HeavyEquipmentReportController extends Controller
         return response()->streamDownload(function () use ($trips) {
             $handle = fopen('php://output', 'w');
             fwrite($handle, "\xEF\xBB\xBF");
-            fputcsv($handle, ['No SPB', 'No Tiket', 'Tanggal', 'Rute', 'Unit', 'Sopir', 'Project', 'Ton Netto', 'Ton Tagihan', 'Pendapatan', 'Upah Sopir', 'Bonus Ayak terkait SPB', 'Kontribusi setelah Bonus', 'Status'], ';');
+            fputcsv($handle, ['No SPB', 'No Tiket', 'Tanggal', 'Rute', 'Unit', 'Sopir', 'Project', 'Ton Netto', 'Ton Tagihan', 'Pendapatan', 'Upah Sopir', 'Kontribusi', 'Status'], ';');
             foreach ($trips as $trip) {
                 fputcsv($handle, [
                     $trip->trip_no,
@@ -91,8 +91,7 @@ class HeavyEquipmentReportController extends Controller
                     $trip->billable_tons ?: $trip->actual_tons,
                     $trip->revenue_total,
                     $trip->driver_pay_total,
-                    $trip->bonusAyaks->sum('bonus'),
-                    $trip->gross_contribution - $trip->bonusAyaks->sum('bonus'),
+                    $trip->gross_contribution,
                     $trip->status,
                 ], ';');
             }
@@ -117,18 +116,17 @@ class HeavyEquipmentReportController extends Controller
             'bonus_ayak' => BonusAyak::where('business_id', $businessId)->where('asset_id', $asset->id)->sum('bonus'),
             'contribution' => (clone $baseQuery)->whereNotIn('status', ['cancelled'])->sum('gross_contribution') - BonusAyak::where('business_id', $businessId)->where('asset_id', $asset->id)->sum('bonus'),
         ];
-        $trips = $baseQuery->with(['route', 'driver', 'project', 'billing', 'settlements', 'bonusAyaks'])
+        $trips = $baseQuery->with(['route', 'driver', 'project', 'billing', 'settlements'])
             ->latest('trip_date')
             ->latest('id')
             ->get();
-        $manualBonusAyaks = BonusAyak::where('business_id', $businessId)
+        $assetBonusAyaks = BonusAyak::where('business_id', $businessId)
             ->where('asset_id', $asset->id)
-            ->whereDoesntHave('trips')
             ->with(['driver', 'project'])
             ->latest('tanggal')
             ->latest('id')
             ->get();
 
-        return view('assetmanagement::fleet.reports.asset_ledger', compact('asset', 'summary', 'trips', 'manualBonusAyaks'));
+        return view('assetmanagement::fleet.reports.asset_ledger', compact('asset', 'summary', 'trips', 'assetBonusAyaks'));
     }
 }

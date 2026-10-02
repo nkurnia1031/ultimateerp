@@ -6,7 +6,14 @@
 
 <!-- Content Header (Page header) -->
 <section class="content-header">
-  <h1 class="tw-text-xl md:tw-text-3xl tw-font-bold tw-text-black">@lang( 'user.add_user' )</h1>
+  <div class="tw-flex tw-flex-wrap tw-items-center tw-justify-between tw-gap-3">
+    <h1 class="tw-text-xl md:tw-text-3xl tw-font-bold tw-text-black">@lang( 'user.add_user' )</h1>
+    @if($can_import_users)
+      <a class="tw-dw-btn tw-dw-btn-outline tw-dw-btn-primary" href="{{ route('users.import-business') }}">
+        <i class="fa fa-copy" aria-hidden="true"></i> Impor dari business lain
+      </a>
+    @endif
+  </div>
 </section>
 
 <!-- Main content -->
@@ -90,14 +97,16 @@
           {!! Form::label('username', __( 'business.username' ) . ':') !!}
           @if(!empty($username_ext))
             <div class="input-group">
-              {!! Form::text('username', null, ['class' => 'form-control', 'placeholder' => __( 'business.username' ) ]); !!}
+              {!! Form::text('username', null, ['class' => 'form-control', 'maxlength' => max(1, 191 - mb_strlen($username_ext)), 'placeholder' => __( 'business.username' ) ]); !!}
               <span class="input-group-addon">{{$username_ext}}</span>
             </div>
             <p class="help-block" id="show_username"></p>
           @else
-              {!! Form::text('username', null, ['class' => 'form-control', 'placeholder' => __( 'business.username' ) ]); !!}
+              {!! Form::text('username', null, ['class' => 'form-control', 'maxlength' => 191, 'placeholder' => __( 'business.username' ) ]); !!}
           @endif
           <p class="help-block">@lang('lang_v1.username_help')</p>
+          @error('username') <p class="text-danger" role="alert">{{ $message }}</p> @enderror
+          <p id="username_availability" class="help-block" aria-live="polite"></p>
         </div>
       </div>
       <div class="col-md-4">
@@ -289,19 +298,7 @@
                         equalTo: "#password"
                     },
                     username: {
-                        minlength: 5,
-                        remote: {
-                            url: "/business/register/check-username",
-                            type: "post",
-                            data: {
-                                username: function() {
-                                    return $( "#username" ).val();
-                                },
-                                @if(!empty($username_ext))
-                                  username_ext: "{{$username_ext}}"
-                                @endif
-                            }
-                        }
+                        minlength: 5
                     }
                 },
                 messages: {
@@ -311,22 +308,62 @@
                     confirm_password: {
                         equalTo: 'Should be same as password'
                     },
-                    username: {
-                        remote: 'Invalid username or User already exist'
-                    },
                     email: {
                         remote: '{{ __("validation.unique", ["attribute" => __("business.email")]) }}'
                     }
                 }
             });
-  $('#username').change( function(){
+  const usernameExtension = @json($username_ext ?? '');
+  const usernameHelp = @json(__('lang_v1.your_username_will_be'));
+  let usernameCheckTimer = null;
+  let usernameCheckSequence = 0;
+
+  $('#username').on('input change', function(){
+    const rawUsername = $(this).val().trim();
     if($('#show_username').length > 0){
-      if($(this).val().trim() != ''){
-        $('#show_username').html("{{__('lang_v1.your_username_will_be')}}: <b>" + $(this).val() + "{{$username_ext}}</b>");
+      if(rawUsername !== ''){
+        $('#show_username').text(usernameHelp + ': ' + rawUsername + usernameExtension);
       } else {
-        $('#show_username').html('');
+        $('#show_username').text('');
       }
     }
+
+    window.clearTimeout(usernameCheckTimer);
+    const checkSequence = ++usernameCheckSequence;
+    const feedback = $('#username_availability');
+    if (!rawUsername) {
+      feedback.text('');
+      return;
+    }
+
+    feedback.removeClass('text-success text-danger').text('Memeriksa username…');
+    usernameCheckTimer = window.setTimeout(function(){
+      $.ajax({
+        method: 'POST',
+        url: @json(route('users.check-username-details')),
+        dataType: 'json',
+        data: {
+          _token: '{{ csrf_token() }}',
+          username: rawUsername + usernameExtension
+        }
+      }).done(function(result){
+        if (checkSequence !== usernameCheckSequence) return;
+        if (result.available) {
+          feedback.removeClass('text-danger').addClass('text-success').text('Username tujuan tersedia: ' + result.username);
+          return;
+        }
+
+        const details = (result.matches || []).map(function(match){
+          return match.name + ' — ' + match.business + ' (' + match.status + ')';
+        }).join('; ');
+        feedback.removeClass('text-success').addClass('text-danger')
+          .text((result.message || 'Username sudah digunakan.') + (details ? ' Dipakai oleh: ' + details : ''));
+      }).fail(function(xhr){
+        if (checkSequence !== usernameCheckSequence) return;
+        feedback.removeClass('text-success').addClass('text-danger')
+          .text(xhr.status === 403 ? 'Pemeriksaan detail username tidak diizinkan.' : 'Pemeriksaan username gagal. Coba lagi.');
+      });
+    }, 350);
   });
 
 

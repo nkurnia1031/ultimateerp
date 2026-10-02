@@ -100,7 +100,7 @@ class SolarImportProcessService
                 'process_state' => 'failed',
                 'stage' => 'failed',
                 'progress_message' => 'Proses gagal.',
-                'error_message' => mb_substr($message, 0, 65000),
+                'error_message' => mb_substr($this->publicErrorMessage($message), 0, 500),
                 'failed_at' => now(),
                 'heartbeat_at' => now(),
                 'updated_at' => now(),
@@ -161,12 +161,22 @@ class SolarImportProcessService
             'heartbeat_at' => $batch->heartbeat_at,
             'started_at' => $batch->started_at,
             'completed_at' => $batch->completed_at,
-            'error' => $batch->error_message,
+            'error' => $batch->error_message ? $this->publicErrorMessage($batch->error_message) : null,
             'stale' => $stale,
             'summary' => $summary,
             'can_confirm' => $batch->operation === 'preview'
                 && $batch->process_state === 'completed'
                 && $batch->status === 'preview',
         ];
+    }
+
+    private function publicErrorMessage(string $message): string
+    {
+        $message = trim(strip_tags($message));
+        if (mb_strlen($message) > 500 || preg_match('/SQLSTATE|Stack trace|Exception:|Error:/i', $message)) {
+            return 'Proses gagal karena kesalahan sistem. Coba proses ulang. Jika masih gagal, hubungi administrator dengan ID batch.';
+        }
+
+        return $message !== '' ? $message : 'Proses gagal. Coba proses ulang atau hubungi administrator dengan ID batch.';
     }
 }

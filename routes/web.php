@@ -165,7 +165,10 @@ Route::middleware(['setData', 'auth', 'SetSessionData', 'language', 'timezone', 
     Route::prefix('solar')->name('solar.')->group(function () {
         Route::get('/', [SolarController::class, 'index'])->name('index');
         Route::get('/template', [SolarController::class, 'template'])->name('template');
+        Route::get('/template/usage', [SolarController::class, 'usageTemplate'])->name('template.usage');
         Route::get('/export', [SolarController::class, 'export'])->name('export');
+        Route::get('/export/usage', [SolarController::class, 'usageExport'])->name('export.usage');
+        Route::get('/reports/daily', [SolarController::class, 'dailyReport'])->name('reports.daily');
         Route::post('/reconcile', [SolarController::class, 'reconcile'])->name('reconcile');
         Route::post('/reconcile/upload', [SolarController::class, 'uploadPreview'])->name('reconcile.upload');
         Route::post('/import/confirm', [SolarController::class, 'confirmImport'])->name('import.confirm');
@@ -198,6 +201,10 @@ Route::middleware(['setData', 'auth', 'SetSessionData', 'language', 'timezone', 
             ->whereUuid('batchId')
             ->whereNumber('rowId')
             ->name('imports.rows.date');
+        Route::patch('/imports/{batchId}/rows/{rowId}', [SolarController::class, 'updatePreviewRow'])
+            ->whereUuid('batchId')
+            ->whereNumber('rowId')
+            ->name('imports.rows.update');
         Route::post('/imports/{batchId}/rollback', [SolarController::class, 'rollbackImport'])
             ->whereUuid('batchId')
             ->name('imports.rollback');
@@ -205,14 +212,14 @@ Route::middleware(['setData', 'auth', 'SetSessionData', 'language', 'timezone', 
             ->whereUuid('token')
             ->name('reconcile.export');
         Route::post('/{ledger}', [SolarController::class, 'store'])
-            ->whereIn('ledger', ['stock', 'pool', 'mess'])
+            ->whereIn('ledger', ['stock', 'pool', 'mess', 'usage'])
             ->name('store');
         Route::put('/{ledger}/{id}', [SolarController::class, 'update'])
-            ->whereIn('ledger', ['stock', 'pool', 'mess'])
+            ->whereIn('ledger', ['stock', 'pool', 'mess', 'usage'])
             ->whereNumber('id')
             ->name('update');
         Route::delete('/{ledger}/{id}', [SolarController::class, 'destroy'])
-            ->whereIn('ledger', ['stock', 'pool', 'mess'])
+            ->whereIn('ledger', ['stock', 'pool', 'mess', 'usage'])
             ->whereNumber('id')
             ->name('destroy');
     });
@@ -358,6 +365,18 @@ Route::middleware(['setData', 'auth', 'SetSessionData', 'language', 'timezone', 
     Route::resource('roles', RoleController::class);
 
     Route::get('/users/ledger', [ManageUserController::class, 'getLedger']);
+    Route::post('/users/check-username-details', [ManageUserController::class, 'checkUsernameAvailability'])
+        ->name('users.check-username-details');
+    Route::get('/users/import-business', [ManageUserController::class, 'importUsers'])
+        ->name('users.import-business');
+    Route::post('/users/import-business/source-users', [ManageUserController::class, 'searchImportSourceUsers'])
+        ->name('users.import-business.source-users');
+    Route::post('/users/import-business/preview', [ManageUserController::class, 'previewImportedUser'])
+        ->name('users.import-business.preview');
+    Route::post('/users/import-business/target-contacts', [ManageUserController::class, 'searchImportTargetContacts'])
+        ->name('users.import-business.target-contacts');
+    Route::post('/users/import-business', [ManageUserController::class, 'storeImportedUser'])
+        ->name('users.import-business.store');
     Route::resource('users', ManageUserController::class);
 
     Route::resource('group-taxes', GroupTaxController::class);

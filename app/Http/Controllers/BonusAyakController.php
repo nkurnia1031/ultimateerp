@@ -15,7 +15,6 @@ use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Maatwebsite\Excel\Facades\Excel;
 use Modules\AssetManagement\Entities\Asset;
-use Modules\AssetManagement\Entities\HeavyEquipmentTrip;
 use Modules\Project\Entities\Project;
 use Barryvdh\DomPDF\Facade\Pdf;
 
@@ -29,7 +28,7 @@ class BonusAyakController extends Controller
         $to = $request->input('to');
         $nama = $request->input('nama');
         $query = $this->scopedQuery(BonusAyak::query(), $businessId)
-            ->with(['driver', 'asset', 'project', 'trips', 'settlements'])
+            ->with(['driver', 'asset', 'project', 'settlements'])
             ->when($from, fn ($q) => $q->whereDate('tanggal', '>=', $from))
             ->when($to, fn ($q) => $q->whereDate('tanggal', '<=', $to))
             ->when($nama, fn ($q) => $q->where(function ($inner) use ($nama) {
@@ -47,12 +46,6 @@ class BonusAyakController extends Controller
         $users = User::where('business_id', $businessId)->where('user_type', 'user')->orderBy('first_name')->get();
         $assets = Asset::where('business_id', $businessId)->orderBy('name')->get();
         $projects = Project::where('business_id', $businessId)->orderBy('name')->pluck('name', 'id');
-        $availableTrips = HeavyEquipmentTrip::where('business_id', $businessId)
-            ->where('status', 'verified')
-            ->whereDoesntHave('bonusAyaks')
-            ->with(['route', 'asset', 'driver', 'project'])
-            ->latest('trip_date')->latest('id')->limit(500)->get();
-
         if ($request->input('export') === 'excel') {
             return Excel::download(new BonusAyakExport($from, $to, $businessId), 'bonus_ayak.xlsx');
         }
@@ -68,7 +61,6 @@ class BonusAyakController extends Controller
             'users' => $users,
             'assets' => $assets,
             'projects' => $projects,
-            'availableTrips' => $availableTrips,
         ]);
     }
 
@@ -82,27 +74,15 @@ class BonusAyakController extends Controller
             'asset_id' => ['required', 'integer'],
             'trip' => ['required', 'integer', 'min:0'],
             'project_id' => ['nullable', 'integer'],
-            'trip_ids' => ['nullable', 'array'],
-            'trip_ids.*' => ['integer'],
         ]);
         $driver = User::where('business_id', $businessId)->where('user_type', 'user')->findOrFail($validated['driver_id']);
         $asset = Asset::where('business_id', $businessId)->findOrFail($validated['asset_id']);
         $project = ! empty($validated['project_id'])
             ? Project::where('business_id', $businessId)->findOrFail($validated['project_id'])
             : null;
-        $sourceTrips = $this->sourceTrips($validated['trip_ids'] ?? [], $businessId, $driver->id, $asset->id);
-        if ($sourceTrips->isNotEmpty()) {
-            $sourceProjectIds = $sourceTrips->pluck('project_id')->filter()->unique();
-            if ($sourceProjectIds->count() > 1 || ($project && $sourceProjectIds->isNotEmpty() && (int) $sourceProjectIds->first() !== (int) $project->id)) {
-                throw ValidationException::withMessages(['project_id' => 'SPB sumber Bonus Ayak harus berasal dari satu Project yang sama.']);
-            }
-            $validated['project_id'] = $project?->id ?: $sourceProjectIds->first();
-            $validated['trip'] = $sourceTrips->count();
-        }
-
-        $bonusAyak = BonusAyak::create([
+        BonusAyak::create([
             'business_id' => $businessId,
-            'project_id' => $validated['project_id'] ?? null,
+            'project_id' => $project?->id,
             'tanggal' => $validated['tanggal'],
             'nama_operator' => $driver->user_full_name,
             'driver_id' => $driver->id,
@@ -112,27 +92,17 @@ class BonusAyakController extends Controller
             'bonus' => $this->hitungBonus($validated['trip']),
             'created_by' => auth()->id(),
         ]);
-        $this->syncSourceTrips($bonusAyak, $sourceTrips, $businessId);
-
         return back()->with('success', 'Data Bonus Ayak berhasil disimpan.');
     }
 
     public function edit($id)
     {
         $this->authorizeAccess();
-        $bonusAyak = $this->bonus($id)->load(['driver', 'asset', 'project', 'trips', 'settlements']);
+        $bonusAyak = $this->bonus($id)->load(['driver', 'asset', 'project', 'settlements']);
         $users = User::where('business_id', $this->businessId())->where('user_type', 'user')->orderBy('first_name')->get();
         $assets = Asset::where('business_id', $this->businessId())->orderBy('name')->get();
         $projects = Project::where('business_id', $this->businessId())->orderBy('name')->pluck('name', 'id');
-        $availableTrips = HeavyEquipmentTrip::where('business_id', $this->businessId())
-            ->where('status', 'verified')
-            ->where(function ($query) use ($bonusAyak) {
-                $query->whereDoesntHave('bonusAyaks')->orWhereHas('bonusAyaks', fn ($bonus) => $bonus->where('bonus_ayak.id', $bonusAyak->id));
-            })
-            ->with(['route', 'asset', 'driver', 'project'])
-            ->latest('trip_date')->latest('id')->limit(500)->get();
-
-        return view('bonus_ayak.edit', ['bonus' => $bonusAyak, 'users' => $users, 'assets' => $assets, 'projects' => $projects, 'availableTrips' => $availableTrips]);
+        return view('bonus_ayak.edit', ['bonus' => $bonusAyak, 'users' => $users, 'assets' => $assets, 'projects' => $projects]);
     }
 
     public function update(Request $request, $id)
@@ -146,8 +116,6 @@ class BonusAyakController extends Controller
             'asset_id' => ['required', 'integer'],
             'trip' => ['required', 'integer', 'min:0'],
             'project_id' => ['nullable', 'integer'],
-            'trip_ids' => ['nullable', 'array'],
-            'trip_ids.*' => ['integer'],
         ]);
         $driver = User::where('business_id', $businessId)->where('user_type', 'user')->findOrFail($validated['driver_id']);
         $asset = Asset::where('business_id', $businessId)->findOrFail($validated['asset_id']);
@@ -157,18 +125,9 @@ class BonusAyakController extends Controller
         $project = ! empty($validated['project_id'])
             ? Project::where('business_id', $businessId)->findOrFail($validated['project_id'])
             : null;
-        $sourceTrips = $this->sourceTrips($validated['trip_ids'] ?? [], $businessId, $driver->id, $asset->id, $bonusAyak->id);
-        if ($sourceTrips->isNotEmpty()) {
-            $sourceProjectIds = $sourceTrips->pluck('project_id')->filter()->unique();
-            if ($sourceProjectIds->count() > 1 || ($project && $sourceProjectIds->isNotEmpty() && (int) $sourceProjectIds->first() !== (int) $project->id)) {
-                throw ValidationException::withMessages(['project_id' => 'SPB sumber Bonus Ayak harus berasal dari satu Project yang sama.']);
-            }
-            $validated['project_id'] = $project?->id ?: $sourceProjectIds->first();
-            $validated['trip'] = $sourceTrips->count();
-        }
         $bonusAyak->update([
             'business_id' => $businessId,
-            'project_id' => $validated['project_id'] ?? null,
+            'project_id' => $project?->id,
             'tanggal' => $validated['tanggal'],
             'nama_operator' => $driver->user_full_name,
             'driver_id' => $driver->id,
@@ -177,8 +136,6 @@ class BonusAyakController extends Controller
             'trip' => $validated['trip'],
             'bonus' => $this->hitungBonus($validated['trip']),
         ]);
-        $this->syncSourceTrips($bonusAyak, $sourceTrips, $businessId);
-
         return redirect()->route('bonus-ayak.index')->with('success', 'Data Bonus Ayak berhasil diupdate.');
     }
 
@@ -516,33 +473,4 @@ class BonusAyakController extends Controller
         return $preview;
     }
 
-    private function sourceTrips(array $ids, int $businessId, int $driverId, int $assetId, ?int $ignoreBonusId = null)
-    {
-        $ids = array_values(array_unique(array_filter(array_map('intval', $ids))));
-        if ($ids === []) {
-            return collect();
-        }
-        $trips = HeavyEquipmentTrip::where('business_id', $businessId)
-            ->whereIn('id', $ids)
-            ->where('status', 'verified')
-            ->with('bonusAyaks')
-            ->get();
-        if ($trips->count() !== count($ids)) {
-            throw ValidationException::withMessages(['trip_ids' => 'Sebagian SPB sumber tidak ditemukan atau bukan business aktif.']);
-        }
-        if ($trips->contains(fn ($trip) => (int) $trip->driver_id !== $driverId || (int) $trip->asset_id !== $assetId)) {
-            throw ValidationException::withMessages(['trip_ids' => 'SPB sumber harus menggunakan sopir dan unit yang sama dengan Bonus Ayak.']);
-        }
-        if ($trips->contains(fn ($trip) => $trip->bonusAyaks->contains(fn ($bonus) => $ignoreBonusId === null || (int) $bonus->id !== $ignoreBonusId))) {
-            throw ValidationException::withMessages(['trip_ids' => 'Salah satu SPB sudah menjadi sumber Bonus Ayak lain.']);
-        }
-
-        return $trips;
-    }
-
-    private function syncSourceTrips(BonusAyak $bonusAyak, $trips, int $businessId): void
-    {
-        $payload = $trips->mapWithKeys(fn ($trip) => [$trip->id => ['business_id' => $businessId]])->all();
-        $bonusAyak->trips()->sync($payload);
-    }
 }

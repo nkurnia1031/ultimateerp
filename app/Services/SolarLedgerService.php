@@ -168,16 +168,23 @@ class SolarLedgerService
         return $this->balancesBefore($businessId, Carbon::tomorrow()->format('Y-m-d'));
     }
 
+    public function balancesAtEndOfDate(int $businessId, string $date): array
+    {
+        return $this->balancesBefore($businessId, Carbon::parse($date)->addDay()->format('Y-m-d'));
+    }
+
     public function rowHash(string $ledger, array $row): string
     {
-        $keys = $ledger === 'stock'
+        $keys = $ledger === 'usage'
+            ? ['tanggal', 'equipment_name', 'asset_id', 'quantity_gln']
+            : ($ledger === 'stock'
             ? ['tanggal', 'stock_in', 'out_actual', 'out_meteran', 'keterangan']
-            : ['tanggal', 'qty_in', 'qty_out', 'keterangan', 'unit', 'operator', 'customer_id', 'nama_kapal', 'lokasi'];
+            : ['tanggal', 'qty_in', 'qty_out', 'keterangan', 'unit', 'operator', 'customer_id', 'nama_kapal', 'lokasi']);
 
         $normalized = ['ledger' => $ledger];
         foreach ($keys as $key) {
             $value = $row[$key] ?? null;
-            if ($key === 'customer_id') {
+            if (in_array($key, ['customer_id', 'asset_id'], true)) {
                 $value = $value === null || $value === '' ? null : (int) $value;
             } elseif (is_numeric($value)) {
                 $value = number_format((float) $value, 4, '.', '');
@@ -192,7 +199,7 @@ class SolarLedgerService
 
     public function decorateSourceKeys(array $parsed): array
     {
-        foreach (self::LEDGERS as $ledger) {
+        foreach (array_merge(self::LEDGERS, ['usage']) as $ledger) {
             $occurrences = [];
             foreach ($parsed['rows'][$ledger] ?? [] as $index => $row) {
                 $hash = $this->rowHash($ledger, $row);
@@ -214,6 +221,139 @@ class SolarLedgerService
         return $parsed;
     }
 
+    public function usageReconciliation(int $businessId, array $rows, array $errors = []): array
+    {
+        $items = [];
+        $onlyExcel = [];
+        $summary = ['match' => 0, 'only_excel' => 0, 'only_app' => 0, 'different' => 0, 'error' => 0];
+
+        foreach ($errors as $error) {
+            if (($error['ledger'] ?? '') !== 'usage') {
+                continue;
+            }
+            $summary['error']++;
+            $items[] = [
+                'ledger' => 'usage',
+                'row' => $error['row'] ?? null,
+                'date' => null,
+                'status' => 'error',
+                'differences' => [$error['message'] ?? 'Nilai pemakaian tidak valid.'],
+                'excel' => $error,
+                'app' => null,
+                'raw_date' => $error['raw_date'] ?? null,
+                'matched_by' => null,
+            ];
+        }
+
+        $rows = array_values($rows);
+        if ($rows === []) {
+            return compact('summary', 'items', 'onlyExcel');
+        }
+        $dates = array_values(array_filter(array_column($rows, 'tanggal')));
+        sort($dates);
+        $appRows = DB::table('solar_equipment_usages')
+            ->where('business_id', $businessId)
+            ->whereBetween('usage_date', [$dates[0], $dates[count($dates) - 1]])
+            ->orderBy('usage_date')
+            ->orderBy('id')
+            ->get()
+            ->map(function ($row) {
+                $values = (array) $row;
+                $values['tanggal'] = (string) $row->usage_date;
+                $values['quantity_gln'] = (float) $row->quantity_gln;
+                $values['asset_id'] = $row->asset_id === null ? null : (int) $row->asset_id;
+                return $values;
+            })
+            ->all();
+
+        $byKey = [];
+        $byHash = [];
+        foreach ($appRows as $index => $app) {
+            if (! empty($app['source_key'])) {
+                $byKey[$app['source_key']][] = $index;
+            }
+            $byHash[$app['source_hash'] ?: $this->rowHash('usage', $app)][] = $index;
+        }
+
+        $used = [];
+        $ambiguous = [];
+        foreach ($rows as $excel) {
+            $sourceHash = $excel['source_hash'] ?? $this->rowHash('usage', $excel);
+            $sourceKey = $excel['source_key'] ?? null;
+            $candidates = array_values(array_filter($byKey[$sourceKey] ?? [], fn ($i) => ! isset($used[$i])));
+            $matchedBy = $candidates !== [] ? 'source_key' : null;
+            if ($candidates === []) {
+                $candidates = array_values(array_filter($byHash[$sourceHash] ?? [], fn ($i) => ! isset($used[$i])));
+                $matchedBy = $candidates !== [] ? 'source_hash' : null;
+            }
+
+            if (count($candidates) > 1) {
+                $summary['error']++;
+                foreach ($candidates as $candidate) $ambiguous[$candidate] = true;
+                $items[] = $this->comparisonItem('usage', $excel, null, 'error', ['Beberapa baris pemakaian cocok; sistem tidak memilih pasangan otomatis.'], 'ambiguous');
+                continue;
+            }
+
+            if ($candidates === []) {
+                $identity = $this->usageIdentity($excel);
+                $candidates = [];
+                foreach ($appRows as $index => $app) {
+                    if (isset($used[$index]) || $app['tanggal'] !== $excel['tanggal'] || $this->usageIdentity($app) !== $identity) continue;
+                    $candidates[] = $index;
+                }
+                $matchedBy = $candidates !== [] ? 'date_asset' : null;
+            }
+
+            if (count($candidates) > 1) {
+                $summary['error']++;
+                foreach ($candidates as $candidate) $ambiguous[$candidate] = true;
+                $items[] = $this->comparisonItem('usage', $excel, null, 'error', ['Ada beberapa pemakaian alat pada tanggal yang sama; pencocokan perlu diperiksa.'], 'ambiguous');
+                continue;
+            }
+
+            if ($candidates === []) {
+                $summary['only_excel']++;
+                $onlyExcel['usage'][] = $excel;
+                $details = ! empty($excel['asset_match_status']) && $excel['asset_match_status'] !== 'matched'
+                    ? ['Baris belum ada di aplikasi; nama alat akan disimpan sebagai label karena Asset belum dipetakan.']
+                    : ['Baris belum ada di aplikasi.'];
+                $items[] = $this->comparisonItem('usage', $excel, null, 'only_excel', $details);
+                continue;
+            }
+
+            $appIndex = $candidates[0];
+            $used[$appIndex] = true;
+            $app = $appRows[$appIndex];
+            $differences = [];
+            if (abs((float) $excel['quantity_gln'] - (float) $app['quantity_gln']) >= 0.0001) {
+                $differences[] = sprintf('Pemakaian: Excel "%s Gln", aplikasi "%s Gln"', $excel['quantity_gln'], $app['quantity_gln']);
+            }
+            if (($excel['asset_id'] ?? null) !== ($app['asset_id'] ?? null)) {
+                $differences[] = 'Pemetaan Asset berbeda.';
+            }
+            $status = $differences === [] ? 'match' : 'different';
+            $summary[$status]++;
+            $items[] = $this->comparisonItem('usage', $excel, $app, $status, $differences, $matchedBy);
+        }
+
+        foreach ($appRows as $index => $app) {
+            if (! isset($used[$index]) && ! isset($ambiguous[$index])) {
+                $summary['only_app']++;
+                $items[] = $this->comparisonItem('usage', null, $app, 'only_app', ['Baris tidak ditemukan di workbook.']);
+            }
+        }
+
+        return compact('summary', 'items', 'onlyExcel');
+    }
+
+    private function usageIdentity(array $row): string
+    {
+        $asset = ($row['asset_id'] ?? null) !== null
+            ? 'asset:'.(int) $row['asset_id']
+            : 'name:'.mb_strtolower(trim(preg_replace('/\s+/', ' ', (string) ($row['equipment_name'] ?? ''))));
+        return $asset;
+    }
+
     public function reconciliation(int $businessId, array $parsed): array
     {
         $items = [];
@@ -229,11 +369,12 @@ class SolarLedgerService
         foreach ($parsed['errors'] ?? [] as $error) {
             $items[] = [
                 'ledger' => $error['ledger'] ?? '-',
+                'source_sheet' => $error['source_sheet'] ?? strtoupper((string) ($error['ledger'] ?? '-')),
                 'row' => $error['row'] ?? null,
                 'date' => null,
                 'status' => 'error',
                 'differences' => [$error['message']],
-                'excel' => null,
+                'excel' => $error['excel'] ?? null,
                 'app' => null,
                 'raw_date' => $error['raw_date'] ?? null,
             ];

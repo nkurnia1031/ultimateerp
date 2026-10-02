@@ -43,7 +43,7 @@ class SolarImportService
 
         $inserted = DB::transaction(function () use ($batch, $businessId, $batchId, $rows, $total) {
             $this->processService->update($batchId, $businessId, 'saving', 'Menyimpan transaksi baru.', 35, 0, $total);
-            $inserted = ['stock' => 0, 'pool' => 0, 'mess' => 0];
+            $inserted = ['stock' => 0, 'pool' => 0, 'mess' => 0, 'usage' => 0];
             $snapshot = $this->ledgerService->openingSnapshot($businessId);
             DB::table('solar_import_batches')->where('id', $batchId)->update([
                 'opening_snapshot' => json_encode($snapshot),
@@ -84,7 +84,8 @@ class SolarImportService
                         ];
                     })->all();
                     foreach (array_chunk($payloads, 100) as $payloadChunk) {
-                        $inserted[$ledger] += DB::table($this->ledgerService->table($ledger))->insertOrIgnore($payloadChunk);
+                        $table = $ledger === 'usage' ? 'solar_equipment_usages' : $this->ledgerService->table($ledger);
+                        $inserted[$ledger] += DB::table($table)->insertOrIgnore($payloadChunk);
                     }
                 }
                 $current = min($total, ($chunkIndex + 1) * 250);
@@ -121,6 +122,14 @@ class SolarImportService
 
     private function payload(string $ledger, array $row): array
     {
+        if ($ledger === 'usage') {
+            return [
+                'usage_date' => $row['tanggal'],
+                'asset_id' => $row['asset_id'] ?? null,
+                'equipment_name' => $row['equipment_name'],
+                'quantity_gln' => (float) $row['quantity_gln'],
+            ];
+        }
         if ($ledger === 'stock') {
             return [
                 'tanggal' => $row['tanggal'],

@@ -19,9 +19,14 @@
     @component('components.widget', ['class' => 'box-primary', 'title' => __( 'user.all_users' )])
         @can('user.create')
             @slot('tool')
-                <div class="box-tools">
+                <div class="box-tools tw-flex tw-flex-wrap tw-gap-2">
+                    @if($can_import_users)
+                        <a class="tw-dw-btn tw-dw-btn-outline tw-dw-btn-primary" href="{{ route('users.import-business') }}">
+                            <i class="fa fa-copy" aria-hidden="true"></i> Impor dari business lain
+                        </a>
+                    @endif
                     <a class="tw-dw-btn tw-bg-gradient-to-r tw-from-indigo-600 tw-to-blue-500 tw-font-bold tw-text-white tw-border-none tw-rounded-full" href="{{action([\App\Http\Controllers\ManageUserController::class, 'create'])}}">
-                        <svg  xmlns="http://www.w3.org/2000/svg"  width="24"  height="24"  viewBox="0 0 24 24"  fill="none"  stroke="currentColor"  stroke-width="2"  stroke-linecap="round"  stroke-linejoin="round"  class="icon icon-tabler icons-tabler-outline icon-tabler-plus"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M12 5l0 14" /><path d="M5 12l14 0" /></svg>                        @lang( 'messages.add' )
+                        <i class="fa fa-plus" aria-hidden="true"></i> Tambah user
                     </a>
                  </div>
             @endslot
@@ -35,6 +40,7 @@
                             <th>@lang( 'user.name' )</th>
                             <th>@lang( 'user.role' )</th>
                             <th>@lang( 'business.email' )</th>
+                            <th>Status login</th>
                             <th>@lang( 'messages.action' )</th>
                         </tr>
                     </thead>
@@ -60,7 +66,7 @@
                     fixedHeader:false,
                     ajax: '/users',
                     columnDefs: [ {
-                        "targets": [4],
+                        "targets": [2, 4, 5],
                         "orderable": false,
                         "searchable": false
                     } ],
@@ -69,6 +75,7 @@
                         {"data":"full_name"},
                         {"data":"role"},
                         {"data":"email"},
+                        {"data":"login_status"},
                         {"data":"action"}
                     ]
                 });
