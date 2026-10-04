@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Contact;
 use App\Jobs\ProcessSolarImport;
 use App\Jobs\ProcessSolarPreview;
 use App\Services\SolarImportProcessService;
@@ -59,24 +60,32 @@ class SolarController extends Controller
 
         foreach (SolarLedgerService::LEDGERS as $ledger) {
             $table = $this->ledgerService->table($ledger);
-            $query = DB::table($table)
-                ->leftJoin('contacts', function ($join) use ($table, $businessId) {
-                    $join->on("{$table}.customer_id", '=', 'contacts.id')
-                        ->where('contacts.business_id', $businessId);
+            $query = DB::table("{$table} as solar_row")
+                ->leftJoin('assets as solar_asset', function ($join) use ($businessId) {
+                    $join->on('solar_row.asset_id', '=', 'solar_asset.id')
+                        ->where('solar_asset.business_id', $businessId);
                 })
-                ->where("{$table}.business_id", $businessId)
-                ->whereBetween("{$table}.tanggal", [$dateFrom, $dateTo])
-                ->orderBy("{$table}.tanggal")
-                ->orderBy("{$table}.id")
-                ->select("{$table}.*", DB::raw('COALESCE(contacts.supplier_business_name, contacts.name) as customer_name'));
+                ->leftJoin('users as solar_driver', function ($join) use ($businessId) {
+                    $join->on('solar_row.driver_id', '=', 'solar_driver.id')
+                        ->where('solar_driver.business_id', $businessId);
+                })
+                ->where('solar_row.business_id', $businessId)
+                ->select(
+                    'solar_row.*',
+                    'solar_asset.name as linked_asset_name',
+                    DB::raw("TRIM(CONCAT(COALESCE(solar_driver.surname, ''), ' ', COALESCE(solar_driver.first_name, ''), ' ', COALESCE(solar_driver.last_name, ''))) as linked_driver_name")
+                );
 
-            if ($ledger === 'stock') {
-                $query = DB::table($table)
-                    ->where('business_id', $businessId)
-                    ->whereBetween('tanggal', [$dateFrom, $dateTo])
-                    ->orderBy('tanggal')
-                    ->orderBy('id');
+            if ($ledger !== 'stock') {
+                $query->leftJoin('contacts', function ($join) use ($businessId) {
+                    $join->on('solar_row.customer_id', '=', 'contacts.id')
+                        ->where('contacts.business_id', $businessId);
+                })->addSelect(DB::raw("COALESCE(NULLIF(TRIM(contacts.supplier_business_name), ''), NULLIF(TRIM(contacts.name), ''), NULLIF(TRIM(contacts.contact_id), ''), NULLIF(TRIM(contacts.mobile), ''), NULLIF(TRIM(contacts.email), ''), CONCAT('Customer #', contacts.id)) as customer_name"));
             }
+
+            $query->whereBetween('solar_row.tanggal', [$dateFrom, $dateTo])
+                ->orderBy('solar_row.tanggal')
+                ->orderBy('solar_row.id');
 
             $rows[$ledger] = $query->get();
         }
@@ -84,14 +93,25 @@ class SolarController extends Controller
         $customers = DB::table('contacts')
             ->where('business_id', $businessId)
             ->whereIn('type', ['customer', 'both'])
-            ->select('id', DB::raw('COALESCE(supplier_business_name, name) as display_name'))
-            ->orderBy('display_name')
-            ->get();
+            ->get(['id', 'contact_id', 'name', 'supplier_business_name', 'mobile', 'email'])
+            ->map(function ($customer) {
+                $customer->display_name = Contact::customerDisplayName($customer, true);
+
+                return $customer;
+            })
+            ->sortBy('display_name', SORT_NATURAL | SORT_FLAG_CASE)
+            ->values();
 
         $assets = DB::table('assets')
             ->where('business_id', $businessId)
             ->select('id', 'asset_code', 'name')
             ->orderBy('name')
+            ->get();
+        $drivers = DB::table('users')
+            ->where('business_id', $businessId)
+            ->whereNull('deleted_at')
+            ->select('id', DB::raw("TRIM(CONCAT(COALESCE(surname, ''), ' ', COALESCE(first_name, ''), ' ', COALESCE(last_name, ''))) as full_name"))
+            ->orderBy('full_name')
             ->get();
         $usageRows = DB::table('solar_equipment_usages')
             ->leftJoin('assets', function ($join) use ($businessId) {
@@ -134,6 +154,7 @@ class SolarController extends Controller
             'balances' => $this->ledgerService->balancesAtEndOfDate($businessId, $reportDate),
             'customers' => $customers,
             'assets' => $assets,
+            'drivers' => $drivers,
             'importBatches' => DB::table('solar_import_batches')
                 ->where('business_id', $businessId)
                 ->orderByDesc('created_at')
@@ -178,8 +199,14 @@ class SolarController extends Controller
             ->orderBy('usage_date')
             ->orderBy('equipment_name')
             ->get();
+        $events = DB::table('solar_import_batch_events')
+            ->where('business_id', $businessId)
+            ->where('batch_id', $batchId)
+            ->orderBy('sequence')
+            ->limit(300)
+            ->get();
 
-        return view('solar.import-detail', compact('batch', 'rows'));
+        return view('solar.import-detail', compact('batch', 'rows', 'events'));
     }
 
     public function reconcilePreview(Request $request, string $batchId)
@@ -198,12 +225,29 @@ class SolarController extends Controller
         );
 
         $assets = DB::table('assets')->where('business_id', $businessId)->orderBy('name')->get(['id', 'asset_code', 'name']);
-        $customers = DB::table('contacts')->where('business_id', $businessId)->whereIn('type', ['customer', 'both'])->orderBy('name')->get(['id', 'name', 'supplier_business_name']);
+        $customers = DB::table('contacts')
+            ->where('business_id', $businessId)
+            ->whereIn('type', ['customer', 'both'])
+            ->get(['id', 'contact_id', 'name', 'supplier_business_name', 'mobile', 'email'])
+            ->map(function ($customer) {
+                $customer->display_name = Contact::customerDisplayName($customer, true);
+
+                return $customer;
+            })
+            ->sortBy('display_name', SORT_NATURAL | SORT_FLAG_CASE)
+            ->values();
+        $drivers = DB::table('users')
+            ->where('business_id', $businessId)
+            ->whereNull('deleted_at')
+            ->select('id', DB::raw("TRIM(CONCAT(COALESCE(surname, ''), ' ', COALESCE(first_name, ''), ' ', COALESCE(last_name, ''))) as full_name"))
+            ->orderBy('full_name')
+            ->get();
         $viewData = [
             'token' => $batchId,
             'summary' => $this->previewService->summary($batchId, $businessId),
             'assets' => $assets,
             'customers' => $customers,
+            'drivers' => $drivers,
         ];
         if ($request->boolean('fragment')) {
             return view('solar._preview-workspace', $viewData);
@@ -299,6 +343,141 @@ class SolarController extends Controller
         ]);
     }
 
+    public function previewMappings(Request $request, string $batchId)
+    {
+        $businessId = $this->authorizeSolar($request);
+        $batch = DB::table('solar_import_batches')
+            ->where('id', $batchId)
+            ->where('business_id', $businessId)
+            ->where('status', 'preview')
+            ->first();
+        abort_if(! $batch || ($batch->operation ?: 'preview') !== 'preview', 404, 'Batch preview tidak ditemukan.');
+
+        $sheet = $request->filled('sheet') ? mb_substr(trim((string) $request->input('sheet')), 0, 120) : null;
+
+        return response()->json([
+            'mappings' => $this->previewService->referenceMappings($businessId, $batchId, $sheet),
+        ]);
+    }
+
+    public function previewReferenceOptions(Request $request, string $batchId)
+    {
+        $businessId = $this->authorizeSolar($request);
+        $batchExists = DB::table('solar_import_batches')
+            ->where('id', $batchId)
+            ->where('business_id', $businessId)
+            ->where('status', 'preview')
+            ->where(function ($query) {
+                $query->whereNull('operation')->orWhere('operation', 'preview');
+            })
+            ->exists();
+        abort_unless($batchExists, 404, 'Batch preview tidak ditemukan.');
+
+        $validated = $request->validate([
+            'type' => ['required', Rule::in(['asset', 'driver', 'customer'])],
+            'q' => ['nullable', 'string', 'max:120'],
+        ]);
+        $search = trim((string) ($validated['q'] ?? ''));
+
+        if ($validated['type'] === 'asset') {
+            $query = DB::table('assets')->where('business_id', $businessId);
+            if ($search !== '') {
+                $query->where(function ($query) use ($search) {
+                    $query->where('name', 'like', '%'.$search.'%')
+                        ->orWhere('asset_code', 'like', '%'.$search.'%');
+                });
+            }
+            $results = $query->orderBy('name')->limit(30)->get(['id', 'asset_code', 'name'])
+                ->map(function ($asset) {
+                    $label = trim(implode(' · ', array_filter([
+                        trim((string) ($asset->asset_code ?? '')),
+                        trim((string) ($asset->name ?? '')),
+                    ])));
+
+                    return [
+                        'id' => (string) $asset->id,
+                        'text' => $label !== '' ? $label : 'Asset #'.$asset->id,
+                    ];
+                });
+        } elseif ($validated['type'] === 'driver') {
+            $fullName = "TRIM(CONCAT(COALESCE(surname, ''), ' ', COALESCE(first_name, ''), ' ', COALESCE(last_name, '')))";
+            $query = DB::table('users')->where('business_id', $businessId)->whereNull('deleted_at');
+            if ($search !== '') {
+                $query->whereRaw($fullName.' LIKE ?', ['%'.$search.'%']);
+            }
+            $results = $query->orderBy('first_name')->limit(30)
+                ->get(['id', DB::raw($fullName.' as full_name')])
+                ->filter(fn ($driver) => trim((string) $driver->full_name) !== '')
+                ->map(fn ($driver) => ['id' => (string) $driver->id, 'text' => trim((string) $driver->full_name)]);
+        } else {
+            $query = DB::table('contacts')
+                ->where('business_id', $businessId)
+                ->whereIn('type', ['customer', 'both']);
+            if ($search !== '') {
+                $query->where(function ($query) use ($search) {
+                    $query->where('name', 'like', '%'.$search.'%')
+                        ->orWhere('supplier_business_name', 'like', '%'.$search.'%')
+                        ->orWhere('contact_id', 'like', '%'.$search.'%')
+                        ->orWhere('mobile', 'like', '%'.$search.'%')
+                        ->orWhere('email', 'like', '%'.$search.'%');
+                });
+            }
+            $results = $query->orderBy('supplier_business_name')->orderBy('name')->limit(30)
+                ->get(['id', 'name', 'supplier_business_name', 'contact_id', 'mobile', 'email'])
+                ->map(fn ($customer) => [
+                    'id' => (string) $customer->id,
+                    'text' => Contact::customerDisplayName($customer, true),
+                ]);
+        }
+
+        return response()->json(['results' => $results->values()]);
+    }
+
+    public function updatePreviewMapping(Request $request, string $batchId)
+    {
+        $businessId = $this->authorizeSolar($request);
+        $batch = DB::table('solar_import_batches')
+            ->where('id', $batchId)
+            ->where('business_id', $businessId)
+            ->where('status', 'preview')
+            ->where(function ($query) {
+                $query->where('process_state', 'completed')->orWhereNull('process_state');
+            })
+            ->first();
+        abort_if(! $batch || ($batch->operation ?: 'preview') !== 'preview', 404, 'Batch preview belum siap atau sudah diproses.');
+
+        $validated = $request->validate([
+            'type' => ['required', Rule::in(['asset', 'driver'])],
+            'source_value' => ['required', 'string', 'max:255'],
+            'target_id' => ['nullable', 'integer'],
+            'sheet' => ['nullable', 'string', 'max:120'],
+        ]);
+        $targetId = isset($validated['target_id']) ? (int) $validated['target_id'] : null;
+        if ($targetId !== null && $validated['type'] === 'asset') {
+            abort_unless(DB::table('assets')->where('business_id', $businessId)->where('id', $targetId)->exists(), 422, 'Unit/alat tidak ditemukan pada business ini.');
+        } elseif ($targetId !== null) {
+            abort_unless(DB::table('users')->where('business_id', $businessId)->whereNull('deleted_at')->where('id', $targetId)->exists(), 422, 'Supir tidak ditemukan pada business ini.');
+        }
+
+        $this->previewService->saveReferenceMapping(
+            $businessId,
+            $batchId,
+            $validated['type'],
+            $validated['source_value'],
+            $targetId
+        );
+
+        return response()->json([
+            'success' => true,
+            'summary' => $this->previewService->summary($batchId, $businessId),
+            'mappings' => $this->previewService->referenceMappings(
+                $businessId,
+                $batchId,
+                $validated['sheet'] ?? null
+            ),
+        ]);
+    }
+
     public function previewSummary(Request $request, string $batchId)
     {
         $businessId = $this->authorizeSolar($request);
@@ -312,6 +491,16 @@ class SolarController extends Controller
         $businessId = $this->authorizeSolar($request);
 
         return response()->json($this->processService->status($batchId, $businessId));
+    }
+
+    public function previewEvents(Request $request, string $batchId)
+    {
+        $businessId = $this->authorizeSolar($request);
+        $afterId = max(0, (int) $request->query('after_id', 0));
+
+        return response()->json([
+            'events' => $this->processService->events($batchId, $businessId, $afterId),
+        ]);
     }
 
     public function uploadPreview(Request $request)
@@ -347,6 +536,7 @@ class SolarController extends Controller
                 'updated_at' => now(),
             ]);
             $request->session()->put("solar_imports.{$token}", $path);
+            $this->processService->queued($token, $businessId, 'preview');
             ProcessSolarPreview::dispatch($token, $businessId);
 
             return response()->json([
@@ -383,10 +573,19 @@ class SolarController extends Controller
                 'Preview belum selesai atau sudah diproses.'
             );
 
+            $warnings = json_decode((string) ($batch->preview_warnings ?? '[]'), true) ?: [];
+            $blockingWarning = collect($warnings)->first(fn ($warning) => ! empty($warning['blocking']));
+            abort_unless(
+                ! $blockingWarning,
+                422,
+                $blockingWarning['message'] ?? 'Peringatan workbook harus diperbaiki sebelum import.'
+            );
+
             $this->processService->queued($batchId, $businessId, 'import', (int) $this->previewService->summary($batchId, $businessId)['only_excel']);
 
             return $batch;
         });
+        $this->processService->flushPendingEvents($batch->id, $businessId);
         ProcessSolarImport::dispatch($batch->id, $businessId);
 
         return response()->json([
@@ -430,6 +629,7 @@ class SolarController extends Controller
 
             return [$batch, $operation];
         });
+        $this->processService->flushPendingEvents($batchId, $businessId);
         if ($operation === 'import') {
             ProcessSolarImport::dispatch($batchId, $businessId);
         } else {
@@ -507,10 +707,10 @@ class SolarController extends Controller
                 ],
             ]);
             $row['tanggal'] = Carbon::parse($validated['tanggal'])->format('Y-m-d');
-        $row['equipment_name'] = trim($validated['equipment_name']);
-        $row['quantity_gln'] = (float) $validated['quantity_gln'];
-        $row['asset_id'] = $validated['asset_id'] ?? null;
-        $row['asset_match_status'] = $row['asset_id'] ? 'matched' : 'unmatched';
+            $row['equipment_name'] = trim($validated['equipment_name']);
+            $row['quantity_gln'] = (float) $validated['quantity_gln'];
+            $row['asset_id'] = $validated['asset_id'] ?? null;
+            $row['asset_match_status'] = $row['asset_id'] ? 'matched' : 'unmatched';
             $row['source_sheet'] = $preview->source_sheet;
             $row['source_row'] = $preview->source_row;
             $row['source_hash'] = $this->ledgerService->rowHash('usage', $row);
@@ -521,6 +721,8 @@ class SolarController extends Controller
             ]);
             $comparison = $this->ledgerService->usageReconciliation($businessId, $decorated['rows']['usage']);
         } else {
+            $unitMaxLength = $preview->ledger === 'stock' ? 255 : 50;
+            $operatorMaxLength = $preview->ledger === 'stock' ? 255 : 100;
             $validated = $request->validate([
                 'tanggal' => ['required', 'date'],
                 'stock_in' => ['nullable', 'numeric', 'min:0'],
@@ -529,20 +731,35 @@ class SolarController extends Controller
                 'qty_in' => ['nullable', 'numeric', 'min:0'],
                 'qty_out' => ['nullable', 'numeric', 'min:0'],
                 'keterangan' => ['nullable', 'string', 'max:500'],
-                'unit' => ['nullable', 'string', 'max:50'],
-                'operator' => ['nullable', 'string', 'max:100'],
+                'unit' => ['nullable', 'string', 'max:'.$unitMaxLength],
+                'operator' => ['nullable', 'string', 'max:'.$operatorMaxLength],
                 'customer_id' => ['nullable', Rule::exists('contacts', 'id')->where(fn ($query) => $query->where('business_id', $businessId)->whereIn('type', ['customer', 'both']))],
+                'asset_id' => ['nullable', Rule::exists('assets', 'id')->where(fn ($query) => $query->where('business_id', $businessId))],
+                'driver_id' => ['nullable', Rule::exists('users', 'id')->where(fn ($query) => $query->where('business_id', $businessId)->whereNull('deleted_at'))],
                 'nama_kapal' => ['nullable', 'string', 'max:255'],
                 'lokasi' => ['nullable', 'string', 'max:255'],
             ]);
             $row['tanggal'] = Carbon::parse($validated['tanggal'])->format('Y-m-d');
-            foreach (['stock_in', 'out_actual', 'out_meteran', 'qty_in', 'qty_out', 'keterangan', 'unit', 'operator', 'customer_id', 'nama_kapal', 'lokasi'] as $field) {
+            $unitChanged = array_key_exists('unit', $validated)
+                && mb_strtolower(trim((string) ($row['unit'] ?? ''))) !== mb_strtolower(trim((string) ($validated['unit'] ?? '')));
+            $driverChanged = array_key_exists('operator', $validated)
+                && mb_strtolower(trim((string) ($row['operator'] ?? ''))) !== mb_strtolower(trim((string) ($validated['operator'] ?? '')));
+            foreach (['stock_in', 'out_actual', 'out_meteran', 'qty_in', 'qty_out', 'keterangan', 'unit', 'operator', 'customer_id', 'asset_id', 'driver_id', 'nama_kapal', 'lokasi'] as $field) {
                 if (array_key_exists($field, $validated)) $row[$field] = $validated[$field];
+            }
+            if ($unitChanged) {
+                $row['asset_id'] = null;
+                $row['asset_match_status'] = 'unmatched';
+            }
+            if ($driverChanged) {
+                $row['driver_id'] = null;
+                $row['driver_match_status'] = 'unmatched';
             }
             unset($row['customer_ref']);
             $row['source_sheet'] = $preview->source_sheet;
             $row['source_row'] = $preview->source_row;
             $ledger = $preview->ledger;
+            $row = $this->previewService->refreshReferenceSuggestions($businessId, $ledger, $row);
             $sourceRows = ['stock' => [], 'pool' => [], 'mess' => []];
             $sourceRows[$ledger][] = $row;
             $decorated = $this->ledgerService->decorateSourceKeys(['rows' => $sourceRows, 'opening' => [], 'errors' => []]);
@@ -788,7 +1005,7 @@ class SolarController extends Controller
                 $query->leftJoin('contacts', function ($join) use ($table, $businessId) {
                     $join->on("{$table}.customer_id", '=', 'contacts.id')
                         ->where('contacts.business_id', $businessId);
-                })->select("{$table}.*", DB::raw('COALESCE(contacts.supplier_business_name, contacts.name) as customer_name'));
+                })->select("{$table}.*", DB::raw("COALESCE(NULLIF(TRIM(contacts.supplier_business_name), ''), NULLIF(TRIM(contacts.name), ''), NULLIF(TRIM(contacts.contact_id), ''), NULLIF(TRIM(contacts.mobile), ''), NULLIF(TRIM(contacts.email), ''), CONCAT('Customer #', contacts.id)) as customer_name"));
             }
 
             $rows[$ledger] = $query->get()->all();
@@ -866,18 +1083,22 @@ class SolarController extends Controller
         $common = [
             'tanggal' => ['required', 'date'],
             'keterangan' => ['nullable', 'string', 'max:500'],
+            'asset_id' => ['nullable', Rule::exists('assets', 'id')->where(fn ($query) => $query->where('business_id', $businessId))],
+            'driver_id' => ['nullable', Rule::exists('users', 'id')->where(fn ($query) => $query->where('business_id', $businessId)->whereNull('deleted_at'))],
         ];
         $rules = $ledger === 'stock'
             ? $common + [
+                'unit' => ['nullable', 'string', 'max:255'],
+                'operator' => ['nullable', 'string', 'max:255'],
                 'stock_in' => ['nullable', 'numeric', 'min:0'],
                 'out_actual' => ['nullable', 'numeric', 'min:0'],
                 'out_meteran' => ['nullable', 'numeric', 'min:0'],
             ]
             : $common + [
-                'qty_in' => ['nullable', 'numeric', 'min:0'],
-                'qty_out' => ['nullable', 'numeric', 'min:0'],
                 'unit' => ['nullable', 'string', 'max:50'],
                 'operator' => ['nullable', 'string', 'max:100'],
+                'qty_in' => ['nullable', 'numeric', 'min:0'],
+                'qty_out' => ['nullable', 'numeric', 'min:0'],
                 'customer_id' => [
                     'nullable',
                     Rule::exists('contacts', 'id')->where(fn ($query) => $query->where('business_id', $businessId)),
@@ -899,6 +1120,10 @@ class SolarController extends Controller
 
             return [
                 'tanggal' => $validated['tanggal'],
+                'asset_id' => $validated['asset_id'] ?? null,
+                'driver_id' => $validated['driver_id'] ?? null,
+                'unit' => $this->referenceSnapshot($validated['unit'] ?? null, 'assets', $validated['asset_id'] ?? null),
+                'operator' => $this->referenceSnapshot($validated['operator'] ?? null, 'users', $validated['driver_id'] ?? null),
                 'stock_in' => (float) ($validated['stock_in'] ?? 0),
                 'out_actual' => (float) ($validated['out_actual'] ?? 0),
                 'stock_actual' => 0,
@@ -908,7 +1133,7 @@ class SolarController extends Controller
             ];
         }
 
-        $hasDescription = collect(['keterangan', 'unit', 'operator', 'customer_id', 'nama_kapal', 'lokasi'])
+        $hasDescription = collect(['keterangan', 'unit', 'operator', 'asset_id', 'driver_id', 'customer_id', 'nama_kapal', 'lokasi'])
             ->contains(fn ($field) => trim((string) ($validated[$field] ?? '')) !== '');
         if ((float) ($validated['qty_in'] ?? 0) === 0.0
             && (float) ($validated['qty_out'] ?? 0) === 0.0
@@ -924,8 +1149,10 @@ class SolarController extends Controller
             'qty_out' => (float) ($validated['qty_out'] ?? 0),
             'current_stock' => 0,
             'keterangan' => $validated['keterangan'] ?? null,
-            'unit' => $validated['unit'] ?? null,
-            'operator' => $validated['operator'] ?? null,
+            'asset_id' => $validated['asset_id'] ?? null,
+            'driver_id' => $validated['driver_id'] ?? null,
+            'unit' => $this->referenceSnapshot($validated['unit'] ?? null, 'assets', $validated['asset_id'] ?? null),
+            'operator' => $this->referenceSnapshot($validated['operator'] ?? null, 'users', $validated['driver_id'] ?? null),
             'customer_id' => $validated['customer_id'] ?? null,
         ];
         if ($ledger === 'mess') {
@@ -934,6 +1161,26 @@ class SolarController extends Controller
         }
 
         return $payload;
+    }
+
+    private function referenceSnapshot(?string $snapshot, string $table, ?int $id): ?string
+    {
+        $snapshot = trim((string) $snapshot);
+        if ($snapshot !== '') {
+            return $snapshot;
+        }
+        if ($id === null) {
+            return null;
+        }
+
+        if ($table === 'assets') {
+            return DB::table('assets')->where('id', $id)->value('name');
+        }
+
+        return DB::table('users')
+            ->where('id', $id)
+            ->selectRaw("TRIM(CONCAT(COALESCE(surname, ''), ' ', COALESCE(first_name, ''), ' ', COALESCE(last_name, ''))) as full_name")
+            ->value('full_name');
     }
 
     private function validatedUsagePayload(Request $request, int $businessId): array
@@ -1019,13 +1266,11 @@ class SolarController extends Controller
         return DB::table('contacts')
             ->where('business_id', $businessId)
             ->whereIn('type', ['customer', 'both'])
-            ->orderBy('name')
-            ->get()
+            ->get(['id', 'contact_id', 'name', 'supplier_business_name', 'mobile', 'email'])
             ->map(function ($customer) {
-                $name = $customer->supplier_business_name ?: $customer->name;
-
-                return "C{$customer->id} | {$name}";
+                return "C{$customer->id} | ".Contact::customerDisplayName($customer, false);
             })
+            ->sortBy(fn ($reference) => $reference, SORT_NATURAL | SORT_FLAG_CASE)
             ->all();
     }
 

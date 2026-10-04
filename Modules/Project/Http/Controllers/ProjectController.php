@@ -490,7 +490,7 @@ class ProjectController extends Controller
             $heavy_equipment_bonus_query = BonusAyak::where('business_id', $business_id)->where('project_id', $id);
             $heavy_equipment_bonus_total = (clone $heavy_equipment_bonus_query)->sum('bonus');
             $heavy_equipment_bonus_ayaks = (clone $heavy_equipment_bonus_query)
-                ->with(['driver', 'asset', 'trips'])
+                ->with(['driver', 'asset'])
                 ->latest('tanggal')->latest('id')->limit(10)->get();
             $heavy_equipment_trip_total['bonus_ayak'] = $heavy_equipment_bonus_total;
             $heavy_equipment_trip_total['contribution'] -= $heavy_equipment_bonus_total;

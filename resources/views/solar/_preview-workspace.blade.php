@@ -4,14 +4,20 @@
     data-status-url="{{ ! empty($token) ? route('solar.imports.status', $token) : '' }}"
     data-reconcile-url-template="{{ route('solar.imports.reconcile', ['batchId' => '__BATCH__']) }}"
     data-rows-url-template="{{ route('solar.imports.rows', ['batchId' => '__BATCH__']) }}"
+    data-mappings-url-template="{{ route('solar.imports.mappings', ['batchId' => '__BATCH__']) }}"
+    data-reference-options-url-template="{{ route('solar.imports.reference-options', ['batchId' => '__BATCH__']) }}"
+    data-mapping-update-url-template="{{ route('solar.imports.mappings.update', ['batchId' => '__BATCH__']) }}"
     data-summary-url-template="{{ route('solar.imports.summary', ['batchId' => '__BATCH__']) }}"
     data-confirm-url-template="{{ route('solar.imports.confirm', ['batchId' => '__BATCH__']) }}"
     data-status-url-template="{{ route('solar.imports.status', ['batchId' => '__BATCH__']) }}"
+    data-events-url-template="{{ route('solar.imports.events', ['batchId' => '__BATCH__']) }}"
     data-cancel-url-template="{{ route('solar.imports.cancel', ['batchId' => '__BATCH__']) }}"
     data-retry-url-template="{{ route('solar.imports.retry', ['batchId' => '__BATCH__']) }}"
     data-update-url-template="{{ route('solar.imports.rows.update', ['batchId' => '__BATCH__', 'rowId' => '__ROW__']) }}"
     data-sheets='@json($summary['sheets'] ?? [])'
+    data-preview-warnings='@json($summary['warnings'] ?? [])'
     data-assets='@json($assets ?? [])'
+    data-drivers='@json($drivers ?? [])'
     data-customers='@json($customers ?? [])'>
     <div class="solar-preview-header">
         <div>
@@ -23,9 +29,24 @@
     <div id="solar-preview-summary" class="row solar-preview-summary"></div>
     <input type="hidden" id="solar-preview-csrf" value="{{ csrf_token() }}">
     <div class="alert alert-info">
-        Kolom bertanda pensil dapat dikoreksi langsung. Perubahan disimpan di preview melalui AJAX dan baru masuk ke ledger setelah dikonfirmasi.
+        Kolom bertanda pensil dapat dikoreksi langsung. Unit berarti Asset/kendaraan; kandidat mirip dari Keterangan hanya berupa saran sampai dipilih. Pemetaan Asset dan supir berlaku ke semua baris dengan nilai sumber yang sama; perubahan baru masuk ke ledger setelah dikonfirmasi.
     </div>
+    <div id="solar-preview-warnings" class="alert alert-warning" role="status" hidden></div>
     <div id="solar-preview-tabs" class="solar-preview-tabs" role="tablist"></div>
+    <section id="solar-reference-mapping-panel" class="solar-reference-mapping-panel" aria-labelledby="solar-reference-mapping-title">
+        <div class="solar-reference-mapping-heading">
+            <div>
+                <h4 id="solar-reference-mapping-title">Pemetaan unit dan supir</h4>
+                <p class="text-muted">Pilih padanan dari database. Satu pilihan diterapkan ke semua baris dengan nama sumber yang sama di workbook ini.</p>
+            </div>
+            <div class="solar-reference-mapping-tools">
+                <input id="solar-reference-mapping-search" type="search" class="form-control input-sm" placeholder="Cari nama unit atau supir" aria-label="Cari nilai unit atau supir">
+                <span id="solar-reference-mapping-count" class="text-muted"></span>
+            </div>
+        </div>
+        <div id="solar-preview-reference-mappings" class="solar-reference-mapping-list" aria-live="polite"></div>
+        <button id="solar-reference-mapping-more" type="button" class="btn btn-default btn-sm" hidden>Muat nama lagi</button>
+    </section>
     <div class="solar-preview-sheet-heading">
         <strong id="solar-preview-sheet-title">Pilih sheet</strong>
         <span id="solar-preview-sheet-counts" class="text-muted"></span>
@@ -44,7 +65,7 @@
         <span>Baris siap diimpor: <strong id="solar-preview-importable-count">0</strong></span>
         <span>Baris akan dilewati / diperiksa: <strong id="solar-preview-skip-count">0</strong></span>
         @if (! empty($token))
-            <button type="button" id="solar-preview-confirm" class="btn btn-success" data-token="{{ $token }}" {{ ($summary['only_excel'] ?? 0) < 1 ? 'disabled' : '' }}>
+            <button type="button" id="solar-preview-confirm" class="btn btn-success" data-token="{{ $token }}" {{ (($summary['only_excel'] ?? 0) < 1 || collect($summary['warnings'] ?? [])->contains(fn ($warning) => ! empty($warning['blocking']))) ? 'disabled' : '' }}>
                 <i class="fa fa-check"></i> Konfirmasi &amp; Antrekan Import
             </button>
         @else
@@ -72,6 +93,17 @@
     .solar-preview-grid { width:100%; min-height:400px; height:min(62vh, 680px); margin-bottom:12px; }
     #solar-reconcile-app .alert-info { color:#16384a !important; background-color:#e8f4f8 !important; border-color:#c7e3ec !important; }
     .solar-preview-tab .badge { background-color:#666; }
+    .solar-reference-mapping-panel { border:1px solid #dce7ea; background:#f8fbfc; border-radius:5px; padding:12px; margin:12px 0; }
+    .solar-reference-mapping-heading { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
+    .solar-reference-mapping-heading h4 { margin:0 0 4px; }
+    .solar-reference-mapping-heading p { margin:0; }
+    .solar-reference-mapping-tools { display:flex; align-items:center; gap:10px; }
+    .solar-reference-mapping-tools input { min-width:230px; }
+    .solar-reference-mapping-list { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:8px; margin-top:10px; }
+    .solar-reference-map-item { display:grid; grid-template-columns:minmax(95px,1fr) minmax(180px,1.5fr); align-items:center; gap:8px; padding:8px; border:1px solid #dce7ea; background:#fff; border-radius:4px; }
+    .solar-reference-map-source { min-width:0; overflow-wrap:anywhere; }
+    .solar-reference-map-source small { display:block; color:#6b7c84; margin-top:2px; }
+    .solar-reference-map-item select { min-width:0; }
     .solar-preview-editable-cell { background:#fff8d6 !important; border-left:2px solid #d8a900 !important; }
     .solar-preview-row-issue { background:#fff4f0 !important; }
     .solar-preview-row-warning { background:#fffbea !important; }
@@ -83,6 +115,10 @@
         .solar-preview-header { flex-direction:column; }
         .solar-preview-header .btn,.solar-preview-footer .btn { width:100%; }
         .solar-preview-footer span { width:100%; }
+        .solar-reference-mapping-heading { flex-direction:column; }
+        .solar-reference-mapping-tools { width:100%; flex-direction:column; align-items:stretch; }
+        .solar-reference-mapping-tools input { min-width:0; width:100%; }
+        .solar-reference-map-item { grid-template-columns:1fr; }
         .solar-preview-grid { height:60vh; min-height:350px; }
         #solar-preview-modal .solar-preview-modal-dialog { width:auto; margin:8px; }
     }

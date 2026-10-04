@@ -253,7 +253,7 @@
                             <br><br>
                             <div class="table-responsive fleet-datatable-wrap"><table id="project-heavy-equipment-trips-table" class="table table-bordered table-striped fleet-datatable"><thead><tr><th>Trip</th><th>Tanggal</th><th>Rute</th><th>Unit</th><th>Sopir</th><th>Ton</th><th>Total</th><th>Status</th></tr></thead><tbody>@forelse($heavy_equipment_trips as $heavyTrip)<tr><td><a href="{{ route('asset.fleet.trips.show', $heavyTrip->id) }}">{{ $heavyTrip->trip_no }}</a></td><td>{{ optional($heavyTrip->trip_date)->format('d-m-Y') }}</td><td>{{ $heavyTrip->route->name }}</td><td>{{ $heavyTrip->asset->name }}</td><td>{{ $heavyTrip->driver->user_full_name }}</td><td>{{ $heavyTrip->actual_tons }}</td><td>@format_currency($heavyTrip->revenue_total)</td><td>{{ strtoupper($heavyTrip->status) }}</td></tr>@empty<tr><td colspan="8" class="text-center">Belum ada trip untuk project ini.</td></tr>@endforelse</tbody></table></div>
                             <div class="well well-sm"><strong>Bonus Ayak Project:</strong> @format_currency($heavy_equipment_bonus_total) <span class="text-muted">(bukan line invoice pelanggan)</span></div>
-                            <div class="table-responsive fleet-datatable-wrap"><table id="project-heavy-equipment-bonus-table" class="table table-bordered table-striped fleet-datatable"><thead><tr><th>Tanggal</th><th>Sopir</th><th>Unit</th><th>SPB sumber</th><th>Trip</th><th>Bonus</th></tr></thead><tbody>@forelse($heavy_equipment_bonus_ayaks as $bonusAyak)<tr><td>{{ optional($bonusAyak->tanggal)->format('d-m-Y') }}</td><td>{{ optional($bonusAyak->driver)->user_full_name ?: $bonusAyak->nama_operator }}</td><td>{{ optional($bonusAyak->asset)->name ?: $bonusAyak->unit }}</td><td>{{ $bonusAyak->trips->pluck('trip_no')->implode(', ') ?: 'Manual' }}</td><td>{{ $bonusAyak->trip }}</td><td>@format_currency($bonusAyak->bonus)</td></tr>@empty<tr><td colspan="6" class="text-center">Belum ada Bonus Ayak untuk project ini.</td></tr>@endforelse</tbody></table></div>
+                            <div class="table-responsive fleet-datatable-wrap"><table id="project-heavy-equipment-bonus-table" class="table table-bordered table-striped fleet-datatable"><thead><tr><th>Tanggal</th><th>Sopir</th><th>Unit</th><th>Trip</th><th>Bonus</th></tr></thead><tbody>@forelse($heavy_equipment_bonus_ayaks as $bonusAyak)<tr><td>{{ optional($bonusAyak->tanggal)->format('d-m-Y') }}</td><td>{{ optional($bonusAyak->driver)->user_full_name ?: $bonusAyak->nama_operator }}</td><td>{{ optional($bonusAyak->asset)->name ?: $bonusAyak->unit }}</td><td>{{ $bonusAyak->trip }}</td><td>@format_currency($bonusAyak->bonus)</td></tr>@empty<tr><td colspan="5" class="text-center">Belum ada Bonus Ayak untuk project ini.</td></tr>@endforelse</tbody></table></div>
                         </div>
                     @endif
                     @if($is_lead_or_admin)
@@ -303,7 +303,7 @@
 <script>
 $(function () {
     initFleetDataTable('#project-heavy-equipment-trips-table', { order: [[1, 'desc']], columnDefs: [{ targets: [0, 2, 3, 4, 5, 6, 7], orderable: false }] });
-    initFleetDataTable('#project-heavy-equipment-bonus-table', { order: [[0, 'desc']], columnDefs: [{ targets: [1, 2, 3, 4, 5], orderable: false }] });
+    initFleetDataTable('#project-heavy-equipment-bonus-table', { order: [[0, 'desc']], columnDefs: [{ targets: [1, 2, 3, 4], orderable: false }] });
 });
 </script>
 @endpush

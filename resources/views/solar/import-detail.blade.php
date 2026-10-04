@@ -6,7 +6,10 @@
 <section class="content-header">
     <h1>Detail Import Solar <small>{{ $batch->file_name ?: 'Workbook Solar' }}</small></h1>
 </section>
-<section class="content">
+<section class="content" id="solar-import-detail"
+    data-status-url="{{ route('solar.imports.status', $batch->id) }}"
+    data-events-url="{{ route('solar.imports.events', $batch->id) }}"
+    data-last-event-id="{{ $events->max('sequence') ?? 0 }}">
     <div class="box box-primary">
         <div class="box-header with-border">
             <a href="{{ route('solar.imports') }}" class="btn btn-default btn-sm"><i class="fa fa-arrow-left"></i> Kembali</a>
@@ -15,6 +18,20 @@
         <div class="box-body">
             <p><strong>Batch:</strong> {{ $batch->id }}</p>
             <p><strong>File hash:</strong> <code>{{ $batch->file_hash }}</code></p>
+            <div id="solar-import-detail-progress" class="alert alert-info">
+                <strong>{{ ucfirst($batch->process_state ?: 'completed') }}</strong> · {{ (int) ($batch->progress_percent ?? 0) }}% · {{ $batch->progress_message ?: 'Belum ada pesan proses.' }}
+                <div class="progress progress-xs" style="margin:7px 0 0"><div class="progress-bar" style="width:{{ (int) ($batch->progress_percent ?? 0) }}%"></div></div>
+            </div>
+            <h4>Log proses</h4>
+            <ol id="solar-import-detail-events" style="max-height:320px;overflow:auto;padding-left:22px">
+                @forelse ($events as $event)
+                    @php $context = json_decode((string) $event->context, true) ?: []; @endphp
+                    <li><small class="text-muted">{{ \Carbon\Carbon::parse($event->created_at)->format('H:i:s') }} · {{ $event->progress_percent === null ? '' : ((int) $event->progress_percent).'% · ' }}</small><strong>{{ ucfirst(str_replace('_', ' ', $event->stage)) }}:</strong> {{ $event->message }}@if (! empty($context['sheet'])) <span class="text-muted">(Sheet {{ $context['sheet'] }}@if (! empty($context['row'])) · baris {{ $context['row'] }}@endif)</span>@endif</li>
+                @empty
+                    <li class="text-muted">Log proses belum tersedia untuk batch ini.</li>
+                @endforelse
+            </ol>
+            <div id="solar-import-detail-connection" class="text-muted" aria-live="polite"></div>
             @foreach ($rows as $ledger => $records)
                 <h4>{{ $ledger === 'usage' ? 'PEMAKAIAN ALAT' : strtoupper($ledger) }} ({{ $records->count() }} baris)</h4>
                 @if ($records->isEmpty())
@@ -41,4 +58,8 @@
         </div>
     </div>
 </section>
+@endsection
+
+@section('javascript')
+<script src="{{ asset('js/solar.js?v=' . $asset_v) }}"></script>
 @endsection

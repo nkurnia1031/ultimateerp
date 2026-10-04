@@ -60,4 +60,31 @@ class ContactSupplierLabelTest extends TestCase
             ],
         ];
     }
+
+    /** @dataProvider customerLabelCases */
+    public function test_customer_label_always_has_a_usable_fallback(array $attributes, string $expected): void
+    {
+        $this->assertSame($expected, Contact::customerDisplayName((object) $attributes, false));
+    }
+
+    public static function customerLabelCases(): array
+    {
+        return [
+            'business and customer name' => [[
+                'id' => 7,
+                'supplier_business_name' => 'PT Contoh',
+                'name' => 'Customer A',
+                'contact_id' => 'C007',
+            ], 'PT Contoh - Customer A'],
+            'trim whitespace and use customer name' => [[
+                'id' => 8,
+                'supplier_business_name' => '  ',
+                'name' => '  Pelanggan B  ',
+            ], 'Pelanggan B'],
+            'contact id fallback' => [['id' => 9, 'name' => ' ', 'contact_id' => ' C009 '], 'C009'],
+            'mobile fallback' => [['id' => 10, 'name' => '', 'mobile' => '08123456789'], '08123456789'],
+            'email fallback' => [['id' => 11, 'name' => '', 'email' => 'solar@example.test'], 'solar@example.test'],
+            'database id fallback' => [['id' => 12, 'name' => ' ', 'contact_id' => '', 'mobile' => ' ', 'email' => ''], 'Customer #12'],
+        ];
+    }
 }

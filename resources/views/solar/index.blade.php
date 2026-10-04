@@ -25,6 +25,9 @@
     .solar-matrix th:first-child, .solar-matrix td:first-child { text-align:left; position:sticky; left:0; background:#fff; z-index:1; }
     .solar-matrix thead th { position:sticky; top:0; z-index:2; background:#f5f7fa; }
     .solar-usage-scroll { overflow:auto; max-height:65vh; }
+    .solar-process-log-wrap { margin-top:12px; border-top:1px solid #e4e8eb; padding-top:8px; }
+    .solar-process-log { max-height:180px; overflow:auto; padding-left:22px; margin:6px 0 0; }
+    .solar-process-log li { padding:3px 0; }
     @media (max-width:767px) {
         .solar-toolbar { align-items:stretch; }
         .solar-actions .btn { flex:1 1 auto; }
@@ -154,7 +157,7 @@
                             <thead>
                                 <tr>
                                     <th>Tanggal</th><th>IN</th><th>OUT ACT</th><th>STOCK ACT</th>
-                                    <th>OUT Meteran</th><th>STOCK Meteran</th><th>Keterangan</th><th>Sumber</th><th>Aksi</th>
+                                    <th>OUT Meteran</th><th>STOCK Meteran</th><th>Unit Asset</th><th>Supir</th><th>Keterangan</th><th>Sumber</th><th>Aksi</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -166,6 +169,8 @@
                                         <td class="text-right"><strong>{{ number_format($row->stock_actual, 2, ',', '.') }}</strong></td>
                                         <td class="text-right">{{ number_format($row->out_meteran, 2, ',', '.') }}</td>
                                         <td class="text-right"><strong>{{ number_format($row->stock_meteran, 2, ',', '.') }}</strong></td>
+                                        <td>{{ $row->linked_asset_name ?: ($row->unit ?: '—') }}</td>
+                                        <td>{{ $row->linked_driver_name ?: ($row->operator ?: '—') }}</td>
                                         <td>{{ $row->keterangan ?: '—' }}</td>
                                         <td><span class="label label-default solar-source">{{ $row->source ?? 'legacy' }}</span></td>
                                         <td class="text-nowrap">
@@ -179,7 +184,7 @@
                                         </td>
                                     </tr>
                                 @empty
-                                    <tr><td colspan="9" class="solar-empty">Belum ada transaksi Stock pada rentang tanggal ini.</td></tr>
+                                    <tr><td colspan="11" class="solar-empty">Belum ada transaksi Stock pada rentang tanggal ini.</td></tr>
                                 @endforelse
                             </tbody>
                         </table>
@@ -195,7 +200,7 @@
                             <thead>
                                 <tr>
                                     <th>Tanggal</th><th>IN</th><th>OUT</th><th>Current</th><th>Keterangan</th>
-                                    <th>Unit</th><th>Operator</th><th>Customer</th><th>Sumber</th><th>Aksi</th>
+                                    <th>Unit Asset</th><th>Supir</th><th>Customer</th><th>Sumber</th><th>Aksi</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -206,8 +211,8 @@
                                         <td class="text-right">{{ number_format($row->qty_out, 2, ',', '.') }}</td>
                                         <td class="text-right"><strong>{{ number_format($row->current_stock, 2, ',', '.') }}</strong></td>
                                         <td>{{ $row->keterangan ?: '—' }}</td>
-                                        <td>{{ $row->unit ?: '—' }}</td>
-                                        <td>{{ $row->operator ?: '—' }}</td>
+                                        <td>{{ $row->linked_asset_name ?: ($row->unit ?: '—') }}</td>
+                                        <td>{{ $row->linked_driver_name ?: ($row->operator ?: '—') }}</td>
                                         <td>{{ $row->customer_name ?: '—' }}</td>
                                         <td><span class="label label-default solar-source">{{ $row->source ?? 'legacy' }}</span></td>
                                         <td class="text-nowrap">
@@ -233,7 +238,7 @@
                             <thead>
                                 <tr>
                                     <th>Tanggal</th><th>IN</th><th>OUT</th><th>Current</th><th>Keterangan</th><th>Nama Kapal</th>
-                                    <th>Unit</th><th>Operator</th><th>Customer</th><th>Lokasi</th><th>Sumber</th><th>Aksi</th>
+                                    <th>Unit Asset</th><th>Supir</th><th>Customer</th><th>Lokasi</th><th>Sumber</th><th>Aksi</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -245,8 +250,8 @@
                                         <td class="text-right"><strong>{{ number_format($row->current_stock, 2, ',', '.') }}</strong></td>
                                         <td>{{ $row->keterangan ?: '—' }}</td>
                                         <td>{{ $row->nama_kapal ?: '—' }}</td>
-                                        <td>{{ $row->unit ?: '—' }}</td>
-                                        <td>{{ $row->operator ?: '—' }}</td>
+                                        <td>{{ $row->linked_asset_name ?: ($row->unit ?: '—') }}</td>
+                                        <td>{{ $row->linked_driver_name ?: ($row->operator ?: '—') }}</td>
                                         <td>{{ $row->customer_name ?: '—' }}</td>
                                         <td>{{ $row->lokasi ?: '—' }}</td>
                                         <td><span class="label label-default solar-source">{{ $row->source ?? 'legacy' }}</span></td>
@@ -446,13 +451,31 @@
                                 <label for="solar-qty-out">OUT</label>
                                 <input type="number" min="0" step="0.01" class="form-control" id="solar-qty-out" name="qty_out">
                             </div>
-                            <div class="col-sm-6 form-group ledger-quantity">
-                                <label for="solar-unit">Unit</label>
-                                <input type="text" class="form-control" id="solar-unit" name="unit" placeholder="Liter / gln">
+                            <div class="col-sm-6 form-group ledger-not-usage">
+                                <label for="solar-unit">Nama Unit Asset / nomor polisi</label>
+                                <input type="text" class="form-control" id="solar-unit" name="unit" placeholder="Nama Asset atau nomor polisi dari sumber">
                             </div>
-                            <div class="col-sm-6 form-group ledger-quantity">
-                                <label for="solar-operator">Operator</label>
+                            <div class="col-sm-6 form-group ledger-not-usage">
+                                <label for="solar-operator">Nama Supir / Operator</label>
                                 <input type="text" class="form-control" id="solar-operator" name="operator">
+                            </div>
+                            <div class="col-sm-6 form-group ledger-not-usage">
+                                <label for="solar-record-asset-id">Asset terdaftar (opsional)</label>
+                                <select class="form-control select2" id="solar-record-asset-id" name="asset_id" style="width:100%">
+                                    <option value="">Tanpa relasi Asset</option>
+                                    @foreach ($assets as $asset)
+                                        <option value="{{ $asset->id }}" data-asset-name="{{ $asset->name }}">{{ $asset->asset_code }} Â· {{ $asset->name }}</option>
+                                    @endforeach
+                                </select>
+                            </div>
+                            <div class="col-sm-6 form-group ledger-not-usage">
+                                <label for="solar-record-driver-id">Cocokkan Supir</label>
+                                <select class="form-control select2" id="solar-record-driver-id" name="driver_id" style="width:100%">
+                                    <option value="">Tanpa relasi pengguna</option>
+                                    @foreach ($drivers as $driver)
+                                        <option value="{{ $driver->id }}" data-driver-name="{{ $driver->full_name }}">{{ $driver->full_name }}</option>
+                                    @endforeach
+                                </select>
                             </div>
                             <div class="col-sm-12 form-group ledger-quantity">
                                 <label for="solar-customer">Customer</label>
@@ -513,7 +536,8 @@
                     data-status-url-template="{{ route('solar.imports.status', ['batchId' => '__BATCH__']) }}"
                     data-cancel-url-template="{{ route('solar.imports.cancel', ['batchId' => '__BATCH__']) }}"
                     data-retry-url-template="{{ route('solar.imports.retry', ['batchId' => '__BATCH__']) }}"
-                    data-reconcile-url-template="{{ route('solar.imports.reconcile', ['batchId' => '__BATCH__']) }}">
+                    data-reconcile-url-template="{{ route('solar.imports.reconcile', ['batchId' => '__BATCH__']) }}"
+                    data-events-url-template="{{ route('solar.imports.events', ['batchId' => '__BATCH__']) }}">
                     @csrf
                     <div class="modal-header">
                         <button type="button" class="close" data-dismiss="modal">&times;</button>
@@ -539,16 +563,18 @@
     </div>
 
     <div class="modal fade" id="solar-process-modal" tabindex="-1" data-backdrop="static" data-keyboard="false">
-        <div class="modal-dialog modal-sm">
+        <div class="modal-dialog modal-lg">
             <div class="modal-content">
                 <div class="modal-header"><h4 class="modal-title"><i class="fa fa-refresh fa-spin"></i> <span id="solar-process-title">Memproses</span></h4></div>
                 <div class="modal-body">
                     <div class="progress"><div id="solar-process-progress" class="progress-bar progress-bar-info progress-bar-striped active" style="width:0%">0%</div></div>
                     <p id="solar-process-stage" class="text-muted">Menunggu proses...</p>
                     <p id="solar-process-message">Memulai...</p>
-                    <small class="text-muted">Berjalan: <span id="solar-process-elapsed">0 detik</span> · Pembaruan terakhir: <span id="solar-process-heartbeat">—</span></small>
+                    <small class="text-muted">Berjalan: <span id="solar-process-elapsed">0 detik</span> · Checkpoint terakhir: <span id="solar-process-heartbeat">—</span></small>
+                    <div id="solar-process-activity" class="alert alert-info" style="margin-top:10px;margin-bottom:8px">Menunggu informasi proses...</div>
+                    <div class="solar-process-log-wrap"><strong>Aktivitas terbaru</strong><ol id="solar-process-log" class="solar-process-log"><li class="text-muted">Log akan muncul saat server mengirim checkpoint.</li></ol></div>
                     <div id="solar-process-error" class="alert alert-danger" style="display:none;margin-top:10px"></div>
-                    <div id="solar-process-stale" class="alert alert-warning" style="display:none;margin-top:10px">Tidak ada pembaruan dari server. Proses mungkin masih berjalan.</div>
+                    <div id="solar-process-stale" class="alert alert-warning" style="display:none;margin-top:10px"></div>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-warning" id="solar-process-retry" style="display:none">Coba cek lagi</button>

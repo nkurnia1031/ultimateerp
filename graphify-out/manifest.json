@@ -5130,9 +5130,9 @@
     "semantic_hash": ""
   },
   "Modules/Project/Http/Controllers/ProjectController.php": {
-    "mtime": 1789113607.26164,
-    "seen": 1789120958.4261777,
-    "ast_hash": "3dce9d31dfb413693c8097c4a36a0d37",
+    "mtime": 1791136492.1232939,
+    "seen": 1791137036.6260703,
+    "ast_hash": "5dbe08a7a9cd9a4963b1e55e5939523b",
     "semantic_hash": ""
   },
   "Modules/Project/Http/Controllers/ProjectTimeLogController.php": {
@@ -5328,9 +5328,9 @@
     "semantic_hash": "56b20558290fbcae827b749eec313f82"
   },
   "Modules/Project/Resources/views/project/show.blade.php": {
-    "mtime": 1789149606.589129,
-    "seen": 1789150150.8208792,
-    "ast_hash": "b63a2a9bb7afb50ac04389c61cb432c4",
+    "mtime": 1791137057.2548397,
+    "seen": 1791137279.5306702,
+    "ast_hash": "57093ad164e1c5f01cee732047c562e3",
     "semantic_hash": ""
   },
   "Modules/Project/Resources/views/reports/employee_timelog.blade.php": {
@@ -5808,9 +5808,9 @@
     "semantic_hash": ""
   },
   "app/Contact.php": {
-    "mtime": 1785566890.3359659,
-    "seen": 1788970597.7115812,
-    "ast_hash": "87cf8d5d9d96da288c8ba6f5771df21b",
+    "mtime": 1791127309.6596515,
+    "seen": 1791129584.4055626,
+    "ast_hash": "e946fce6acb9a909385369d607a00f15",
     "semantic_hash": ""
   },
   "app/Currency.php": {
@@ -6366,9 +6366,9 @@
     "semantic_hash": "120608a3ca3e9afc2222ac6ac449df5e"
   },
   "app/Http/Controllers/SolarController.php": {
-    "mtime": 1790970929.8659954,
-    "seen": 1790972051.1878984,
-    "ast_hash": "c9b103f71244fc47d65f9a26f3a342a7",
+    "mtime": 1791135905.2287676,
+    "seen": 1791136034.256895,
+    "ast_hash": "014aefec1608898d10eee1909a79907d",
     "semantic_hash": ""
   },
   "app/Http/Controllers/StockAdjustmentController.php": {
@@ -11748,9 +11748,9 @@
     "semantic_hash": "9a27618c33d64d82fcf78fc3f7569817"
   },
   "resources/views/solar/index.blade.php": {
-    "mtime": 1790970955.9273183,
-    "seen": 1790972051.2025948,
-    "ast_hash": "0ec200a88374c20ae08688ade071b768",
+    "mtime": 1791133674.0080495,
+    "seen": 1791135815.8483505,
+    "ast_hash": "f6c36d19114904244214eec8372c1202",
     "semantic_hash": ""
   },
   "resources/views/stock_adjustment/create.blade.php": {
@@ -13194,9 +13194,9 @@
     "semantic_hash": "e604e8c82a6bc445c9785a4567a1ebeb"
   },
   "routes/web.php": {
-    "mtime": 1790964826.625157,
-    "seen": 1790965456.159491,
-    "ast_hash": "6d96ea714b66cfdd60cc35b833163e62",
+    "mtime": 1791133502.7386048,
+    "seen": 1791135815.8494093,
+    "ast_hash": "37297a4269deb03cea4969a07c024152",
     "semantic_hash": ""
   },
   "Modules/Manufacturing/License.txt": {
@@ -13836,9 +13836,9 @@
     "semantic_hash": ""
   },
   "app/Services/SolarWorkbookService.php": {
-    "mtime": 1790965234.7321198,
-    "seen": 1790965456.150666,
-    "ast_hash": "d8a2f6e604baf02764d0560594cf66d7",
+    "mtime": 1791133436.1374867,
+    "seen": 1791135815.841715,
+    "ast_hash": "30aee7fb7b7b3a0885bcf49f485ea664",
     "semantic_hash": ""
   },
   "database/migrations/2026_07_27_000000_harden_solar_ledgers.php": {
@@ -13848,15 +13848,15 @@
     "semantic_hash": ""
   },
   "public/js/solar.js": {
-    "mtime": 1790971556.8183987,
-    "seen": 1790972051.1968381,
-    "ast_hash": "1e076e3b0f621fac0796ef0664d736a4",
+    "mtime": 1791138432.1290264,
+    "seen": 1791139110.613782,
+    "ast_hash": "27c520a6133b7815d4d009a592798496",
     "semantic_hash": ""
   },
   "resources/views/solar/reconcile.blade.php": {
-    "mtime": 1790963831.8950753,
-    "seen": 1790965456.1573212,
-    "ast_hash": "55c36f78dc4dad55e1cac7e01d12fb63",
+    "mtime": 1791133674.0111628,
+    "seen": 1791135815.8483505,
+    "ast_hash": "05d6ad98a7490e459db0487041548eff",
     "semantic_hash": ""
   },
   "app/Console/Commands/BackfillSolarSourceKeys.php": {
@@ -13872,21 +13872,21 @@
     "semantic_hash": ""
   },
   "resources/views/solar/import-history.blade.php": {
-    "mtime": 1790970941.9643774,
-    "seen": 1790972051.2025948,
-    "ast_hash": "82aacc3d12dd623d80dd7c767a83a0b6",
+    "mtime": 1791133939.2383363,
+    "seen": 1791135815.8483505,
+    "ast_hash": "054d5473d9895aa486fa292e848e40dd",
     "semantic_hash": ""
   },
   "resources/views/solar/import-detail.blade.php": {
-    "mtime": 1790963422.9481459,
-    "seen": 1790965456.1573212,
-    "ast_hash": "8b939f02deaff00e7e3d4cf4b2fb217a",
+    "mtime": 1791133939.2403352,
+    "seen": 1791135815.8483505,
+    "ast_hash": "18252b381ba4d4c4d2ee2c6e1a25eb08",
     "semantic_hash": ""
   },
   "app/Services/SolarImportPreviewService.php": {
-    "mtime": 1790967583.623601,
-    "seen": 1790972051.1878984,
-    "ast_hash": "ba5a96c903c5dece07aa559515bfb01b",
+    "mtime": 1791133473.5142596,
+    "seen": 1791135815.841715,
+    "ast_hash": "f5d64c887896c88046ca023651ab0762",
     "semantic_hash": ""
   },
   "database/migrations/2026_08_02_000000_create_solar_import_preview_rows.php": {
@@ -13902,21 +13902,21 @@
     "semantic_hash": ""
   },
   "app/Jobs/ProcessSolarPreview.php": {
-    "mtime": 1790968882.7585516,
-    "seen": 1790972051.1878984,
-    "ast_hash": "f2a248fcaee2d21e7682fb5048ad4f13",
+    "mtime": 1791133482.610371,
+    "seen": 1791135815.8407035,
+    "ast_hash": "bd8664d1e02769d7765302bf861fb63f",
     "semantic_hash": ""
   },
   "app/Services/SolarImportProcessService.php": {
-    "mtime": 1790968882.75642,
-    "seen": 1790972051.1878984,
-    "ast_hash": "84ab6ddeac5f58eb36b8597e21d88e7f",
+    "mtime": 1791133560.3120863,
+    "seen": 1791135815.841715,
+    "ast_hash": "c398dc47996093e1c47668927d368cf3",
     "semantic_hash": ""
   },
   "app/Services/SolarImportService.php": {
-    "mtime": 1790963292.153927,
-    "seen": 1790965456.150666,
-    "ast_hash": "a062dc2764b9684ccfa3346460cfd245",
+    "mtime": 1791133582.7730854,
+    "seen": 1791135815.841715,
+    "ast_hash": "0846a11c81dec07047c7b0d430fd8243",
     "semantic_hash": ""
   },
   "database/migrations/2026_08_03_000000_add_solar_process_tracking.php": {
@@ -14658,9 +14658,9 @@
     "semantic_hash": ""
   },
   "resources/views/solar/_preview-workspace.blade.php": {
-    "mtime": 1790969811.8060126,
-    "seen": 1790972051.2025948,
-    "ast_hash": "7c3bd85b8e0b8960bf672510b6016222",
+    "mtime": 1791133918.9076653,
+    "seen": 1791135815.8483505,
+    "ast_hash": "b52981a6eba159a985bb6c4ae44705a7",
     "semantic_hash": ""
   },
   "resources/views/solar/daily-report.blade.php": {
@@ -14673,6 +14673,18 @@
     "mtime": 1790967583.6249115,
     "seen": 1790972051.193327,
     "ast_hash": "baa14bdfee4f61ef7432e978d2f04082",
+    "semantic_hash": ""
+  },
+  "database/migrations/2026_10_04_000001_add_solar_asset_driver_mappings.php": {
+    "mtime": 1791117769.325582,
+    "seen": 1791121913.7741454,
+    "ast_hash": "7baf361fbedc24ba0e261e25962fb152",
+    "semantic_hash": ""
+  },
+  "database/migrations/2026_10_05_000001_add_solar_import_batch_events.php": {
+    "mtime": 1791133563.8165178,
+    "seen": 1791135815.8441324,
+    "ast_hash": "b2a24dc36a0f5adf2c3a0bb01115f2ea",
     "semantic_hash": ""
   }
 }

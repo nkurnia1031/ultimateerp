@@ -37,13 +37,14 @@ class ProcessSolarPreview implements ShouldQueue
             return;
         }
 
+        if (! $processService->start($this->batchId, $this->businessId, 'file_check', 'Memeriksa file upload dan akses penyimpanan.', 5)) {
+            return;
+        }
         $path = $batch->file_path;
         if (! $path || ! Storage::disk('local')->exists($path)) {
             throw new \RuntimeException('File preview sudah tidak tersedia.');
         }
-        if (! $processService->start($this->batchId, $this->businessId, 'reading', 'Membaca workbook Excel.', 10)) {
-            return;
-        }
+        $processService->update($this->batchId, $this->businessId, 'file_check', 'File tersedia. Menyiapkan pembacaan workbook.', 8, null, null, ['file_bytes' => Storage::disk('local')->size($path)]);
 
         $overrides = json_decode((string) ($batch->date_overrides ?? '[]'), true) ?: [];
         $result = $previewService->rebuild(
@@ -51,16 +52,21 @@ class ProcessSolarPreview implements ShouldQueue
             $this->batchId,
             Storage::disk('local')->path($path),
             $overrides,
-            fn (string $stage, string $message, int $percent) => $processService->update(
+            function (string $stage, string $message, int $percent, ?int $current = null, ?int $total = null, array $context = []) use ($processService): void {
+                $processService->update(
                 $this->batchId,
                 $this->businessId,
                 $stage,
                 $message,
-                $percent
-            )
+                    $percent,
+                    $current,
+                    $total,
+                    $context
+                );
+            }
         );
         $total = count($result['items'] ?? []);
-        $processService->update($this->batchId, $this->businessId, 'saving', 'Menyimpan hasil preview.', 90, $total, $total);
+        $processService->update($this->batchId, $this->businessId, 'saving', 'Menyimpan ringkasan preview dan peringatan sheet.', 96, $total, $total, ['stage_detail' => 'preview_summary', 'rows' => $total]);
         DB::table('solar_import_batches')->where('id', $this->batchId)->update([
             'counts' => json_encode($previewService->summary($this->batchId, $this->businessId)),
             'updated_at' => now(),

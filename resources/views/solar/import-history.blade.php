@@ -73,6 +73,7 @@
                                 @else
                                     <span class="text-muted">Tidak ada aksi</span>
                                 @endif
+                                <a class="btn btn-xs btn-default" href="{{ route('solar.imports.detail', $batch->id) }}"><i class="fa fa-list-alt"></i> Log</a>
                             </td>
                         </tr>
                     @empty

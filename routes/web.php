@@ -179,6 +179,15 @@ Route::middleware(['setData', 'auth', 'SetSessionData', 'language', 'timezone', 
         Route::get('/imports/{batchId}/rows', [SolarController::class, 'previewRows'])
             ->whereUuid('batchId')
             ->name('imports.rows');
+        Route::get('/imports/{batchId}/mappings', [SolarController::class, 'previewMappings'])
+            ->whereUuid('batchId')
+            ->name('imports.mappings');
+        Route::get('/imports/{batchId}/reference-options', [SolarController::class, 'previewReferenceOptions'])
+            ->whereUuid('batchId')
+            ->name('imports.reference-options');
+        Route::patch('/imports/{batchId}/mappings', [SolarController::class, 'updatePreviewMapping'])
+            ->whereUuid('batchId')
+            ->name('imports.mappings.update');
         Route::get('/imports/{batchId}/summary', [SolarController::class, 'previewSummary'])
             ->whereUuid('batchId')
             ->name('imports.summary');
@@ -188,6 +197,9 @@ Route::middleware(['setData', 'auth', 'SetSessionData', 'language', 'timezone', 
         Route::get('/imports/{batchId}/status', [SolarController::class, 'previewStatus'])
             ->whereUuid('batchId')
             ->name('imports.status');
+        Route::get('/imports/{batchId}/events', [SolarController::class, 'previewEvents'])
+            ->whereUuid('batchId')
+            ->name('imports.events');
         Route::post('/imports/{batchId}/confirm', [SolarController::class, 'confirmImportAjax'])
             ->whereUuid('batchId')
             ->name('imports.confirm');

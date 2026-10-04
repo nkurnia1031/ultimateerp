@@ -269,6 +269,8 @@ class Contact extends Authenticatable
             'contacts.middle_name',
             'contacts.last_name',
             'contacts.supplier_business_name',
+            'contacts.mobile',
+            'contacts.email',
         ]);
 
         if (auth()->check() && ! auth()->user()->can('customer.view') && auth()->user()->can('customer.view_own')) {
@@ -289,26 +291,52 @@ class Contact extends Authenticatable
 
     protected static function formatCustomerDropdownLabel($contact, $append_id = true)
     {
-        $full_name = trim($contact->full_name ?: ($contact->name ?? ''));
-        $label_parts = array_filter([
-            trim((string) $contact->supplier_business_name),
-            $full_name,
-        ], function ($value) {
-            return $value !== '';
-        });
+        return self::customerDisplayName($contact, $append_id);
+    }
 
-        $display_label = ! empty($label_parts) ? implode(' - ', $label_parts) : '';
-        $contact_id = trim((string) $contact->contact_id);
+    /**
+     * Return a usable customer label even when legacy contact name fields are blank.
+     *
+     * Solar and other dropdowns can use this when building their own scoped lists.
+     */
+    public static function customerDisplayName($contact, $append_id = true): string
+    {
+        $value = function ($key) use ($contact) {
+            return trim((string) (is_array($contact) ? ($contact[$key] ?? '') : ($contact->{$key} ?? '')));
+        };
 
-        if ($display_label === '') {
-            $display_label = $contact_id !== '' ? $contact_id : __('contact.customer') . ' #' . $contact->id;
+        $id = is_array($contact) ? ($contact['id'] ?? '') : ($contact->id ?? '');
+        $contactId = $value('contact_id');
+        $businessName = $value('supplier_business_name');
+        $name = $value('full_name');
+        if ($name === '') {
+            $name = $value('name');
         }
 
-        if ($append_id && $contact_id !== '' && $display_label !== $contact_id) {
-            $display_label .= ' (' . $contact_id . ')';
+        $parts = array_values(array_unique(array_filter(
+            [$businessName, $name],
+            fn ($part) => $part !== ''
+        ), SORT_REGULAR));
+        $label = implode(' - ', $parts);
+
+        if ($label === '') {
+            foreach ([$contactId, $value('mobile'), $value('email')] as $fallback) {
+                if ($fallback !== '') {
+                    $label = $fallback;
+                    break;
+                }
+            }
         }
 
-        return $display_label;
+        if ($label === '') {
+            $label = 'Customer #' . trim((string) $id);
+        }
+
+        if ($append_id && $contactId !== '' && $label !== $contactId) {
+            $label .= ' (' . $contactId . ')';
+        }
+
+        return $label;
     }
 
     /**

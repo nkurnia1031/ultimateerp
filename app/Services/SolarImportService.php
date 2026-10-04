@@ -30,19 +30,20 @@ class SolarImportService
             throw new RuntimeException('Batch preview tidak siap atau sudah diproses.');
         }
 
-        if (! $this->processService->start($batchId, $businessId, 'reading', 'Menyiapkan data import.', 5)) {
+        if (! $this->processService->start($batchId, $businessId, 'file_check', 'Memeriksa workbook dan batch import.', 3)) {
             throw new RuntimeException('Import sudah berjalan atau dibatalkan.');
         }
 
-        $rows = $this->previewService->importableRows($batchId, $businessId);
-        $total = count($rows);
         $path = $batch->file_path;
         if (! $path || ! Storage::disk('local')->exists($path)) {
             throw new RuntimeException('File preview sudah tidak tersedia.');
         }
+        $rows = $this->previewService->importableRows($batchId, $businessId);
+        $total = count($rows);
+        $this->processService->update($batchId, $businessId, 'reading', 'Memuat baris yang sudah disetujui dari preview.', 8, 0, $total, ['stage_detail' => 'load_preview_rows']);
 
-        $inserted = DB::transaction(function () use ($batch, $businessId, $batchId, $rows, $total) {
-            $this->processService->update($batchId, $businessId, 'saving', 'Menyimpan transaksi baru.', 35, 0, $total);
+        $inserted = DB::transaction(function () use ($batch, $businessId, $batchId, $rows, $total, $path) {
+            $this->processService->update($batchId, $businessId, 'saving', 'Menyimpan transaksi baru ke ledger.', 32, 0, $total, ['stage_detail' => 'save_start']);
             $inserted = ['stock' => 0, 'pool' => 0, 'mess' => 0, 'usage' => 0];
             $snapshot = $this->ledgerService->openingSnapshot($businessId);
             DB::table('solar_import_batches')->where('id', $batchId)->update([
@@ -51,7 +52,9 @@ class SolarImportService
             ]);
 
             $overrides = json_decode((string) ($batch->date_overrides ?? '[]'), true) ?: [];
-            $parsed = $this->workbookService->parse(Storage::disk('local')->path($batch->file_path), $overrides);
+            $parsed = $this->workbookService->parse(Storage::disk('local')->path($path), $overrides, function ($stage, $message, $percent, $current = null, $rowTotal = null, $context = []) use ($batchId, $businessId): void {
+                $this->processService->update($batchId, $businessId, $stage, 'Membaca workbook untuk saldo awal: '.$message, min(30, max(12, $percent)), $current, $rowTotal, $context + ['stage_detail' => 'opening_balance_read']);
+            });
             foreach (SolarLedgerService::LEDGERS as $ledger) {
                 $this->guardCancellation($batchId, $businessId);
                 $table = $this->ledgerService->table($ledger);
@@ -90,12 +93,15 @@ class SolarImportService
                 }
                 $current = min($total, ($chunkIndex + 1) * 250);
                 $percent = $total > 0 ? 35 + (int) floor(($current / $total) * 50) : 85;
-                $this->processService->update($batchId, $businessId, 'saving', 'Menyimpan transaksi baru.', $percent, $current, $total);
+                $this->processService->update($batchId, $businessId, 'saving', 'Menyimpan transaksi baru: '.$current.' dari '.$total.' baris.', $percent, $current, $total, ['stage_detail' => 'save_rows', 'chunk' => $chunkIndex + 1, 'ledger_counts' => $inserted]);
             }
 
-            $this->processService->update($batchId, $businessId, 'recalculating', 'Menghitung ulang saldo ledger.', 90, $total, $total);
+            $ledgerIndex = 0;
             foreach (SolarLedgerService::LEDGERS as $ledger) {
+                $ledgerIndex++;
+                $this->processService->update($batchId, $businessId, 'recalculating', 'Menghitung ulang saldo ledger '.$ledger.'.', 88 + (int) floor((($ledgerIndex - 1) / count(SolarLedgerService::LEDGERS)) * 10), $ledgerIndex - 1, count(SolarLedgerService::LEDGERS), ['ledger' => $ledger, 'stage_detail' => 'recalculate_start']);
                 $this->ledgerService->recalculate($businessId, $ledger);
+                $this->processService->update($batchId, $businessId, 'recalculating', 'Saldo ledger '.$ledger.' selesai dihitung ulang.', 88 + (int) floor(($ledgerIndex / count(SolarLedgerService::LEDGERS)) * 10), $ledgerIndex, count(SolarLedgerService::LEDGERS), ['ledger' => $ledger, 'stage_detail' => 'recalculate_complete']);
             }
 
             DB::table('solar_import_batches')->where('id', $batchId)->update([
@@ -133,6 +139,10 @@ class SolarImportService
         if ($ledger === 'stock') {
             return [
                 'tanggal' => $row['tanggal'],
+                'asset_id' => $row['asset_id'] ?? null,
+                'driver_id' => $row['driver_id'] ?? null,
+                'unit' => $row['unit'] ?? null,
+                'operator' => $row['operator'] ?? null,
                 'stock_in' => $row['stock_in'],
                 'out_actual' => $row['out_actual'],
                 'stock_actual' => 0,
@@ -144,6 +154,8 @@ class SolarImportService
 
         $payload = [
             'tanggal' => $row['tanggal'],
+            'asset_id' => $row['asset_id'] ?? null,
+            'driver_id' => $row['driver_id'] ?? null,
             'qty_in' => $row['qty_in'],
             'qty_out' => $row['qty_out'],
             'current_stock' => 0,

@@ -4,7 +4,8 @@
     var app = document.getElementById('solar-app');
     var reconcileApp = document.getElementById('solar-reconcile-app');
     var historyApp = document.getElementById('solar-import-history');
-    if (!app && !reconcileApp && !historyApp) {
+    var importDetailApp = document.getElementById('solar-import-detail');
+    if (!app && !reconcileApp && !historyApp && !importDetailApp) {
         return;
     }
 
@@ -16,13 +17,21 @@
     var processTimer = null;
     var processDelay = 1000;
     var processStatusUrl = null;
+    var processEventsUrl = null;
     var processBatchId = null;
     var processOperation = null;
     var processLastHeartbeat = null;
+    var processEventCursor = 0;
+    var processClockTimer = null;
+    var processNetworkFailures = 0;
+    var processStartedAt = null;
+    var processCreatedAt = null;
 
     function processText(stage) {
         return {
             uploading: 'Mengunggah file',
+            queued: 'Menunggu worker queue Solar',
+            file_check: 'Memeriksa file',
             reading: 'Membaca workbook',
             matching: 'Mencocokkan transaksi',
             saving: 'Menyimpan hasil',
@@ -48,6 +57,8 @@
         $('#solar-process-message').text('Memulai...');
         $('#solar-process-elapsed').text('0 detik');
         $('#solar-process-heartbeat').text('—');
+        $('#solar-process-activity').removeClass('alert-warning alert-danger').addClass('alert-info').text('Menunggu worker mengambil batch.');
+        $('#solar-process-log').html('<li class="text-muted">Mengambil log aktivitas...</li>');
         $('#solar-process-error, #solar-process-stale, #solar-process-retry, #solar-process-close').hide();
         $('#solar-process-retry').removeData('retry').text('Coba cek lagi');
         $('#solar-process-cancel').show().prop('disabled', false);
@@ -59,6 +70,49 @@
             window.clearTimeout(processTimer);
             processTimer = null;
         }
+        if (processClockTimer) {
+            window.clearInterval(processClockTimer);
+            processClockTimer = null;
+        }
+    }
+
+    function processEventsUrlFor(batchId) {
+        var template = $('#solar-import-form').attr('data-events-url-template')
+            || (reconcileApp && $(reconcileApp).attr('data-events-url-template'));
+        return template ? template.replace('__BATCH__', encodeURIComponent(batchId)) : null;
+    }
+
+    function fetchProcessEvents(done) {
+        if (!processEventsUrl) {
+            if (done) done();
+            return;
+        }
+        $.getJSON(processEventsUrl, { after_id: processEventCursor }).done(function (response) {
+            var events = response.events || [];
+            if (!events.length) return;
+            var list = $('#solar-process-log');
+            list.find('.text-muted').remove();
+            events.forEach(function (event) {
+                var context = event.context || {};
+                var details = [];
+                if (context.sheet) details.push('Sheet ' + context.sheet);
+                if (context.row) details.push('baris ' + context.row + (context.row_total ? '/' + context.row_total : ''));
+                if (context.issues != null) details.push(context.issues + ' isu');
+                if (event.current != null && event.total != null) details.push(event.current + '/' + event.total);
+                var timestamp = event.created_at ? new Date(event.created_at).toLocaleTimeString() : '';
+                var line = '<li class="' + (event.level === 'error' ? 'text-danger' : '') + '"><small class="text-muted">' + escapeHtml(timestamp) + (event.percent == null ? '' : ' · ' + Number(event.percent) + '%') + '</small> <strong>' + escapeHtml(processText(event.stage)) + ':</strong> ' + escapeHtml(event.message || '') + (details.length ? ' <span class="text-muted">(' + escapeHtml(details.join(' · ')) + ')</span>' : '') + '</li>';
+                list.append(line);
+                processEventCursor = Math.max(processEventCursor, Number(event.id || 0));
+            });
+            list.find('li').slice(0, -30).remove();
+            if (list[0]) list.scrollTop(list[0].scrollHeight);
+        }).always(function () { if (done) done(); });
+    }
+
+    function updateProcessElapsed(startedAt, createdAt) {
+        if (startedAt) processStartedAt = startedAt;
+        if (createdAt) processCreatedAt = createdAt;
+        $('#solar-process-elapsed').text(formatElapsed(processStartedAt || processCreatedAt));
     }
 
     function loadPreviewWorkspace(batchId) {
@@ -125,14 +179,30 @@
         $('#solar-process-progress').css('width', percent + '%').text(percent + '%');
         $('#solar-process-stage').text(processText(data.stage));
         $('#solar-process-message').text(data.message || 'Memproses...');
-        $('#solar-process-elapsed').text(formatElapsed(data.started_at));
+        updateProcessElapsed(data.started_at, data.created_at);
         $('#solar-process-heartbeat').text(data.heartbeat_at ? new Date(data.heartbeat_at).toLocaleTimeString() : '—');
         processLastHeartbeat = data.heartbeat_at || processLastHeartbeat;
-        $('#solar-process-stale').toggle(!!data.stale);
-        if (data.stale) {
-            $('#solar-process-retry').show();
-            stopProcessPolling();
+        var age = Number(data.activity_age_seconds || 0);
+        var ageText = age < 60 ? age + ' detik lalu' : Math.floor(age / 60) + ' menit ' + (age % 60) + ' detik lalu';
+        var activity;
+        var activityClass = 'alert-info';
+        if (data.state === 'queued') {
+            activity = data.stale
+                ? 'Batch masih di antrean. Worker belum mengambilnya selama ' + ageText + '; periksa bahwa queue worker menjalankan antrean solar.'
+                : 'Menunggu worker queue solar mengambil batch. File sudah diterima server.';
+            if (data.stale) activityClass = 'alert-warning';
+        } else if (data.stage === 'reading') {
+            activity = 'Server sedang membuka atau membaca workbook. Checkpoint terakhir ' + ageText + '. Workbook dengan banyak sheet atau baris dapat memerlukan waktu; halaman tetap memeriksa status otomatis.';
+            if (data.stale) activityClass = 'alert-warning';
+        } else if (data.stale) {
+            activity = 'Belum ada checkpoint baru selama ' + ageText + ' pada tahap ' + processText(data.stage) + '. Worker mungkin lambat atau berhenti; pemantauan akan terus mencoba kembali.';
+            activityClass = 'alert-warning';
+        } else {
+            activity = 'Checkpoint diterima ' + ageText + '. Tahap aktif: ' + processText(data.stage) + '.';
         }
+        $('#solar-process-activity').removeClass('alert-info alert-warning alert-danger').addClass(activityClass).text(activity);
+        $('#solar-process-stale').toggle(!!data.stale).text(activity);
+        $('#solar-process-retry').toggle(!!data.stale && ['failed', 'cancelled'].indexOf(data.state) === -1).text('Cek status lagi');
         if (['completed', 'failed', 'cancelled'].indexOf(data.state) !== -1) {
             finishProcess(data);
         }
@@ -143,15 +213,20 @@
             return;
         }
         $.getJSON(processStatusUrl).done(function (data) {
-            processDelay = Math.min(5000, processDelay + 500);
+            processNetworkFailures = 0;
+            processDelay = Math.min(5000, Math.max(1500, processDelay + 250));
             updateProcess(data);
-            if (['completed', 'failed', 'cancelled'].indexOf(data.state) === -1 && !data.stale) {
-                processTimer = window.setTimeout(pollProcess, processDelay);
-            }
+            fetchProcessEvents();
+            if (['completed', 'failed', 'cancelled'].indexOf(data.state) === -1) processTimer = window.setTimeout(pollProcess, processDelay);
         }).fail(function () {
-            $('#solar-process-stale').text('Status server tidak dapat diambil. Proses mungkin masih berjalan.').show();
-            $('#solar-process-retry').show();
-            stopProcessPolling();
+            processNetworkFailures++;
+            var retrySeconds = Math.max(1, Math.ceil(processDelay / 1000));
+            var connectionMessage = 'Koneksi status ke server gagal sementara. Percobaan ulang otomatis sekitar ' + retrySeconds + ' detik lagi; batch tetap diproses di server.';
+            $('#solar-process-activity').removeClass('alert-info alert-warning').addClass('alert-danger').text(connectionMessage);
+            $('#solar-process-stale').text(connectionMessage).show();
+            $('#solar-process-retry').text('Coba cek sekarang').show();
+            processDelay = Math.min(15000, Math.ceil(processDelay * (processNetworkFailures < 3 ? 1.6 : 1.35)));
+            processTimer = window.setTimeout(pollProcess, processDelay);
         });
     }
 
@@ -159,9 +234,15 @@
         stopProcessPolling();
         processBatchId = batchId;
         processStatusUrl = statusUrl;
+        processEventsUrl = processEventsUrlFor(batchId);
+        processEventCursor = 0;
+        processNetworkFailures = 0;
+        processStartedAt = null;
+        processCreatedAt = new Date().toISOString();
         processDelay = 1000;
         window.localStorage.setItem('solar.activeBatch', batchId);
         resetProcessModal(title);
+        processClockTimer = window.setInterval(function () { updateProcessElapsed(); }, 1000);
         pollProcess();
     }
 
@@ -362,13 +443,61 @@
         });
     }
 
+    function initImportDetailUI() {
+        if (!importDetailApp) return;
+        var root = $(importDetailApp);
+        var statusUrl = root.attr('data-status-url');
+        var eventsUrl = root.attr('data-events-url');
+        var cursor = Number(root.attr('data-last-event-id') || 0);
+        var timer = null;
+        var stopped = false;
+
+        function poll() {
+            if (stopped) return;
+            $.getJSON(statusUrl).done(function (data) {
+                var active = ['queued', 'processing'].indexOf(data.state) !== -1;
+                var percent = Math.max(0, Math.min(100, Number(data.percent || 0)));
+                $('#solar-import-detail-progress').toggleClass('alert-warning', !!data.stale).toggleClass('alert-info', !data.stale).html(
+                    '<strong>' + escapeHtml(data.state || '') + '</strong> · ' + percent + '% · ' + escapeHtml(data.message || '') +
+                    (data.stale ? '<br><small>Checkpoint terakhir ' + escapeHtml(String(data.activity_age_seconds || 0)) + ' detik lalu. ' + (data.state === 'queued' ? 'Periksa worker queue solar.' : 'Worker belum mengirim checkpoint terbaru.') + '</small>' : '') +
+                    '<div class="progress progress-xs" style="margin:7px 0 0"><div class="progress-bar" style="width:' + percent + '%"></div></div>'
+                );
+                $('#solar-import-detail-connection').text('Checkpoint: ' + (data.heartbeat_at ? new Date(data.heartbeat_at).toLocaleString() : 'belum tersedia'));
+                $.getJSON(eventsUrl, { after_id: cursor }).done(function (response) {
+                    var list = $('#solar-import-detail-events');
+                    (response.events || []).forEach(function (event) {
+                        var context = event.context || {};
+                        var detail = context.sheet ? ' (Sheet ' + context.sheet + (context.row ? ' · baris ' + context.row : '') + ')' : '';
+                        list.append('<li><small class="text-muted">' + escapeHtml(event.created_at ? new Date(event.created_at).toLocaleTimeString() : '') + (event.percent == null ? '' : ' · ' + Number(event.percent) + '% · ') + '</small><strong>' + escapeHtml(processText(event.stage)) + ':</strong> ' + escapeHtml(event.message || '') + '<span class="text-muted">' + escapeHtml(detail) + '</span></li>');
+                        cursor = Math.max(cursor, Number(event.id || 0));
+                    });
+                    list.find('li').slice(0, -300).remove();
+                });
+                if (active) timer = window.setTimeout(poll, 4000);
+            }).fail(function () {
+                $('#solar-import-detail-connection').text('Koneksi status terputus sementara. Riwayat log tetap tersimpan; halaman mencoba kembali otomatis.');
+                timer = window.setTimeout(poll, 7000);
+            });
+        }
+
+        poll();
+        $(window).on('beforeunload.solar-import-detail', function () {
+            stopped = true;
+            if (timer) window.clearTimeout(timer);
+        });
+    }
+
     var previewGridApi = null;
     var previewSheets = [];
     var previewRows = [];
     var previewActiveSheet = null;
     var previewFilter = 'all';
     var previewAssetMap = {};
+    var previewDriverMap = {};
     var previewCustomerMap = {};
+    var previewMappingGroups = [];
+    var previewMappingQuery = '';
+    var previewMappingLimit = 12;
 
     function previewRowsUrl(sheet) {
         var template = reconcileApp.getAttribute('data-rows-url-template');
@@ -380,6 +509,22 @@
         return reconcileApp.getAttribute('data-update-url-template')
             .replace('__BATCH__', encodeURIComponent(reconcileApp.getAttribute('data-batch-id')))
             .replace('__ROW__', encodeURIComponent(rowId));
+    }
+
+    function previewMappingsUrl(sheet) {
+        return reconcileApp.getAttribute('data-mappings-url-template')
+            .replace('__BATCH__', encodeURIComponent(reconcileApp.getAttribute('data-batch-id')))
+            + (sheet ? '?sheet=' + encodeURIComponent(sheet) : '');
+    }
+
+    function previewMappingUpdateUrl() {
+        return reconcileApp.getAttribute('data-mapping-update-url-template')
+            .replace('__BATCH__', encodeURIComponent(reconcileApp.getAttribute('data-batch-id')));
+    }
+
+    function previewReferenceOptionsUrl() {
+        return reconcileApp.getAttribute('data-reference-options-url-template')
+            .replace('__BATCH__', encodeURIComponent(reconcileApp.getAttribute('data-batch-id')));
     }
 
     function updatePreviewStats(summary) {
@@ -394,7 +539,17 @@
         );
         $('#solar-preview-importable-count').text(importable);
         $('#solar-preview-skip-count').text(Math.max(0, total - importable));
-        $('#solar-preview-confirm').prop('disabled', importable < 1).text('Konfirmasi & Antrekan Import (' + importable + ')');
+        var warnings = Array.isArray(summary.warnings) ? summary.warnings : [];
+        var blocking = warnings.some(function (warning) { return !!warning.blocking; });
+        if (warnings.length) {
+            var warningHtml = warnings.map(function (warning) {
+                return '<li>' + escapeHtml(warning.message || 'Periksa kembali nama sheet workbook.') + '</li>';
+            }).join('');
+            $('#solar-preview-warnings').removeClass('alert-warning alert-danger').addClass(blocking ? 'alert-danger' : 'alert-warning').html('<strong>' + (blocking ? 'Import diblokir:' : 'Catatan workbook:') + '</strong><ul style="margin:5px 0 0;padding-left:20px">' + warningHtml + '</ul>').removeAttr('hidden');
+        } else {
+            $('#solar-preview-warnings').attr('hidden', true).empty();
+        }
+        $('#solar-preview-confirm').prop('disabled', importable < 1 || blocking).text(blocking ? 'Perbaiki nama sheet lalu unggah ulang' : 'Konfirmasi & Antrekan Import (' + importable + ')');
         previewSheets = summary.sheets || previewSheets;
         renderPreviewTabs();
     }
@@ -419,7 +574,7 @@
 
     function rowPayload(row) {
         var original = $.extend({}, row.excel || {});
-        ['tanggal', 'stock_in', 'out_actual', 'out_meteran', 'qty_in', 'qty_out', 'keterangan', 'unit', 'operator', 'customer_id', 'nama_kapal', 'lokasi', 'equipment_name', 'asset_id', 'quantity_gln'].forEach(function (field) {
+        ['tanggal', 'stock_in', 'out_actual', 'out_meteran', 'qty_in', 'qty_out', 'keterangan', 'unit', 'operator', 'customer_id', 'nama_kapal', 'lokasi', 'equipment_name', 'asset_id', 'driver_id', 'quantity_gln'].forEach(function (field) {
             if (Object.prototype.hasOwnProperty.call(row, field)) original[field] = row[field];
         });
         var payload = {
@@ -434,10 +589,11 @@
             unit: original.unit,
             operator: original.operator,
             customer_id: original.customer_id || '',
+            asset_id: original.asset_id || '',
+            driver_id: original.driver_id || '',
             nama_kapal: original.nama_kapal,
             lokasi: original.lokasi,
             equipment_name: original.equipment_name || '',
-            asset_id: original.asset_id || '',
             quantity_gln: original.quantity_gln || ''
         };
         return payload;
@@ -452,20 +608,90 @@
         return map[String(value)] || fallback || String(value);
     }
 
+    function formatReferenceSuggestions(value) {
+        if (!Array.isArray(value) || value.length === 0) return '—';
+        return value.map(function (candidate) {
+            return candidate && candidate.label ? candidate.label : '';
+        }).filter(Boolean).join(' / ') || '—';
+    }
+
+    function SolarRemoteSelectEditor() {}
+
+    SolarRemoteSelectEditor.prototype.init = function (params) {
+        this.params = params;
+        this.type = params.colDef.cellEditorParams && params.colDef.cellEditorParams.type || 'asset';
+        this.element = document.createElement('select');
+        this.element.className = 'form-control input-sm';
+        this.element.style.width = Math.max(220, Number(params.column && params.column.getActualWidth ? params.column.getActualWidth() : 0)) + 'px';
+        this.element.appendChild(new Option('', '', false, false));
+        this.$element = $(this.element);
+        var currentId = params.value == null ? '' : String(params.value);
+        if (currentId) {
+            var sourceMap = this.type === 'asset' ? previewAssetMap : (this.type === 'driver' ? previewDriverMap : previewCustomerMap);
+            var label = sourceMap[currentId]
+                || (this.type === 'customer' ? (params.data.customer_name || params.data.customer_ref || 'Customer #' + currentId) : this.type + ' #' + currentId);
+            this.element.appendChild(new Option(label, currentId, true, true));
+        }
+    };
+
+    SolarRemoteSelectEditor.prototype.getGui = function () { return this.element; };
+    SolarRemoteSelectEditor.prototype.afterGuiAttached = function () {
+        if ($.fn.select2) {
+            var self = this;
+            if (!this.$element.data('select2')) {
+                this.$element.select2({
+                    placeholder: this.type === 'asset' ? 'Cari Asset / nomor polisi' : (this.type === 'driver' ? 'Cari supir/operator' : 'Cari Customer'),
+                    allowClear: true,
+                    width: '100%',
+                    dropdownParent: $('body'),
+                    ajax: {
+                        url: previewReferenceOptionsUrl(),
+                        dataType: 'json',
+                        delay: 250,
+                        data: function (query) { return { type: self.type, q: query.term || '' }; },
+                        processResults: function (response) { return { results: response.results || [] }; }
+                    }
+                });
+                this.$element.on('select2:select.solar-grid select2:clear.solar-grid', function () {
+                    window.setTimeout(function () { self.params.stopEditing(); }, 0);
+                });
+            }
+            this.$element.select2('open');
+            window.setTimeout(function () { $('.select2-container--open .select2-search__field').last().trigger('focus'); }, 30);
+        } else {
+            this.element.focus();
+        }
+    };
+    SolarRemoteSelectEditor.prototype.getValue = function () { return this.$element.val() || ''; };
+    SolarRemoteSelectEditor.prototype.destroy = function () {
+        if (this.$element && this.$element.data('select2')) this.$element.select2('destroy');
+    };
+    SolarRemoteSelectEditor.prototype.isPopup = function () { return true; };
+
     function previewColumnDefs(ledger) {
         var defs = [
             { headerName: 'Baris Excel', field: 'source_row', width: 100, pinned: 'left', editable: false },
             { headerName: 'Tanggal ✎', field: 'tanggal', width: 140, editable: true, cellEditor: 'agTextCellEditor', cellClass: 'solar-preview-editable-cell', valueFormatter: function (p) { return p.value || 'Isi tanggal'; } }
         ];
+        if (ledger === 'pool' || ledger === 'mess') {
+            defs.push({ headerName: 'Customer ✎', field: 'customer_id', minWidth: 200, editable: true, cellEditor: SolarRemoteSelectEditor, cellEditorPopup: true, cellEditorParams: { type: 'customer' }, cellClass: 'solar-preview-editable-cell', valueFormatter: function (p) { return formatSelectValue(previewCustomerMap, p.value, p.data.customer_name || (p.data.customer_ref ? 'Belum cocok · ' + p.data.customer_ref : 'Pilih Customer')); } });
+        }
         if (ledger === 'usage') {
             defs.push(
-                { headerName: 'Nama alat', field: 'equipment_name', minWidth: 180, editable: true, cellClass: 'solar-preview-editable-cell' },
-                { headerName: 'Asset ✎', field: 'asset_id', minWidth: 190, editable: true, cellEditor: 'agSelectCellEditor', cellEditorParams: { values: [''].concat(Object.keys(previewAssetMap)) }, cellClass: 'solar-preview-editable-cell', valueFormatter: function (p) { return formatSelectValue(previewAssetMap, p.value, 'Belum dipetakan · ' + (p.data.equipment_name || '')); } },
+                { headerName: 'Nama Asset / alat', field: 'equipment_name', minWidth: 180, editable: true, cellClass: 'solar-preview-editable-cell' },
+                { headerName: 'Asset ✎', field: 'asset_id', minWidth: 190, editable: true, cellEditor: SolarRemoteSelectEditor, cellEditorPopup: true, cellEditorParams: { type: 'asset' }, refData: previewAssetMap, cellClass: 'solar-preview-editable-cell', valueFormatter: function (p) { return formatSelectValue(previewAssetMap, p.value, 'Belum dipetakan · ' + (p.data.equipment_name || '')); } },
+                { headerName: 'Saran Asset', field: 'asset_suggestions', minWidth: 220, editable: false, valueFormatter: function (p) { return formatReferenceSuggestions(p.value); } },
                 { headerName: 'Jumlah (Gln) ✎', field: 'quantity_gln', minWidth: 145, editable: true, cellEditor: 'agNumberCellEditor', cellClass: 'solar-preview-editable-cell', valueParser: function (p) { return Number(p.newValue); }, valueFormatter: function (p) { return p.value === '' || p.value == null ? '' : Number(p.value).toLocaleString('id-ID', { maximumFractionDigits: 2 }); } },
                 { headerName: 'Liter (Gln × 30)', valueGetter: function (p) { return Number(p.data.quantity_gln || 0) * 30; }, minWidth: 150, valueFormatter: function (p) { return Number(p.value || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 }); } }
             );
         } else if (ledger === 'stock') {
             defs.push(
+                { headerName: 'Unit / Asset ✎', field: 'unit', minWidth: 170, editable: true, cellClass: 'solar-preview-editable-cell' },
+                { headerName: 'Relasi Asset ✎', field: 'asset_id', minWidth: 185, editable: true, cellEditor: SolarRemoteSelectEditor, cellEditorPopup: true, cellEditorParams: { type: 'asset' }, refData: previewAssetMap, cellClass: 'solar-preview-editable-cell', valueFormatter: function (p) { return formatSelectValue(previewAssetMap, p.value, 'Belum dipetakan'); } },
+                { headerName: 'Saran Asset', field: 'asset_suggestions', minWidth: 220, editable: false, valueFormatter: function (p) { return formatReferenceSuggestions(p.value); } },
+                { headerName: 'Nama supir ✎', field: 'operator', minWidth: 145, editable: true, cellClass: 'solar-preview-editable-cell' },
+                { headerName: 'Relasi supir ✎', field: 'driver_id', minWidth: 185, editable: true, cellEditor: SolarRemoteSelectEditor, cellEditorPopup: true, cellEditorParams: { type: 'driver' }, refData: previewDriverMap, cellClass: 'solar-preview-editable-cell', valueFormatter: function (p) { return formatSelectValue(previewDriverMap, p.value, 'Belum dipetakan'); } },
+                { headerName: 'Saran supir', field: 'driver_suggestions', minWidth: 220, editable: false, valueFormatter: function (p) { return formatReferenceSuggestions(p.value); } },
                 { headerName: 'Masuk (L) ✎', field: 'stock_in', editable: true, cellEditor: 'agNumberCellEditor', cellClass: 'solar-preview-editable-cell' },
                 { headerName: 'Keluar Aktual (L) ✎', field: 'out_actual', editable: true, cellEditor: 'agNumberCellEditor', cellClass: 'solar-preview-editable-cell' },
                 { headerName: 'Keluar Meteran (L) ✎', field: 'out_meteran', editable: true, cellEditor: 'agNumberCellEditor', cellClass: 'solar-preview-editable-cell' },
@@ -475,9 +701,13 @@
             defs.push(
                 { headerName: 'Masuk (Gln) ✎', field: 'qty_in', editable: true, cellEditor: 'agNumberCellEditor', cellClass: 'solar-preview-editable-cell' },
                 { headerName: 'Keluar (Gln) ✎', field: 'qty_out', editable: true, cellEditor: 'agNumberCellEditor', cellClass: 'solar-preview-editable-cell' },
-                { headerName: 'Unit ✎', field: 'unit', editable: true, cellClass: 'solar-preview-editable-cell' },
-                { headerName: 'Operator ✎', field: 'operator', editable: true, cellClass: 'solar-preview-editable-cell' },
-                { headerName: 'Customer ✎', field: 'customer_id', minWidth: 190, editable: true, cellEditor: 'agSelectCellEditor', cellEditorParams: { values: [''].concat(Object.keys(previewCustomerMap)) }, cellClass: 'solar-preview-editable-cell', valueFormatter: function (p) { return formatSelectValue(previewCustomerMap, p.value, p.data.customer_ref ? 'Belum cocok · ' + p.data.customer_ref : '—'); } }
+                { headerName: 'Keterangan ✎', field: 'keterangan', minWidth: 180, editable: true, cellClass: 'solar-preview-editable-cell' },
+                { headerName: 'Unit / Asset ✎', field: 'unit', minWidth: 170, editable: true, cellClass: 'solar-preview-editable-cell' },
+                { headerName: 'Relasi Asset ✎', field: 'asset_id', minWidth: 185, editable: true, cellEditor: SolarRemoteSelectEditor, cellEditorPopup: true, cellEditorParams: { type: 'asset' }, refData: previewAssetMap, cellClass: 'solar-preview-editable-cell', valueFormatter: function (p) { return formatSelectValue(previewAssetMap, p.value, 'Belum dipetakan'); } },
+                { headerName: 'Saran Asset', field: 'asset_suggestions', minWidth: 220, editable: false, valueFormatter: function (p) { return formatReferenceSuggestions(p.value); } },
+                { headerName: 'Nama supir ✎', field: 'operator', editable: true, cellClass: 'solar-preview-editable-cell' },
+                { headerName: 'Relasi supir ✎', field: 'driver_id', minWidth: 185, editable: true, cellEditor: SolarRemoteSelectEditor, cellEditorPopup: true, cellEditorParams: { type: 'driver' }, refData: previewDriverMap, cellClass: 'solar-preview-editable-cell', valueFormatter: function (p) { return formatSelectValue(previewDriverMap, p.value, 'Belum dipetakan'); } },
+                { headerName: 'Saran supir', field: 'driver_suggestions', minWidth: 220, editable: false, valueFormatter: function (p) { return formatReferenceSuggestions(p.value); } },
             );
             if (ledger === 'mess') defs.push(
                 { headerName: 'Nama Kapal ✎', field: 'nama_kapal', editable: true, cellClass: 'solar-preview-editable-cell' },
@@ -512,7 +742,7 @@
             }
             row.tanggal = normalizedDate;
         }
-        if (event.colDef.field === 'asset_id' || event.colDef.field === 'customer_id') {
+        if (event.colDef.field === 'asset_id' || event.colDef.field === 'driver_id' || event.colDef.field === 'customer_id') {
             row[event.colDef.field] = event.newValue === '' ? null : Number(event.newValue);
         }
         var body = rowPayload(row);
@@ -547,6 +777,7 @@
         renderPreviewTabs();
         $('#solar-preview-sheet-title').text(sheet.title || sheetKey);
         $('#solar-preview-sheet-counts').text(Number(sheet.total || 0) + ' baris · ' + Number(sheet.importable || 0) + ' siap · ' + Number(sheet.needs_check || 0) + ' perlu diperiksa');
+        loadPreviewMappings(sheetKey);
         $.getJSON(previewRowsUrl(sheetKey)).done(function (response) {
             previewRows = (response.data || []).map(function (item) {
                 var excel = item.excel || {};
@@ -566,6 +797,7 @@
                     customer_ref: excel.customer_ref || '',
                     equipment_name: excel.equipment_name || item.equipment_name || '',
                     asset_id: excel.asset_id == null ? '' : String(excel.asset_id),
+                    driver_id: excel.driver_id == null ? '' : String(excel.driver_id),
                     customer_id: excel.customer_id == null ? '' : String(excel.customer_id),
                     quantity_gln: excel.quantity_gln == null && item.raw_value ? Number(item.raw_value) : excel.quantity_gln
                 });
@@ -600,20 +832,145 @@
         });
     }
 
+    function loadPreviewMappings(sheetKey) {
+        $('#solar-preview-reference-mappings').html('<span class="text-muted">Memuat daftar nama…</span>');
+        $.getJSON(previewMappingsUrl(sheetKey)).done(function (response) {
+            renderPreviewMappings(response.mappings || {});
+        }).fail(function () {
+            $('#solar-preview-reference-mappings').html('<span class="text-danger">Daftar pemetaan tidak dapat dimuat.</span>');
+        });
+    }
+
+    function renderPreviewMappings(mappings) {
+        previewMappingGroups = (mappings.asset || []).concat(mappings.driver || []);
+        previewMappingLimit = previewMappingPageSize();
+        renderPreviewMappingGroups();
+    }
+
+    function previewMappingPageSize() {
+        return window.matchMedia && window.matchMedia('(max-width: 767px)').matches ? 6 : 12;
+    }
+
+    function renderPreviewMappingGroups() {
+        var query = previewMappingQuery.toLocaleLowerCase();
+        var groups = previewMappingGroups.filter(function (item) {
+            return !query || String(item.source_value || '').toLocaleLowerCase().indexOf(query) !== -1;
+        });
+        var shownGroups = groups.slice(0, previewMappingLimit);
+        $('#solar-reference-mapping-count').text(groups.length + ' nama unik' + (groups.length > shownGroups.length ? ' · tampil ' + shownGroups.length : ''));
+        if (!groups.length) {
+            $('#solar-preview-reference-mappings').html('<span class="text-muted">Tidak ada nama yang cocok.</span>');
+            $('#solar-reference-mapping-more').prop('hidden', true);
+            return;
+        }
+
+        var html = shownGroups.map(function (item) {
+            var isAsset = item.type === 'asset';
+            var targets = isAsset ? previewAssetMap : previewDriverMap;
+            var selectedId = item.has_conflict ? '' : (item.target_id == null ? '' : String(item.target_id));
+            var selectedOption = selectedId && targets[selectedId]
+                ? '<option value="' + escapeHtml(selectedId) + '" selected>' + escapeHtml(targets[selectedId]) + '</option>'
+                : '';
+            var sheetSummary = Object.keys(item.sheets || {}).map(function (name) {
+                return escapeHtml(name) + ': ' + Number(item.sheets[name]);
+            }).join(' · ');
+            var suggestions = (item.suggestions || []).map(function (candidate) { return candidate.label || ''; }).filter(Boolean);
+            var conflict = item.has_conflict ? ' · Pilihan baris berbeda' : '';
+            return '<label class="solar-reference-map-item">' +
+                '<span class="solar-reference-map-source"><strong>' + escapeHtml(item.source_value) + '</strong><small>' + escapeHtml(isAsset ? 'Unit Asset' : 'Supir') + ' · ' + Number(item.row_count) + ' baris' + conflict + '</small><small>' + sheetSummary + '</small>' + (suggestions.length ? '<small>Saran (pilih untuk menerapkan): ' + escapeHtml(suggestions.join(' / ')) + '</small>' : '') + '</span>' +
+                '<select class="form-control input-sm" data-solar-reference-mapping data-type="' + escapeHtml(item.type) + '" data-source-value="' + escapeHtml(item.source_value) + '"><option value=""></option>' + selectedOption + '</select>' +
+                '</label>';
+        }).join('');
+        $('#solar-preview-reference-mappings').html(html);
+        initPreviewMappingSelects();
+
+        var remaining = groups.length - shownGroups.length;
+        $('#solar-reference-mapping-more')
+            .text('Muat ' + Math.min(50, remaining) + ' nama lagi · ' + remaining + ' tersisa')
+            .prop('hidden', remaining <= 0);
+    }
+
+    function initPreviewMappingSelects() {
+        if (!$.fn.select2) return;
+        $('#solar-preview-reference-mappings [data-solar-reference-mapping]').each(function () {
+            var mappingType = $(this).data('type');
+            $(this).select2({
+                placeholder: 'Cari padanan di database…',
+                allowClear: true,
+                width: '100%',
+                ajax: {
+                    url: previewReferenceOptionsUrl(),
+                    dataType: 'json',
+                    delay: 250,
+                    data: function (params) {
+                        return { type: mappingType, q: params.term || '' };
+                    },
+                    processResults: function (response) {
+                        return { results: response.results || [] };
+                    }
+                }
+            });
+        });
+    }
+
+    function savePreviewMapping(select) {
+        var $select = $(select);
+        var data = {
+            _token: $('#solar-preview-csrf').val(),
+            type: $select.data('type'),
+            source_value: $select.attr('data-source-value'),
+            target_id: $select.val() || '',
+            sheet: previewActiveSheet || ''
+        };
+        $select.prop('disabled', true);
+        $.ajax({ url: previewMappingUpdateUrl(), method: 'PATCH', data: data, headers: { Accept: 'application/json' } })
+            .done(function (response) {
+                updatePreviewStats(response.summary || {});
+                renderPreviewMappings(response.mappings || {});
+                loadPreviewSheet(previewActiveSheet, true);
+                $('#solar-preview-feedback').attr('hidden', true);
+            }).fail(function (xhr) {
+                var message = xhr.responseJSON && xhr.responseJSON.message ? xhr.responseJSON.message : 'Pemetaan tidak tersimpan.';
+                if (xhr.responseJSON && xhr.responseJSON.errors) message = Object.values(xhr.responseJSON.errors).flat()[0] || message;
+                showPreviewFeedback(message, false);
+                loadPreviewMappings(previewActiveSheet);
+            }).always(function () { $select.prop('disabled', false); });
+    }
+
     function initReconcile() {
         if (!reconcileApp || reconcileApp.getAttribute('data-grid-ready') === '1') return;
         reconcileApp.setAttribute('data-grid-ready', '1');
         var assets = JSON.parse(reconcileApp.getAttribute('data-assets') || '[]');
+        var drivers = JSON.parse(reconcileApp.getAttribute('data-drivers') || '[]');
         var customers = JSON.parse(reconcileApp.getAttribute('data-customers') || '[]');
         previewAssetMap = {};
         assets.forEach(function (asset) { previewAssetMap[String(asset.id)] = [asset.asset_code, asset.name].filter(Boolean).join(' · '); });
+        previewDriverMap = {};
+        drivers.forEach(function (driver) { previewDriverMap[String(driver.id)] = driver.full_name || ''; });
         previewCustomerMap = {};
-        customers.forEach(function (customer) { previewCustomerMap[String(customer.id)] = customer.supplier_business_name || customer.name; });
+        customers.forEach(function (customer) {
+            var customerLabel = [customer.display_name, customer.supplier_business_name, customer.name, customer.contact_id, customer.mobile, customer.email]
+                .map(function (value) { return String(value || '').trim(); })
+                .find(function (value) { return value !== ''; });
+            previewCustomerMap[String(customer.id)] = customerLabel || ('Customer #' + customer.id);
+        });
         try { previewSheets = JSON.parse(reconcileApp.getAttribute('data-sheets') || '[]'); } catch (error) { previewSheets = []; }
         previewActiveSheet = previewSheets.length ? previewSheets[0].sheet_key : null;
-        updatePreviewStats({ sheets: previewSheets, total: previewSheets.reduce(function (sum, sheet) { return sum + Number(sheet.total || 0); }, 0), importable: previewSheets.reduce(function (sum, sheet) { return sum + Number(sheet.importable || 0); }, 0), needs_check: previewSheets.reduce(function (sum, sheet) { return sum + Number(sheet.needs_check || 0); }, 0) });
+        var initialWarnings = [];
+        try { initialWarnings = JSON.parse(reconcileApp.getAttribute('data-preview-warnings') || '[]'); } catch (error) { initialWarnings = []; }
+        updatePreviewStats({ sheets: previewSheets, warnings: initialWarnings, total: previewSheets.reduce(function (sum, sheet) { return sum + Number(sheet.total || 0); }, 0), importable: previewSheets.reduce(function (sum, sheet) { return sum + Number(sheet.importable || 0); }, 0), needs_check: previewSheets.reduce(function (sum, sheet) { return sum + Number(sheet.needs_check || 0); }, 0) });
         if (previewActiveSheet) loadPreviewSheet(previewActiveSheet);
         $('#solar-preview-tabs').off('click.solar').on('click.solar', '.solar-preview-tab', function () { loadPreviewSheet($(this).data('sheet-key')); });
+        $('#solar-preview-reference-mappings').off('change.solar').on('change.solar', '[data-solar-reference-mapping]', function () { savePreviewMapping(this); });
+        $('#solar-reference-mapping-search').off('input.solar').on('input.solar', function () {
+            previewMappingQuery = String(this.value || '').trim();
+            previewMappingLimit = previewMappingPageSize();
+            renderPreviewMappingGroups();
+        });
+        $('#solar-reference-mapping-more').off('click.solar').on('click.solar', function () {
+            previewMappingLimit += previewMappingPageSize();
+            renderPreviewMappingGroups();
+        });
         $('#solar-preview-filter').off('change.solar').on('change.solar', function () { previewFilter = this.value; applyPreviewFilter(); });
         $('#solar-preview-confirm').off('click.solar').on('click.solar', function () {
             var batchId = reconcileApp.getAttribute('data-batch-id');
@@ -639,6 +996,7 @@
     initProcessUI();
     initReconcile();
     initHistoryUI();
+    initImportDetailUI();
     if (!app) {
         return;
     }
@@ -697,9 +1055,12 @@
         setValue('solar-keterangan', record.keterangan);
         setValue('solar-equipment-name', record.equipment_name);
         setValue('solar-asset-id', record.asset_id);
+        setValue('solar-record-asset-id', record.asset_id);
+        setValue('solar-record-driver-id', record.driver_id);
         setValue('solar-quantity-gln', record.quantity_gln);
         $('#solar-customer').trigger('change');
         $('#solar-asset-id').trigger('change');
+        $('#solar-record-asset-id, #solar-record-driver-id').trigger('change');
         $('#solar-quantity-gln').trigger('input');
         $('#solar-record-modal').modal('show');
     }
@@ -736,6 +1097,18 @@
             equipmentName.val(selected.data('asset-name') || selected.text());
         }
     });
+    $('#solar-record-asset-id').on('change', function () {
+        var selected = $(this).find(':selected');
+        if (this.value && !$('#solar-unit').val()) {
+            $('#solar-unit').val(selected.data('asset-name') || selected.text());
+        }
+    });
+    $('#solar-record-driver-id').on('change', function () {
+        var selected = $(this).find(':selected');
+        if (this.value && !$('#solar-operator').val()) {
+            $('#solar-operator').val(selected.data('driver-name') || selected.text());
+        }
+    });
     $('#solar-quantity-gln').on('input', function () {
         var liters = Number(this.value || 0) * 30;
         $('#solar-quantity-liter').text(liters.toLocaleString('id-ID', { maximumFractionDigits: 2 }));
@@ -763,6 +1136,11 @@
             width: '100%'
         });
         $('#solar-asset-id').select2({
+            dropdownParent: $('#solar-record-modal'),
+            allowClear: true,
+            width: '100%'
+        });
+        $('#solar-record-asset-id, #solar-record-driver-id').select2({
             dropdownParent: $('#solar-record-modal'),
             allowClear: true,
             width: '100%'
