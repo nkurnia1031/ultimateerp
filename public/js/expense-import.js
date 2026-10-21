@@ -36,6 +36,10 @@
         return $('#expense_import_preview_modal').data('date-template').replace('__BATCH__', encodeURIComponent(id)).replace('__ROW__', encodeURIComponent(row));
     }
 
+    function taxUrl(id, row) {
+        return $('#expense_import_preview_modal').data('tax-template').replace('__BATCH__', encodeURIComponent(id)).replace('__ROW__', encodeURIComponent(row));
+    }
+
     function escapeHtml(value) {
         return $('<div>').text(value === null || typeof value === 'undefined' ? '' : value).html();
     }
@@ -209,14 +213,29 @@
                 { data: 'reference_no', render: function (value) { return escapeHtml(value || '-'); } },
                 { data: 'expense_date', render: function (value, type, row) { return escapeHtml(value || row.raw_expense_date || '-'); } },
                 { data: 'paid_on_date', render: function (value, type, row) { return escapeHtml(value || row.raw_paid_on_date || '-'); } },
+                { data: 'tax_status', render: function (value, type, row) {
+                    if (value === 'unknown') {
+                        return '<span class="label label-warning">Belum dikenal: ' + escapeHtml(row.raw_applicable_tax || '-') + '</span>';
+                    }
+                    if (value === 'none') { return '<span class="text-muted">-</span>'; }
+                    return escapeHtml(row.tax_name || (row.payload && row.payload.applicable_tax) || '-');
+                } },
                 { data: 'status', render: function (value) { return value === 'valid' ? '<span class="label label-success">Valid</span>' : '<span class="label label-danger">Error</span>'; } },
                 { data: 'errors', render: function (value) { return escapeHtml((value || []).join(' ')); } },
                 { data: null, orderable: false, searchable: false, render: function (value, type, row) {
-                    if (row.status !== 'error') { return '<span class="text-muted">-</span>'; }
                     var actions = '';
-                    if (!row.expense_date && row.raw_expense_date) { actions += '<button type="button" class="btn btn-xs btn-primary expense-import-edit-date" data-row="' + row.id + '" data-field="expense_date"><i class="fa fa-calendar"></i> Tanggal</button> '; }
-                    if (!row.paid_on_date && row.raw_paid_on_date) { actions += '<button type="button" class="btn btn-xs btn-primary expense-import-edit-date" data-row="' + row.id + '" data-field="paid_on_date"><i class="fa fa-calendar"></i> Bayar</button>'; }
-                    return actions || '<span class="text-muted">Perbaiki template</span>';
+                    if (row.status === 'error' && !row.expense_date && row.raw_expense_date) { actions += '<button type="button" class="btn btn-xs btn-primary expense-import-edit-date" data-row="' + row.id + '" data-field="expense_date"><i class="fa fa-calendar"></i> Tanggal</button> '; }
+                    if (row.status === 'error' && !row.paid_on_date && row.raw_paid_on_date) { actions += '<button type="button" class="btn btn-xs btn-primary expense-import-edit-date" data-row="' + row.id + '" data-field="paid_on_date"><i class="fa fa-calendar"></i> Bayar</button> '; }
+                    if (row.tax_status === 'unknown' || row.tax_status === 'mapped' || row.tax_mapping_required) {
+                        var options = window.expenseImportTaxOptions || [];
+                        var select = '<select class="form-control input-sm expense-import-map-tax" data-row="' + row.id + '"><option value="">Pilih TaxRate / grup</option>';
+                        options.forEach(function (tax) {
+                            var selected = Number(row.tax_id) === Number(tax.id) ? ' selected' : '';
+                            select += '<option value="' + Number(tax.id) + '"' + selected + '>' + escapeHtml(tax.label) + '</option>';
+                        });
+                        actions += select + '</select>';
+                    }
+                    return actions || '<span class="text-muted">-</span>';
                 } }
             ],
             order: [[0, 'asc']]
@@ -227,6 +246,34 @@
         if (previewTable) {
             previewTable.ajax.reload();
         }
+    });
+
+    $('#expense_import_preview_table').on('change', '.expense-import-map-tax', function () {
+        var select = $(this);
+        var taxRateId = select.val();
+        if (!batchId || !taxRateId) { return; }
+
+        select.prop('disabled', true);
+        $.ajax({
+            url: taxUrl(batchId, select.data('row')),
+            method: 'PATCH',
+            dataType: 'json',
+            headers: { Accept: 'application/json' },
+            data: {
+                _token: form.find('input[name="_token"]').val(),
+                tax_rate_id: taxRateId
+            }
+        }).done(function (response) {
+            updateSummary(response.summary || {});
+            if (previewTable) { previewTable.ajax.reload(null, false); }
+            if (window.toastr) { toastr.success(response.message || 'TaxRate berhasil dipetakan.'); }
+        }).fail(function (xhr) {
+            var message = (xhr.responseJSON && (xhr.responseJSON.message || xhr.responseJSON.msg)) || 'TaxRate gagal dipetakan.';
+            if (window.toastr) { toastr.error(message); }
+            select.val('');
+        }).always(function () {
+            select.prop('disabled', false);
+        });
     });
 
     form.on('submit', function (event) {

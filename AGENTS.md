@@ -158,3 +158,17 @@ Then perform an `agent-browser` smoke test on the local URL: login, open the aff
 - Lead reports with the observed result, then evidence, root cause, change, and verification commands.
 - Preserve migrations and existing IDs/data. Prefer additive/idempotent migrations and explicit backfill commands over guesses about ownership.
 - If the next task is ambiguous, first state the assumption in the commentary, inspect the graph and current implementation, and only then modify files.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs live in GitHub Issues for `nkurnia1031/ultimateerp`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Use the single-context domain layout. See `docs/agents/domain.md`.

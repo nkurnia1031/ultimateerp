@@ -4,6 +4,8 @@ namespace Modules\Accounting\Http\Controllers;
 
 use App\Account;
 use App\AccountTransaction;
+use App\Transaction;
+use App\TransactionPayment;
 use App\Utils\ModuleUtil;
 use App\Utils\Util;
 use Carbon\Carbon;
@@ -12,11 +14,13 @@ use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 use Modules\Accounting\Entities\AccountingAccountsTransaction;
 use Modules\Accounting\Entities\AccountingAccount;
 use Modules\Accounting\Entities\AccountingAccTransMapping;
 use Modules\Accounting\Jobs\AnalyzeJournalImportJob;
 use Modules\Accounting\Jobs\ProcessJournalImportJob;
+use Modules\Accounting\Services\JournalTaxReconciliationService;
 use Modules\Accounting\Utils\AccountingUtil;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use Yajra\DataTables\Facades\DataTables;
@@ -145,18 +149,30 @@ class JournalEntryController extends Controller
             abort(403, 'Unauthorized action.');
         }
 
+        $taxReviewCounts = DB::table('accounting_acc_trans_mappings')
+            ->where('business_id', $business_id)
+            ->where('tax_reconciliation_status', 'review')
+            ->select('journal_import_id', DB::raw('COUNT(*) as tax_reconciliation_review_count'))
+            ->groupBy('journal_import_id');
+
         $imports = DB::table('accounting_journal_imports as aji')
             ->leftJoin('users as u', 'aji.created_by', '=', 'u.id')
+            ->leftJoinSub($taxReviewCounts, 'tax_review_counts', function ($join) {
+                $join->on('tax_review_counts.journal_import_id', '=', 'aji.id');
+            })
             ->where('aji.business_id', $business_id)
             ->select(
                 'aji.*',
-                DB::raw("CONCAT(COALESCE(u.surname, ''),' ',COALESCE(u.first_name, ''),' ',COALESCE(u.last_name,'')) as added_by")
+                DB::raw("CONCAT(COALESCE(u.surname, ''),' ',COALESCE(u.first_name, ''),' ',COALESCE(u.last_name,'')) as added_by"),
+                DB::raw('COALESCE(tax_review_counts.tax_reconciliation_review_count, 0) as tax_reconciliation_review_count')
             )
             ->orderBy('aji.id', 'desc')
             ->limit(25)
             ->get();
 
-        return view('accounting::journal_entry.import')->with(compact('imports'));
+        $taxReconciliationReviews = $this->getTaxReconciliationReviews($business_id);
+
+        return view('accounting::journal_entry.import')->with(compact('imports', 'taxReconciliationReviews'));
     }
 
     public function analyzeImport(Request $request)
@@ -186,7 +202,7 @@ class JournalEntryController extends Controller
             'file_name' => $file->getClientOriginalName(),
             'file_path' => $path,
             'status' => 'queued',
-            'last_message' => 'File uploaded. Waiting for analyzer worker...',
+            'last_message' => 'File diterima; menunggu worker queue imports.',
             'created_by' => request()->session()->get('user.id'),
             'created_at' => now(),
             'updated_at' => now(),
@@ -225,6 +241,8 @@ class JournalEntryController extends Controller
         }
 
         $analysis = $this->readTemporaryJournalAnalysis($batch->analysis_path);
+        $tax_mapping_accounts = $this->getJournalTaxMappingAccounts($analysis['entries'], $business_id);
+        $tax_rate_options = $this->getJournalTaxRateOptions($business_id);
         $path = $batch->file_path;
         $analysis_path = $batch->analysis_path;
         $original_file_name = $batch->file_name;
@@ -241,8 +259,10 @@ class JournalEntryController extends Controller
             ->limit(25)
             ->get();
 
+        $taxReconciliationReviews = $this->getTaxReconciliationReviews($business_id);
+
         return view('accounting::journal_entry.import')
-            ->with(compact('batch', 'analysis', 'path', 'analysis_path', 'imports', 'original_file_name', 'account_options', 'main_account_options'));
+            ->with(compact('batch', 'analysis', 'path', 'analysis_path', 'imports', 'original_file_name', 'account_options', 'main_account_options', 'tax_mapping_accounts', 'tax_rate_options', 'taxReconciliationReviews'));
     }
 
     public function startImport(Request $request)
@@ -257,6 +277,8 @@ class JournalEntryController extends Controller
 
         $request->validate([
             'import_id' => 'required|integer',
+            'tax_account_mappings' => 'sometimes|array',
+            'tax_account_mappings.*' => 'nullable|string',
         ]);
 
         $batch = DB::table('accounting_journal_imports')
@@ -272,13 +294,21 @@ class JournalEntryController extends Controller
             ], 422);
         }
 
+        $analysis = $this->readTemporaryJournalAnalysis($batch->analysis_path);
+        $this->validateJournalTaxAccountMappingSelections(
+            $request->input('tax_account_mappings', []),
+            $business_id,
+            $analysis['entries'],
+            $request->input('account_mappings', [])
+        );
+
         DB::table('accounting_journal_imports')
             ->where('id', $batch->id)
             ->update([
                 'status' => 'queued_import',
                 'processed_entries' => 0,
                 'import_options' => json_encode($request->except(['_token', 'import_id'])),
-                'last_message' => 'Waiting for import worker...',
+                'last_message' => 'Menunggu worker queue imports untuk mulai menyimpan entry.',
                 'updated_at' => now(),
             ]);
 
@@ -314,6 +344,8 @@ class JournalEntryController extends Controller
             'skipped_entries' => (int) $batch->skipped_entries,
             'last_message' => $batch->last_message,
             'error_message' => $batch->error_message,
+            'created_at' => $batch->created_at,
+            'updated_at' => $batch->updated_at,
         ]);
     }
 
@@ -332,9 +364,17 @@ class JournalEntryController extends Controller
             'file_path' => 'required|string',
             'analysis_path' => 'required|string',
             'offset' => 'required|integer|min:0',
+            'tax_account_mappings' => 'sometimes|array',
+            'tax_account_mappings.*' => 'nullable|string',
         ]);
 
         $analysis = $this->readTemporaryJournalAnalysis($request->input('analysis_path'));
+        $this->validateJournalTaxAccountMappingSelections(
+            $request->input('tax_account_mappings', []),
+            $business_id,
+            $analysis['entries'],
+            $request->input('account_mappings', [])
+        );
         $offset = (int) $request->input('offset', 0);
         $chunk_size = (int) $request->input('chunk_size', 50);
         $chunk_size = max(10, min($chunk_size, 100));
@@ -347,6 +387,20 @@ class JournalEntryController extends Controller
             $next_offset = $offset + count($entries);
             $is_complete = $next_offset >= count($analysis['entries']);
             $status = $is_complete ? 'imported' : 'processing';
+            $taxReconciliation = ['review' => 0];
+
+            if ($is_complete) {
+                $this->persistJournalTaxAccountMappings(
+                    $analysis,
+                    $business_id,
+                    request()->session()->get('user.id'),
+                    $request->only(['account_mappings', 'tax_account_mappings'])
+                );
+                $taxReconciliation = $this->reconcileJournalImportTaxes(
+                    (int) $request->input('import_id'),
+                    (int) $business_id
+                );
+            }
 
             DB::table('accounting_journal_imports')
                 ->where('id', $request->input('import_id'))
@@ -356,7 +410,8 @@ class JournalEntryController extends Controller
                     'skipped_entries' => DB::raw('skipped_entries + '.$result['skipped']),
                     'processed_entries' => $next_offset,
                     'status' => $status,
-                    'last_message' => 'Processed '.$next_offset.' / '.count($analysis['entries']),
+                    'last_message' => 'Processed '.$next_offset.' / '.count($analysis['entries'])
+                        .($is_complete ? '; tax perlu ditinjau: '.($taxReconciliation['review'] ?? 0) : ''),
                     'updated_at' => now(),
                 ]);
 
@@ -408,6 +463,8 @@ class JournalEntryController extends Controller
 
         $request->validate([
             'file_path' => 'required|string',
+            'tax_account_mappings' => 'sometimes|array',
+            'tax_account_mappings.*' => 'nullable|string',
         ]);
 
         if (! file_exists(public_path($request->input('file_path')))) {
@@ -418,12 +475,17 @@ class JournalEntryController extends Controller
         }
 
         $analysis = $this->analyzeJournalWorkbook($request->input('file_path'), $business_id);
+        $this->validateJournalTaxAccountMappingSelections(
+            $request->input('tax_account_mappings', []),
+            $business_id,
+            $analysis['entries'],
+            $request->input('account_mappings', [])
+        );
 
         try {
             DB::beginTransaction();
 
             $user_id = request()->session()->get('user.id');
-            $include_non_journal = $request->boolean('include_non_journal');
             $create_missing_accounts = $request->boolean('create_missing_accounts');
             $create_missing_main_accounts = $request->boolean('create_missing_main_accounts');
             $account_mappings = array_filter($request->input('account_mappings', []));
@@ -437,7 +499,7 @@ class JournalEntryController extends Controller
                 'unbalanced_entries' => $analysis['unbalanced_count'],
                 'duplicate_entries' => $analysis['duplicate_count'],
                 'missing_accounts' => count($analysis['missing_accounts']),
-                'unsupported_entries' => $analysis['non_journal_count'],
+                'unsupported_entries' => 0,
                 'summary' => json_encode($this->compactJournalAnalysisSummary($analysis)),
                 'created_by' => $user_id,
                 'created_at' => now(),
@@ -451,11 +513,6 @@ class JournalEntryController extends Controller
 
             foreach ($analysis['entries'] as $entry) {
                 if ($entry['is_unbalanced'] || $entry['is_duplicate'] || $entry['exists_in_system']) {
-                    $skipped++;
-                    continue;
-                }
-
-                if ($entry['source_type'] !== 'Journal Entry' && ! $include_non_journal) {
                     $skipped++;
                     continue;
                 }
@@ -488,6 +545,7 @@ class JournalEntryController extends Controller
                 $mapping->type = 'journal_entry';
                 $mapping->created_by = $user_id;
                 $mapping->operation_date = $entry['date'];
+                $this->applyJournalSourceLinkToMapping($mapping, $entry);
                 $mapping->save();
 
                 foreach ($resolved_lines as $line) {
@@ -519,11 +577,23 @@ class JournalEntryController extends Controller
                 $imported++;
             }
 
+            $this->persistJournalTaxAccountMappings(
+                $analysis,
+                $business_id,
+                $user_id,
+                [
+                    'account_mappings' => $account_mappings,
+                    'tax_account_mappings' => $request->input('tax_account_mappings', []),
+                ]
+            );
+            $taxReconciliation = $this->reconcileJournalImportTaxes($journal_import_id, (int) $business_id);
+
             DB::table('accounting_journal_imports')
                 ->where('id', $journal_import_id)
                 ->update([
                     'imported_entries' => $imported,
                     'skipped_entries' => $skipped,
+                    'last_message' => 'Import selesai; tax perlu ditinjau: '.($taxReconciliation['review'] ?? 0),
                     'updated_at' => now(),
                 ]);
 
@@ -553,7 +623,6 @@ class JournalEntryController extends Controller
         $business_id = request()->session()->get('user.business_id');
         $user_id = request()->session()->get('user.id');
         $journal_import_id = (int) $request->input('import_id');
-        $include_non_journal = $request->boolean('include_non_journal');
         $create_missing_accounts = $request->boolean('create_missing_accounts');
         $create_missing_main_accounts = $request->boolean('create_missing_main_accounts');
         $account_mappings = array_filter($request->input('account_mappings', []));
@@ -565,11 +634,6 @@ class JournalEntryController extends Controller
 
         foreach ($entries as $entry) {
             if ($entry['is_unbalanced'] || $entry['is_duplicate'] || $entry['exists_in_system']) {
-                $skipped++;
-                continue;
-            }
-
-            if ($entry['source_type'] !== 'Journal Entry' && ! $include_non_journal) {
                 $skipped++;
                 continue;
             }
@@ -602,6 +666,7 @@ class JournalEntryController extends Controller
             $mapping->type = 'journal_entry';
             $mapping->created_by = $user_id;
             $mapping->operation_date = $entry['date'];
+            $this->applyJournalSourceLinkToMapping($mapping, $entry);
             $mapping->save();
 
             foreach ($resolved_lines as $line) {
@@ -641,7 +706,6 @@ class JournalEntryController extends Controller
         $business_id = $import->business_id;
         $user_id = $import->created_by;
         $journal_import_id = $import->id;
-        $include_non_journal = ! empty($options['include_non_journal']);
         $create_missing_accounts = ! empty($options['create_missing_accounts']);
         $create_missing_main_accounts = ! empty($options['create_missing_main_accounts']);
         $account_mappings = ! empty($options['account_mappings']) && is_array($options['account_mappings']) ? array_filter($options['account_mappings']) : [];
@@ -653,11 +717,6 @@ class JournalEntryController extends Controller
 
         foreach ($entries as $entry) {
             if ($entry['is_unbalanced'] || $entry['is_duplicate'] || $entry['exists_in_system']) {
-                $skipped++;
-                continue;
-            }
-
-            if ($entry['source_type'] !== 'Journal Entry' && ! $include_non_journal) {
                 $skipped++;
                 continue;
             }
@@ -690,6 +749,7 @@ class JournalEntryController extends Controller
             $mapping->type = 'journal_entry';
             $mapping->created_by = $user_id;
             $mapping->operation_date = $entry['date'];
+            $this->applyJournalSourceLinkToMapping($mapping, $entry);
             $mapping->save();
 
             foreach ($resolved_lines as $line) {
@@ -724,6 +784,95 @@ class JournalEntryController extends Controller
         return compact('imported', 'skipped');
     }
 
+    public function persistJournalTaxAccountMappings(array $analysis, int $business_id, int $user_id, array $options): void
+    {
+        $selections = $options['tax_account_mappings'] ?? [];
+        $account_mappings = $options['account_mappings'] ?? [];
+
+        $this->validateJournalTaxAccountMappingSelections(
+            $selections,
+            $business_id,
+            $analysis['entries'] ?? [],
+            $account_mappings
+        );
+
+        $lines_by_key = [];
+        foreach ($analysis['entries'] ?? [] as $entry) {
+            foreach ($entry['lines'] ?? [] as $line) {
+                $lines_by_key[$this->journalLineAccountKey($line)] = $line;
+            }
+        }
+
+        $account_cache = $this->getAccountingAccountCache($business_id);
+        foreach ($selections as $account_key => $selection) {
+            $selection = trim((string) $selection);
+            if ($selection === '') {
+                continue;
+            }
+
+            $line = $lines_by_key[$account_key] ?? null;
+            if ($line === null) {
+                continue;
+            }
+
+            $accounting_account_id = null;
+            if (! empty($account_mappings[$account_key])) {
+                $accounting_account_id = AccountingAccount::where('business_id', $business_id)
+                    ->where('id', (int) $account_mappings[$account_key])
+                    ->value('id');
+            }
+            if (empty($accounting_account_id)) {
+                $account = $this->findAccountInCache($line, $account_cache);
+                $accounting_account_id = $account['id'] ?? null;
+            }
+            if (empty($accounting_account_id)) {
+                continue;
+            }
+
+            $mapping_query = DB::table('accounting_journal_tax_account_mappings')
+                ->where('business_id', $business_id)
+                ->where('accounting_account_id', $accounting_account_id);
+
+            if ($selection === '__clear__') {
+                $mapping_query->delete();
+                continue;
+            }
+
+            $existing_mapping = $mapping_query->first();
+            if (! empty($existing_mapping) && (int) $existing_mapping->tax_rate_id === (int) $selection) {
+                continue;
+            }
+
+            $now = now();
+            if (empty($existing_mapping)) {
+                DB::table('accounting_journal_tax_account_mappings')->insert([
+                    'business_id' => $business_id,
+                    'accounting_account_id' => $accounting_account_id,
+                    'tax_rate_id' => (int) $selection,
+                    'created_by' => $user_id,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ]);
+            } else {
+                $mapping_query->update([
+                    'tax_rate_id' => (int) $selection,
+                    'created_by' => $user_id,
+                    'updated_at' => $now,
+                ]);
+            }
+        }
+    }
+
+    public function reconcileJournalImportTaxes(int $journalImportId, int $businessId): array
+    {
+        return app(JournalTaxReconciliationService::class)->reconcileImport($journalImportId, $businessId);
+    }
+
+    public function revertJournalImportTaxes(int $journalImportId, int $businessId): int
+    {
+        return app(JournalTaxReconciliationService::class)->revertImport($journalImportId, $businessId);
+    }
+
     public function revertImport($id)
     {
         $business_id = request()->session()->get('user.business_id');
@@ -747,6 +896,7 @@ class JournalEntryController extends Controller
                 throw new \Exception('Import batch tidak ditemukan atau sudah direvert.');
             }
 
+            $this->revertJournalImportTaxes((int) $id, (int) $business_id);
             AccountTransaction::where('journal_import_id', $id)->delete();
             AccountingAccountsTransaction::where('journal_import_id', $id)->delete();
             AccountingAccTransMapping::where('business_id', $business_id)
@@ -1048,7 +1198,7 @@ class JournalEntryController extends Controller
         ];
     }
 
-    public function analyzeJournalWorkbook($path, $business_id)
+    public function analyzeJournalWorkbook($path, $business_id, ?callable $progressCallback = null)
     {
         $source_date_range = null;
         $account_cache = $this->getAccountingAccountCache($business_id);
@@ -1065,7 +1215,11 @@ class JournalEntryController extends Controller
         $missing_accounts = [];
         $line_hashes = [];
 
-        foreach ($this->readJournalWorkbookRows(public_path($path)) as $index => $row) {
+        if ($progressCallback) {
+            $progressCallback(['message' => 'Membuka workbook dan menyiapkan analisis.']);
+        }
+
+        foreach ($this->readJournalWorkbookRows(public_path($path), $progressCallback) as $index => $row) {
             if ($index === 2) {
                 $source_date_range = $row[0] ?? null;
             }
@@ -1150,15 +1304,38 @@ class JournalEntryController extends Controller
 
         foreach ($entries as $key => $entry) {
             $entries[$key]['is_unbalanced'] = abs($entry['debit_total'] - $entry['credit_total']) > 0.01;
-            $entries[$key]['duplicate_matches'] = $this->findExistingFinancialMatches($entry, $business_id);
-            $entries[$key]['exists_in_system'] = isset($existing_source_keys[$entry['source_key']]) || ! empty($entries[$key]['duplicate_matches']);
+            $entries[$key]['exists_in_system'] = isset($existing_source_keys[$entry['source_key']]);
+            $entries[$key]['duplicate_matches'] = $entries[$key]['exists_in_system']
+                ? ['Jenis, nomor, dan tanggal ini sudah pernah diimport ke GL.']
+                : [];
             $entries[$key]['line_count'] = count($entry['lines']);
+        }
+
+        if ($progressCallback) {
+            $progressCallback(['message' => 'Mencocokkan referensi transaksi sumber dengan data bisnis.']);
+        }
+
+        $source_links = $this->resolveJournalSourceLinks($entries, $business_id);
+        foreach ($entries as $key => $entry) {
+            $entries[$key] = array_merge($entry, $source_links[$key] ?? [
+                'source_link_status' => 'unmatched',
+                'source_record_type' => null,
+                'source_record_id' => null,
+                'source_link_note' => 'Sumber transaksi tidak dapat dipastikan.',
+                'source_link_label' => null,
+                'source_link_candidates' => [],
+            ]);
         }
 
         $types = [];
         foreach ($entries as $entry) {
             $types[$entry['source_type']] = ($types[$entry['source_type']] ?? 0) + 1;
         }
+
+        $source_link_counts = collect($entries)->countBy('source_link_status');
+        $source_link_matched_count = (int) ($source_link_counts['matched'] ?? 0);
+        $source_link_unmatched_count = (int) ($source_link_counts['unmatched'] ?? 0);
+        $source_link_ambiguous_count = (int) ($source_link_counts['ambiguous'] ?? 0);
 
         return [
             'source_date_range' => $source_date_range,
@@ -1169,22 +1346,311 @@ class JournalEntryController extends Controller
             'unbalanced_count' => count(array_filter($entries, fn ($entry) => $entry['is_unbalanced'])),
             'duplicate_count' => count($duplicate_keys),
             'existing_count' => count(array_filter($entries, fn ($entry) => $entry['exists_in_system'])),
+            'source_link_matched_count' => $source_link_matched_count,
+            'source_link_unmatched_count' => $source_link_unmatched_count,
+            'source_link_ambiguous_count' => $source_link_ambiguous_count,
+            'source_link_review_count' => $source_link_unmatched_count + $source_link_ambiguous_count,
             'missing_accounts' => array_values($missing_accounts),
             'entries' => $entries,
         ];
     }
 
-    private function readJournalWorkbookRows($full_path)
+    private function resolveJournalSourceLinks(array $entries, int $business_id): array
+    {
+        $definitions = [
+            'Journal Entry' => ['model' => null, 'record_type' => null],
+            'Sales Invoice' => ['model' => 'transaction', 'record_type' => Transaction::class, 'types' => ['sell']],
+            'Purchase Invoice' => ['model' => 'transaction', 'record_type' => Transaction::class, 'types' => ['purchase']],
+            'Expense' => ['model' => 'transaction', 'record_type' => Transaction::class, 'types' => ['expense']],
+            'Purchase Payment' => ['model' => 'payment', 'record_type' => TransactionPayment::class, 'types' => ['purchase']],
+            'Receive Payment' => ['model' => 'payment', 'record_type' => TransactionPayment::class, 'types' => ['sell']],
+            'Bank Deposit' => ['model' => 'account_transaction', 'record_type' => AccountTransaction::class],
+            'Bank Transfer' => ['model' => 'account_transaction', 'record_type' => AccountTransaction::class],
+            'Bank Withdrawal' => ['model' => 'account_transaction', 'record_type' => AccountTransaction::class],
+            'Stock Adjustment' => ['model' => 'transaction', 'record_type' => Transaction::class, 'types' => ['stock_adjustment']],
+            'Stock In/Out' => ['model' => 'transaction', 'record_type' => Transaction::class, 'types' => ['opening_stock', 'sell_transfer', 'purchase_transfer', 'stock_adjustment']],
+            'Opening Balance' => ['model' => 'transaction', 'record_type' => Transaction::class, 'types' => ['opening_balance', 'opening_stock']],
+            'Reversal' => ['model' => 'account_transaction', 'record_type' => AccountTransaction::class],
+        ];
+
+        $entriesByType = [];
+        foreach ($entries as $key => $entry) {
+            $entriesByType[$entry['source_type']][] = [$key, $entry];
+        }
+
+        $links = [];
+        foreach ($entriesByType as $sourceType => $typedEntries) {
+            $definition = $definitions[$sourceType] ?? null;
+            if ($definition === null) {
+                foreach ($typedEntries as [$key]) {
+                    $links[$key] = $this->unmatchedJournalSourceLink('Jenis sumber belum memiliki aturan pencocokan yang aman.');
+                }
+                continue;
+            }
+
+            if ($definition['model'] === null) {
+                foreach ($typedEntries as [$key]) {
+                    $links[$key] = [
+                        'source_link_status' => 'not_applicable',
+                        'source_record_type' => null,
+                        'source_record_id' => null,
+                        'source_link_note' => 'Journal Entry manual tidak memiliki transaksi sumber untuk ditautkan.',
+                        'source_link_label' => null,
+                        'source_link_candidates' => [],
+                    ];
+                }
+                continue;
+            }
+
+            $sourceNumbers = collect($typedEntries)
+                ->map(fn ($item) => trim((string) ($item[1]['source_number'] ?? '')))
+                ->filter()
+                ->unique()
+                ->values()
+                ->all();
+            $numericIds = [];
+            foreach ($sourceNumbers as $sourceNumber) {
+                if (filter_var($sourceNumber, FILTER_VALIDATE_INT) !== false) {
+                    $numericIds[] = $sourceNumber;
+                } elseif (preg_match('/^(\d+)\/(.+)$/', $sourceNumber, $idAndReference)) {
+                    $numericIds[] = $idAndReference[1];
+                }
+            }
+            $numericIds = array_values(array_unique($numericIds));
+            $candidates = collect();
+
+            if ($sourceNumbers !== [] || $numericIds !== []) {
+                if ($definition['model'] === 'transaction') {
+                    $query = DB::table('transactions')
+                        ->where('business_id', $business_id)
+                        ->whereIn('type', $definition['types'])
+                        ->where(function ($query) use ($sourceNumbers, $numericIds) {
+                            if ($sourceNumbers !== []) {
+                                $query->whereIn('invoice_no', $sourceNumbers)
+                                    ->orWhereIn('ref_no', $sourceNumbers);
+                            }
+                            if ($numericIds !== []) {
+                                $method = $sourceNumbers === [] ? 'whereIn' : 'orWhereIn';
+                                $query->{$method}('id', $numericIds);
+                            }
+                        })
+                        ->select(
+                            'id',
+                            'invoice_no as reference_one',
+                            'ref_no as reference_two',
+                            'transaction_date as source_date',
+                            'final_total as source_amount'
+                        );
+                    $candidates = $query->get()->map(fn ($row) => $this->journalSourceCandidate($row, $definition['record_type'], ['reference_one', 'reference_two']));
+                } elseif ($definition['model'] === 'payment') {
+                    $query = DB::table('transaction_payments')
+                        ->join('transactions as source_transactions', 'source_transactions.id', '=', 'transaction_payments.transaction_id')
+                        ->where('source_transactions.business_id', $business_id)
+                        ->whereIn('source_transactions.type', $definition['types'])
+                        ->where(function ($query) use ($sourceNumbers, $numericIds) {
+                            if ($sourceNumbers !== []) {
+                                $query->whereIn('transaction_payments.payment_ref_no', $sourceNumbers);
+                            }
+                            if ($numericIds !== []) {
+                                $method = $sourceNumbers === [] ? 'whereIn' : 'orWhereIn';
+                                $query->{$method}('transaction_payments.id', $numericIds);
+                            }
+                        })
+                        ->select(
+                            'transaction_payments.id',
+                            'transaction_payments.payment_ref_no as reference_one',
+                            DB::raw('NULL as reference_two'),
+                            'transaction_payments.paid_on as source_date',
+                            'transaction_payments.amount as source_amount'
+                        );
+                    $candidates = $query->get()->map(fn ($row) => $this->journalSourceCandidate($row, $definition['record_type'], ['reference_one']));
+                } else {
+                    $query = DB::table('account_transactions')
+                        ->join('accounts as source_accounts', 'source_accounts.id', '=', 'account_transactions.account_id')
+                        ->where('source_accounts.business_id', $business_id)
+                        ->whereNull('account_transactions.deleted_at')
+                        ->where(function ($query) use ($sourceNumbers, $numericIds) {
+                            if ($sourceNumbers !== []) {
+                                $query->whereIn('account_transactions.reff_no', $sourceNumbers);
+                            }
+                            if ($numericIds !== []) {
+                                $method = $sourceNumbers === [] ? 'whereIn' : 'orWhereIn';
+                                $query->{$method}('account_transactions.id', $numericIds);
+                            }
+                        })
+                        ->select(
+                            'account_transactions.id',
+                            'account_transactions.reff_no as reference_one',
+                            DB::raw('NULL as reference_two'),
+                            'account_transactions.operation_date as source_date',
+                            'account_transactions.amount as source_amount'
+                        );
+                    $candidates = $query->get()->map(fn ($row) => $this->journalSourceCandidate($row, $definition['record_type'], ['reference_one']));
+                }
+            }
+
+            foreach ($typedEntries as [$key, $entry]) {
+                $sourceNumber = trim((string) ($entry['source_number'] ?? ''));
+                $matches = $candidates->filter(function ($candidate) use ($sourceNumber) {
+                    if ($sourceNumber === '') {
+                        return false;
+                    }
+                    foreach ($candidate['references'] as $reference) {
+                        if (strcasecmp($reference, $sourceNumber) === 0) {
+                            return true;
+                        }
+                    }
+
+                    return false;
+                })->unique('id')->values();
+
+                if ($matches->isEmpty() && $sourceNumber !== '') {
+                    $matches = $candidates->filter(function ($candidate) use ($sourceNumber) {
+                        if ((string) $candidate['id'] === $sourceNumber) {
+                            return true;
+                        }
+
+                        if (preg_match('/^(\d+)\/(.+)$/', $sourceNumber, $idAndReference)
+                            && (string) $candidate['id'] === $idAndReference[1]) {
+                            foreach ($candidate['references'] as $reference) {
+                                if (strcasecmp($reference, $idAndReference[2]) === 0) {
+                                    return true;
+                                }
+                            }
+                        }
+
+                        return false;
+                    })->unique('id')->values();
+                }
+
+                if ($matches->count() > 1) {
+                    $dateMatches = $matches->filter(fn ($candidate) => $candidate['date'] === $entry['date'])->values();
+                    if ($dateMatches->count() === 1) {
+                        $matches = $dateMatches;
+                    } else {
+                        $amountCandidates = $dateMatches->isNotEmpty() ? $dateMatches : $matches;
+                        $amountMatches = $amountCandidates
+                            ->filter(fn ($candidate) => abs((float) $candidate['amount'] - (float) $entry['debit_total']) <= 0.01)
+                            ->values();
+                        if ($amountMatches->count() === 1) {
+                            $matches = $amountMatches;
+                        }
+                    }
+                }
+
+                if ($matches->count() === 1) {
+                    $candidate = $matches->first();
+                    $validationNotes = [];
+                    if ($candidate['date'] !== $entry['date']) {
+                        $validationNotes[] = 'tanggal sumber berbeda dari tanggal Journal';
+                    }
+                    if (abs((float) $candidate['amount'] - (float) $entry['debit_total']) > 0.01) {
+                        $validationNotes[] = 'total sumber berbeda dari total debit Journal';
+                    }
+                    $linkNote = 'Sumber unik ditemukan berdasarkan jenis dan nomor dokumen.';
+                    if ($validationNotes !== []) {
+                        $linkNote .= ' Perlu ditinjau: '.implode('; ', $validationNotes).'.';
+                    }
+                    $links[$key] = [
+                        'source_link_status' => 'matched',
+                        'source_record_type' => $candidate['record_type'],
+                        'source_record_id' => $candidate['id'],
+                        'source_link_note' => $linkNote,
+                        'source_link_label' => $candidate['label'],
+                        'source_link_candidates' => [$candidate['label']],
+                    ];
+                } elseif ($matches->count() > 1) {
+                    $labels = $matches->take(5)->pluck('label')->values()->all();
+                    $links[$key] = [
+                        'source_link_status' => 'ambiguous',
+                        'source_record_type' => null,
+                        'source_record_id' => null,
+                        'source_link_note' => 'Ditemukan '.$matches->count().' sumber yang cocok; relasi perlu ditinjau.',
+                        'source_link_label' => null,
+                        'source_link_candidates' => $labels,
+                    ];
+                } else {
+                    $links[$key] = $this->unmatchedJournalSourceLink(
+                        "Tidak ditemukan sumber dengan nomor '{$sourceNumber}' untuk jenis transaksi ini dalam business aktif."
+                    );
+                }
+            }
+        }
+
+        return $links;
+    }
+
+    private function journalSourceCandidate($row, string $recordType, array $referenceFields): array
+    {
+        $references = [];
+        foreach ($referenceFields as $field) {
+            $reference = trim((string) ($row->{$field} ?? ''));
+            if ($reference !== '') {
+                $references[] = $reference;
+            }
+        }
+        $id = (int) $row->id;
+        $referenceLabel = $references[0] ?? null;
+
+        return [
+            'id' => $id,
+            'record_type' => $recordType,
+            'date' => substr((string) $row->source_date, 0, 10),
+            'amount' => (float) $row->source_amount,
+            'references' => $references,
+            'label' => class_basename($recordType).' #'.$id.($referenceLabel !== null && $referenceLabel !== (string) $id ? ' ('.$referenceLabel.')' : ''),
+        ];
+    }
+
+    private function applyJournalSourceLinkToMapping(AccountingAccTransMapping $mapping, array $entry): void
+    {
+        $mapping->source_record_type = $entry['source_record_type'] ?? null;
+        $mapping->source_record_id = $entry['source_record_id'] ?? null;
+        $mapping->source_link_status = $entry['source_link_status'] ?? 'unmatched';
+        $mapping->source_link_note = $entry['source_link_note'] ?? 'Sumber transaksi perlu ditinjau.';
+    }
+
+    private function unmatchedJournalSourceLink(string $note): array
+    {
+        return [
+            'source_link_status' => 'unmatched',
+            'source_record_type' => null,
+            'source_record_id' => null,
+            'source_link_note' => $note,
+            'source_link_label' => null,
+            'source_link_candidates' => [],
+        ];
+    }
+
+    private function readJournalWorkbookRows($full_path, ?callable $progressCallback = null)
     {
         $reader = IOFactory::createReaderForFile($full_path);
         $reader->setReadDataOnly(true);
         $worksheet_info = $reader->listWorksheetInfo($full_path);
         $highest_row = (int) ($worksheet_info[0]['totalRows'] ?? 0);
         $highest_column = $worksheet_info[0]['lastColumnLetter'] ?? 'E';
-        $chunk_size = 500;
+        $chunk_size = 5000;
+        $processed_rows = 0;
+
+        if ($progressCallback) {
+            $progressCallback([
+                'processed_rows' => 0,
+                'total_rows' => $highest_row,
+                'message' => 'Membaca baris 0 / '.$highest_row.' dari workbook Excel.',
+            ]);
+        }
 
         for ($start_row = 1; $start_row <= $highest_row; $start_row += $chunk_size) {
             $end_row = min($start_row + $chunk_size - 1, $highest_row);
+
+            if ($progressCallback) {
+                $progressCallback([
+                    'processed_rows' => $processed_rows,
+                    'total_rows' => $highest_row,
+                    'message' => 'Menyiapkan baris '.$start_row.'-'.$end_row.' / '.$highest_row.' dari workbook Excel.',
+                ]);
+            }
+
             $reader->setReadFilter(new class($start_row, $end_row) implements \PhpOffice\PhpSpreadsheet\Reader\IReadFilter {
                 private $start_row;
 
@@ -1207,92 +1673,21 @@ class JournalEntryController extends Controller
             $rows = $sheet->rangeToArray('A'.$start_row.':'.$highest_column.$end_row, null, true, true, false);
 
             foreach ($rows as $offset => $row) {
+                $processed_rows = $start_row + $offset;
                 yield ($start_row + $offset - 1) => $row;
+
+                if ($progressCallback && ($processed_rows === $end_row || $processed_rows === $highest_row)) {
+                    $progressCallback([
+                        'processed_rows' => $processed_rows,
+                        'total_rows' => $highest_row,
+                        'message' => 'Menganalisis baris '.$processed_rows.' / '.$highest_row.' dari workbook Excel.',
+                    ]);
+                }
             }
 
             $spreadsheet->disconnectWorksheets();
             unset($spreadsheet, $sheet, $rows);
         }
-    }
-
-    private function findExistingFinancialMatches($entry, $business_id)
-    {
-        if (empty($entry['date'])) {
-            return [];
-        }
-
-        $matches = [];
-        $date = $entry['date'];
-        $source_number = (string) $entry['source_number'];
-        $ref_no = $entry['source_type'].' #'.$entry['source_number'];
-        $amount = round((float) $entry['debit_total'], 4);
-
-        $accounting_duplicate = DB::table('accounting_acc_trans_mappings as atm')
-            ->join('accounting_accounts_transactions as aat', 'aat.acc_trans_mapping_id', '=', 'atm.id')
-            ->where('atm.business_id', $business_id)
-            ->whereDate('atm.operation_date', $date)
-            ->where(function ($q) use ($ref_no, $source_number) {
-                $q->where('atm.ref_no', $ref_no)
-                    ->orWhere('atm.ref_no', $source_number)
-                    ->orWhere('atm.ref_no', 'like', '%#'.$source_number);
-            })
-            ->where('aat.type', 'debit')
-            ->groupBy('atm.id', 'atm.ref_no')
-            ->havingRaw('ROUND(SUM(aat.amount), 4) = ?', [$amount])
-            ->select('atm.ref_no')
-            ->first();
-        if (! empty($accounting_duplicate)) {
-            $matches[] = 'Accounting journal: '.$accounting_duplicate->ref_no;
-        }
-
-        $transaction_duplicate = DB::table('transactions')
-            ->where('business_id', $business_id)
-            ->whereDate('transaction_date', $date)
-            ->where(function ($q) use ($source_number, $ref_no) {
-                $q->where('invoice_no', $source_number)
-                    ->orWhere('ref_no', $source_number)
-                    ->orWhere('invoice_no', $ref_no)
-                    ->orWhere('ref_no', $ref_no);
-            })
-            ->whereRaw('ROUND(final_total, 4) = ?', [$amount])
-            ->select('id', 'type', 'invoice_no', 'ref_no')
-            ->first();
-        if (! empty($transaction_duplicate)) {
-            $matches[] = 'Transaction '.$transaction_duplicate->type.': '.($transaction_duplicate->invoice_no ?: $transaction_duplicate->ref_no);
-        }
-
-        $payment_duplicate = DB::table('transaction_payments as tp')
-            ->join('transactions as t', 'tp.transaction_id', '=', 't.id')
-            ->where('t.business_id', $business_id)
-            ->whereDate('tp.paid_on', $date)
-            ->where(function ($q) use ($source_number, $ref_no) {
-                $q->where('tp.payment_ref_no', $source_number)
-                    ->orWhere('tp.payment_ref_no', $ref_no);
-            })
-            ->whereRaw('ROUND(tp.amount, 4) = ?', [$amount])
-            ->select('tp.payment_ref_no')
-            ->first();
-        if (! empty($payment_duplicate)) {
-            $matches[] = 'Payment: '.$payment_duplicate->payment_ref_no;
-        }
-
-        $account_transaction_duplicate = DB::table('account_transactions as at')
-            ->join('accounts as a', 'at.account_id', '=', 'a.id')
-            ->where('a.business_id', $business_id)
-            ->whereNull('at.deleted_at')
-            ->whereDate('at.operation_date', $date)
-            ->where(function ($q) use ($source_number, $ref_no) {
-                $q->where('at.reff_no', $source_number)
-                    ->orWhere('at.reff_no', $ref_no);
-            })
-            ->whereRaw('ROUND(at.amount, 4) = ?', [$amount])
-            ->select('at.reff_no')
-            ->first();
-        if (! empty($account_transaction_duplicate)) {
-            $matches[] = 'Payment account transaction: '.$account_transaction_duplicate->reff_no;
-        }
-
-        return $matches;
     }
 
     public function deleteTemporaryJournalFile($path)
@@ -1390,6 +1785,233 @@ class JournalEntryController extends Controller
             'by_gl_code' => $accounts->whereNotNull('gl_code')->keyBy(fn ($account) => strtolower(trim($account->gl_code)))->toArray(),
             'by_name' => $accounts->keyBy(fn ($account) => strtolower(trim($account->name)))->toArray(),
         ];
+    }
+
+    private function getTaxReconciliationReviews(int $business_id)
+    {
+        return DB::table('accounting_acc_trans_mappings as mapping')
+            ->join('accounting_journal_imports as import', 'import.id', '=', 'mapping.journal_import_id')
+            ->where('mapping.business_id', $business_id)
+            ->where('import.business_id', $business_id)
+            ->where('mapping.tax_reconciliation_status', 'review')
+            ->orderByDesc('mapping.updated_at')
+            ->limit(50)
+            ->get([
+                'import.file_name',
+                'import.created_at as import_created_at',
+                'mapping.ref_no',
+                'mapping.source_record_id',
+                'mapping.tax_reconciliation_note',
+                'mapping.journal_tax_amount',
+                'mapping.calculated_tax_amount',
+                'mapping.journal_total_amount',
+                'mapping.recalculated_final_total',
+            ]);
+    }
+
+    private function getJournalTaxMappingAccounts(array $entries, int $business_id): array
+    {
+        $account_cache = $this->getAccountingAccountCache($business_id);
+        $accounts = [];
+
+        foreach ($entries as $entry) {
+            foreach ($entry['lines'] ?? [] as $line) {
+                $key = $this->journalLineAccountKey($line);
+                if (isset($accounts[$key])) {
+                    continue;
+                }
+
+                $system_account = $this->findAccountInCache($line, $account_cache);
+                $accounts[$key] = [
+                    'key' => $key,
+                    'account_no' => $line['account_no'],
+                    'account_name' => $line['account_name'],
+                    'accounting_account_id' => $system_account['id'] ?? null,
+                    'accounting_account_name' => $system_account['name'] ?? null,
+                    'tax_rate_id' => null,
+                    'clear_stale_mapping' => false,
+                ];
+            }
+        }
+
+        $account_ids = collect($accounts)
+            ->pluck('accounting_account_id')
+            ->filter()
+            ->unique()
+            ->values();
+
+        if ($account_ids->isEmpty()) {
+            return array_values($accounts);
+        }
+
+        $mappings = DB::table('accounting_journal_tax_account_mappings as journal_tax_mappings')
+            ->leftJoin('tax_rates as mapped_tax_rates', function ($join) {
+                $join->on('mapped_tax_rates.id', '=', 'journal_tax_mappings.tax_rate_id')
+                    ->on('mapped_tax_rates.business_id', '=', 'journal_tax_mappings.business_id')
+                    ->whereNull('mapped_tax_rates.deleted_at');
+            })
+            ->where('journal_tax_mappings.business_id', $business_id)
+            ->whereIn('journal_tax_mappings.accounting_account_id', $account_ids)
+            ->select(
+                'journal_tax_mappings.accounting_account_id',
+                'journal_tax_mappings.tax_rate_id',
+                'mapped_tax_rates.id as active_tax_rate_id'
+            )
+            ->get()
+            ->keyBy('accounting_account_id');
+
+        foreach ($accounts as &$account) {
+            $mapping = $mappings->get($account['accounting_account_id']);
+            if (empty($mapping)) {
+                continue;
+            }
+
+            if (empty($mapping->active_tax_rate_id)) {
+                $account['clear_stale_mapping'] = true;
+            } else {
+                $account['tax_rate_id'] = (string) $mapping->tax_rate_id;
+            }
+        }
+        unset($account);
+
+        return array_values($accounts);
+    }
+
+    private function getJournalTaxRateOptions(int $business_id): array
+    {
+        return DB::table('tax_rates')
+            ->where('business_id', $business_id)
+            ->whereNull('deleted_at')
+            ->orderBy('is_tax_group')
+            ->orderBy('name')
+            ->get(['id', 'name', 'amount', 'is_tax_group'])
+            ->mapWithKeys(function ($tax_rate) {
+                $prefix = $tax_rate->is_tax_group ? 'Grup: ' : '';
+                $label = $prefix.$tax_rate->name;
+                if (! $tax_rate->is_tax_group && is_numeric($tax_rate->amount)) {
+                    $amount = rtrim(rtrim(number_format((float) $tax_rate->amount, 4, '.', ''), '0'), '.');
+                    $label .= ' ('.$amount.'%)';
+                }
+
+                return [$tax_rate->id => $label];
+            })
+            ->all();
+    }
+
+    private function validateJournalTaxAccountMappingSelections($selections, int $business_id, array $entries = [], $account_mappings = []): void
+    {
+        if (! is_array($selections) || ! is_array($account_mappings)) {
+            throw ValidationException::withMessages([
+                'tax_account_mappings' => 'Format pemetaan akun pajak tidak valid.',
+            ]);
+        }
+
+        $tax_rate_ids = [];
+        foreach ($selections as $account_key => $selection) {
+            if (! is_string($selection) && ! is_numeric($selection) && $selection !== null) {
+                throw ValidationException::withMessages([
+                    'tax_account_mappings' => 'Pilihan TaxRate tidak valid.',
+                ]);
+            }
+
+            $selection = trim((string) $selection);
+            if ($selection === '' || $selection === '__clear__') {
+                continue;
+            }
+
+            if (! ctype_digit($selection)) {
+                throw ValidationException::withMessages([
+                    'tax_account_mappings' => 'Pilihan TaxRate harus berasal dari daftar business ini.',
+                ]);
+            }
+
+            $tax_rate_ids[] = (int) $selection;
+        }
+
+        $tax_rate_ids = array_values(array_unique($tax_rate_ids));
+        if ($tax_rate_ids !== []) {
+            $valid_tax_rate_ids = DB::table('tax_rates')
+                ->where('business_id', $business_id)
+                ->whereNull('deleted_at')
+                ->whereIn('id', $tax_rate_ids)
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->all();
+
+            if (count($valid_tax_rate_ids) !== count($tax_rate_ids)) {
+                throw ValidationException::withMessages([
+                    'tax_account_mappings' => 'TaxRate atau grup pajak harus berasal dari business yang aktif.',
+                ]);
+            }
+        }
+
+        $selected_keys = collect($selections)
+            ->filter(fn ($selection) => trim((string) $selection) !== '')
+            ->keys();
+        if ($selected_keys->isEmpty() || $entries === []) {
+            return;
+        }
+
+        $lines_by_key = [];
+        foreach ($entries as $entry) {
+            foreach ($entry['lines'] ?? [] as $line) {
+                $lines_by_key[$this->journalLineAccountKey($line)] = $line;
+            }
+        }
+
+        $missing_keys = $selected_keys->filter(fn ($key) => ! isset($lines_by_key[$key]));
+        if ($missing_keys->isNotEmpty()) {
+            throw ValidationException::withMessages([
+                'tax_account_mappings' => 'Pemetaan akun pajak tidak sesuai dengan akun pada workbook.',
+            ]);
+        }
+
+        $account_cache = $this->getAccountingAccountCache($business_id);
+        $account_mapping_ids = collect($account_mappings)
+            ->filter(fn ($id) => is_scalar($id) && ctype_digit((string) $id))
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values();
+        $valid_account_mapping_ids = $account_mapping_ids->isEmpty()
+            ? collect()
+            : AccountingAccount::where('business_id', $business_id)
+                ->whereIn('id', $account_mapping_ids)
+                ->pluck('id')
+                ->mapWithKeys(fn ($id) => [(int) $id => true]);
+
+        $resolved_selections = [];
+        foreach ($selections as $account_key => $selection) {
+            $selection = trim((string) $selection);
+            if ($selection === '') {
+                continue;
+            }
+
+            $line = $lines_by_key[$account_key];
+            $account_id = null;
+            $requested_account_id = $account_mappings[$account_key] ?? null;
+            if (is_scalar($requested_account_id)
+                && ctype_digit((string) $requested_account_id)
+                && $valid_account_mapping_ids->has((int) $requested_account_id)) {
+                $account_id = (int) $requested_account_id;
+            } else {
+                $account = $this->findAccountInCache($line, $account_cache);
+                $account_id = $account['id'] ?? null;
+            }
+
+            if ($account_id) {
+                $identity = 'account:'.$account_id;
+            } elseif (trim((string) $line['account_no']) !== '') {
+                $identity = 'new-gl:'.strtolower(trim((string) $line['account_no']));
+            } else {
+                $identity = 'new-name:'.strtolower(trim((string) $line['account_name']));
+            }
+            if (isset($resolved_selections[$identity]) && $resolved_selections[$identity] !== $selection) {
+                throw ValidationException::withMessages([
+                    'tax_account_mappings' => 'Satu akun GL tidak dapat dipetakan ke lebih dari satu TaxRate atau grup dalam import yang sama.',
+                ]);
+            }
+            $resolved_selections[$identity] = $selection;
+        }
     }
 
     private function getAccountingAccountOptions($business_id)

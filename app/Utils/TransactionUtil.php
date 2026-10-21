@@ -5436,6 +5436,66 @@ class TransactionUtil extends Util
     }
 
     /**
+     * Filter a Sell list query by product or variation details without joining
+     * sell lines into the result set, which would duplicate transaction rows.
+     */
+    public function filterSellsByProduct($query, string $keyword): void
+    {
+        $query->whereExists(function ($productQuery) use ($keyword) {
+            $productQuery->select(DB::raw(1))
+                ->from('transaction_sell_lines as search_tsl')
+                ->join('products as search_p', 'search_p.id', '=', 'search_tsl.product_id')
+                ->leftJoin('variations as search_v', 'search_v.id', '=', 'search_tsl.variation_id')
+                ->leftJoin('product_variations as search_pv', 'search_pv.id', '=', 'search_v.product_variation_id')
+                ->whereColumn('search_tsl.transaction_id', 'transactions.id')
+                ->whereNull('search_tsl.parent_sell_line_id')
+                ->where(function ($nameQuery) use ($keyword) {
+                    $nameQuery->where('search_p.name', 'like', "%{$keyword}%")
+                        ->orWhere('search_p.sku', 'like', "%{$keyword}%")
+                        ->orWhere('search_v.name', 'like', "%{$keyword}%")
+                        ->orWhere('search_v.sub_sku', 'like', "%{$keyword}%")
+                        ->orWhere('search_pv.name', 'like', "%{$keyword}%");
+                });
+        });
+    }
+
+    /**
+     * Build the compact product and variation labels used by the Sell list.
+     */
+    public function formatSellProductSummary($sellLines): string
+    {
+        return collect($sellLines)
+            ->filter(fn ($line) => empty($line->parent_sell_line_id) && ! empty($line->product_id))
+            ->map(function ($line) {
+                $product = $line->product;
+                if (! $product) {
+                    return null;
+                }
+
+                $label = trim((string) $product->name);
+                if ($product->type === 'variable') {
+                    $variation = $line->variations;
+                    $variationParts = [
+                        optional($variation?->product_variation)->name,
+                        optional($variation)->name,
+                    ];
+                    foreach ($variationParts as $variationPart) {
+                        $variationPart = trim((string) $variationPart);
+                        if ($variationPart !== '') {
+                            $label .= ' - ' . $variationPart;
+                        }
+                    }
+                }
+
+                return $label;
+            })
+            ->filter()
+            ->unique()
+            ->sort()
+            ->implode('||');
+    }
+
+    /**
      * Function to get ledger details
      */
     public function getLedgerDetails($contact_id, $start, $end, $format = 'format_1', $location_id = null, $line_details = false)

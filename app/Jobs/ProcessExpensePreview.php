@@ -38,7 +38,10 @@ class ProcessExpensePreview implements ShouldQueue
         if (! $batch->file_path || ! Storage::disk('local')->exists($batch->file_path)) {
             throw new \RuntimeException('File import Expense sudah tidak tersedia.');
         }
-        $overrides = json_decode((string) ($batch->date_overrides ?? '[]'), true) ?: [];
+        $overrides = array_merge(
+            json_decode((string) ($batch->date_overrides ?? '[]'), true) ?: [],
+            json_decode((string) ($batch->row_overrides ?? '[]'), true) ?: []
+        );
         $summary = $importService->preview(
             $this->batchId,
             $this->businessId,

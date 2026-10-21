@@ -14,7 +14,8 @@ class AnalyzeJournalImportJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public $timeout = 0;
+    // Match the queue worker timeout and stay below database retry_after.
+    public $timeout = 1800;
 
     public $tries = 1;
 
@@ -37,11 +38,20 @@ class AnalyzeJournalImportJob implements ShouldQueue
         try {
             DB::table('accounting_journal_imports')->where('id', $this->importId)->update([
                 'status' => 'analyzing',
-                'last_message' => 'Analyzing uploaded file...',
+                'last_message' => 'Worker mulai membuka workbook.',
                 'updated_at' => now(),
             ]);
 
-            $analysis = $controller->analyzeJournalWorkbook($import->file_path, $import->business_id);
+            $analysis = $controller->analyzeJournalWorkbook(
+                $import->file_path,
+                $import->business_id,
+                function (array $progress) {
+                    DB::table('accounting_journal_imports')->where('id', $this->importId)->update([
+                        'last_message' => $progress['message'] ?? 'Analisis workbook berjalan.',
+                        'updated_at' => now(),
+                    ]);
+                }
+            );
             $analysisPath = $controller->writeTemporaryJournalAnalysis($analysis);
 
             DB::table('accounting_journal_imports')->where('id', $this->importId)->update([
@@ -52,20 +62,34 @@ class AnalyzeJournalImportJob implements ShouldQueue
                 'unbalanced_entries' => $analysis['unbalanced_count'],
                 'duplicate_entries' => $analysis['duplicate_count'],
                 'missing_accounts' => count($analysis['missing_accounts']),
-                'unsupported_entries' => $analysis['non_journal_count'],
+                'unsupported_entries' => 0,
                 'summary' => json_encode($controller->compactJournalAnalysisSummary($analysis)),
                 'status' => 'analyzed',
-                'last_message' => 'Analysis completed.',
+                'last_message' => 'Analisis selesai; preview siap ditinjau.',
                 'updated_at' => now(),
             ]);
         } catch (\Throwable $e) {
             DB::table('accounting_journal_imports')->where('id', $this->importId)->update([
                 'status' => 'failed',
+                'last_message' => 'Analisis gagal. Buka detail batch untuk melihat kesalahan.',
                 'error_message' => $e->getMessage(),
                 'updated_at' => now(),
             ]);
 
             throw $e;
         }
+    }
+
+    public function failed(\Throwable $exception)
+    {
+        DB::table('accounting_journal_imports')
+            ->where('id', $this->importId)
+            ->whereIn('status', ['queued', 'analyzing'])
+            ->update([
+                'status' => 'failed',
+                'last_message' => 'Worker menghentikan analisis sebelum selesai.',
+                'error_message' => substr($exception->getMessage(), 0, 2000),
+                'updated_at' => now(),
+            ]);
     }
 }

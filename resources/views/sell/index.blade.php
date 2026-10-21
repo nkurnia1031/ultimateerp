@@ -73,6 +73,7 @@
                             <th>@lang('lang_v1.contact_no')</th>
                             <th>@lang('sale.location')</th>
                             <th>@lang('Tags')</th>
+                            <th>@lang('sale.products')</th>
 
                             <th>@lang('sale.payment_status')</th>
                             <th>@lang('lang_v1.payment_method')</th>
@@ -101,7 +102,7 @@
                     <tfoot>
                         <tr class="bg-gray font-17 footer-total text-center">
 
-                            <td colspan="7"><strong>@lang('sale.total'):</strong></td>
+                            <td colspan="8"><strong>@lang('sale.total'):</strong></td>
 
 
 
@@ -238,6 +239,12 @@
                     {
                         data: 'tags',
                         name: 'tags'
+                    },
+                    {
+                        data: 'products',
+                        name: 'products',
+                        orderable: false,
+                        searchable: true
                     },
 
                     {

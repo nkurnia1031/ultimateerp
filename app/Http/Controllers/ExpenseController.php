@@ -856,6 +856,26 @@ class ExpenseController extends Controller
         $business_id = request()->session()->get('user.business_id');
 
         $payment_types = $this->transactionUtil->payment_types(null, false, $business_id);
+        $expense_import_tax_options = TaxRate::where('business_id', $business_id)
+            ->orderBy('is_tax_group')
+            ->orderBy('name')
+            ->get(['id', 'name', 'amount', 'is_tax_group'])
+            ->map(function ($tax) {
+                $amount = is_numeric($tax->amount)
+                    ? rtrim(rtrim(number_format((float) $tax->amount, 4, '.', ''), '0'), '.')
+                    : null;
+                $label = ($tax->is_tax_group ? 'Grup: ' : '').$tax->name;
+                if (! $tax->is_tax_group && $amount !== null) {
+                    $label .= ' ('.$amount.'%)';
+                }
+
+                return [
+                    'id' => (int) $tax->id,
+                    'label' => $label,
+                ];
+            })
+            ->values()
+            ->all();
         $zip_loaded = extension_loaded('zip') ? true : false;
         $imported_sales = Transaction::where('business_id', $business_id)
             ->where('type', 'expense')
@@ -884,10 +904,10 @@ class ExpenseController extends Controller
                 'msg' => 'Please install/enable PHP Zip archive for import',
             ];
 
-            return view('expense.import', compact('payment_types', 'imported_sales_array', 'expense_import_batches'))
+            return view('expense.import', compact('payment_types', 'imported_sales_array', 'expense_import_batches', 'expense_import_tax_options'))
                 ->with('notification', $output);
         } else {
-            return view('expense.import', compact('payment_types', 'imported_sales_array', 'expense_import_batches'));
+            return view('expense.import', compact('payment_types', 'imported_sales_array', 'expense_import_batches', 'expense_import_tax_options'));
         }
     }
 
@@ -946,7 +966,7 @@ class ExpenseController extends Controller
     public function expenseImportPreviewRows(Request $request, string $batchId)
     {
         $businessId = $this->authorizeExpenseImport($request);
-        $sortColumns = ['source_row', 'group_key', 'group_key', 'group_key', 'status', 'status', 'source_row'];
+        $sortColumns = ['source_row', 'group_key', 'group_key', 'group_key', 'source_row', 'status', 'status', 'source_row'];
         $sortIndex = (int) $request->input('order.0.column', 0);
         $result = $this->expenseImportService->previewRows(
             $batchId,
@@ -978,6 +998,22 @@ class ExpenseController extends Controller
         $result = $this->expenseImportService->updateDate($batchId, $rowId, $businessId, $validated['field'], $validated['date']);
 
         return response()->json(['success' => true, 'summary' => $result, 'message' => 'Tanggal diperbarui dan preview dihitung ulang.']);
+    }
+
+    public function expenseImportUpdateTax(Request $request, string $batchId, int $rowId)
+    {
+        $businessId = $this->authorizeExpenseImport($request);
+        $validated = $request->validate([
+            'tax_rate_id' => ['required', 'integer', 'min:1'],
+        ]);
+        $result = $this->expenseImportService->updateTax(
+            $batchId,
+            $rowId,
+            $businessId,
+            (int) $validated['tax_rate_id']
+        );
+
+        return response()->json(['success' => true, 'summary' => $result, 'message' => 'TaxRate dipetakan dan preview dihitung ulang.']);
     }
 
     public function expenseImportConfirm(Request $request, string $batchId)

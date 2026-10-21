@@ -10,7 +10,7 @@
     <h1>Import Journal Entry</h1>
 </section>
 
-<section class="content no-print">
+<section id="journal_import_page" class="content no-print" data-status-url-base="{{ url('accounting/journal-entry/import') }}">
     @component('components.widget', ['class' => 'box-primary', 'title' => 'Upload & Analisa XLSX'])
         {!! Form::open([
             'url' => action([\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'analyzeImport']),
@@ -59,7 +59,7 @@
                     <div class="info-box">
                         <span class="info-box-icon bg-yellow"><i class="fas fa-layer-group"></i></span>
                         <div class="info-box-content">
-                            <span class="info-box-text">Di luar Journal</span>
+                            <span class="info-box-text">Transaksi selain Journal Entry</span>
                             <span class="info-box-number">{{ $analysis['non_journal_count'] }}</span>
                         </div>
                     </div>
@@ -94,6 +94,14 @@
                             <th>Sudah pernah diimport</th>
                             <td>{{ $analysis['existing_count'] }}</td>
                         </tr>
+                        <tr>
+                            <th>Relasi sumber cocok</th>
+                            <td>{{ $analysis['source_link_matched_count'] ?? 0 }}</td>
+                        </tr>
+                        <tr>
+                            <th>Relasi perlu ditinjau</th>
+                            <td>{{ $analysis['source_link_review_count'] ?? 0 }} ({{ $analysis['source_link_unmatched_count'] ?? 0 }} tidak ditemukan, {{ $analysis['source_link_ambiguous_count'] ?? 0 }} ambigu)</td>
+                        </tr>
                     </table>
                 </div>
                 <div class="col-md-6">
@@ -115,6 +123,45 @@
                     </table>
                 </div>
             </div>
+
+            @php
+                $source_link_review_entries = collect($analysis['entries'])->filter(function ($entry) {
+                    return in_array($entry['source_link_status'] ?? '', ['unmatched', 'ambiguous'], true);
+                })->take(50);
+            @endphp
+            @if($source_link_review_entries->isNotEmpty())
+                <h4>Relasi Sumber Perlu Ditinjau</h4>
+                <p class="help-block">Status relasi hanya untuk penautan. Entry yang lolos validasi tetap diproses ke GL; sistem hanya menghubungkan sumber yang cocok secara unik dan tidak membuat transaksi keuangan sumber baru. Tinjau nomor yang tidak ditemukan atau memiliki lebih dari satu kandidat.</p>
+                <div class="table-responsive" style="max-height: 320px; overflow: auto;">
+                    <table class="table table-bordered table-condensed">
+                        <thead>
+                            <tr>
+                                <th>Jenis</th>
+                                <th>Nomor</th>
+                                <th>Tanggal</th>
+                                <th>Status relasi</th>
+                                <th>Kandidat</th>
+                                <th>Catatan</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach($source_link_review_entries as $entry)
+                                <tr class="{{ ($entry['source_link_status'] ?? '') === 'ambiguous' ? 'warning' : 'danger' }}">
+                                    <td>{{ $entry['source_type'] }}</td>
+                                    <td>{{ $entry['source_number'] }}</td>
+                                    <td>{{ $entry['date'] }}</td>
+                                    <td>{{ ($entry['source_link_status'] ?? '') === 'ambiguous' ? 'Ambigu' : 'Tidak ditemukan' }}</td>
+                                    <td>{{ implode(', ', $entry['source_link_candidates'] ?? []) ?: '—' }}</td>
+                                    <td>{{ $entry['source_link_note'] ?? '' }}</td>
+                                </tr>
+                            @endforeach
+                        </tbody>
+                    </table>
+                </div>
+                @if(($analysis['source_link_review_count'] ?? 0) > 50)
+                    <p class="help-block">Menampilkan 50 dari {{ $analysis['source_link_review_count'] }} entry yang perlu ditinjau.</p>
+                @endif
+            @endif
 
             {!! Form::open([
                 'url' => action([\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'storeImport']),
@@ -182,13 +229,51 @@
                 @endif
             @endif
 
+            @if(!empty($tax_mapping_accounts))
+                <h4>Mapping Akun GL ke TaxRate / Grup Pajak</h4>
+                <p class="help-block">Pilih TaxRate atau grup yang sesuai untuk akun GL pajak. Mapping disimpan per business dan digunakan pada import berikutnya. TaxRate baru tidak dibuat otomatis.</p>
+                <div class="table-responsive" style="max-height: 360px; overflow: auto;">
+                    <table class="table table-bordered table-condensed">
+                        <thead>
+                            <tr>
+                                <th>Nomor Akun Workbook</th>
+                                <th>Akun Workbook</th>
+                                <th>Akun GL Sistem</th>
+                                <th>TaxRate / Grup Pajak</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach($tax_mapping_accounts as $tax_account)
+                                @php
+                                    $selected_tax_rate = $tax_account['tax_rate_id']
+                                        ?? ($tax_account['clear_stale_mapping'] ? '__clear__' : '');
+                                @endphp
+                                <tr>
+                                    <td>{{ $tax_account['account_no'] }}</td>
+                                    <td>{{ $tax_account['account_name'] }}</td>
+                                    <td>{{ $tax_account['accounting_account_name'] ?: 'Belum terhubung; akan disimpan jika akun berhasil dipetakan saat import.' }}</td>
+                                    <td style="min-width: 300px;">
+                                        {!! Form::select(
+                                            'tax_account_mappings['.$tax_account['key'].']',
+                                            ['' => 'Tidak mengubah mapping', '__clear__' => 'Hapus mapping'] + $tax_rate_options,
+                                            $selected_tax_rate,
+                                            ['class' => 'form-control select2', 'style' => 'width: 100%;']
+                                        ) !!}
+                                    </td>
+                                </tr>
+                            @endforeach
+                        </tbody>
+                    </table>
+                </div>
+            @endif
+
             @php
                 $duplicate_entries = collect($analysis['entries'])->filter(function ($entry) {
                     return !empty($entry['duplicate_matches']);
                 })->take(20);
             @endphp
             @if($duplicate_entries->isNotEmpty())
-                <h4>Potensi Double Record di Database</h4>
+                <h4>Sudah Pernah Diimport</h4>
                 <div class="table-responsive" style="max-height: 260px; overflow: auto;">
                     <table class="table table-bordered table-condensed">
                         <thead>
@@ -211,17 +296,11 @@
                         </tbody>
                     </table>
                 </div>
-                <p class="help-block">Entry yang cocok berdasarkan tanggal, no ref, dan jumlah akan otomatis dilewati saat import.</p>
+                <p class="help-block">Entry dengan jenis, nomor, dan tanggal yang sudah ada dari import Journal sebelumnya akan dilewati agar tidak terimport dua kali.</p>
             @endif
 
-                <div class="checkbox">
-                    <label>
-                        {!! Form::checkbox('include_non_journal', 1, false) !!}
-                        Ikut import tipe non Journal Entry yang tidak ditemukan di transaksi/payment sebagai manual journal
-                    </label>
-                    <p class="help-block">
-                        Sales Invoice, Receive Payment, Expense, Reversal, dan Opening Balance akan dicek dulu berdasarkan tanggal, nomor referensi, dan jumlah pada tabel transactions, transaction_payments, account_transactions, dan journal accounting. Jika sudah ada, otomatis dilewati.
-                    </p>
+                <div class="alert alert-info">
+                    Semua jenis transaksi di workbook diproses sebagai GL. Relasi sumber hanya dibuat untuk satu sumber yang cocok; sumber yang tidak ditemukan atau ambigu ditandai untuk ditinjau. Import ini tidak membuat transaksi finansial sumber baru.
                 </div>
 
                 <div class="checkbox">
@@ -247,7 +326,18 @@
                             0%
                         </div>
                     </div>
-                    <p id="journal_import_progress_text" class="help-block">Menyiapkan import...</p>
+                    <p class="help-block">
+                        <strong id="journal_import_progress_stage">Menyiapkan import...</strong>
+                        <span id="journal_import_progress_count"></span>
+                        <span> · Pembaruan terakhir: <span id="journal_import_progress_heartbeat">—</span></span>
+                    </p>
+                    <p id="journal_import_progress_text" class="help-block" aria-live="polite">Menunggu update worker.</p>
+                    <p id="journal_import_progress_stale" class="text-warning hide"></p>
+                    <p id="journal_import_progress_error" class="text-danger hide"></p>
+                    <div class="well well-sm" style="max-height: 150px; overflow-y: auto; margin-bottom: 0;">
+                        <strong>Log aktivitas</strong>
+                        <ul id="journal_import_progress_log" style="margin: 5px 0 0; padding-left: 20px;"></ul>
+                    </div>
                 </div>
             {!! Form::close() !!}
         @endcomponent
@@ -263,6 +353,8 @@
                         <th>Periode</th>
                         <th>Imported</th>
                         <th>Skipped</th>
+                        <th>Relasi perlu review</th>
+                        <th>Tax perlu review</th>
                         <th>Status</th>
                         <th>Oleh</th>
                         <th>@lang('messages.action')</th>
@@ -270,42 +362,75 @@
                 </thead>
                 <tbody>
                     @forelse($imports as $import)
+                        @php
+                            $isJournalImportActive = in_array($import->status, ['queued', 'analyzing', 'queued_import', 'importing', 'reconciling', 'processing']);
+                            $journalImportPercent = !empty($import->total_entries)
+                                ? min(100, (int) round(($import->processed_entries / $import->total_entries) * 100))
+                                : 0;
+                            if ($import->status === 'reconciling') {
+                                $journalImportPercent = min(95, $journalImportPercent);
+                            }
+                        @endphp
                         <tr>
+                            @php
+                                $importSummary = json_decode((string) $import->summary, true) ?: [];
+                            @endphp
                             <td>{{ @format_datetime($import->created_at) }}</td>
                             <td>{{ $import->file_name }}</td>
                             <td>{{ $import->source_date_range }}</td>
                             <td>{{ $import->imported_entries }}</td>
                             <td>{{ $import->skipped_entries }}</td>
+                            <td>{{ $importSummary['source_link_review_count'] ?? '—' }}</td>
+                            <td>{{ (int) ($import->tax_reconciliation_review_count ?? 0) }}</td>
                             <td>
-                                @if(in_array($import->status, ['queued', 'analyzing', 'queued_import', 'importing', 'processing']))
-                                    <span class="label bg-yellow">{{ $import->status }}</span>
+                                @if($isJournalImportActive)
+                                    <span class="label bg-yellow" id="journal-import-status-{{ $import->id }}">{{ $import->status }}</span>
                                 @elseif($import->status == 'analyzed')
-                                    <span class="label bg-aqua">analyzed</span>
+                                    <span class="label bg-aqua" id="journal-import-status-{{ $import->id }}">analyzed</span>
                                 @elseif($import->status == 'imported')
-                                    <span class="label bg-green">imported</span>
+                                    <span class="label bg-green" id="journal-import-status-{{ $import->id }}">imported</span>
                                 @elseif($import->status == 'failed')
-                                    <span class="label bg-red">failed</span>
+                                    <span class="label bg-red" id="journal-import-status-{{ $import->id }}">failed</span>
                                 @else
-                                    <span class="label bg-gray">{{ $import->status }}</span>
+                                    <span class="label bg-gray" id="journal-import-status-{{ $import->id }}">{{ $import->status }}</span>
                                 @endif
-                                @if(in_array($import->status, ['queued', 'analyzing', 'queued_import', 'importing', 'processing']))
+                                @if($isJournalImportActive)
                                     <div class="progress" style="margin-top: 5px; margin-bottom: 0;">
-                                        @php
-                                            $percent = !empty($import->total_entries) ? min(100, round(($import->processed_entries / $import->total_entries) * 100)) : 0;
-                                        @endphp
-                                        <div class="progress-bar progress-bar-striped active" style="width: {{ $percent }}%;">{{ $percent }}%</div>
+                                        <div id="journal-import-progress-{{ $import->id }}" class="progress-bar progress-bar-striped active" role="progressbar" aria-valuenow="{{ $journalImportPercent }}" aria-valuemin="0" aria-valuemax="100" style="width: {{ in_array($import->status, ['queued', 'analyzing', 'queued_import']) ? '100' : $journalImportPercent }}%;">
+                                            {{ in_array($import->status, ['queued', 'analyzing', 'queued_import']) ? '' : $journalImportPercent.'%' }}
+                                        </div>
                                     </div>
+                                    <small id="journal-import-count-{{ $import->id }}" class="text-muted">
+                                        @if(in_array($import->status, ['importing', 'reconciling', 'processing']))
+                                            {{ (int) $import->processed_entries }} / {{ (int) $import->total_entries }} entry
+                                        @else
+                                            Menunggu update worker
+                                        @endif
+                                    </small><br>
+                                    <small id="journal-import-message-{{ $import->id }}" class="text-muted" aria-live="polite">{{ $import->last_message ?: 'Menunggu worker queue imports.' }}</small><br>
+                                    <small class="text-muted">Pembaruan terakhir: <span id="journal-import-heartbeat-{{ $import->id }}">{{ $import->updated_at }}</span></small><br>
+                                    <small id="journal-import-stale-{{ $import->id }}" class="text-warning hide"></small>
+                                @elseif($import->status === 'failed')
+                                    <small class="text-danger">{{ $import->last_message ?: 'Import gagal.' }}</small>
+                                    @if(!empty($import->error_message))
+                                        <details><summary>Detail error</summary><small class="text-danger">{{ \Illuminate\Support\Str::limit($import->error_message, 500) }}</small></details>
+                                    @endif
+                                @elseif(!empty($import->last_message))
+                                    <br><small class="text-muted">{{ $import->last_message }}</small>
                                 @endif
                             </td>
                             <td>{{ $import->added_by }}</td>
-                            <td>
+                            <td id="journal-import-action-{{ $import->id }}"
+                                data-review-url="{{ action([\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'reviewImport'], [$import->id]) }}"
+                                data-revert-url="{{ action([\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'revertImport'], [$import->id]) }}"
+                                data-csrf-token="{{ csrf_token() }}">
                                 @if($import->status == 'analyzed')
                                     <a href="{{ action([\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'reviewImport'], [$import->id]) }}" class="btn btn-primary btn-xs">
                                         <i class="fas fa-check"></i> Review & Import
                                     </a>
-                                @elseif(in_array($import->status, ['queued', 'analyzing', 'queued_import', 'importing', 'processing']))
+                                @elseif($isJournalImportActive)
                                     <button type="button" class="btn btn-default btn-xs journal-import-watch" data-id="{{ $import->id }}">
-                                        <i class="fas fa-sync"></i> Watch
+                                        <i class="fas fa-sync"></i> Pantau progres
                                     </button>
                                 @elseif($import->status == 'imported')
                                     {!! Form::open([
@@ -325,123 +450,58 @@
                         </tr>
                     @empty
                         <tr>
-                            <td colspan="8" class="text-center">@lang('purchase.no_records_found')</td>
+                            <td colspan="10" class="text-center">@lang('purchase.no_records_found')</td>
                         </tr>
                     @endforelse
                 </tbody>
             </table>
         </div>
     @endcomponent
+
+    @if($taxReconciliationReviews->isNotEmpty())
+        @component('components.widget', ['class' => 'box-warning', 'title' => 'Rekonsiliasi Pajak Perlu Ditinjau'])
+            <p class="help-block">Periksa mapping yang belum tunggal, perbedaan pajak item, atau hasil total transaksi yang tidak sama dengan total debit Journal. Bila pajak item cocok, pajak transaksi diperbarui dari Journal dan selisih total tetap ditandai untuk ditinjau.</p>
+            <div class="table-responsive">
+                <table class="table table-bordered table-striped">
+                    <thead>
+                        <tr>
+                            <th>Tanggal import</th>
+                            <th>File</th>
+                            <th>Entry Journal</th>
+                            <th>Transaksi sumber</th>
+                            <th>Pajak Journal</th>
+                            <th>Pajak item hitung</th>
+                            <th>Total debit Journal</th>
+                            <th>Total akhir transaksi</th>
+                            <th>Catatan</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach($taxReconciliationReviews as $review)
+                            <tr class="warning">
+                                <td>{{ @format_datetime($review->import_created_at) }}</td>
+                                <td>{{ $review->file_name }}</td>
+                                <td>{{ $review->ref_no }}</td>
+                                <td>#{{ $review->source_record_id }}</td>
+                                <td>@if($review->journal_tax_amount === null) — @else @format_currency($review->journal_tax_amount) @endif</td>
+                                <td>@if($review->calculated_tax_amount === null) — @else @format_currency($review->calculated_tax_amount) @endif</td>
+                                <td>@if($review->journal_total_amount === null) — @else @format_currency($review->journal_total_amount) @endif</td>
+                                <td>@if($review->recalculated_final_total === null) — @else @format_currency($review->recalculated_final_total) @endif</td>
+                                <td>{{ $review->tax_reconciliation_note }}</td>
+                            </tr>
+                        @endforeach
+                    </tbody>
+                </table>
+            </div>
+            @if($taxReconciliationReviews->count() === 50)
+                <p class="help-block">Menampilkan maksimal 50 rekonsiliasi terbaru yang perlu ditinjau.</p>
+            @endif
+        @endcomponent
+    @endif
 </section>
 
 @endsection
 
 @section('javascript')
-<script type="text/javascript">
-    $(document).on('submit', '#journal_import_form', function(e) {
-        e.preventDefault();
-
-        if (!confirm('Import journal dari file ini sekarang?')) {
-            return false;
-        }
-
-        var form = $(this);
-        var progressBox = $('#journal_import_progress_box');
-        var progressBar = $('#journal_import_progress_bar');
-        var progressText = $('#journal_import_progress_text');
-        var submitButton = form.find('button[type="submit"]');
-        var formData = form.serializeArray();
-
-        submitButton.prop('disabled', true);
-        progressBox.removeClass('hide');
-        updateJournalImportProgress(0, 'Menyiapkan batch import...');
-
-        $.ajax({
-            method: 'POST',
-            url: '{{ action([\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'startImport']) }}',
-            data: form.serialize(),
-            dataType: 'json',
-            success: function(response) {
-                if (response.success) {
-                    pollJournalImportStatus(response.import_id);
-                } else {
-                    submitButton.prop('disabled', false);
-                    toastr.error(response.msg || '{{ __("messages.something_went_wrong") }}');
-                }
-            },
-            error: function(xhr) {
-                submitButton.prop('disabled', false);
-                toastr.error(xhr.responseJSON && xhr.responseJSON.msg ? xhr.responseJSON.msg : '{{ __("messages.something_went_wrong") }}');
-            }
-        });
-
-        function pollJournalImportStatus(importId) {
-            $.ajax({
-                method: 'GET',
-                url: '{{ url('accounting/journal-entry/import') }}/' + importId + '/status',
-                dataType: 'json',
-                success: function(response) {
-                    if (!response.success) {
-                        submitButton.prop('disabled', false);
-                        toastr.error(response.msg || '{{ __("messages.something_went_wrong") }}');
-                        return;
-                    }
-
-                    var percent = response.total_entries > 0 ? Math.round((response.processed_entries / response.total_entries) * 100) : 100;
-                    updateJournalImportProgress(percent, response.last_message || ('Diproses ' + response.processed_entries + ' / ' + response.total_entries + ' entry...'));
-
-                    if (response.status == 'imported') {
-                        updateJournalImportProgress(100, 'Import selesai. Halaman akan dimuat ulang...');
-                        toastr.success('Import journal selesai.');
-                        setTimeout(function() {
-                            window.location = '{{ action([\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'import']) }}';
-                        }, 1200);
-                    } else if (response.status == 'failed') {
-                        submitButton.prop('disabled', false);
-                        toastr.error(response.error_message || '{{ __("messages.something_went_wrong") }}');
-                    } else {
-                        setTimeout(function() {
-                            pollJournalImportStatus(importId);
-                        }, 2000);
-                    }
-                },
-                error: function(xhr) {
-                    submitButton.prop('disabled', false);
-                    toastr.error(xhr.responseJSON && xhr.responseJSON.msg ? xhr.responseJSON.msg : '{{ __("messages.something_went_wrong") }}');
-                }
-            });
-        }
-
-        function updateJournalImportProgress(percent, text) {
-            progressBar.css('width', percent + '%').text(percent + '%');
-            progressText.text(text);
-        }
-    });
-
-    $(document).on('click', '.journal-import-watch', function() {
-        var importId = $(this).data('id');
-        var button = $(this);
-        button.prop('disabled', true);
-
-        $.ajax({
-            method: 'GET',
-            url: '{{ url('accounting/journal-entry/import') }}/' + importId + '/status',
-            dataType: 'json',
-            success: function(response) {
-                if (response.status == 'analyzed') {
-                    window.location = '{{ url('accounting/journal-entry/import') }}/' + importId + '/review';
-                } else if (response.status == 'imported' || response.status == 'failed') {
-                    window.location.reload();
-                } else {
-                    toastr.info(response.last_message || 'Masih diproses di background.');
-                    button.prop('disabled', false);
-                }
-            },
-            error: function() {
-                button.prop('disabled', false);
-                toastr.error('{{ __("messages.something_went_wrong") }}');
-            }
-        });
-    });
-</script>
+<script type="text/javascript" src="{{ versioned_asset_url(Module::asset('accounting:js/journal_import.js'), $asset_v ?? null) }}"></script>
 @endsection

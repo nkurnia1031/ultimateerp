@@ -116,6 +116,16 @@ class SellController extends Controller
             $sale_type = ! empty(request()->input('sale_type')) ? request()->input('sale_type') : 'sell';
 
             $sells = $this->transactionUtil->getListSells($business_id, $sale_type);
+            $sells->with([
+                'sell_lines' => function ($query) {
+                    $query->whereNull('parent_sell_line_id')
+                        ->whereNotNull('product_id')
+                        ->select('id', 'transaction_id', 'product_id', 'variation_id');
+                },
+                'sell_lines.product:id,name,type',
+                'sell_lines.variations:id,name,product_variation_id',
+                'sell_lines.variations.product_variation:id,name',
+            ]);
 
             $permitted_locations = auth()->user()->permitted_locations();
             if ($permitted_locations != 'all') {
@@ -540,6 +550,11 @@ class SellController extends Controller
 
                     return (string) view('purchase.partials.tags', ['tags' => $tags]);
                 })
+                ->editColumn('products', function ($row) {
+                    $products = $this->transactionUtil->formatSellProductSummary($row->sell_lines);
+
+                    return (string) view('purchase.partials.products', ['products' => $products]);
+                })
                 ->filterColumn('tags', function ($query, $keyword) use ($sale_type) {
                     if ($sale_type === 'sell') {
                         $query->whereRaw("COALESCE(sell_line_tag_aggregate.sell_line_tag_names, '') like ?", ["%{$keyword}%"]);
@@ -548,6 +563,9 @@ class SellController extends Controller
                             $q->where('name', 'like', "%{$keyword}%");
                         });
                     }
+                })
+                ->filterColumn('products', function ($query, $keyword) {
+                    $this->transactionUtil->filterSellsByProduct($query, $keyword);
                 })
                 ->orderColumn('tags', function ($query, $order) use ($sale_type) {
                     if ($sale_type === 'sell') {
@@ -719,7 +737,7 @@ class SellController extends Controller
                     },
                 ]);
 
-            $rawColumns = ['tags', 'final_total', 'action', 'total_paid', 'total_remaining', 'payment_status', 'invoice_no', 'discount_amount', 'tax_amount', 'total_before_tax', 'shipping_status', 'types_of_service_name', 'payment_methods', 'return_due', 'conatct_name', 'status', 'zatca_status'];
+            $rawColumns = ['tags', 'products', 'final_total', 'action', 'total_paid', 'total_remaining', 'payment_status', 'invoice_no', 'discount_amount', 'tax_amount', 'total_before_tax', 'shipping_status', 'types_of_service_name', 'payment_methods', 'return_due', 'conatct_name', 'status', 'zatca_status'];
 
             return $datatable->rawColumns($rawColumns)
                 ->make(true);

@@ -55,6 +55,7 @@ class ExpenseImportService
             'progress_message' => 'File diterima, menunggu proses preview.',
             'heartbeat_at' => now(),
             'summary' => json_encode([], JSON_UNESCAPED_UNICODE),
+            'row_overrides' => json_encode([], JSON_UNESCAPED_UNICODE),
             'created_at' => now(),
             'updated_at' => now(),
         ]);
@@ -66,6 +67,7 @@ class ExpenseImportService
     {
         $progress && $progress('reading', 'Membaca workbook Excel.', 10, 0, 0);
         $rows = $this->parseWorkbook($path, $businessId, $overrides, $progress);
+        $rows = $this->validateGroupTaxes($rows);
         $progress && $progress('matching', 'Memvalidasi kategori, lokasi, pembayaran, dan tanggal.', 70, count($rows), count($rows));
 
         DB::transaction(function () use ($batchId, $businessId, $rows, $progress) {
@@ -181,9 +183,14 @@ class ExpenseImportService
                     'paid_on_date' => $normalized['paid_on_date'] ?? null,
                     'raw_expense_date' => $raw['EXPENSE DATE'] ?? '',
                     'raw_paid_on_date' => $raw['PAID ON DATE'] ?? '',
+                    'raw_applicable_tax' => $raw['APPLICABLE TAX'] ?? '',
                     'status' => $row->status,
                     'errors' => $errors,
                     'is_importable' => (bool) $row->is_importable,
+                    'tax_id' => $normalized['tax_id'] ?? null,
+                    'tax_name' => $normalized['tax_name'] ?? null,
+                    'tax_status' => $normalized['tax_status'] ?? 'none',
+                    'tax_mapping_required' => collect($errors)->contains(fn ($error) => str_contains((string) $error, 'satu TaxRate atau grup pajak')),
                     'payload' => $normalized,
                 ];
             })->values()->all(),
@@ -217,7 +224,10 @@ class ExpenseImportService
             throw new RuntimeException('Baris ini tidak memiliki error tanggal yang dapat diedit.');
         }
 
-        $overrides = json_decode((string) $batch->date_overrides, true) ?: [];
+        $overrides = array_merge(
+            json_decode((string) $batch->date_overrides, true) ?: [],
+            json_decode((string) ($batch->row_overrides ?? '[]'), true) ?: []
+        );
         $overrides[$row->source_row.':'.$field] = $date;
         $path = $batch->file_path;
         if (! $path || ! Storage::disk('local')->exists($path)) {
@@ -226,7 +236,55 @@ class ExpenseImportService
 
         $summary = $this->preview($batchId, $businessId, Storage::disk('local')->path($path), $overrides);
         DB::table('expense_import_batches')->where('id', $batchId)->update([
-            'date_overrides' => json_encode($overrides, JSON_UNESCAPED_UNICODE),
+            'row_overrides' => json_encode($overrides, JSON_UNESCAPED_UNICODE),
+            'updated_at' => now(),
+        ]);
+
+        return $summary;
+    }
+
+    public function updateTax(string $batchId, int $rowId, int $businessId, int $taxRateId): array
+    {
+        $batch = DB::table('expense_import_batches')->where('id', $batchId)->where('business_id', $businessId)->first();
+        if (! $batch || $batch->status !== 'preview' || (($batch->process_state ?? 'completed') !== 'completed')) {
+            throw new RuntimeException('Batch preview tidak ditemukan atau sudah diproses.');
+        }
+
+        $row = DB::table('expense_import_preview_rows')
+            ->where('id', $rowId)->where('batch_id', $batchId)->where('business_id', $businessId)->first();
+        if (! $row) {
+            throw new RuntimeException('Baris preview tidak ditemukan.');
+        }
+
+        $normalized = json_decode((string) $row->normalized_payload, true) ?: [];
+        $rawTaxName = trim((string) ($normalized['original_applicable_tax'] ?? $normalized['applicable_tax'] ?? ''));
+        if (! in_array(($normalized['tax_status'] ?? null), ['unknown', 'mapped', 'matched'], true) || $rawTaxName === '') {
+            throw new RuntimeException('Baris ini tidak memiliki TaxRate yang perlu dipetakan.');
+        }
+        $rowErrors = json_decode((string) $row->errors, true) ?: [];
+        if (($normalized['tax_status'] ?? null) === 'matched'
+            && ! collect($rowErrors)->contains(fn ($error) => str_contains((string) $error, 'satu TaxRate atau grup pajak'))) {
+            throw new RuntimeException('TaxRate yang sudah cocok tidak memerlukan pemetaan ulang.');
+        }
+
+        $taxRate = TaxRate::where('business_id', $businessId)->find($taxRateId);
+        if (! $taxRate) {
+            throw new RuntimeException('TaxRate harus berasal dari business ini dan masih aktif.');
+        }
+
+        $overrides = array_merge(
+            json_decode((string) $batch->date_overrides, true) ?: [],
+            json_decode((string) ($batch->row_overrides ?? '[]'), true) ?: []
+        );
+        $overrides['tax_name:'.$this->normalize($rawTaxName)] = (int) $taxRate->id;
+        $path = $batch->file_path;
+        if (! $path || ! Storage::disk('local')->exists($path)) {
+            throw new RuntimeException('File sumber preview sudah tidak tersedia.');
+        }
+
+        $summary = $this->preview($batchId, $businessId, Storage::disk('local')->path($path), $overrides);
+        DB::table('expense_import_batches')->where('id', $batchId)->where('business_id', $businessId)->update([
+            'row_overrides' => json_encode($overrides, JSON_UNESCAPED_UNICODE),
             'updated_at' => now(),
         ]);
 
@@ -341,10 +399,12 @@ class ExpenseImportService
         $categoryByName = $categories->groupBy(fn ($category) => $this->normalize($category->name));
         $contacts = Contact::where('business_id', $businessId)->get();
         $users = User::where('business_id', $businessId)->get();
-        $taxes = TaxRate::where('business_id', $businessId)->get()->keyBy(fn ($tax) => $this->normalize($tax->name));
+        $taxes = TaxRate::where('business_id', $businessId)->get();
+        $taxesByName = $taxes->keyBy(fn ($tax) => $this->normalize($tax->name));
+        $taxesById = $taxes->keyBy('id');
         $paymentTypes = $this->transactionUtil->payment_types(null, false, $businessId);
 
-        return compact('locations', 'categories', 'categoryByName', 'contacts', 'users', 'taxes', 'paymentTypes');
+        return compact('locations', 'categories', 'categoryByName', 'contacts', 'users', 'taxesByName', 'taxesById', 'paymentTypes');
     }
 
     private function validateRow(array $row, int $sourceRow, array $context, array $overrides): array
@@ -399,6 +459,27 @@ class ExpenseImportService
             $errors[] = "Metode pembayaran '{$paymentMethod}' tidak tersedia.";
         }
 
+        $originalTaxName = $this->stringValue($row['APPLICABLE TAX'] ?? null);
+        $taxOverrideId = $originalTaxName !== ''
+            ? ($overrides['tax_name:'.$this->normalize($originalTaxName)] ?? null)
+            : null;
+        $tax = is_numeric($taxOverrideId)
+            ? $context['taxesById']->get((int) $taxOverrideId)
+            : null;
+        $matchedTax = $originalTaxName !== ''
+            ? $context['taxesByName']->get($this->normalize($originalTaxName))
+            : null;
+        $taxStatus = $originalTaxName === '' ? 'none' : 'matched';
+        if ($tax) {
+            $taxStatus = 'mapped';
+        } else {
+            $tax = $matchedTax;
+        }
+        if (! $tax && $originalTaxName !== '') {
+            $taxStatus = 'unknown';
+            $errors[] = "Tax '{$originalTaxName}' tidak dikenal. Pilih TaxRate yang tersedia dari preview.";
+        }
+
         $normalized = [
             'location_id' => $location?->id,
             'location_name' => $locationName,
@@ -413,7 +494,11 @@ class ExpenseImportService
             'expense_for' => $this->stringValue($row['EXPENSE FOR'] ?? null),
             'expense_for_contact_id' => $this->stringValue($row['EXPENSE FOR CONTACT ID'] ?? null),
             'attach_document' => $this->stringValue($row['ATTACH DOCUMENT'] ?? null),
-            'applicable_tax' => $this->stringValue($row['APPLICABLE TAX'] ?? null),
+            'applicable_tax' => $tax?->name ?? $originalTaxName,
+            'original_applicable_tax' => $originalTaxName,
+            'tax_id' => $tax?->id,
+            'tax_name' => $tax?->name,
+            'tax_status' => $taxStatus,
             'expense_note' => $this->stringValue($row['EXPENSE NOTE'] ?? null),
             'total_amount' => $total,
             'paid_amount' => $paid,
@@ -441,32 +526,57 @@ class ExpenseImportService
         $payload = json_decode((string) $first->normalized_payload, true) ?: [];
         $categoryId = $this->validCategoryId($payload['category_id'] ?? null, $businessId)
             ?: $this->resolveCategory($payload['category_name'] ?? '', $businessId, null);
+
+        $taxName = trim((string) ($payload['applicable_tax'] ?? ''));
+        $originalTaxName = trim((string) ($payload['original_applicable_tax'] ?? $taxName));
+        $tax = ! empty($payload['tax_id'])
+            ? TaxRate::where('business_id', $businessId)->find((int) $payload['tax_id'])
+            : null;
+        if (! $tax && $taxName !== '') {
+            $tax = $this->resolveTax($taxName, $businessId);
+        }
+        if ($originalTaxName !== '' && ! $tax) {
+            throw new RuntimeException("Tax '{$originalTaxName}' tidak lagi tersedia. Buka ulang preview dan petakan ke TaxRate yang aktif.");
+        }
+        $taxPercentage = 0.0;
+        if ($tax) {
+            $tax->loadMissing('sub_taxes');
+            $taxPercentage = $tax->is_tax_group
+                ? (float) $tax->sub_taxes->where('business_id', $businessId)->sum('amount')
+                : (float) $tax->amount;
+            if ($tax->is_tax_group && $taxPercentage <= 0) {
+                throw new RuntimeException("Grup pajak '{$tax->name}' tidak memiliki komponen aktif yang valid.");
+            }
+        }
+
         $lineRows = [];
+        $total = 0;
+        $totalBeforeTax = 0;
+        $paid = 0;
         foreach ($rows as $row) {
             $item = json_decode((string) $row->normalized_payload, true) ?: [];
             $lineCategoryId = $this->validCategoryId($item['category_id'] ?? null, $businessId)
                 ?: $this->resolveCategory($item['category_name'] ?? '', $businessId, null);
             $lineSubCategoryId = $this->validCategoryId($item['sub_category_id'] ?? null, $businessId, $lineCategoryId)
                 ?: $this->resolveCategory($item['sub_category_name'] ?? '', $businessId, $lineCategoryId);
+            $inclusiveAmount = (float) ($item['total_amount'] ?? 0);
+            $lineBaseAmount = $tax
+                ? $this->transactionUtil->calc_percentage_base($inclusiveAmount, $taxPercentage)
+                : $inclusiveAmount;
+            $total += $inclusiveAmount;
+            $totalBeforeTax += $lineBaseAmount;
+            $paid += (float) ($item['paid_amount'] ?? 0);
             $lineRows[] = [
                 'category_id' => $lineCategoryId,
                 'sub_category_id' => $lineSubCategoryId,
                 'description' => $item['description'] ?? null,
-                'amount' => (float) ($item['total_amount'] ?? 0),
+                'amount' => $lineBaseAmount,
             ];
         }
 
-        $total = (float) $rows->sum(fn ($row) => (float) ((json_decode((string) $row->normalized_payload, true) ?: [])['total_amount'] ?? 0));
-        $paid = (float) $rows->sum(fn ($row) => (float) ((json_decode((string) $row->normalized_payload, true) ?: [])['paid_amount'] ?? 0));
+        $taxAmount = $total - $totalBeforeTax;
         $contactId = $this->resolveContact($payload['expense_for_contact_id'] ?? '', $businessId, $userId);
         $expenseFor = $this->resolveUser($payload['expense_for'] ?? '', $businessId, $userId);
-        $tax = $this->resolveTax($payload['applicable_tax'] ?? '', $businessId);
-        $totalBeforeTax = $total;
-        $taxAmount = 0;
-        if ($tax) {
-            $totalBeforeTax = $this->transactionUtil->calc_percentage_base($total, $tax->amount);
-            $taxAmount = $total - $totalBeforeTax;
-        }
         $reference = trim((string) ($payload['reference_no'] ?? ''));
         if ($reference === '') {
             $reference = $this->transactionUtil->generateReferenceNumber('expense', $this->transactionUtil->setAndGetReferenceCount('expense', $businessId), $businessId);
@@ -691,6 +801,69 @@ class ExpenseImportService
         $valid = count(array_filter($rows, fn ($row) => $row['is_importable']));
         $groups = collect($rows)->filter(fn ($row) => $row['is_importable'])->pluck('group_key')->filter()->unique()->count();
         return ['total' => count($rows), 'valid' => $valid, 'errors' => count($rows) - $valid, 'importable' => $valid, 'groups' => $groups, 'skipped' => 0];
+    }
+
+    private function validateGroupTaxes(array $rows): array
+    {
+        $groupIndexes = [];
+        foreach ($rows as $index => $row) {
+            $groupIndexes[$row['group_key']][] = $index;
+        }
+
+        foreach ($groupIndexes as $indexes) {
+            if (count($indexes) < 2) {
+                continue;
+            }
+
+            $knownTaxIds = [];
+            $hasUnknownTax = false;
+            foreach ($indexes as $index) {
+                $payload = $rows[$index]['normalized_payload'];
+                if (! empty($payload['tax_id'])) {
+                    $knownTaxIds[(int) $payload['tax_id']] = $payload;
+                } elseif (($payload['tax_status'] ?? null) === 'unknown') {
+                    $hasUnknownTax = true;
+                }
+            }
+
+            if (count($knownTaxIds) === 1 && ! $hasUnknownTax) {
+                $taxId = array_key_first($knownTaxIds);
+                $taxPayload = reset($knownTaxIds);
+                foreach ($indexes as $index) {
+                    if (($rows[$index]['normalized_payload']['tax_status'] ?? null) === 'none') {
+                        $rows[$index]['normalized_payload']['tax_id'] = $taxId;
+                        $rows[$index]['normalized_payload']['tax_name'] = $taxPayload['tax_name'];
+                        $rows[$index]['normalized_payload']['applicable_tax'] = $taxPayload['applicable_tax'];
+                        $rows[$index]['normalized_payload']['tax_status'] = 'inherited';
+                    }
+                }
+            }
+
+            $taxKeys = [];
+            foreach ($indexes as $index) {
+                $payload = $rows[$index]['normalized_payload'];
+                if (! empty($payload['tax_id'])) {
+                    $taxKeys[] = 'tax:'.(int) $payload['tax_id'];
+                } elseif (trim((string) ($payload['original_applicable_tax'] ?? '')) !== '') {
+                    $taxKeys[] = 'unknown:'.$this->normalize($payload['original_applicable_tax']);
+                } else {
+                    $taxKeys[] = 'none';
+                }
+            }
+
+            if (count(array_unique($taxKeys)) < 2) {
+                continue;
+            }
+
+            foreach ($indexes as $index) {
+                $rows[$index]['errors'][] = 'Satu transaksi dengan REFERENCE NO yang sama harus menggunakan satu TaxRate atau grup pajak pada semua baris.';
+                $rows[$index]['errors'] = array_values(array_unique($rows[$index]['errors']));
+                $rows[$index]['status'] = 'error';
+                $rows[$index]['is_importable'] = false;
+            }
+        }
+
+        return $rows;
     }
 
     private function rowIsEmpty(array $row): bool

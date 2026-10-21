@@ -478,6 +478,7 @@ Route::middleware(['setData', 'auth', 'SetSessionData', 'language', 'timezone', 
     Route::get('import-expense/{batch}/summary', [ExpenseController::class, 'expenseImportPreviewSummary'])->name('expenses.import.summary');
     Route::get('import-expense/{batch}/preview', [ExpenseController::class, 'expenseImportPreviewRows'])->name('expenses.import.preview');
     Route::patch('import-expense/{batch}/rows/{row}/date', [ExpenseController::class, 'expenseImportUpdateDate'])->name('expenses.import.rows.date');
+    Route::patch('import-expense/{batch}/rows/{row}/tax', [ExpenseController::class, 'expenseImportUpdateTax'])->name('expenses.import.rows.tax');
     Route::post('import-expense/{batch}/confirm', [ExpenseController::class, 'expenseImportConfirm'])->name('expenses.import.confirm');
     Route::post('import-expense/{batch}/cancel', [ExpenseController::class, 'expenseImportCancel'])->name('expenses.import.cancel');
     Route::get('expenses/{id}/duplicate', [ExpenseController::class, 'duplicate'])
