@@ -23,6 +23,7 @@
             reconciling: 'Merekonsiliasi pajak',
             processing: 'Memproses',
             imported: 'Selesai',
+            partially_imported: 'Sebagian selesai',
             failed: 'Gagal'
         };
 
@@ -39,9 +40,12 @@
     }
 
     function progressPercent(response) {
-        var percent = response.total_entries > 0
-            ? Math.round((response.processed_entries / response.total_entries) * 100)
-            : 0;
+        var queueTotal = Number(response.queue_total || 0);
+        var percent = queueTotal > 0
+            ? Math.round((Number(response.queue_processed || 0) / queueTotal) * 100)
+            : (response.total_entries > 0
+                ? Math.round((response.processed_entries / response.total_entries) * 100)
+                : 0);
 
         percent = Math.max(0, Math.min(100, percent));
         if (response.status === 'reconciling') {
@@ -54,17 +58,17 @@
     }
 
     function indeterminate(response) {
-        return ['queued', 'analyzing', 'queued_import'].indexOf(response.status) !== -1 ||
-            (response.status === 'importing' && response.total_entries <= 0);
+        return (['queued', 'analyzing', 'queued_import'].indexOf(response.status) !== -1 && Number(response.queue_total || 0) <= 0) ||
+            (response.status === 'importing' && Number(response.queue_total || response.total_entries || 0) <= 0);
     }
 
     function actionForStatus(actionCell, response) {
         if (isActive(response.status)) {
             actionCell.empty().append($('<span class="text-muted">').text(statusLabel(response.status) + '...'));
-        } else if (response.status === 'analyzed') {
+        } else if (['analyzed', 'partially_imported', 'failed'].indexOf(response.status) !== -1) {
             actionCell.empty().append($('<a class="btn btn-primary btn-xs">')
                 .attr('href', actionCell.data('review-url'))
-                .text('Review & Import'));
+                .text(response.status === 'analyzed' ? 'Review & Import' : 'Review & Continue'));
         } else if (response.status === 'imported') {
             var form = $('<form>', {
                 action: actionCell.data('revert-url'),
@@ -83,8 +87,6 @@
                 }
             });
             actionCell.empty().append(form);
-        } else if (response.status === 'failed') {
-            actionCell.empty().append($('<span class="text-danger">').text('Gagal'));
         }
     }
 
@@ -94,7 +96,7 @@
         var statusElement = $('#journal-import-status-' + id);
         var progressElement = $('#journal-import-progress-' + id);
         var percent = progressPercent(response);
-        var statusClass = status === 'imported' ? 'bg-green' : (status === 'failed' ? 'bg-red' : (status === 'analyzed' ? 'bg-aqua' : 'bg-yellow'));
+        var statusClass = status === 'imported' ? 'bg-green' : (status === 'failed' ? 'bg-red' : (['analyzed', 'partially_imported'].indexOf(status) !== -1 ? 'bg-aqua' : 'bg-yellow'));
 
         statusElement.text(statusLabel(status)).attr('class', 'label ' + statusClass);
 
@@ -105,8 +107,11 @@
         }
 
         var countText;
-        if (['importing', 'reconciling', 'processing', 'imported'].indexOf(status) !== -1) {
-            countText = response.processed_entries + ' / ' + response.total_entries + ' entry (' + response.imported_entries + ' dibuat, ' + response.skipped_entries + ' dilewati)';
+        if (Number(response.queue_total || 0) > 0 || ['importing', 'reconciling', 'processing', 'imported', 'partially_imported', 'failed'].indexOf(status) !== -1) {
+            var queueCounts = response.queue_counts || {};
+            countText = (response.queue_processed || 0) + ' / ' + (response.queue_total || 0) + ' baris queue ('
+                + (queueCounts.completed || 0) + ' selesai, ' + (queueCounts.failed || 0) + ' gagal, '
+                + (queueCounts.pending || 0) + ' pending)';
         } else if (status === 'analyzed') {
             countText = response.total_entries + ' entry siap ditinjau';
         } else if (response.total_entries > 0) {
@@ -165,10 +170,13 @@
         progressBar.css('width', indeterminate(response) ? '100%' : percent + '%')
             .text(indeterminate(response) ? '' : percent + '%');
 
+        var queueCounts = response.queue_counts || {};
+        var progressCount = Number(response.queue_total || 0) > 0
+            ? ' · ' + response.queue_processed + ' / ' + response.queue_total + ' baris queue ('
+                + (queueCounts.completed || 0) + ' selesai, ' + (queueCounts.failed || 0) + ' gagal)'
+            : (response.total_entries > 0 ? ' · ' + response.processed_entries + ' / ' + response.total_entries + ' entry' : '');
         $('#journal_import_progress_stage').text(statusLabel(response.status));
-        $('#journal_import_progress_count').text(response.total_entries > 0
-            ? ' · ' + response.processed_entries + ' / ' + response.total_entries + ' entry (' + response.imported_entries + ' dibuat, ' + response.skipped_entries + ' dilewati)'
-            : '');
+        $('#journal_import_progress_count').text(progressCount);
         $('#journal_import_progress_heartbeat').text(updatedAtText(response.updated_at));
 
         var updatedAt = response.updated_at ? new Date(String(response.updated_at).replace(' ', 'T')) : null;
@@ -191,7 +199,6 @@
                 .text(response.error_message || 'Import gagal. Periksa detail batch dan laravel.log.');
         }
     }
-
     function pollWatch(importId) {
         var id = String(importId);
         if (watchers[id]) {
@@ -247,8 +254,11 @@
                 if (response.status === 'imported') {
                     submitButton.prop('disabled', true).text('Import selesai');
                     toastr.success('Import journal selesai.');
+                } else if (response.status === 'partially_imported') {
+                    submitButton.prop('disabled', false).text('Lanjutkan draft');
+                    toastr.info(response.last_message || 'Sebagian baris masih menunggu kelengkapan atau handler.');
                 } else if (response.status === 'failed') {
-                    submitButton.prop('disabled', true).text('Import gagal');
+                    submitButton.prop('disabled', false).text('Coba lagi setelah diperbaiki');
                     toastr.error(response.error_message || 'Import gagal. Periksa detail batch.');
                 } else {
                     window.setTimeout(poll, 2000);
@@ -266,10 +276,622 @@
         poll();
     }
 
+    var draftPage = 1;
+    var draftLastPage = 1;
+    var draftType = null;
+    var draftRowsById = {};
+    var activeDetailRow = null;
+    var detailSaveTimer = null;
+    var detailSaveInFlight = false;
+    var detailSavePending = null;
+
+    function draftActionLabel(action) {
+        var labels = {
+            journal: 'Journal Entry (GL)',
+            create: 'Buat baru',
+            update: 'Lengkapi sumber',
+            link: 'Tautkan sumber',
+            review: 'Perlu ditinjau'
+        };
+
+        return labels[action] || 'Perlu ditinjau';
+    }
+
+    function draftActionOptions(row) {
+        var actions;
+        if (row.source_type === 'Journal Entry') {
+            actions = ['journal'];
+        } else if (row.source_link_status === 'matched') {
+            actions = ['update', 'link', 'review'];
+        } else if (row.source_link_status === 'ambiguous') {
+            actions = ['update', 'link', 'create', 'review'];
+        } else {
+            actions = ['create', 'review'];
+        }
+
+        return actions;
+    }
+
+    function formatDraftNumber(value) {
+        var number = Number(value || 0);
+        return isFinite(number) ? number.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00';
+    }
+
+    function candidatesForRow(row) {
+        var candidates = Array.isArray(row.source_link_candidate_details) ? row.source_link_candidate_details.slice() : [];
+        if (!candidates.length && row.source_link_status === 'matched' && row.source_record_id) {
+            candidates.push({
+                id: row.source_record_id,
+                record_type: row.source_record_type,
+                label: row.source_link_label || ('Sumber #' + row.source_record_id)
+            });
+        }
+
+        return candidates;
+    }
+
+    function renderDraftRow(row) {
+        draftRowsById[String(row.id)] = row;
+        var tr = $('<tr>').attr('data-row-id', row.id).data('draft-row', row);
+        var dateNumber = $('<strong>').text(row.source_type + ' #' + (row.source_number || '—'));
+        var date = $('<small class="text-muted" style="display:block">').text(row.date || 'Tanggal kosong');
+        tr.append($('<td>').append(dateNumber).append(date));
+        tr.append($('<td>').text(row.description || '—'));
+
+        var processLabels = {
+            pending: 'Menunggu',
+            queued: 'Di antrean',
+            running: 'Diproses',
+            completed: 'Selesai',
+            failed: 'Gagal'
+        };
+        var processCell = $('<td>').append($('<strong>').text(processLabels[row.processing_status] || row.processing_status || 'Menunggu'));
+        if (row.processing_message) {
+            processCell.append($('<small class="text-muted" style="display:block">').text(row.processing_message));
+        }
+        if (row.processing_error) {
+            processCell.append($('<small class="text-danger" style="display:block">').text(row.processing_error));
+        }
+        if (row.reconciliation_status === 'mismatch') {
+            processCell.append($('<small class="text-warning" style="display:block">').text(
+                'Selisih total: ' + formatDraftNumber(row.difference_amount)
+            ));
+            if (['queued', 'running', 'completed'].indexOf(row.processing_status) === -1) {
+                processCell.append($('<button type="button" class="btn btn-warning btn-xs journal-draft-approve-difference" style="margin-top:4px">')
+                    .text('Setujui selisih'));
+            }
+        } else if (row.reconciliation_status === 'approved') {
+            processCell.append($('<small class="text-muted" style="display:block">').text(
+                'Selisih disetujui: ' + (row.difference_approval_reason || 'alasan tercatat')
+            ));
+        }
+        tr.append(processCell);
+        tr.append($('<td class="text-right">').text(formatDraftNumber(row.debit_total)));
+        tr.append($('<td class="text-right">').text(formatDraftNumber(row.credit_total)));
+
+        var actionSelect = $('<select class="form-control input-sm journal-draft-action" aria-label="Aksi transaksi sumber">');
+        draftActionOptions(row).forEach(function (action) {
+            actionSelect.append($('<option>').val(action).text(draftActionLabel(action)));
+        });
+        actionSelect.val(row.source_action);
+        actionSelect.prop('disabled', ['queued', 'running', 'completed'].indexOf(row.processing_status) !== -1);
+        tr.append($('<td>').append(actionSelect));
+
+        var sourceCell = $('<td>');
+        if (row.source_type === 'Journal Entry') {
+            sourceCell.text('Tidak ada transaksi sumber; GL Journal Entry saja.');
+        } else {
+            var candidates = candidatesForRow(row);
+            if (candidates.length) {
+                var candidateSelect = $('<select class="form-control input-sm journal-draft-source" aria-label="Pilih sumber transaksi">');
+                candidateSelect.append($('<option>').val('').text('Pilih sumber...'));
+                candidates.forEach(function (candidate) {
+                    var value = String(candidate.record_type || '') + '|' + String(candidate.id || '');
+                    candidateSelect.append($('<option>').val(value).text(candidate.label || ('Sumber #' + candidate.id)));
+                });
+                if (row.source_link_status === 'ambiguous') {
+                    candidateSelect.append($('<option>').val('create').text('Buat baru secara eksplisit'));
+                }
+                if (row.source_record_type && row.source_record_id) {
+                    candidateSelect.val(String(row.source_record_type) + '|' + String(row.source_record_id));
+                } else if (row.source_action === 'create') {
+                    candidateSelect.val('create');
+                }
+                candidateSelect.prop('disabled', ['queued', 'running', 'completed'].indexOf(row.processing_status) !== -1);
+                sourceCell.append(candidateSelect);
+            } else {
+                sourceCell.append($('<span>').text(row.source_link_status === 'unmatched'
+                    ? 'Tidak ditemukan; baris akan dibuat sebagai transaksi baru.'
+                    : 'Pilih keputusan sumber.'));
+            }
+            if (row.source_link_note) {
+                sourceCell.append($('<small class="text-muted" style="display:block">').text(row.source_link_note));
+            }
+        }
+        tr.append(sourceCell);
+
+        var reviewedId = 'journal-draft-reviewed-' + row.id;
+        var reviewedLabel = $('<label class="checkbox-inline">').attr('for', reviewedId);
+        reviewedLabel.append($('<input type="checkbox" class="journal-draft-reviewed">').attr('id', reviewedId)
+            .prop('checked', row.is_reviewed)
+            .prop('disabled', ['queued', 'running'].indexOf(row.processing_status) !== -1));
+        reviewedLabel.append(' Ditinjau');
+        tr.append($('<td>').append(reviewedLabel));
+
+        var detailsButton = $('<button type="button" class="btn btn-default btn-xs journal-draft-edit-details">')
+            .text('Edit detail');
+        if (row.source_type === 'Journal Entry') {
+            detailsButton.prop('disabled', true).attr('title', 'Journal Entry tidak memiliki detail transaksi sumber.');
+        } else if (['queued', 'running', 'completed'].indexOf(row.processing_status) !== -1) {
+            detailsButton.prop('disabled', true).attr('title', 'Baris yang sudah masuk antrean tidak dapat diubah.');
+        }
+        tr.append($('<td>').append(detailsButton));
+
+        return tr;
+    }
+
+    function loadDraftRows(pageNumber) {
+        var draft = $('#journal_import_draft');
+        if (!draft.length || !draftType) {
+            return;
+        }
+        draftPage = pageNumber || 1;
+        $('#journal_import_draft_status').text('Memuat baris...');
+        $('#journal_import_draft_table tbody').empty().append(
+            $('<tr>').append($('<td colspan="9" class="text-center text-muted">').text('Memuat draft...'))
+        );
+
+        $.ajax({
+            method: 'GET',
+            url: draft.data('rows-url'),
+            dataType: 'json',
+            data: {
+                type: draftType,
+                review_filter: $('#journal_import_review_filter').val() || 'all',
+                page: draftPage,
+                per_page: 50
+            }
+        }).done(function (response) {
+            var tbody = $('#journal_import_draft_table tbody').empty();
+            if (!response.success || !response.rows.length) {
+                tbody.append($('<tr>').append($('<td colspan="9" class="text-center text-muted">').text('Tidak ada baris untuk filter ini.')));
+            } else {
+                response.rows.forEach(function (row) {
+                    tbody.append(renderDraftRow(row));
+                });
+            }
+
+            draftLastPage = Number(response.last_page || 1);
+            var first = response.total ? ((response.page - 1) * response.per_page) + 1 : 0;
+            var last = Math.min(response.page * response.per_page, response.total);
+            $('#journal_import_draft_pagination_info').text(first + '–' + last + ' dari ' + response.total + ' baris');
+            $('#journal_import_draft_previous').prop('disabled', response.page <= 1);
+            $('#journal_import_draft_next').prop('disabled', response.page >= draftLastPage);
+            $('#journal_import_draft_status').text('Draft tersimpan otomatis.');
+        }).fail(function (xhr) {
+            var message = xhr.responseJSON && xhr.responseJSON.msg ? xhr.responseJSON.msg : 'Gagal memuat baris draft.';
+            $('#journal_import_draft_status').text(message).addClass('text-danger');
+            $('#journal_import_draft_table tbody').empty().append(
+                $('<tr>').append($('<td colspan="9" class="text-center text-danger">').text(message))
+            );
+        });
+    }
+
+    function saveDraftRow(rowId, payload, rowElement) {
+        var draft = $('#journal_import_draft');
+        var status = $('#journal_import_draft_status');
+        status.removeClass('text-danger').text('Menyimpan perubahan...');
+        rowElement && rowElement.addClass('journal-draft-saving');
+
+        $.ajax({
+            method: 'PATCH',
+            url: draft.data('row-url-base') + '/' + encodeURIComponent(rowId),
+            contentType: 'application/json',
+            dataType: 'json',
+            headers: { 'X-CSRF-TOKEN': draft.data('csrf-token') },
+            data: JSON.stringify(payload)
+        }).done(function (response) {
+            if (response.success && response.row) {
+                draftRowsById[String(rowId)] = response.row;
+                if (rowElement) {
+                    rowElement.removeClass('journal-draft-saving').addClass('success');
+                    window.setTimeout(function () { rowElement.removeClass('success'); }, 900);
+                }
+                status.text(response.msg || 'Draft tersimpan.');
+                window.setTimeout(function () {
+                    if (status.text() === (response.msg || 'Draft tersimpan.')) {
+                        status.text('Draft tersimpan otomatis.');
+                    }
+                }, 1800);
+            }
+        }).fail(function (xhr) {
+            if (rowElement) {
+                rowElement.removeClass('journal-draft-saving');
+                var savedRow = rowElement.data('draft-row') || {};
+                rowElement.find('.journal-draft-action').val(savedRow.source_action || 'review');
+                rowElement.find('.journal-draft-reviewed').prop('checked', Boolean(savedRow.is_reviewed));
+                var savedSource = savedRow.source_action === 'create'
+                    ? 'create'
+                    : (savedRow.source_record_type && savedRow.source_record_id
+                        ? savedRow.source_record_type + '|' + savedRow.source_record_id
+                        : '');
+                rowElement.find('.journal-draft-source').val(savedSource);
+            }
+            var message = xhr.responseJSON && xhr.responseJSON.msg ? xhr.responseJSON.msg : 'Perubahan belum tersimpan. Coba lagi.';
+            status.addClass('text-danger').text(message);
+        });
+    }
+
+    function selectedSource(rowElement) {
+        var value = rowElement.find('.journal-draft-source').val();
+        if (!value || value === 'create') {
+            return { type: null, id: null };
+        }
+        var parts = String(value).split('|');
+        return { type: parts[0] || null, id: Number(parts[1]) || null };
+    }
+
+    function actionPayload(rowElement, action) {
+        var row = rowElement.data('draft-row');
+        var source = selectedSource(rowElement);
+        var payload = {
+            source_action: action,
+            source_record_type: (action === 'link' || action === 'update') ? source.type : null,
+            source_record_id: (action === 'link' || action === 'update') ? source.id : null
+        };
+        if (action === 'journal') {
+            payload.source_record_type = null;
+            payload.source_record_id = null;
+        }
+        return payload;
+    }
+
+    function optionUrlData(kind, sourceType, selectedId, extraData) {
+        return $.extend({
+            kind: kind,
+            source_type: sourceType,
+            selected_id: selectedId || undefined
+        }, extraData || {});
+    }
+
+    function configureDraftSelect(select, kind, sourceType, selectedId, extraData) {
+        var draft = $('#journal_import_draft');
+        var element = $(select);
+        if (element.hasClass('select2-hidden-accessible')) {
+            element.select2('destroy');
+        }
+        element.empty().append($('<option>'));
+        element.select2({
+            width: '100%',
+            allowClear: true,
+            placeholder: 'Pilih dari master data',
+            dropdownParent: $('#journal_import_detail_modal'),
+            ajax: {
+                url: draft.data('options-url'),
+                dataType: 'json',
+                delay: 250,
+                data: function (params) {
+                    return $.extend(optionUrlData(kind, sourceType, null, extraData), { q: params.term || '' });
+                },
+                processResults: function (data) {
+                    return { results: data.results || [] };
+                }
+            }
+        });
+        if (selectedId) {
+            $.getJSON(draft.data('options-url'), optionUrlData(kind, sourceType, selectedId, extraData)).done(function (data) {
+                var item = (data.results || [])[0];
+                if (item) {
+                    element.append(new Option(item.text, item.id, true, true)).trigger('change');
+                }
+            });
+        }
+    }
+
+    function showDraftFields(sourceType, selectedContactId) {
+        var contactKind = sourceType === 'Sales Invoice' || sourceType === 'Receive Payment'
+            ? 'customer'
+            : (sourceType === 'Purchase Invoice' || sourceType === 'Purchase Payment' ? 'supplier' : 'contact');
+        var contactTypes = ['Sales Invoice', 'Purchase Invoice', 'Expense'];
+        var paymentTypes = ['Receive Payment', 'Purchase Payment', 'Bank Deposit', 'Bank Transfer', 'Bank Withdrawal', 'Reversal'];
+        var invoicePaymentTypes = ['Receive Payment', 'Purchase Payment'];
+        var detailTypes = ['Sales Invoice', 'Purchase Invoice', 'Stock Adjustment', 'Stock In/Out', 'Opening Balance'];
+        var transferTypes = ['Bank Deposit', 'Bank Transfer'];
+
+        $('.journal-draft-field-contact').toggle(contactTypes.indexOf(sourceType) !== -1);
+        $('.journal-draft-field-location').toggle(sourceType !== 'Journal Entry');
+        $('.journal-draft-field-payment-account').toggle(paymentTypes.indexOf(sourceType) !== -1);
+        $('.journal-draft-field-transfer-account').toggle(transferTypes.indexOf(sourceType) !== -1);
+        $('.journal-draft-field-reversal-target').toggle(sourceType === 'Reversal');
+        $('.journal-draft-field-payment-method').toggle(invoicePaymentTypes.indexOf(sourceType) !== -1);
+        $('.journal-draft-field-invoice').toggle(invoicePaymentTypes.indexOf(sourceType) !== -1);
+        $('.journal-draft-field-expense-category').toggle(sourceType === 'Expense');
+        $('.journal-draft-field-details').toggle(detailTypes.indexOf(sourceType) !== -1);
+        $('.journal-draft-field-stock-direction').toggle(sourceType === 'Stock In/Out');
+        var accountLabel = sourceType === 'Bank Deposit' ? 'Akun penerima deposit'
+            : (sourceType === 'Bank Transfer' ? 'Akun asal transfer'
+                : (sourceType === 'Bank Withdrawal' ? 'Akun yang ditarik' : 'Akun pembayaran / bank'));
+        $('#journal_draft_payment_account_label').text(accountLabel);
+        $('#journal_draft_transfer_account_label').text(sourceType === 'Bank Deposit' ? 'Asal dana internal (opsional)' : 'Akun tujuan transfer');
+        $('#journal_draft_transfer_account_help').text(sourceType === 'Bank Deposit'
+            ? 'Biarkan kosong jika sumber dana berada di luar akun kas/bank yang tercatat.'
+            : 'Pilih akun kas/bank penerima transfer.');
+        configureDraftSelect('#journal_draft_contact', contactKind, sourceType, selectedContactId || null);
+    }
+
+    function addDraftDetailLine(detail, sourceType) {
+        detail = detail || {};
+        var row = $('<tr class="journal-draft-detail-row">');
+        var product = $('<select class="form-control journal-draft-select journal-draft-product" data-kind="product" style="width:100%">').append($('<option>'));
+        row.append($('<td>').append(product));
+        var unit = $('<select class="form-control journal-draft-select journal-draft-unit" data-kind="unit" style="width:100%">').append($('<option>'));
+        row.append($('<td>').append(unit));
+        row.append($('<td>').append($('<input type="number" min="0.0001" step="0.0001" class="form-control input-sm journal-draft-quantity" aria-label="Jumlah">').val(detail.quantity || '')));
+        row.append($('<td>').append($('<input type="number" min="0" step="0.01" class="form-control input-sm journal-draft-unit-price" aria-label="Harga">').val(detail.unit_price || '')));
+        var account = $('<select class="form-control journal-draft-select journal-draft-detail-account" data-kind="payment_account" style="width:100%">').append($('<option>'));
+        row.append($('<td>').append(account));
+        var remove = $('<button type="button" class="btn btn-link text-danger journal-draft-remove-detail" aria-label="Hapus baris detail">').text('Hapus');
+        row.append($('<td>').append(remove));
+        $('#journal_draft_details_table tbody').append(row);
+        configureDraftSelect(product, 'product', sourceType, detail.variation_id || null);
+        configureDraftSelect(unit, 'unit', sourceType, detail.unit_id || null, { variation_id: detail.variation_id || null });
+        product.on('change', function () {
+            configureDraftSelect(unit, 'unit', sourceType, null, { variation_id: product.val() || null });
+        });
+        configureDraftSelect(account, 'payment_account', sourceType, detail.account_id || null);
+    }
+
+    function collectDraftData() {
+        return {
+            contact_id: $('#journal_draft_contact').val() || null,
+            location_id: $('#journal_draft_location').val() || null,
+            payment_account_id: $('#journal_draft_payment_account').val() || null,
+            transfer_account_id: $('#journal_draft_transfer_account').val() || null,
+            reversal_target_id: $('#journal_draft_reversal_target').val() || null,
+            movement_direction: $('#journal_draft_movement_direction').val() || null,
+            payment_method: $('#journal_draft_payment_method').val() || null,
+            invoice_reference: $('#journal_draft_invoice').val() || null,
+            expense_category_id: $('#journal_draft_expense_category').val() || null,
+            details: collectDraftDetails()
+        };
+    }
+
+    function saveDraftDetails(snapshot, closeAfterSave) {
+        snapshot = snapshot || (activeDetailRow ? {
+            rowId: activeDetailRow.id,
+            draftData: collectDraftData()
+        } : null);
+        if (!snapshot) return;
+        if (detailSaveInFlight) {
+            detailSavePending = { snapshot: snapshot, closeAfterSave: Boolean(closeAfterSave) };
+            return;
+        }
+
+        var rowId = snapshot.rowId;
+        var saveButton = $('#journal_import_detail_form').find('button[type="submit"]');
+        detailSaveInFlight = true;
+        saveButton.prop('disabled', true);
+        $('#journal_import_detail_error').addClass('hide').empty();
+
+        $.ajax({
+            method: 'PATCH',
+            url: $('#journal_import_draft').data('row-url-base') + '/' + encodeURIComponent(rowId),
+            contentType: 'application/json',
+            dataType: 'json',
+            headers: { 'X-CSRF-TOKEN': $('#journal_import_draft').data('csrf-token') },
+            data: JSON.stringify({ draft_data: snapshot.draftData })
+        }).done(function (response) {
+            if (response.success && response.row) {
+                draftRowsById[String(rowId)] = response.row;
+                if (activeDetailRow && String(activeDetailRow.id) === String(rowId)) {
+                    activeDetailRow = response.row;
+                }
+                $('#journal_import_draft_table tbody tr').filter(function () {
+                    return String($(this).data('row-id')) === String(rowId);
+                }).data('draft-row', response.row);
+                $('#journal_import_draft_status').removeClass('text-danger').text('Perubahan detail tersimpan otomatis.');
+                if (closeAfterSave && activeDetailRow && String(activeDetailRow.id) === String(rowId)) {
+                    $('#journal_import_detail_modal').modal('hide');
+                    loadDraftRows(draftPage);
+                }
+            }
+        }).fail(function (xhr) {
+            var errors = xhr.responseJSON && xhr.responseJSON.errors;
+            var message = xhr.responseJSON && xhr.responseJSON.msg ? xhr.responseJSON.msg : 'Detail belum tersimpan.';
+            if (errors) {
+                var firstError = Object.keys(errors)[0];
+                message = errors[firstError][0] || message;
+            }
+            $('#journal_import_detail_error').removeClass('hide').text(message);
+            $('#journal_import_draft_status').addClass('text-danger').text(message);
+        }).always(function () {
+            detailSaveInFlight = false;
+            saveButton.prop('disabled', false);
+            if (detailSavePending) {
+                var pending = detailSavePending;
+                detailSavePending = null;
+                saveDraftDetails(pending.snapshot, pending.closeAfterSave);
+            }
+        });
+    }
+
+    function scheduleDraftDetailSave() {
+        if (detailSaveTimer) window.clearTimeout(detailSaveTimer);
+        var snapshot = activeDetailRow ? {
+            rowId: activeDetailRow.id,
+            draftData: collectDraftData()
+        } : null;
+        detailSaveTimer = window.setTimeout(function () {
+            detailSaveTimer = null;
+            saveDraftDetails(snapshot, false);
+        }, 450);
+    }
+
+    function openDraftDetails(row) {
+        activeDetailRow = row;
+        var data = row.draft_data || {};
+        $('#journal_import_detail_title').text('Detail ' + row.source_type + ' #' + (row.source_number || ''));
+        $('#journal_import_detail_error').addClass('hide').empty();
+        $('#journal_draft_details_table tbody').empty();
+        showDraftFields(row.source_type, data.contact_id || null);
+        configureDraftSelect('#journal_draft_location', 'location', row.source_type, data.location_id || null);
+        configureDraftSelect('#journal_draft_payment_account', 'payment_account', row.source_type, data.payment_account_id || null);
+        configureDraftSelect('#journal_draft_transfer_account', 'transfer_account', row.source_type, data.transfer_account_id || null);
+        configureDraftSelect('#journal_draft_reversal_target', 'reversal_target', row.source_type, data.reversal_target_id || null);
+        $('#journal_draft_movement_direction').val(data.movement_direction || '');
+        configureDraftSelect('#journal_draft_invoice', 'invoice', row.source_type, data.invoice_reference || null);
+        configureDraftSelect('#journal_draft_payment_method', 'payment_method', row.source_type, data.payment_method || null);
+        configureDraftSelect('#journal_draft_expense_category', 'expense_category', row.source_type, data.expense_category_id || null);
+        (Array.isArray(data.details) ? data.details : []).forEach(function (detail) {
+            addDraftDetailLine(detail, row.source_type);
+        });
+        $('#journal_import_detail_modal').modal('show');
+    }
+
+    function collectDraftDetails() {
+        var details = [];
+        $('#journal_draft_details_table tbody .journal-draft-detail-row').each(function () {
+            var detail = {
+                variation_id: $(this).find('.journal-draft-product').val() || null,
+                unit_id: $(this).find('.journal-draft-unit').val() || null,
+                quantity: $(this).find('.journal-draft-quantity').val() || null,
+                unit_price: $(this).find('.journal-draft-unit-price').val() || null,
+                account_id: $(this).find('.journal-draft-detail-account').val() || null
+            };
+            details.push(detail);
+        });
+        return details;
+    }
+
+    $(document).on('click', '.journal-import-type-tab', function () {
+        $('.journal-import-type-tabs li').removeClass('active');
+        $('.journal-import-type-tab').attr('aria-selected', 'false');
+        $(this).closest('li').addClass('active');
+        $(this).attr('aria-selected', 'true');
+        draftType = String($(this).data('type'));
+        loadDraftRows(1);
+    });
+
+    $(document).on('change', '#journal_import_review_filter', function () {
+        loadDraftRows(1);
+    });
+    $(document).on('click', '#journal_import_draft_previous', function () {
+        if (draftPage > 1) loadDraftRows(draftPage - 1);
+    });
+    $(document).on('click', '#journal_import_draft_next', function () {
+        if (draftPage < draftLastPage) loadDraftRows(draftPage + 1);
+    });
+
+    $(document).on('change', '.journal-draft-action', function () {
+        var rowElement = $(this).closest('tr');
+        saveDraftRow(rowElement.data('row-id'), actionPayload(rowElement, $(this).val()), rowElement);
+    });
+
+    $(document).on('change', '.journal-draft-source', function () {
+        var rowElement = $(this).closest('tr');
+        var value = $(this).val();
+        var action = value === 'create' ? 'create' : (value ? 'update' : 'review');
+        rowElement.find('.journal-draft-action').val(action);
+        saveDraftRow(rowElement.data('row-id'), actionPayload(rowElement, action), rowElement);
+    });
+
+    $(document).on('change', '.journal-draft-reviewed', function () {
+        var rowElement = $(this).closest('tr');
+        var action = rowElement.find('.journal-draft-action').val();
+        var payload = actionPayload(rowElement, action);
+        payload.is_reviewed = $(this).is(':checked');
+        saveDraftRow(rowElement.data('row-id'), payload, rowElement);
+    });
+
+    $(document).on('click', '.journal-draft-edit-details', function () {
+        var row = $(this).closest('tr').data('draft-row');
+        if (row) openDraftDetails(row);
+    });
+    $(document).on('click', '#journal_draft_add_detail', function () {
+        if (activeDetailRow) {
+            addDraftDetailLine({}, activeDetailRow.source_type);
+            scheduleDraftDetailSave();
+        }
+    });
+    $(document).on('click', '.journal-draft-remove-detail', function () {
+        $(this).closest('tr').remove();
+        scheduleDraftDetailSave();
+    });
+
+    $(document).on('change input', '#journal_import_detail_form .journal-draft-select, #journal_import_detail_form input', function () {
+        scheduleDraftDetailSave();
+    });
+
+    $(document).on('submit', '#journal_import_detail_form', function (event) {
+        event.preventDefault();
+        if (!activeDetailRow) return;
+        if (detailSaveTimer) window.clearTimeout(detailSaveTimer);
+        detailSaveTimer = null;
+        saveDraftDetails({
+            rowId: activeDetailRow.id,
+            draftData: collectDraftData()
+        }, true);
+    });
+
+    $(function () {
+        var draft = $('#journal_import_draft');
+        if (draft.length) {
+            draftType = String(draft.data('default-type') || 'Journal Entry');
+            loadDraftRows(1);
+        }
+    });
+
+    $(document).on('click', '.journal-draft-approve-difference', function () {
+        var row = $(this).closest('tr').data('draft-row') || {};
+        $('#journal_import_difference_row_id').val(row.id || '');
+        $('#journal_import_difference_reason').val('');
+        $('#journal_import_difference_summary').text(
+            'Total Journal: ' + formatDraftNumber(row.journal_total)
+            + ' · Total transaksi: ' + formatDraftNumber(row.business_total)
+            + ' · Selisih: ' + formatDraftNumber(row.difference_amount)
+        );
+        $('#journal_import_difference_modal').modal('show');
+    });
+
+    $(document).on('submit', '#journal_import_difference_form', function (event) {
+        event.preventDefault();
+        var draft = $('#journal_import_draft');
+        var rowId = $('#journal_import_difference_row_id').val();
+        var reason = String($('#journal_import_difference_reason').val() || '').trim();
+        if (!rowId || reason.length < 5) {
+            toastr.error('Masukkan alasan persetujuan minimal 5 karakter.');
+            return;
+        }
+
+        var submitButton = $(this).find('button[type="submit"]').prop('disabled', true);
+        $.ajax({
+            method: 'PATCH',
+            url: draft.data('approve-url-base') + '/' + encodeURIComponent(rowId) + '/approve-difference',
+            contentType: 'application/json',
+            dataType: 'json',
+            headers: { 'X-CSRF-TOKEN': draft.data('csrf-token') },
+            data: JSON.stringify({ reason: reason })
+        }).done(function (response) {
+            if (response.success && response.row) {
+                draftRowsById[String(rowId)] = response.row;
+                $('#journal_import_difference_modal').modal('hide');
+                loadDraftRows(draftPage);
+                toastr.success(response.msg || 'Persetujuan selisih tersimpan.');
+            }
+        }).fail(function (xhr) {
+            var message = xhr.responseJSON && xhr.responseJSON.message
+                ? xhr.responseJSON.message
+                : 'Persetujuan selisih gagal disimpan.';
+            toastr.error(message);
+        }).always(function () {
+            submitButton.prop('disabled', false);
+        });
+    });
+
     $(document).on('submit', '#journal_import_form', function (event) {
         event.preventDefault();
 
-        if (!window.confirm('Import journal dari file ini sekarang?')) {
+        if (!window.confirm('Proses baris Journal Entry yang valid dari draft tersimpan?')) {
             return false;
         }
 

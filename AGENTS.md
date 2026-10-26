@@ -25,7 +25,7 @@ Rules:
 - URL: `http://localhost/2025/ultimateerp/public/`
 - Username: `direktur_cv`
 - Password: `cv123456`
-- For local UI smoke tests, use `agent-browser` (the in-app browser automation skill) and keep the test within this local URL.
+- For local UI end-to-end (E2E) tests, use Playwright and keep the test within this local URL.
 
 ## Session handoff / operational context
 
@@ -49,7 +49,7 @@ This section is the canonical starting point for a new coding session. Read it b
 - Current unit/driver suggestions are distinct values from previous Loading Vendor records in the active business. They are not yet filtered by supplier; supplier-specific history is the next UX enhancement.
 - Loading Vendor has nullable `route_id`, `project_id`, `customer_id`, and `expense_transaction_id`; `expense_status` starts as `not_linked`. No Expense, invoice, Sell, payroll, asset ledger, or internal settlement is created automatically.
 - Verified and cancelled records are locked from edit/delete. Status flow is `draft → loading → in_transit → completed → verified`, with cancellation allowed before finalization. Verification has `asset.fleet_vendor_loadings.verify`; existing fleet management fallbacks remain.
-- Browser verification with `agent-browser` covered create, detail, edit/reload, cancel edit, delete cancel/confirm, Select2 tagging, matched/unmatched supplier import, minimal supplier checkbox, duplicate import detection, status progression, verified locking, desktop, and 390px mobile.
+- Earlier browser verification covered create, detail, edit/reload, cancel edit, delete cancel/confirm, Select2 tagging, matched/unmatched supplier import, minimal supplier checkbox, duplicate import detection, status progression, verified locking, desktop, and 390px mobile.
 - Local test data intentionally left behind: business `2`, Loading Vendor ID `3`, loading number `LV-202609-0002`, supplier ID `1806` (`SUPPLIER-BARU-UI-20260923`), status `verified`, `expense_status=not_linked`, source `vendor-loading-ui-test.csv`. It is final/locked and must not be deleted casually. Other draft test rows were removed through the browser UI. Ignored test files and screenshots may remain under `storage/app/`.
 - The first import test happened before the `Tiket` alias fix, so the retained record has a blank ticket. The importer now recognizes `Tiket`, `Nomor Tiket`, `No Tiket`, and related aliases; a post-fix browser preview confirmed `IMP-UI-20260923-01`, `IMP-UI-20260923-02`, and `IMP-UI-20260923-03`.
 - Completed checks: `migrate --pretend`, `view:cache`, `route:cache`, PHP lint, `php artisan test --filter=ContactSupplierLabelTest` (8 passed), `git diff --check`, and `graphify update .`. No canonical module JavaScript changed, so no module JavaScript publish was needed.
@@ -63,7 +63,7 @@ This section is the canonical starting point for a new coding session. Read it b
    `graphify query "<focused question>"`.
    Use `graphify path` or `graphify explain` for relationships or one concept instead of scanning the whole repository.
 4. Inspect existing routes, controllers, services, jobs, and views before adding a parallel implementation.
-5. For UI verification, use the local demo and `agent-browser`; reproduce the issue, inspect the network/status response, and check Laravel logs before changing code.
+5. For UI verification, use the local demo and Playwright; reproduce the issue, inspect the network/status response, and check Laravel logs before changing code.
 6. After code changes run the relevant lint/tests, publish module JavaScript when applicable, and finish with `graphify update .`.
 
 ### Local demo and testing
@@ -125,6 +125,10 @@ This section is the canonical starting point for a new coding session. Read it b
   Verify the command reports success and that source/runtime copies are byte-identical. Never hand-edit the matching file in `public/modules/<module>/js/`.
 - Run `node --check <script>` for changed JavaScript and verify the Blade view points to the intended canonical/runtime asset.
 
+### Issue workflow checkpoint
+
+For every issue, finish implementation and the relevant non-E2E checks first. Then report the changes, check results, and any known risks to the user, and pause before starting E2E testing or code review. Wait for the user's feedback or direction before entering either stage.
+
 ### Verification checklist
 
 Run only the checks relevant to the change, but for import/queue work the normal checklist is:
@@ -139,7 +143,7 @@ php scripts/publish-module-js.php Accounting
 graphify update .
 ```
 
-Then perform an `agent-browser` smoke test on the local URL: login, open the affected page, upload a small representative workbook, observe the AJAX status/polling, preview errors, correct one invalid row if relevant, confirm only after preview completion, and verify the resulting data.
+Then perform a Playwright E2E smoke test on the local URL: login, open the affected page, upload a small representative workbook, observe the AJAX status/polling, preview errors, correct one invalid row if relevant, confirm only after preview completion, and verify the resulting data. For issue work, do this only after the user has provided feedback at the issue workflow checkpoint.
 
 ### Known pitfalls and diagnostics
 

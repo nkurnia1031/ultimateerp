@@ -9,6 +9,7 @@ use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\DB;
 use Modules\Accounting\Http\Controllers\JournalEntryController;
+use Modules\Accounting\Services\JournalImportDraftService;
 
 class AnalyzeJournalImportJob implements ShouldQueue
 {
@@ -27,7 +28,7 @@ class AnalyzeJournalImportJob implements ShouldQueue
         $this->onQueue('imports');
     }
 
-    public function handle(JournalEntryController $controller)
+    public function handle(JournalEntryController $controller, JournalImportDraftService $draftService)
     {
         $import = DB::table('accounting_journal_imports')->where('id', $this->importId)->first();
 
@@ -53,6 +54,7 @@ class AnalyzeJournalImportJob implements ShouldQueue
                 }
             );
             $analysisPath = $controller->writeTemporaryJournalAnalysis($analysis);
+            $draftService->persistEntries((int) $import->id, (int) $import->business_id, $analysis['entries']);
 
             DB::table('accounting_journal_imports')->where('id', $this->importId)->update([
                 'analysis_path' => $analysisPath,
@@ -65,7 +67,7 @@ class AnalyzeJournalImportJob implements ShouldQueue
                 'unsupported_entries' => 0,
                 'summary' => json_encode($controller->compactJournalAnalysisSummary($analysis)),
                 'status' => 'analyzed',
-                'last_message' => 'Analisis selesai; preview siap ditinjau.',
+                'last_message' => 'Analisis selesai; draft baris tersimpan dan preview siap ditinjau.',
                 'updated_at' => now(),
             ]);
         } catch (\Throwable $e) {

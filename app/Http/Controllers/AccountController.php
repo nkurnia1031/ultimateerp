@@ -1149,6 +1149,9 @@ class AccountController extends Controller
         $details = '';
         if (! empty($row->sub_type)) {
             $details = __('account.' . $row->sub_type);
+            if ($row->sub_type === 'reversal' && ! empty($row->transfer_transaction_id)) {
+                $details .= ' (' . __('account.reversal_of') . ': #' . (int) $row->transfer_transaction_id . ')';
+            }
             if (in_array($row->sub_type, ['fund_transfer', 'deposit']) && ! empty($row->transfer_transaction)) {
                 if ($row->type == 'credit') {
                     $details .= ' ( ' . __('account.from') . ': ' . $row->transfer_transaction->account->name . ')';

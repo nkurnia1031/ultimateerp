@@ -112,6 +112,15 @@ class JournalTaxReconciliationService
             return $this->saveResult($mapping, 'not_applicable', 'Jenis transaksi sumber tidak memakai rekonsiliasi pajak ini.', null, null);
         }
 
+        $sourceRow = DB::table('accounting_journal_import_rows')
+            ->where('journal_import_id', $mapping->journal_import_id)
+            ->where('business_id', $businessId)
+            ->where('journal_mapping_id', $mapping->id)
+            ->first(['source_action']);
+        if (($sourceRow->source_action ?? null) === 'link') {
+            return $this->saveResult($mapping, 'not_applicable', 'Transaksi sumber hanya ditautkan; data pajak dan total sumber tidak diubah.', null, null);
+        }
+
         $journalLines = DB::table('accounting_accounts_transactions')
             ->where('acc_trans_mapping_id', $mapping->id)
             ->where('sub_type', 'journal_entry')

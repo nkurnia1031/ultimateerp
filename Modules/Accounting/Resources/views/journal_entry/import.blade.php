@@ -163,8 +163,195 @@
                 @endif
             @endif
 
+            @php
+                $activeDraftType = collect($draftTypeCounts ?? [])->filter(function ($count) { return $count > 0; })->keys()->first() ?? 'Journal Entry';
+            @endphp
+            <section id="journal_import_draft"
+                data-import-id="{{ $batch->id }}"
+                data-rows-url="{{ url('accounting/journal-entry/import/'.$batch->id.'/draft-rows') }}"
+                data-row-url-base="{{ url('accounting/journal-entry/import/'.$batch->id.'/draft-rows') }}"
+                data-approve-url-base="{{ url('accounting/journal-entry/import/'.$batch->id.'/draft-rows') }}"
+                data-options-url="{{ url('accounting/journal-entry/import/'.$batch->id.'/draft-options') }}"
+                data-csrf-token="{{ csrf_token() }}"
+                data-default-type="{{ $activeDraftType }}">
+                <h4>Draft transaksi per jenis</h4>
+                <p class="help-block">Draft disimpan otomatis dan dapat dilanjutkan kembali oleh pengguna yang memiliki izin Journal pada business ini. Penanda ditinjau hanya untuk membantu pelacakan pekerjaan.</p>
+                <div class="journal-import-tab-scroll" role="region" aria-label="Jenis transaksi Journal" tabindex="0" style="overflow-x:auto; overflow-y:hidden;">
+                    <ul class="nav nav-tabs journal-import-type-tabs" role="tablist" style="display:flex; flex-wrap:nowrap; min-width:max-content; margin-bottom:0;">
+                        @foreach($draftTypeCounts ?? [] as $sourceType => $typeCount)
+                            <li role="presentation" class="{{ $sourceType === $activeDraftType ? 'active' : '' }}" style="float:none; flex:0 0 auto; margin-bottom:-1px;">
+                                <button type="button" class="btn btn-link journal-import-type-tab" role="tab" data-type="{{ $sourceType }}" aria-selected="{{ $sourceType === $activeDraftType ? 'true' : 'false' }}">
+                                    {{ $sourceType }} <span class="badge" data-type-count="{{ $sourceType }}">{{ $typeCount }}</span>
+                                </button>
+                            </li>
+                        @endforeach
+                    </ul>
+                </div>
+                <div class="row" style="margin-top: 12px;">
+                    <div class="col-sm-4 col-md-3">
+                        <label for="journal_import_review_filter">Filter penanda</label>
+                        <select id="journal_import_review_filter" class="form-control">
+                            <option value="all">Semua baris</option>
+                            <option value="unreviewed">Belum ditinjau</option>
+                            <option value="reviewed">Sudah ditinjau</option>
+                        </select>
+                    </div>
+                    <div class="col-sm-8 col-md-9 text-right" style="padding-top: 24px;">
+                        <span id="journal_import_draft_status" class="text-muted" aria-live="polite"></span>
+                    </div>
+                </div>
+                <div class="table-responsive" role="region" aria-label="Baris transaksi Journal import" tabindex="0" style="margin-top: 10px;">
+                    <table class="table table-bordered table-striped" id="journal_import_draft_table">
+                        <thead>
+                            <tr>
+                                <th>Nomor / tanggal</th>
+                                <th>Deskripsi</th>
+                                <th>Status proses / selisih</th>
+                                <th class="text-right">Debit</th>
+                                <th class="text-right">Kredit</th>
+                                <th>Aksi sumber</th>
+                                <th>Sumber yang dipilih</th>
+                                <th>Ditinjau</th>
+                                <th>Detail</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr><td colspan="9" class="text-center text-muted">Memuat draft...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="clearfix">
+                    <small id="journal_import_draft_pagination_info" class="text-muted pull-left"></small>
+                    <div class="btn-group pull-right" role="group" aria-label="Navigasi baris draft">
+                        <button type="button" class="btn btn-default btn-sm" id="journal_import_draft_previous" disabled>Sebelumnya</button>
+                        <button type="button" class="btn btn-default btn-sm" id="journal_import_draft_next" disabled>Berikutnya</button>
+                    </div>
+                </div>
+            </section>
+
+            <div class="modal fade" id="journal_import_detail_modal" tabindex="-1" role="dialog" aria-labelledby="journal_import_detail_title">
+                <div class="modal-dialog modal-lg" role="document">
+                    <div class="modal-content">
+                        <form id="journal_import_detail_form">
+                            <div class="modal-header">
+                                <button type="button" class="close" data-dismiss="modal" aria-label="Tutup"><span aria-hidden="true">&times;</span></button>
+                                <h4 class="modal-title" id="journal_import_detail_title">Lengkapi detail transaksi</h4>
+                            </div>
+                            <div class="modal-body">
+                                <div id="journal_import_detail_error" class="alert alert-danger hide" role="alert"></div>
+                                <div class="row">
+                                    <div class="col-sm-6 journal-draft-field journal-draft-field-contact">
+                                        <div class="form-group">
+                                            <label for="journal_draft_contact">Customer / Supplier / Contact</label>
+                                            <select id="journal_draft_contact" class="form-control journal-draft-select" data-kind="contact" style="width:100%"></select>
+                                        </div>
+                                    </div>
+                                    <div class="col-sm-6 journal-draft-field journal-draft-field-location">
+                                        <div class="form-group">
+                                            <label for="journal_draft_location">Lokasi</label>
+                                            <select id="journal_draft_location" class="form-control journal-draft-select" data-kind="location" style="width:100%"></select>
+                                        </div>
+                                    </div>
+                                    <div class="col-sm-6 journal-draft-field journal-draft-field-stock-direction">
+                                        <div class="form-group">
+                                            <label for="journal_draft_movement_direction">Arah stok</label>
+                                            <select id="journal_draft_movement_direction" class="form-control journal-draft-select">
+                                                <option value="">Pilih arah pergerakan</option>
+                                                <option value="in">Masuk (opening stock)</option>
+                                                <option value="out">Keluar (stock adjustment)</option>
+                                            </select>
+                                            <p class="help-block">Pilih secara eksplisit; alokasi produk dan jumlah tidak diambil dari baris GL.</p>
+                                        </div>
+                                    </div>
+                                    <div class="col-sm-6 journal-draft-field journal-draft-field-payment-account">
+                                        <div class="form-group">
+                                            <label id="journal_draft_payment_account_label" for="journal_draft_payment_account">Akun pembayaran / bank</label>
+                                            <select id="journal_draft_payment_account" class="form-control journal-draft-select" data-kind="payment_account" style="width:100%"></select>
+                                        </div>
+                                    </div>
+                                    <div class="col-sm-6 journal-draft-field journal-draft-field-transfer-account">
+                                        <div class="form-group">
+                                            <label id="journal_draft_transfer_account_label" for="journal_draft_transfer_account">Akun pasangan</label>
+                                            <select id="journal_draft_transfer_account" class="form-control journal-draft-select" data-kind="transfer_account" style="width:100%"></select>
+                                            <p class="help-block" id="journal_draft_transfer_account_help"></p>
+                                        </div>
+                                    </div>
+                                    <div class="col-sm-6 journal-draft-field journal-draft-field-reversal-target">
+                                        <div class="form-group">
+                                            <label for="journal_draft_reversal_target">Transaksi yang dibalik</label>
+                                            <select id="journal_draft_reversal_target" class="form-control journal-draft-select" data-kind="reversal_target" style="width:100%"></select>
+                                            <p class="help-block">Pilih transaksi bank/kas aktif dari business ini. Sistem membalik nilai pada akun dan nominal target.</p>
+                                        </div>
+                                    </div>
+                                    <div class="col-sm-6 journal-draft-field journal-draft-field-invoice">
+                                        <div class="form-group">
+                                            <label for="journal_draft_invoice">Invoice yang dibayar</label>
+                                            <select id="journal_draft_invoice" class="form-control journal-draft-select" data-kind="invoice" style="width:100%"></select>
+                                            <p class="help-block">Pilih invoice final yang sudah ada, atau baris invoice dalam batch yang sama. Pembayaran menunggu invoice tersebut berhasil dan final.</p>
+                                        </div>
+                                    </div>
+                                    <div class="col-sm-6 journal-draft-field journal-draft-field-payment-method">
+                                        <div class="form-group">
+                                            <label for="journal_draft_payment_method">Metode pembayaran</label>
+                                            <select id="journal_draft_payment_method" class="form-control journal-draft-select" data-kind="payment_method" style="width:100%"></select>
+                                        </div>
+                                    </div>
+                                    <div class="col-sm-6 journal-draft-field journal-draft-field-expense-category">
+                                        <div class="form-group">
+                                            <label for="journal_draft_expense_category">Kategori expense</label>
+                                            <select id="journal_draft_expense_category" class="form-control journal-draft-select" data-kind="expense_category" style="width:100%"></select>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="journal-draft-field journal-draft-field-details">
+                                    <h5>Baris detail</h5>
+                                    <div class="table-responsive" role="region" aria-label="Detail item transaksi" tabindex="0">
+                                        <table class="table table-condensed" id="journal_draft_details_table">
+                                            <thead>
+                                                <tr><th style="min-width:220px">Produk / variasi</th><th style="min-width:160px">Satuan</th><th style="width:100px">Jumlah</th><th style="width:130px">Harga / satuan</th><th style="min-width:180px">Akun opsional</th><th style="width:70px"></th></tr>
+                                            </thead>
+                                            <tbody></tbody>
+                                        </table>
+                                    </div>
+                                    <button type="button" class="btn btn-default btn-sm" id="journal_draft_add_detail"><i class="fas fa-plus"></i> Tambah baris</button>
+                                    <p class="help-block">Pilih produk yang sudah ada. Jumlah dan harga harus diisi; sistem tidak menebak alokasi dari baris GL.</p>
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-default" data-dismiss="modal">Batal</button>
+                                <button type="submit" class="btn btn-primary">Simpan detail</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <div class="modal fade" id="journal_import_difference_modal" tabindex="-1" role="dialog" aria-labelledby="journal_import_difference_title">
+                <div class="modal-dialog" role="document">
+                    <div class="modal-content">
+                        <form id="journal_import_difference_form">
+                            <div class="modal-header">
+                                <button type="button" class="close" data-dismiss="modal" aria-label="Tutup"><span aria-hidden="true">&times;</span></button>
+                                <h4 class="modal-title" id="journal_import_difference_title">Setujui selisih total</h4>
+                            </div>
+                            <div class="modal-body">
+                                <input type="hidden" id="journal_import_difference_row_id">
+                                <p id="journal_import_difference_summary" class="help-block"></p>
+                                <label for="journal_import_difference_reason">Alasan persetujuan</label>
+                                <textarea id="journal_import_difference_reason" class="form-control" rows="4" maxlength="1000" required></textarea>
+                                <p class="help-block">Persetujuan ini terpisah dari penanda Ditinjau dan mencatat pengguna serta waktu.</p>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-default" data-dismiss="modal">Batal</button>
+                                <button type="submit" class="btn btn-warning">Setujui selisih</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
             {!! Form::open([
-                'url' => action([\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'storeImport']),
+                'url' => action([\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'startImport']),
                 'method' => 'post',
                 'id' => 'journal_import_form',
             ]) !!}
@@ -300,7 +487,7 @@
             @endif
 
                 <div class="alert alert-info">
-                    Semua jenis transaksi di workbook diproses sebagai GL. Relasi sumber hanya dibuat untuk satu sumber yang cocok; sumber yang tidak ditemukan atau ambigu ditandai untuk ditinjau. Import ini tidak membuat transaksi finansial sumber baru.
+                    Baris Journal Entry yang valid diproses melalui worker. Jenis transaksi lain tetap tersimpan di draft sampai datanya lengkap dan handler sumbernya tersedia.
                 </div>
 
                 <div class="checkbox">
@@ -318,7 +505,7 @@
                 </div>
 
                 <button type="submit" class="btn btn-success">
-                    <i class="fas fa-file-import"></i> Import Sekarang
+                    <i class="fas fa-file-import"></i> Proses Baris Valid
                 </button>
                 <div id="journal_import_progress_box" class="hide" style="margin-top: 15px;">
                     <div class="progress">
@@ -389,6 +576,8 @@
                                     <span class="label bg-aqua" id="journal-import-status-{{ $import->id }}">analyzed</span>
                                 @elseif($import->status == 'imported')
                                     <span class="label bg-green" id="journal-import-status-{{ $import->id }}">imported</span>
+                                @elseif($import->status == 'partially_imported')
+                                    <span class="label bg-aqua" id="journal-import-status-{{ $import->id }}">partially_imported</span>
                                 @elseif($import->status == 'failed')
                                     <span class="label bg-red" id="journal-import-status-{{ $import->id }}">failed</span>
                                 @else
@@ -424,9 +613,9 @@
                                 data-review-url="{{ action([\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'reviewImport'], [$import->id]) }}"
                                 data-revert-url="{{ action([\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'revertImport'], [$import->id]) }}"
                                 data-csrf-token="{{ csrf_token() }}">
-                                @if($import->status == 'analyzed')
+                                @if(in_array($import->status, ['analyzed', 'partially_imported', 'failed'], true))
                                     <a href="{{ action([\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'reviewImport'], [$import->id]) }}" class="btn btn-primary btn-xs">
-                                        <i class="fas fa-check"></i> Review & Import
+                                        <i class="fas fa-check"></i> {{ $import->status === 'analyzed' ? 'Review & Import' : 'Review & Continue' }}
                                     </a>
                                 @elseif($isJournalImportActive)
                                     <button type="button" class="btn btn-default btn-xs journal-import-watch" data-id="{{ $import->id }}">

@@ -29,7 +29,8 @@ class JournalImportJobFailureTest extends TestCase
             24,
             ['queued_import', 'importing', 'reconciling', 'processing'],
             'Worker menghentikan import sebelum selesai.',
-            'queue retry window elapsed'
+            'queue retry window elapsed',
+            true
         );
     }
 
@@ -43,8 +44,20 @@ class JournalImportJobFailureTest extends TestCase
         }
     }
 
-    private function assertFailedBatchUpdate($job, int $importId, array $activeStatuses, string $lastMessage, string $errorMessage): void
+    private function assertFailedBatchUpdate($job, int $importId, array $activeStatuses, string $lastMessage, string $errorMessage, bool $hasRowStates = false): void
     {
+        if ($hasRowStates) {
+            $rowQuery = Mockery::mock();
+            $rowQuery->shouldReceive('where')->once()->with('journal_import_id', $importId)->andReturnSelf();
+            $rowQuery->shouldReceive('whereIn')->once()->with('processing_status', ['queued', 'running'])->andReturnSelf();
+            $rowQuery->shouldReceive('update')->once()->with(Mockery::on(function (array $values) use ($errorMessage) {
+                return ($values['processing_status'] ?? null) === 'failed'
+                    && ($values['processing_error'] ?? null) === $errorMessage
+                    && array_key_exists('updated_at', $values);
+            }))->andReturn(1);
+            DB::shouldReceive('table')->once()->with('accounting_journal_import_rows')->andReturn($rowQuery);
+        }
+
         $query = Mockery::mock();
         $query->shouldReceive('where')->once()->with('id', $importId)->andReturnSelf();
         $query->shouldReceive('whereIn')->once()->with('status', $activeStatuses)->andReturnSelf();
