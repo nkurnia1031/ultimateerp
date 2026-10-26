@@ -182,7 +182,7 @@ class GeneralLedgerBackfillService
             $audit['nearest_suggestions'][] = $this->accountMappingMatch(
                 $mainAccount,
                 $resolved['account'],
-                'nearest_name'
+                $resolved['method'] ?? 'nearest_name'
             ) + ['score' => $resolved['score']];
         }
 
@@ -325,7 +325,9 @@ class GeneralLedgerBackfillService
                     $pair,
                     $autoMap === null ? 'location' : 'automatic_nearest',
                     $autoMap['payment_account_score'] ?? null,
-                    $autoMap['deposit_to_score'] ?? null
+                    $autoMap['deposit_to_score'] ?? null,
+                    $autoMap['payment_account_method'] ?? null,
+                    $autoMap['deposit_to_method'] ?? null
                 )
             );
             $candidate['uses_auto_map'] = $autoMap !== null;
@@ -468,7 +470,13 @@ class GeneralLedgerBackfillService
                     $pair,
                     $usesAutoMap ? 'automatic_nearest' : 'location',
                     $paymentScore,
-                    $depositScore
+                    $depositScore,
+                    $type === 'sell'
+                        ? ($autoMap['method'] ?? null)
+                        : ($sourceAccount['method'] ?? null),
+                    $type === 'purchase'
+                        ? ($autoMap['method'] ?? null)
+                        : ($sourceAccount['method'] ?? null)
                 )
             );
             $candidate['uses_auto_map'] = $usesAutoMap;
@@ -839,7 +847,9 @@ class GeneralLedgerBackfillService
         array $pair,
         string $mappingSource = 'location',
         ?float $paymentAccountScore = null,
-        ?float $depositToScore = null
+        ?float $depositToScore = null,
+        ?string $paymentAccountMethod = null,
+        ?string $depositToMethod = null
     ): array {
         return [
             'location_id' => $locationId,
@@ -848,9 +858,11 @@ class GeneralLedgerBackfillService
             'payment_account_id' => (int) $pair['payment_account']->id,
             'payment_account_name' => (string) $pair['payment_account']->name,
             'payment_account_score' => $paymentAccountScore,
+            'payment_account_method' => $paymentAccountMethod,
             'deposit_to_id' => (int) $pair['deposit_to']->id,
             'deposit_to_name' => (string) $pair['deposit_to']->name,
             'deposit_to_score' => $depositToScore,
+            'deposit_to_method' => $depositToMethod,
         ];
     }
 
@@ -897,6 +909,8 @@ class GeneralLedgerBackfillService
                 'pair' => ['payment_account' => $revenue['account'], 'deposit_to' => $receivable['account']],
                 'payment_account_score' => $revenue['score'],
                 'deposit_to_score' => $receivable['score'],
+                'payment_account_method' => $revenue['method'] ?? 'nearest_name',
+                'deposit_to_method' => $receivable['method'] ?? 'nearest_name',
                 'account_links' => $receivable['crosswalk'] ? [$receivable['crosswalk']] : [],
             ];
         }
@@ -912,6 +926,8 @@ class GeneralLedgerBackfillService
                 'pair' => ['payment_account' => $payable['account'], 'deposit_to' => $purchase['account']],
                 'payment_account_score' => $payable['score'],
                 'deposit_to_score' => $purchase['score'],
+                'payment_account_method' => $payable['method'] ?? 'nearest_name',
+                'deposit_to_method' => $purchase['method'] ?? 'nearest_name',
                 'account_links' => $payable['crosswalk'] ? [$payable['crosswalk']] : [],
             ];
         }
@@ -995,6 +1011,7 @@ class GeneralLedgerBackfillService
                 'account' => $resolved['account'],
                 'score' => $resolved['score'] ?? 1.0,
                 'source_name' => $resolved['source_name'] ?? '',
+                    'method' => $resolved['method'] ?? (! empty($resolved['automatic_nearest']) ? 'nearest_name' : 'account_id'),
             ];
             if (! empty($resolved['crosswalk'])) {
                 $accountLinks[] = $resolved['crosswalk'];
@@ -1016,6 +1033,7 @@ class GeneralLedgerBackfillService
                 'account' => $payable['account'],
                 'score' => $payable['score'],
                 'source_name' => $payable['source_name'],
+                'method' => $payable['method'] ?? 'nearest_name',
             ];
         }
 
@@ -1031,6 +1049,8 @@ class GeneralLedgerBackfillService
             ],
             'payment_account_score' => $primaryPayment['score'],
             'deposit_to_score' => $expenseAccount['score'],
+            'payment_account_method' => $primaryPayment['method'],
+            'deposit_to_method' => $expenseAccount['method'] ?? 'nearest_name',
             'payment_lines' => $paymentLines,
             'account_links' => array_values(array_unique($accountLinks, SORT_REGULAR)),
             'payment_source_names' => array_values(array_unique(array_filter(array_column($paymentAccounts, 'source_name')))),
@@ -1075,9 +1095,7 @@ class GeneralLedgerBackfillService
                 'account' => $mapped['account'],
                 'score' => $mapped['score'] ?? 1.0,
                 'source_name' => (string) $operationalAccounts[0]->name,
-                'method' => ! empty($mapped['automatic_nearest'])
-                    ? 'nearest_name'
-                    : ($mapped['crosswalk'] === null ? 'account_id' : 'exact_name'),
+                'method' => $mapped['method'] ?? ($mapped['crosswalk'] === null ? 'account_id' : 'exact_name'),
                 'automatic_nearest' => ! empty($mapped['automatic_nearest']),
                 'crosswalk' => $mapped['crosswalk'] ?? null,
             ];
@@ -1099,6 +1117,21 @@ class GeneralLedgerBackfillService
         ));
         if ($candidates === []) {
             return ['reason' => 'akun_coa_untuk_tipe_tidak_ditemukan'];
+        }
+
+        $hintName = $this->semanticCoaHint($sourceName);
+        if ($hintName !== null) {
+            $hintedAccount = collect($candidates)->first(
+                fn ($account) => $this->normalizeAccountName((string) $account->name) === $this->normalizeAccountName($hintName)
+            );
+            if ($hintedAccount) {
+                return [
+                    'account' => $hintedAccount,
+                    'score' => 1.0,
+                    'source_name' => $sourceName,
+                    'method' => 'semantic_hint',
+                ];
+            }
         }
 
         $ranked = [];
@@ -1123,6 +1156,69 @@ class GeneralLedgerBackfillService
             'source_name' => $sourceName,
             'method' => 'nearest_name',
         ];
+    }
+
+    private function semanticCoaHint(string $sourceName): ?string
+    {
+        $key = strtolower(preg_replace('/[^a-z0-9]+/i', ' ', trim($sourceName)) ?: '');
+        $key = trim(preg_replace('/\s+/', ' ', $key) ?: '');
+        $hints = [
+            'cash' => 'Cash and cash equivalents',
+            'giro' => 'Cash and cash equivalents',
+            'petty cash pool' => 'Cash and cash equivalents',
+            'mandiri 9641' => 'MANDIRI - BMT',
+            'mandiri pt' => 'MANDIRI - BMT',
+            'employee receivables' => 'Accounts Receivable (A/R)',
+            'employee receivables expenses' => 'Accounts Receivable (A/R)',
+            'kasbon' => 'Accounts Receivable (A/R)',
+            'accumulated depreciation vehicles' => 'Accumulated depreciation on property, plant and equipment',
+            'accumulated depreciation machinery equipment' => 'Accumulated depreciation on property, plant and equipment',
+            'purchase discounts' => 'Discounts given - COS',
+            'repair and maintenance hpp' => 'Repair and maintenance',
+            'donations' => 'Other general and administrative expenses',
+            'transportation' => 'Travel expenses - general and admin expenses',
+            'uang jalan' => 'Travel expenses - general and admin expenses',
+            'travelling general' => 'Travel expenses - general and admin expenses',
+            'fuel toll and parking general' => 'Travel expenses - general and admin expenses',
+            'travelling sales' => 'Travel expenses - selling expense',
+            'fuel toll and parking sales' => 'Travel expenses - selling expense',
+            'employee benefit expense' => 'Wage expenses',
+            'other benefit and allowances' => 'Wage expenses',
+            'salaries' => 'Wage expenses',
+            'overtime' => 'Wage expenses',
+            'thr and bonus' => 'Wage expenses',
+            'incentive' => 'Wage expenses',
+            'uniform' => 'Wage expenses',
+            'meals' => 'Meals and entertainment',
+            'entertainment' => 'Meals and entertainment',
+            'food' => 'Meals and entertainment',
+            'meals and transport' => 'Meals and entertainment',
+            'medical' => 'Insurance - General',
+            'bank administration fee' => 'Bank charges',
+            'bank admin' => 'Bank charges',
+            'document handling expense' => 'Office expenses',
+            'taxes and licenses' => 'Income tax expense',
+            'tunjangan pph' => 'Income tax expense',
+            'bank loan' => 'Long-term debt',
+            'cost of production' => 'Overhead - COS',
+            'inventory adjustments' => 'Change in inventory - COS',
+            'other miscellaneous expense' => 'Other general and administrative expenses',
+            'securities and cleaning' => 'Other general and administrative expenses',
+            'general affair general' => 'Other general and administrative expenses',
+            'security general' => 'Other general and administrative expenses',
+            'cleaning general' => 'Other general and administrative expenses',
+            'souvenir' => 'Other Types of Expenses-Advertising Expenses',
+            'training and developments' => 'Dues and Subscriptions',
+            'shipping freight delivery' => 'Freight and delivery - COS',
+            'shippingan' => 'Freight and delivery - COS',
+            'utilities expense' => 'Utilities',
+            'electricity' => 'Utilities',
+            'water' => 'Utilities',
+            'communication general' => 'Utilities',
+            'communication sales' => 'Utilities',
+        ];
+
+        return $hints[$key] ?? null;
     }
 
     private function accountNameSimilarity(string $sourceName, string $candidateName): float
@@ -1248,6 +1344,14 @@ class GeneralLedgerBackfillService
         $side = $direction === 'input' ? 'debit' : 'credit';
         $candidates = [];
         foreach ($this->accountingAccountsCache[$businessId] ?? [] as $account) {
+            $namedDirection = $this->explicitVatDirection(
+                (string) ($account->gl_code ?? ''),
+                (string) $account->name
+            );
+            if ($namedDirection !== $direction) {
+                continue;
+            }
+
             $components = $this->accountComponentService->groupJournalLines([
                 'lines' => [[
                     'account_no' => (string) ($account->gl_code ?? ''),
@@ -1274,6 +1378,20 @@ class GeneralLedgerBackfillService
         return ['account' => $candidates[0]];
     }
 
+    private function explicitVatDirection(string $accountNo, string $accountName): ?string
+    {
+        $label = mb_strtolower(trim($accountNo.' '.$accountName));
+        $taxTerm = '(?:vat|ppn|gst|pajak|tax)';
+        if (preg_match('/\b'.$taxTerm.'\b.*\b(?:in|input|masukan)\b|\b(?:in|input|masukan)\b.*\b'.$taxTerm.'\b/u', $label) === 1) {
+            return 'input';
+        }
+        if (preg_match('/\b'.$taxTerm.'\b.*\b(?:out|output|keluaran)\b|\b(?:out|output|keluaran)\b.*\b'.$taxTerm.'\b/u', $label) === 1) {
+            return 'output';
+        }
+
+        return null;
+    }
+
     private function mainAccountMapping(int $businessId, int $accountId): array
     {
         $cacheKey = $businessId.':'.$accountId;
@@ -1296,7 +1414,11 @@ class GeneralLedgerBackfillService
             return $this->mainAccountCache[$cacheKey] = ['reason' => 'crosswalk_account_id_ambigu'];
         }
         if (count($direct) === 1) {
-            return $this->mainAccountCache[$cacheKey] = ['account' => $direct[0], 'crosswalk' => null];
+            return $this->mainAccountCache[$cacheKey] = [
+                'account' => $direct[0],
+                'crosswalk' => null,
+                'method' => 'account_id',
+            ];
         }
 
         $mainAccountName = (string) $mainAccount->name;
@@ -1320,6 +1442,7 @@ class GeneralLedgerBackfillService
                 'automatic_nearest' => true,
                 'score' => $nearest['score'],
                 'source_name' => $mainAccountName,
+                'method' => $nearest['method'],
             ];
         }
         if (! empty($matches[0]->account_id) && (int) $matches[0]->account_id !== $accountId) {
@@ -1333,6 +1456,7 @@ class GeneralLedgerBackfillService
                 'accounting_account_id' => (int) $account->id,
                 'account_id' => $accountId,
             ],
+            'method' => 'exact_name',
         ];
     }
 

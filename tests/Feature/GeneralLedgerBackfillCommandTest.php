@@ -273,8 +273,15 @@ class GeneralLedgerBackfillCommandTest extends TestCase
         DB::table('accounts')->insert([
             ['id' => 203, 'business_id' => 7, 'name' => 'Trade Payable'],
             ['id' => 205, 'business_id' => 7, 'name' => 'Cash'],
+            ['id' => 206, 'business_id' => 7, 'name' => 'Giro'],
+            ['id' => 207, 'business_id' => 7, 'name' => 'Employee Receivables (Expenses)'],
         ]);
         DB::table('expense_categories')->insert(['id' => 5, 'business_id' => 7, 'name' => 'Meals']);
+        DB::table('expense_categories')->insert([
+            ['id' => 6, 'business_id' => 7, 'name' => 'Transportation'],
+            ['id' => 42, 'business_id' => 7, 'name' => 'Employee Receivables (Expenses)'],
+            ['id' => 45, 'business_id' => 7, 'name' => 'Taxes and Licenses'],
+        ]);
         DB::table('accounting_accounts')->where('business_id', 7)->delete();
         DB::table('accounting_accounts')->insert([
             ['id' => 107, 'business_id' => 7, 'name' => 'Trade Payable', 'account_primary_type' => 'liability', 'account_id' => 203, 'status' => 'active', 'created_by' => 1],
@@ -282,6 +289,9 @@ class GeneralLedgerBackfillCommandTest extends TestCase
             ['id' => 105, 'business_id' => 7, 'name' => 'VAT In', 'account_primary_type' => 'asset', 'account_id' => null, 'status' => 'active', 'created_by' => 1],
             ['id' => 115, 'business_id' => 7, 'name' => 'Cash and cash equivalents', 'account_primary_type' => 'asset', 'account_id' => null, 'status' => 'active', 'created_by' => 1],
             ['id' => 116, 'business_id' => 7, 'name' => 'Meals and entertainment', 'account_primary_type' => 'expenses', 'account_id' => null, 'status' => 'active', 'created_by' => 1],
+            ['id' => 117, 'business_id' => 7, 'name' => 'Accounts Receivable (A/R)', 'account_primary_type' => 'asset', 'account_id' => null, 'status' => 'active', 'created_by' => 1],
+            ['id' => 118, 'business_id' => 7, 'name' => 'Travel expenses - general and admin expenses', 'account_primary_type' => 'expenses', 'account_id' => null, 'status' => 'active', 'created_by' => 1],
+            ['id' => 119, 'business_id' => 7, 'name' => 'Income tax expense', 'account_primary_type' => 'expenses', 'account_id' => null, 'status' => 'active', 'created_by' => 1],
         ]);
         DB::table('transactions')->insert([
             [
@@ -314,6 +324,51 @@ class GeneralLedgerBackfillCommandTest extends TestCase
                 'invoice_no' => 'EXP-941',
                 'ref_no' => 'EXPENSE-941',
             ],
+            [
+                'id' => 942,
+                'business_id' => 7,
+                'location_id' => 70,
+                'type' => 'expense',
+                'status' => 'final',
+                'expense_category_id' => 6,
+                'transaction_date' => '2023-05-03 10:00:00',
+                'final_total' => 10,
+                'total_before_tax' => 10,
+                'tax_amount' => 0,
+                'created_by' => 1,
+                'invoice_no' => 'EXP-942',
+                'ref_no' => 'EXPENSE-942',
+            ],
+            [
+                'id' => 943,
+                'business_id' => 7,
+                'location_id' => 70,
+                'type' => 'expense',
+                'status' => 'final',
+                'expense_category_id' => 42,
+                'transaction_date' => '2023-05-04 10:00:00',
+                'final_total' => 12,
+                'total_before_tax' => 12,
+                'tax_amount' => 0,
+                'created_by' => 1,
+                'invoice_no' => 'EXP-943',
+                'ref_no' => 'EXPENSE-943',
+            ],
+            [
+                'id' => 944,
+                'business_id' => 7,
+                'location_id' => 70,
+                'type' => 'expense',
+                'status' => 'final',
+                'expense_category_id' => 45,
+                'transaction_date' => '2023-05-05 10:00:00',
+                'final_total' => 8,
+                'total_before_tax' => 8,
+                'tax_amount' => 0,
+                'created_by' => 1,
+                'invoice_no' => 'EXP-944',
+                'ref_no' => 'EXPENSE-944',
+            ],
         ]);
         DB::table('transaction_payments')->insert([
             'id' => 540,
@@ -328,25 +383,30 @@ class GeneralLedgerBackfillCommandTest extends TestCase
         ]);
 
         $this->artisan('accounting:backfill-general-ledger', ['business_id' => 7])
-            ->expectsOutputToContain('Planned groups: 2')
-            ->expectsOutputToContain('Auto-mapped groups: 2')
+            ->expectsOutputToContain('Planned groups: 5')
+            ->expectsOutputToContain('Auto-mapped groups: 5')
             ->expectsOutputToContain('Automatic nearest CoA mappings used:')
             ->expectsOutputToContain('[expense_5]')
             ->expectsOutputToContain('Trade Payable')
-            ->expectsOutputToContain('Debit total: 77.00')
-            ->expectsOutputToContain('Credit total: 77.00')
+            ->expectsOutputToContain('account #206 Giro -> accounting #115 Cash and cash equivalents [semantic_hint; score 1.0000]')
+            ->expectsOutputToContain('account #207 Employee Receivables (Expenses) -> accounting #117 Accounts Receivable (A/R) [semantic_hint; score 1.0000]')
+            ->expectsOutputToContain('Debit total: 107.00')
+            ->expectsOutputToContain('Credit total: 107.00')
             ->assertExitCode(0);
 
         $this->artisan('accounting:backfill-general-ledger', ['business_id' => 7, '--apply' => true])
-            ->expectsOutputToContain('Applied groups: 2')
+            ->expectsOutputToContain('Applied groups: 5')
             ->assertExitCode(0);
 
         $rows = DB::table('accounting_accounts_transactions')->orderBy('id')->get();
-        $this->assertCount(5, $rows);
+        $this->assertCount(11, $rows);
         $this->assertSame(72.0, (float) $rows->where('accounting_account_id', 116)->sum('amount'));
         $this->assertSame(5.0, (float) $rows->where('accounting_account_id', 105)->sum('amount'));
         $this->assertSame(55.0, (float) $rows->where('accounting_account_id', 115)->sum('amount'));
-        $this->assertSame(22.0, (float) $rows->where('accounting_account_id', 107)->sum('amount'));
+        $this->assertSame(52.0, (float) $rows->where('accounting_account_id', 107)->sum('amount'));
+        $this->assertSame(10.0, (float) $rows->where('accounting_account_id', 118)->sum('amount'));
+        $this->assertSame(12.0, (float) $rows->where('accounting_account_id', 117)->sum('amount'));
+        $this->assertSame(8.0, (float) $rows->where('accounting_account_id', 119)->sum('amount'));
         $this->assertNull(DB::table('accounting_accounts')->where('id', 115)->value('account_id'));
     }
 
@@ -436,6 +496,40 @@ class GeneralLedgerBackfillCommandTest extends TestCase
 
         $this->artisan('accounting:backfill-general-ledger', ['business_id' => 7, '--apply' => true])
             ->expectsOutputToContain('Applied groups: 0')
+            ->assertExitCode(0);
+
+        $this->assertSame(0, DB::table('accounting_accounts_transactions')->count());
+        $this->assertSame(0, DB::table('accounting_acc_trans_mappings')->count());
+    }
+
+    public function test_income_tax_accounts_are_not_used_as_vat_accounts(): void
+    {
+        DB::table('accounting_accounts')->whereIn('id', [103, 105])->delete();
+        DB::table('accounting_accounts')->insert([
+            ['id' => 113, 'business_id' => 7, 'name' => 'Income tax expense', 'account_primary_type' => 'expenses', 'account_id' => null, 'status' => 'active', 'created_by' => 1],
+            ['id' => 114, 'business_id' => 7, 'name' => 'Income tax payable', 'account_primary_type' => 'liability', 'account_id' => null, 'status' => 'active', 'created_by' => 1],
+            ['id' => 115, 'business_id' => 7, 'name' => 'Deferred tax assets', 'account_primary_type' => 'asset', 'account_id' => null, 'status' => 'active', 'created_by' => 1],
+        ]);
+        DB::table('transactions')->insert([
+            'id' => 904,
+            'business_id' => 7,
+            'location_id' => 70,
+            'type' => 'sell',
+            'status' => 'final',
+            'transaction_date' => '2023-01-07 10:00:00',
+            'final_total' => 110,
+            'total_before_tax' => 100,
+            'tax_amount' => 10,
+            'created_by' => 1,
+            'invoice_no' => 'INV-904',
+            'ref_no' => 'SALE-904',
+        ]);
+
+        $this->artisan('accounting:backfill-general-ledger', ['business_id' => 7])
+            ->expectsOutputToContain('Planned groups: 0')
+            ->expectsOutputToContain('Ambiguous VAT accounts: 0')
+            ->expectsOutputToContain('Missing VAT accounts: 1')
+            ->expectsOutputToContain('akun_vat_tidak_ditemukan: 1')
             ->assertExitCode(0);
 
         $this->assertSame(0, DB::table('accounting_accounts_transactions')->count());

@@ -72,11 +72,12 @@ class BackfillGeneralLedger extends Command
             $this->line('  Automatic nearest account mappings (not saved as one-to-one crosswalks):');
             foreach ($accountAudit['nearest_suggestions'] as $match) {
                 $this->line(sprintf(
-                    '    account #%d %s -> accounting #%d %s [score %s]',
+                    '    account #%d %s -> accounting #%d %s [%s; score %s]',
                     $match['account_id'],
                     $match['account_name'],
                     $match['accounting_account_id'],
                     $match['accounting_name'],
+                    $match['method'] ?? 'nearest_name',
                     number_format((float) $match['score'], 4, '.', '')
                 ));
             }
@@ -102,14 +103,16 @@ class BackfillGeneralLedger extends Command
             $this->line('Automatic nearest CoA mappings used:');
             foreach ($summary['auto_map_details'] as $map) {
                 $this->line(sprintf(
-                    '  location #%d [%s]: payment_account #%d %s (score %s); deposit_to #%d %s (score %s); groups=%d',
+                    '  location #%d [%s]: payment_account #%d %s (%s; score %s); deposit_to #%d %s (%s; score %s); groups=%d',
                     $map['location_id'],
                     $map['mapping_key'],
                     $map['payment_account_id'],
                     $map['payment_account_name'],
+                    $map['payment_account_method'] ?? 'location-map',
                     $map['payment_account_score'] === null ? 'location-map' : number_format((float) $map['payment_account_score'], 4, '.', ''),
                     $map['deposit_to_id'],
                     $map['deposit_to_name'],
+                    $map['deposit_to_method'] ?? 'location-map',
                     $map['deposit_to_score'] === null ? 'location-map' : number_format((float) $map['deposit_to_score'], 4, '.', ''),
                     $map['groups']
                 ));
