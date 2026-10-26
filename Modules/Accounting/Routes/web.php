@@ -48,6 +48,8 @@ Route::middleware('web', 'SetSessionData', 'auth', 'language', 'timezone', 'Admi
     Route::resource('budget', \Modules\Accounting\Http\Controllers\BudgetController::class)->except(['show', 'edit', 'update', 'destroy']);
 
     Route::get('reports', [\Modules\Accounting\Http\Controllers\ReportController::class, 'index']);
+    Route::get('reports/general-ledger/export', [\Modules\Accounting\Http\Controllers\ReportController::class, 'exportGeneralLedger'])->name('accounting.generalLedger.export');
+    Route::get('reports/general-ledger', [\Modules\Accounting\Http\Controllers\ReportController::class, 'generalLedger'])->name('accounting.generalLedger');
     Route::get('reports/trial-balance', [\Modules\Accounting\Http\Controllers\ReportController::class, 'trialBalance'])->name('accounting.trialBalance');
     Route::get('reports/balance-sheet', [\Modules\Accounting\Http\Controllers\ReportController::class, 'balanceSheet'])->name('accounting.balanceSheet');
     Route::get('reports/account-receivable-ageing-report',

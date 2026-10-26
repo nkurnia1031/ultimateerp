@@ -6,9 +6,13 @@ use App\BusinessLocation;
 use App\Utils\BusinessUtil;
 use App\Utils\ModuleUtil;
 use DB;
+use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
+use Maatwebsite\Excel\Facades\Excel;
 use Modules\Accounting\Entities\AccountingAccount;
+use Modules\Accounting\Exports\GeneralLedgerExport;
+use Modules\Accounting\Services\GeneralLedgerReportService;
 use Modules\Accounting\Utils\AccountingUtil;
 
 class ReportController extends Controller
@@ -45,16 +49,98 @@ class ReportController extends Controller
             abort(403, 'Unauthorized action.');
         }
 
-        $first_account = AccountingAccount::where('business_id', $business_id)
-                            ->where('status', 'active')
-                            ->first();
-        $ledger_url = null;
-        if (! empty($first_account)) {
-            $ledger_url = route('accounting.ledger', $first_account);
+        return view('accounting::report.index');
+    }
+
+    public function generalLedger(Request $request, GeneralLedgerReportService $generalLedgerReportService)
+    {
+        $businessId = (int) $request->session()->get('user.business_id');
+        $this->authorizeReports($businessId);
+        $filters = $this->generalLedgerFilters($request, $businessId);
+        $report = $generalLedgerReportService->paginate(
+            $businessId,
+            $filters['start_date'],
+            $filters['end_date'],
+            $filters['account_id'],
+            (int) ($request->input('page', 1))
+        );
+        $accounts = AccountingAccount::where('business_id', $businessId)
+            ->orderBy('gl_code')
+            ->orderBy('name')
+            ->get(['id', 'name', 'gl_code']);
+        $reportRows = $report->getCollection();
+        $businessName = session('business.name') ?: get_business_name();
+        $currencyPrecision = max(0, min(4, (int) session('business.currency_precision', 2)));
+        $currency = session('currency', []);
+        $decimalSeparator = $currency['decimal_separator'] ?? '.';
+        $thousandSeparator = $currency['thousand_separator'] ?? ',';
+
+        return view('accounting::report.general_ledger', compact(
+            'accounts', 'report', 'reportRows', 'businessName', 'currencyPrecision',
+            'decimalSeparator', 'thousandSeparator'
+        ) + $filters);
+    }
+
+    public function exportGeneralLedger(Request $request, GeneralLedgerReportService $generalLedgerReportService)
+    {
+        $businessId = (int) $request->session()->get('user.business_id');
+        $this->authorizeReports($businessId);
+        $filters = $this->generalLedgerFilters($request, $businessId);
+        $reportRows = $generalLedgerReportService->all(
+            $businessId,
+            $filters['start_date'],
+            $filters['end_date'],
+            $filters['account_id']
+        );
+        $businessName = session('business.name') ?: get_business_name();
+        $currencyPrecision = max(0, min(4, (int) session('business.currency_precision', 2)));
+        $currency = session('currency', []);
+        $decimalSeparator = $currency['decimal_separator'] ?? '.';
+        $thousandSeparator = $currency['thousand_separator'] ?? ',';
+        $view = view('accounting::report.general_ledger_export', compact(
+            'reportRows', 'businessName', 'currencyPrecision', 'decimalSeparator', 'thousandSeparator'
+        ) + $filters);
+        $filename = 'buku-besar-'.$filters['start_date'].'-'.$filters['end_date'].'.xlsx';
+
+        return Excel::download(new GeneralLedgerExport($view), $filename);
+    }
+
+    private function authorizeReports(int $businessId): void
+    {
+        if (! (auth()->user()->can('superadmin') ||
+            $this->moduleUtil->hasThePermissionInSubscription($businessId, 'accounting_module')) ||
+            ! auth()->user()->can('accounting.view_reports')) {
+            abort(403, 'Unauthorized action.');
+        }
+    }
+
+    private function generalLedgerFilters(Request $request, int $businessId): array
+    {
+        $validated = $request->validate([
+            'start_date' => 'nullable|required_with:end_date|date_format:Y-m-d',
+            'end_date' => 'nullable|required_with:start_date|date_format:Y-m-d|after_or_equal:start_date',
+            'account_id' => 'nullable|integer|min:1',
+        ]);
+
+        if (empty($validated['start_date']) && empty($validated['end_date'])) {
+            $financialYear = $this->businessUtil->getCurrentFinancialYear($businessId);
+            $startDate = $financialYear['start'];
+            $endDate = $financialYear['end'];
+        } else {
+            $startDate = $validated['start_date'];
+            $endDate = $validated['end_date'];
         }
 
-        return view('accounting::report.index')
-            ->with(compact('ledger_url'));
+        $accountId = empty($validated['account_id']) ? null : (int) $validated['account_id'];
+        if ($accountId !== null && ! AccountingAccount::where('business_id', $businessId)->where('id', $accountId)->exists()) {
+            abort(404);
+        }
+
+        return [
+            'start_date' => $startDate,
+            'end_date' => $endDate,
+            'account_id' => $accountId,
+        ];
     }
 
     /**

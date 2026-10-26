@@ -41,7 +41,7 @@ class AccountingReportService
                     (object) [
                         'title' => trans_choice('accounting::report.general_ledger', 1),
                         'description' => trans('accounting::report.general_ledger_description'),
-                        'url' =>  url('report/accounting/ledger'),
+                        'url' => route('accounting.generalLedger'),
                     ],
                     (object) [
                         'title' => trans_choice('accounting::report.journal', 1),

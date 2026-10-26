@@ -774,10 +774,10 @@
     "semantic_hash": "c26b337b657adf0fc1b65401667899a3"
   },
   "Modules/Accounting/Http/Controllers/ReportController.php": {
-    "mtime": 1762624297.0,
-    "seen": 1788970597.7075405,
-    "ast_hash": "c13b77d8881641d2e630d2a7c04e3cab",
-    "semantic_hash": "c13b77d8881641d2e630d2a7c04e3cab"
+    "mtime": 1793031094.1532626,
+    "seen": 1793032079.7464135,
+    "ast_hash": "96dca1f5a33bacfc908bb7bbcae8d988",
+    "semantic_hash": ""
   },
   "Modules/Accounting/Http/Controllers/SettingsController.php": {
     "mtime": 1762624297.0,
@@ -1350,10 +1350,10 @@
     "semantic_hash": "265b2a74f454a729884fe0607031842e"
   },
   "Modules/Accounting/Resources/views/report/index.blade.php": {
-    "mtime": 1762624297.0,
-    "seen": 1788970597.7075405,
-    "ast_hash": "6cddf5a2857e08d4a2eb4dec956ec332",
-    "semantic_hash": "6cddf5a2857e08d4a2eb4dec956ec332"
+    "mtime": 1793031037.744191,
+    "seen": 1793032079.7474387,
+    "ast_hash": "55a2f80c6bffd7552547fd9f75076dbb",
+    "semantic_hash": ""
   },
   "Modules/Accounting/Resources/views/report/journal.blade.php": {
     "mtime": 1762624297.0,
@@ -1608,16 +1608,16 @@
     "semantic_hash": "34f27bfe161100880a4ad7cde5cf3181"
   },
   "Modules/Accounting/Routes/web.php": {
-    "mtime": 1793001208.9069548,
-    "seen": 1793001681.8547544,
-    "ast_hash": "e8de8a606bcc8df5c987d3b7093bf9d5",
+    "mtime": 1793031033.0234375,
+    "seen": 1793032079.7474387,
+    "ast_hash": "be485fea6aeaca18a2587099c950631e",
     "semantic_hash": ""
   },
   "Modules/Accounting/Services/AccountingReportService.php": {
-    "mtime": 1762624297.0,
-    "seen": 1788970597.7085507,
-    "ast_hash": "34df6f41bc8f0f80cffa4ac7533b02de",
-    "semantic_hash": "34df6f41bc8f0f80cffa4ac7533b02de"
+    "mtime": 1793031039.4165967,
+    "seen": 1793032079.7474387,
+    "ast_hash": "61ecc0bc253431c390c9387a5305392f",
+    "semantic_hash": ""
   },
   "Modules/Accounting/Services/AccountingService.php": {
     "mtime": 1762624297.0,
@@ -9792,9 +9792,9 @@
     "semantic_hash": ""
   },
   "resources/views/expense/index.blade.php": {
-    "mtime": 1793026737.1991787,
-    "seen": 1793027009.4171379,
-    "ast_hash": "718eb18d11a83a873c26b89310e46ffd",
+    "mtime": 1793028747.6451182,
+    "seen": 1793029007.0965745,
+    "ast_hash": "f213c8f33f28a1acaf82f6c42073c238",
     "semantic_hash": ""
   },
   "resources/views/expense/recur_expense_form_part.blade.php": {
@@ -13350,9 +13350,9 @@
     "semantic_hash": ""
   },
   "public/js/app.js": {
-    "mtime": 1789058638.2927434,
-    "seen": 1789061315.8864388,
-    "ast_hash": "c1a2b746856c6a501ff0e1d465e8d0c8",
+    "mtime": 1793028747.6430147,
+    "seen": 1793029007.095565,
+    "ast_hash": "77ed7e4757a546b2b1e84e98de5e2228",
     "semantic_hash": ""
   },
   "public/js/common.js": {
@@ -14835,6 +14835,48 @@
     "mtime": 1793026668.940545,
     "seen": 1793027009.4130998,
     "ast_hash": "eca6309b0e62131fc28cb1acadd2fa6e",
+    "semantic_hash": ""
+  },
+  "Modules/Accounting/Database/Migrations/2026_10_26_000001_add_general_ledger_query_index.php": {
+    "mtime": 1793031422.4577549,
+    "seen": 1793032079.7449028,
+    "ast_hash": "81d178771e31e79ba1af2bd92c3a3df3",
+    "semantic_hash": ""
+  },
+  "Modules/Accounting/Exports/GeneralLedgerExport.php": {
+    "mtime": 1793032829.431061,
+    "seen": 1793033071.1776028,
+    "ast_hash": "11fc3fdba2ff9933e2bb4b8d895d84f7",
+    "semantic_hash": ""
+  },
+  "Modules/Accounting/Resources/views/report/general_ledger.blade.php": {
+    "mtime": 1793031073.0833828,
+    "seen": 1793032079.7474387,
+    "ast_hash": "6d9fe4a5cbd8ccf6b8722315a5da25b7",
+    "semantic_hash": ""
+  },
+  "Modules/Accounting/Resources/views/report/general_ledger_export.blade.php": {
+    "mtime": 1793031091.9075265,
+    "seen": 1793032079.7474387,
+    "ast_hash": "77dc9913b0e936cc421f240497be5149",
+    "semantic_hash": ""
+  },
+  "Modules/Accounting/Resources/views/report/partials/general_ledger_table.blade.php": {
+    "mtime": 1793031086.396103,
+    "seen": 1793032079.7474387,
+    "ast_hash": "e708047de0099d9fde1ba49d93da2808",
+    "semantic_hash": ""
+  },
+  "Modules/Accounting/Services/GeneralLedgerReportPresenter.php": {
+    "mtime": 1793031848.2897582,
+    "seen": 1793032079.7474387,
+    "ast_hash": "f11e8704ec5c07250399031434318b85",
+    "semantic_hash": ""
+  },
+  "Modules/Accounting/Services/GeneralLedgerReportService.php": {
+    "mtime": 1793033097.748301,
+    "seen": 1793033270.0564353,
+    "ast_hash": "98582f347d7b434bebbe6a035e7b02d3",
     "semantic_hash": ""
   }
 }

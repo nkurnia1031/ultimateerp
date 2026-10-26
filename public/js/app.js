@@ -1540,6 +1540,7 @@ $(document).ready(function () {
             { data: 'payment_status', name: 'payment_status', orderable: false },
             { data: 'tags', name: 'tags', orderable: false },
             { data: 'tax', name: 'tr.name' },
+            { data: 'total_before_tax', name: 'transactions.total_before_tax', searchable: false },
             { data: 'final_total', name: 'final_total' },
             { data: 'payment_due', name: 'payment_due' },
             { data: 'expense_for', name: 'expense_for' },
@@ -1548,9 +1549,11 @@ $(document).ready(function () {
             { data: 'added_by', name: 'usr.first_name' }
         ],
         fnDrawCallback: function (row, data, start, end, display) {
+            var expense_subtotal_before_tax = sum_table_col($('#expense_table'), 'total-before-tax');
             var expense_total = sum_table_col($('#expense_table'), 'final-total');
             var total_due = sum_table_col($('#expense_table'), 'payment_due');
 
+            $('.footer_expense_subtotal_before_tax').html(__currency_trans_from_en(expense_subtotal_before_tax));
             $('.footer_expense_total').html(__currency_trans_from_en(expense_total));
             $('.footer_total_due').html(__currency_trans_from_en(total_due));
 

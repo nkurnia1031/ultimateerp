@@ -37,7 +37,7 @@
                 <div class="box-body">
                     @lang( 'accounting::lang.ledger_report_description')
                     <br/>
-                    <a @if($ledger_url) href="{{$ledger_url}}" @else onclick="alert(' @lang( 'accounting::lang.ledger_add_account') ')" @endif class="btn btn-primary btn-sm pt-2">@lang( 'accounting::lang.view_report')</a>
+                    <a href="{{ route('accounting.generalLedger') }}" class="btn btn-primary btn-sm pt-2">@lang( 'accounting::lang.view_report')</a>
                 </div>
 
             </div>
