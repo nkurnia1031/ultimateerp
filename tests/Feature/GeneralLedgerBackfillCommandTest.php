@@ -263,6 +263,137 @@ class GeneralLedgerBackfillCommandTest extends TestCase
         $this->assertSame(1, DB::table('accounting_accounts_transactions')->where('accounting_account_id', 105)->count());
     }
 
+    public function test_expense_with_same_receivable_account_on_both_sides_is_skipped(): void
+    {
+        DB::table('accounts')->insert([
+            'id' => 204,
+            'business_id' => 7,
+            'name' => 'Account Receivable',
+        ]);
+        DB::table('accounting_accounts')->where('id', 101)->update(['account_id' => 204]);
+        DB::table('expense_categories')->insert([
+            'id' => 42,
+            'business_id' => 7,
+            'name' => 'Employee Receivables (Expenses)',
+        ]);
+        DB::table('transactions')->insert([
+            'id' => 950,
+            'business_id' => 7,
+            'location_id' => 70,
+            'type' => 'expense',
+            'status' => 'final',
+            'expense_category_id' => 42,
+            'transaction_date' => '2023-05-04 10:00:00',
+            'final_total' => 12,
+            'total_before_tax' => 12,
+            'tax_amount' => 0,
+            'created_by' => 1,
+            'invoice_no' => 'EXP-950',
+            'ref_no' => 'EXPENSE-950',
+        ]);
+        DB::table('transaction_payments')->insert([
+            'id' => 550,
+            'transaction_id' => 950,
+            'business_id' => 7,
+            'account_id' => 204,
+            'amount' => 12,
+            'paid_on' => '2023-05-04 10:00:00',
+            'created_by' => 1,
+            'is_return' => 0,
+            'is_advance' => 0,
+        ]);
+
+        $this->artisan('accounting:backfill-general-ledger', ['business_id' => 7])
+            ->expectsOutputToContain('Planned groups: 0')
+            ->expectsOutputToContain('akun_debit_kredit_sama: 1')
+            ->assertExitCode(0);
+
+        $this->artisan('accounting:backfill-general-ledger', ['business_id' => 7, '--apply' => true])
+            ->expectsOutputToContain('Applied groups: 0')
+            ->expectsOutputToContain('akun_debit_kredit_sama: 1')
+            ->assertExitCode(0);
+
+        $this->assertSame(0, DB::table('accounting_accounts_transactions')->count());
+        $this->assertSame(0, DB::table('accounting_acc_trans_mappings')->count());
+    }
+
+    public function test_expense_categories_with_clear_meaning_map_to_matching_coa_accounts(): void
+    {
+        $categories = [
+            9 => 'Depreciation - Vehicle',
+            10 => 'Depreciation - Machinery & Equipment',
+            24 => 'Maintenance - General',
+            39 => 'Training & Developments',
+            45 => 'Taxes and Licenses',
+            49 => 'Insurance',
+        ];
+
+        foreach ($categories as $id => $name) {
+            DB::table('expense_categories')->insert([
+                'id' => $id,
+                'business_id' => 7,
+                'name' => $name,
+            ]);
+        }
+
+        DB::table('accounting_accounts')->insert([
+            ['id' => 120, 'business_id' => 7, 'name' => 'Amortisation expense', 'account_primary_type' => 'expenses', 'status' => 'active', 'created_by' => 1],
+            ['id' => 121, 'business_id' => 7, 'name' => 'Repair and maintenance', 'account_primary_type' => 'expenses', 'status' => 'active', 'created_by' => 1],
+            ['id' => 122, 'business_id' => 7, 'name' => 'Dues and Subscriptions', 'account_primary_type' => 'expenses', 'status' => 'active', 'created_by' => 1],
+            ['id' => 123, 'business_id' => 7, 'name' => 'Other general and administrative expenses', 'account_primary_type' => 'expenses', 'status' => 'active', 'created_by' => 1],
+            ['id' => 124, 'business_id' => 7, 'name' => 'Insurance - General', 'account_primary_type' => 'expenses', 'status' => 'active', 'created_by' => 1],
+        ]);
+
+        $transactions = [];
+        $payments = [];
+        $index = 0;
+        foreach ($categories as $categoryId => $name) {
+            $transactionId = 960 + $index;
+            $paymentId = 560 + $index;
+            $transactions[] = [
+                'id' => $transactionId,
+                'business_id' => 7,
+                'location_id' => 70,
+                'type' => 'expense',
+                'status' => 'final',
+                'expense_category_id' => $categoryId,
+                'transaction_date' => '2023-06-'.str_pad((string) ($index + 1), 2, '0', STR_PAD_LEFT).' 10:00:00',
+                'final_total' => 100,
+                'total_before_tax' => 100,
+                'tax_amount' => 0,
+                'created_by' => 1,
+                'invoice_no' => 'EXP-'.$transactionId,
+                'ref_no' => 'EXPENSE-'.$transactionId,
+            ];
+            $payments[] = [
+                'id' => $paymentId,
+                'transaction_id' => $transactionId,
+                'business_id' => 7,
+                'account_id' => 201,
+                'amount' => 100,
+                'paid_on' => '2023-06-'.str_pad((string) ($index + 1), 2, '0', STR_PAD_LEFT).' 10:00:00',
+                'created_by' => 1,
+                'is_return' => 0,
+                'is_advance' => 0,
+            ];
+            $index++;
+        }
+        DB::table('transactions')->insert($transactions);
+        DB::table('transaction_payments')->insert($payments);
+
+        $this->artisan('accounting:backfill-general-ledger', ['business_id' => 7])
+            ->expectsOutputToContain('Planned groups: 6')
+            ->expectsOutputToContain('deposit_to #120 Amortisation expense (semantic_hint; score 1.0000)')
+            ->expectsOutputToContain('deposit_to #121 Repair and maintenance (semantic_hint; score 1.0000)')
+            ->expectsOutputToContain('deposit_to #122 Dues and Subscriptions (semantic_hint; score 1.0000)')
+            ->expectsOutputToContain('deposit_to #123 Other general and administrative expenses (semantic_hint; score 1.0000)')
+            ->expectsOutputToContain('deposit_to #124 Insurance - General (semantic_hint; score 1.0000)')
+            ->assertExitCode(0);
+
+        $this->assertSame(0, DB::table('accounting_accounts_transactions')->count());
+        $this->assertSame(0, DB::table('accounting_acc_trans_mappings')->count());
+    }
+
     public function test_expense_category_nearest_mapping_takes_precedence_over_generic_location_default(): void
     {
         DB::table('business_locations')->where('id', 70)->update([
@@ -292,6 +423,7 @@ class GeneralLedgerBackfillCommandTest extends TestCase
             ['id' => 117, 'business_id' => 7, 'name' => 'Accounts Receivable (A/R)', 'account_primary_type' => 'asset', 'account_id' => null, 'status' => 'active', 'created_by' => 1],
             ['id' => 118, 'business_id' => 7, 'name' => 'Travel expenses - general and admin expenses', 'account_primary_type' => 'expenses', 'account_id' => null, 'status' => 'active', 'created_by' => 1],
             ['id' => 119, 'business_id' => 7, 'name' => 'Income tax expense', 'account_primary_type' => 'expenses', 'account_id' => null, 'status' => 'active', 'created_by' => 1],
+            ['id' => 123, 'business_id' => 7, 'name' => 'Other general and administrative expenses', 'account_primary_type' => 'expenses', 'account_id' => null, 'status' => 'active', 'created_by' => 1],
         ]);
         DB::table('transactions')->insert([
             [
@@ -406,7 +538,7 @@ class GeneralLedgerBackfillCommandTest extends TestCase
         $this->assertSame(52.0, (float) $rows->where('accounting_account_id', 107)->sum('amount'));
         $this->assertSame(10.0, (float) $rows->where('accounting_account_id', 118)->sum('amount'));
         $this->assertSame(12.0, (float) $rows->where('accounting_account_id', 117)->sum('amount'));
-        $this->assertSame(8.0, (float) $rows->where('accounting_account_id', 119)->sum('amount'));
+        $this->assertSame(8.0, (float) $rows->where('accounting_account_id', 123)->sum('amount'));
         $this->assertNull(DB::table('accounting_accounts')->where('id', 115)->value('account_id'));
     }
 

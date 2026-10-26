@@ -24874,7 +24874,7 @@
       "file_type": "code",
       "norm_label": ".accountnamesimilarity()",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L1224"
+      "source_location": "L1248"
     },
     {
       "id": "modules_accounting_services_generalledgerbackfillservice_generalledgerbackfillservice_accounttypesforexpensecategory",
@@ -24886,7 +24886,7 @@
       "file_type": "code",
       "norm_label": ".accounttypesforexpensecategory()",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L1329"
+      "source_location": "L1353"
     },
     {
       "id": "modules_accounting_services_generalledgerbackfillservice_generalledgerbackfillservice_accounttypesforoperationalaccount",
@@ -24898,7 +24898,7 @@
       "file_type": "code",
       "norm_label": ".accounttypesforoperationalaccount()",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L1313"
+      "source_location": "L1337"
     },
     {
       "id": "modules_accounting_services_generalledgerbackfillservice_generalledgerbackfillservice_applygroup",
@@ -24910,7 +24910,7 @@
       "file_type": "code",
       "norm_label": ".applygroup()",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L698"
+      "source_location": "L717"
     },
     {
       "id": "modules_accounting_services_generalledgerbackfillservice_generalledgerbackfillservice_auditmainaccountmappings",
@@ -24946,7 +24946,7 @@
       "file_type": "code",
       "norm_label": ".explicitvatdirection()",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L1381"
+      "source_location": "L1405"
     },
     {
       "id": "modules_accounting_services_generalledgerbackfillservice_generalledgerbackfillservice_group",
@@ -24958,7 +24958,7 @@
       "file_type": "code",
       "norm_label": ".group()",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L806"
+      "source_location": "L825"
     },
     {
       "id": "modules_accounting_services_generalledgerbackfillservice_generalledgerbackfillservice_haslegacyledgerrows",
@@ -24970,7 +24970,7 @@
       "file_type": "code",
       "norm_label": ".haslegacyledgerrows()",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L791"
+      "source_location": "L810"
     },
     {
       "id": "modules_accounting_services_generalledgerbackfillservice_generalledgerbackfillservice_inferexpensepair",
@@ -24982,7 +24982,7 @@
       "file_type": "code",
       "norm_label": ".inferexpensepair()",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L969"
+      "source_location": "L988"
     },
     {
       "id": "modules_accounting_services_generalledgerbackfillservice_generalledgerbackfillservice_inferoperationalroleaccount",
@@ -24994,7 +24994,7 @@
       "file_type": "code",
       "norm_label": ".inferoperationalroleaccount()",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L1060"
+      "source_location": "L1079"
     },
     {
       "id": "modules_accounting_services_generalledgerbackfillservice_generalledgerbackfillservice_infertransactionpair",
@@ -25006,7 +25006,7 @@
       "file_type": "code",
       "norm_label": ".infertransactionpair()",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L899"
+      "source_location": "L918"
     },
     {
       "id": "modules_accounting_services_generalledgerbackfillservice_generalledgerbackfillservice_invalidtransfercount",
@@ -25030,7 +25030,7 @@
       "file_type": "code",
       "norm_label": ".ispostedtransaction()",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L1468"
+      "source_location": "L1492"
     },
     {
       "id": "modules_accounting_services_generalledgerbackfillservice_generalledgerbackfillservice_line",
@@ -25042,7 +25042,7 @@
       "file_type": "code",
       "norm_label": ".line()",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L869"
+      "source_location": "L888"
     },
     {
       "id": "modules_accounting_services_generalledgerbackfillservice_generalledgerbackfillservice_loadexpensepaymentgroups",
@@ -25054,7 +25054,7 @@
       "file_type": "code",
       "norm_label": ".loadexpensepaymentgroups()",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L938"
+      "source_location": "L957"
     },
     {
       "id": "modules_accounting_services_generalledgerbackfillservice_generalledgerbackfillservice_locationmap",
@@ -25066,7 +25066,7 @@
       "file_type": "code",
       "norm_label": ".locationmap()",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L1463"
+      "source_location": "L1487"
     },
     {
       "id": "modules_accounting_services_generalledgerbackfillservice_generalledgerbackfillservice_locksourcerecord",
@@ -25078,7 +25078,7 @@
       "file_type": "code",
       "norm_label": ".locksourcerecord()",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L764"
+      "source_location": "L783"
     },
     {
       "id": "modules_accounting_services_generalledgerbackfillservice_generalledgerbackfillservice_mainaccountmapping",
@@ -25090,7 +25090,7 @@
       "file_type": "code",
       "norm_label": ".mainaccountmapping()",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L1395"
+      "source_location": "L1419"
     },
     {
       "id": "modules_accounting_services_generalledgerbackfillservice_generalledgerbackfillservice_mapinfo",
@@ -25102,7 +25102,7 @@
       "file_type": "code",
       "norm_label": ".mapinfo()",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L844"
+      "source_location": "L863"
     },
     {
       "id": "modules_accounting_services_generalledgerbackfillservice_generalledgerbackfillservice_nearestaccountingaccount",
@@ -25114,7 +25114,7 @@
       "file_type": "code",
       "norm_label": ".nearestaccountingaccount()",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L1112"
+      "source_location": "L1131"
     },
     {
       "id": "modules_accounting_services_generalledgerbackfillservice_generalledgerbackfillservice_normalizeaccountname",
@@ -25126,7 +25126,7 @@
       "file_type": "code",
       "norm_label": ".normalizeaccountname()",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L1246"
+      "source_location": "L1270"
     },
     {
       "id": "modules_accounting_services_generalledgerbackfillservice_generalledgerbackfillservice_paymentcandidates",
@@ -25162,7 +25162,7 @@
       "file_type": "code",
       "norm_label": ".resolveaccountingpair()",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L878"
+      "source_location": "L897"
     },
     {
       "id": "modules_accounting_services_generalledgerbackfillservice_generalledgerbackfillservice_resolvevataccount",
@@ -25174,7 +25174,7 @@
       "file_type": "code",
       "norm_label": ".resolvevataccount()",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L1342"
+      "source_location": "L1366"
     },
     {
       "id": "modules_accounting_services_generalledgerbackfillservice_generalledgerbackfillservice_run",
@@ -25198,7 +25198,7 @@
       "file_type": "code",
       "norm_label": ".semanticcoahint()",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L1161"
+      "source_location": "L1180"
     },
     {
       "id": "modules_accounting_services_generalledgerbackfillservice_generalledgerbackfillservice_skip",
@@ -25210,7 +25210,7 @@
       "file_type": "code",
       "norm_label": ".skip()",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L1480"
+      "source_location": "L1504"
     },
     {
       "id": "modules_accounting_services_generalledgerbackfillservice_generalledgerbackfillservice_sourcealreadylinked",
@@ -25222,7 +25222,7 @@
       "file_type": "code",
       "norm_label": ".sourcealreadylinked()",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L782"
+      "source_location": "L801"
     },
     {
       "id": "modules_accounting_services_generalledgerbackfillservice_generalledgerbackfillservice_transactioncandidates",
@@ -156761,7 +156761,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L1226",
+      "source_location": "L1250",
       "weight": 1.0
     },
     {
@@ -156773,7 +156773,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L1331",
+      "source_location": "L1355",
       "weight": 1.0
     },
     {
@@ -156785,7 +156785,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L1315",
+      "source_location": "L1339",
       "weight": 1.0
     },
     {
@@ -156797,7 +156797,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L701",
+      "source_location": "L720",
       "weight": 1.0
     },
     {
@@ -156809,7 +156809,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L704",
+      "source_location": "L723",
       "weight": 1.0
     },
     {
@@ -156821,7 +156821,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L704",
+      "source_location": "L723",
       "weight": 1.0
     },
     {
@@ -156893,7 +156893,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L1005",
+      "source_location": "L1024",
       "weight": 1.0
     },
     {
@@ -156905,7 +156905,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L1019",
+      "source_location": "L1038",
       "weight": 1.0
     },
     {
@@ -156917,7 +156917,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L1027",
+      "source_location": "L1046",
       "weight": 1.0
     },
     {
@@ -156929,7 +156929,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L976",
+      "source_location": "L995",
       "weight": 1.0
     },
     {
@@ -156941,7 +156941,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L979",
+      "source_location": "L998",
       "weight": 1.0
     },
     {
@@ -156953,7 +156953,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L1085",
+      "source_location": "L1104",
       "weight": 1.0
     },
     {
@@ -156965,7 +156965,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L1089",
+      "source_location": "L1108",
       "weight": 1.0
     },
     {
@@ -156977,7 +156977,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L1104",
+      "source_location": "L1123",
       "weight": 1.0
     },
     {
@@ -156989,7 +156989,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L902",
+      "source_location": "L921",
       "weight": 1.0
     },
     {
@@ -157001,7 +157001,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L903",
+      "source_location": "L922",
       "weight": 1.0
     },
     {
@@ -157013,7 +157013,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L1430",
+      "source_location": "L1454",
       "weight": 1.0
     },
     {
@@ -157025,7 +157025,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L1433",
+      "source_location": "L1457",
       "weight": 1.0
     },
     {
@@ -157037,7 +157037,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L1122",
+      "source_location": "L1141",
       "weight": 1.0
     },
     {
@@ -157049,7 +157049,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L1125",
+      "source_location": "L1144",
       "weight": 1.0
     },
     {
@@ -157061,7 +157061,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L1141",
+      "source_location": "L1160",
       "weight": 1.0
     },
     {
@@ -157169,7 +157169,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L635",
+      "source_location": "L654",
       "weight": 1.0
     },
     {
@@ -157181,7 +157181,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L635",
+      "source_location": "L654",
       "weight": 1.0
     },
     {
@@ -157193,7 +157193,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L690",
+      "source_location": "L709",
       "weight": 1.0
     },
     {
@@ -157205,7 +157205,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L1347",
+      "source_location": "L1371",
       "weight": 1.0
     },
     {
@@ -345368,7 +345368,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L1060",
+      "source_location": "L1079",
       "weight": 1.0
     },
     {
@@ -345379,7 +345379,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L1112",
+      "source_location": "L1131",
       "weight": 1.0
     },
     {
@@ -345390,7 +345390,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L1161",
+      "source_location": "L1180",
       "weight": 1.0
     },
     {
@@ -345412,7 +345412,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L1224",
+      "source_location": "L1248",
       "weight": 1.0
     },
     {
@@ -345423,7 +345423,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L1246",
+      "source_location": "L1270",
       "weight": 1.0
     },
     {
@@ -345434,7 +345434,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L1313",
+      "source_location": "L1337",
       "weight": 1.0
     },
     {
@@ -345445,7 +345445,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L1329",
+      "source_location": "L1353",
       "weight": 1.0
     },
     {
@@ -345456,7 +345456,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L1342",
+      "source_location": "L1366",
       "weight": 1.0
     },
     {
@@ -345467,7 +345467,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L1381",
+      "source_location": "L1405",
       "weight": 1.0
     },
     {
@@ -345478,7 +345478,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L1395",
+      "source_location": "L1419",
       "weight": 1.0
     },
     {
@@ -345489,7 +345489,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L1463",
+      "source_location": "L1487",
       "weight": 1.0
     },
     {
@@ -345500,7 +345500,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L1468",
+      "source_location": "L1492",
       "weight": 1.0
     },
     {
@@ -345511,7 +345511,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L1480",
+      "source_location": "L1504",
       "weight": 1.0
     },
     {
@@ -345621,7 +345621,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L698",
+      "source_location": "L717",
       "weight": 1.0
     },
     {
@@ -345632,7 +345632,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L764",
+      "source_location": "L783",
       "weight": 1.0
     },
     {
@@ -345643,7 +345643,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L782",
+      "source_location": "L801",
       "weight": 1.0
     },
     {
@@ -345654,7 +345654,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L791",
+      "source_location": "L810",
       "weight": 1.0
     },
     {
@@ -345665,7 +345665,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L806",
+      "source_location": "L825",
       "weight": 1.0
     },
     {
@@ -345676,7 +345676,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L844",
+      "source_location": "L863",
       "weight": 1.0
     },
     {
@@ -345687,7 +345687,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L869",
+      "source_location": "L888",
       "weight": 1.0
     },
     {
@@ -345698,7 +345698,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L878",
+      "source_location": "L897",
       "weight": 1.0
     },
     {
@@ -345709,7 +345709,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L899",
+      "source_location": "L918",
       "weight": 1.0
     },
     {
@@ -345720,7 +345720,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L938",
+      "source_location": "L957",
       "weight": 1.0
     },
     {
@@ -345731,7 +345731,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L969",
+      "source_location": "L988",
       "weight": 1.0
     },
     {
@@ -386554,7 +386554,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L700",
+      "source_location": "L719",
       "weight": 1.0
     },
     {
@@ -386566,7 +386566,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L715",
+      "source_location": "L734",
       "weight": 1.0
     },
     {
@@ -386602,7 +386602,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L793",
+      "source_location": "L812",
       "weight": 1.0
     },
     {
@@ -386614,7 +386614,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L1080",
+      "source_location": "L1099",
       "weight": 1.0
     },
     {
@@ -386638,7 +386638,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L944",
+      "source_location": "L963",
       "weight": 1.0
     },
     {
@@ -386650,7 +386650,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L776",
+      "source_location": "L795",
       "weight": 1.0
     },
     {
@@ -386662,7 +386662,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L1402",
+      "source_location": "L1426",
       "weight": 1.0
     },
     {
@@ -386698,7 +386698,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Modules/Accounting/Services/GeneralLedgerBackfillService.php",
-      "source_location": "L784",
+      "source_location": "L803",
       "weight": 1.0
     },
     {
@@ -394617,5 +394617,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "3bc8e644a97d9db404506494231cc10674dbe6c6"
+  "built_at_commit": "1c3e6f29069bea90e21cdfa0fe87b229b8289ab6"
 }

@@ -625,6 +625,25 @@ class GeneralLedgerBackfillService
             return;
         }
 
+        $debitAccounts = [];
+        $creditAccounts = [];
+        foreach ($candidate['lines'] as $line) {
+            if ((float) $line['amount'] <= 0) {
+                continue;
+            }
+
+            $accountId = (int) $line['accounting_account_id'];
+            if ($line['type'] === 'debit') {
+                $debitAccounts[$accountId] = true;
+            } elseif ($line['type'] === 'credit') {
+                $creditAccounts[$accountId] = true;
+            }
+        }
+        if (array_intersect_key($debitAccounts, $creditAccounts) !== []) {
+            $this->skip($summary, 'akun_debit_kredit_sama');
+            return;
+        }
+
         $debit = round(array_sum(array_map(fn ($line) => $line['type'] === 'debit' ? $line['amount'] : 0, $candidate['lines'])), 4);
         $credit = round(array_sum(array_map(fn ($line) => $line['type'] === 'credit' ? $line['amount'] : 0, $candidate['lines'])), 4);
         if ($candidate['lines'] === [] || round($debit - $credit, 4) !== 0.0) {
@@ -1194,12 +1213,17 @@ class GeneralLedgerBackfillService
             'food' => 'Meals and entertainment',
             'meals and transport' => 'Meals and entertainment',
             'medical' => 'Insurance - General',
+            'insurance' => 'Insurance - General',
             'bank administration fee' => 'Bank charges',
             'bank admin' => 'Bank charges',
             'document handling expense' => 'Office expenses',
-            'taxes and licenses' => 'Income tax expense',
+            'taxes and licenses' => 'Other general and administrative expenses',
             'tunjangan pph' => 'Income tax expense',
             'bank loan' => 'Long-term debt',
+            'depreciation vehicle' => 'Amortisation expense',
+            'depreciation machinery equipment' => 'Amortisation expense',
+            'maintenance general' => 'Repair and maintenance',
+            'training developments' => 'Dues and Subscriptions',
             'cost of production' => 'Overhead - COS',
             'inventory adjustments' => 'Change in inventory - COS',
             'other miscellaneous expense' => 'Other general and administrative expenses',
