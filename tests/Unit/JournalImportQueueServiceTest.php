@@ -45,6 +45,8 @@ class JournalImportQueueServiceTest extends TestCase
         $this->assertFalse($service->queueDecision(array_merge($entry, ['lines' => []]), 'journal', 'pending')['eligible']);
         $this->assertFalse($service->queueDecision($entry, 'journal', 'pending', 'mismatch')['eligible']);
         $this->assertTrue($service->queueDecision($entry, 'journal', 'pending', 'approved')['eligible']);
+        $this->assertFalse($service->queueDecision($entry, 'journal', 'pending', 'auto_approved', (object) ['is_reviewed' => false])['eligible']);
+        $this->assertTrue($service->queueDecision($entry, 'journal', 'pending', 'auto_approved', (object) ['is_reviewed' => true])['eligible']);
         $this->assertFalse($service->queueDecision($entry, 'journal', 'queued')['eligible']);
     }
 
@@ -100,10 +102,16 @@ class JournalImportQueueServiceTest extends TestCase
         ]);
 
         $service = new JournalImportQueueService();
-        $queued = DB::transaction(function () use ($service) {
-            return $service->queueRowsForBatch(20, 3);
+        $firstChunk = DB::transaction(function () use ($service) {
+            return $service->queueRowsForBatch(20, 3, null, 0, 2);
         });
+        $secondChunk = DB::transaction(function () use ($service, $firstChunk) {
+            return $service->queueRowsForBatch(20, 3, null, $firstChunk['last_id'], 2);
+        });
+        $queued = $firstChunk['queued'] + $secondChunk['queued'];
 
+        $this->assertTrue($firstChunk['has_more']);
+        $this->assertFalse($secondChunk['has_more']);
         $this->assertSame(1, $queued);
         $this->assertSame('queued', DB::table('accounting_journal_import_rows')->where('id', 1)->value('processing_status'));
         $this->assertSame('pending', DB::table('accounting_journal_import_rows')->where('id', 2)->value('processing_status'));
@@ -203,17 +211,129 @@ class JournalImportQueueServiceTest extends TestCase
         $mismatch = $service->recordReconciliation(1, 3, 100, 99, 0.01);
         $this->assertSame('mismatch', $mismatch->reconciliation_status);
         $this->assertSame(1.0, (float) $mismatch->difference_amount);
+        $this->assertNull($mismatch->difference_approved_by);
+        $this->assertNull($mismatch->difference_approved_at);
+        $this->assertNull($mismatch->difference_approval_reason);
+
         $approved = $service->approveDiscrepancy(1, 3, 8, 'Approved by review');
         $this->assertSame('approved', $approved->reconciliation_status);
 
         $sameTotals = $service->recordReconciliation(1, 3, 100, 99, 0.01);
         $this->assertSame('approved', $sameTotals->reconciliation_status);
         $this->assertSame(8, (int) $sameTotals->difference_approved_by);
+        $this->assertNotEmpty($sameTotals->difference_approved_at);
+        $this->assertSame('Approved by review', $sameTotals->difference_approval_reason);
 
         $changedTotals = $service->recordReconciliation(1, 3, 100, 98, 0.01);
         $this->assertSame('mismatch', $changedTotals->reconciliation_status);
         $this->assertNull($changedTotals->difference_approved_by);
+        $this->assertNull($changedTotals->difference_approved_at);
         $this->assertNull($changedTotals->difference_approval_reason);
+    }
+
+    public function test_component_explained_difference_is_auto_approved_but_still_requires_review(): void
+    {
+        $this->useSqliteDatabase();
+        $this->createDraftRowsTable();
+        DB::table('accounting_journal_import_rows')->insert([
+            'id' => 1,
+            'journal_import_id' => 20,
+            'business_id' => 3,
+            'entry_index' => 4,
+            'source_type' => 'Expense',
+            'source_action' => 'update',
+            'entry_data' => '{}',
+            'draft_data' => '{}',
+            'processing_status' => 'pending',
+            'reconciliation_status' => 'not_checked',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $row = (new JournalImportQueueService())->recordReconciliation(1, 3, 27272727, 29999999.7, 0.01, true);
+
+        $this->assertSame('auto_approved', $row->reconciliation_status);
+        $this->assertNull($row->difference_approved_by);
+        $this->assertNull($row->difference_approved_at);
+        $this->assertNull($row->difference_approval_reason);
+        $this->assertSame('Selisih disetujui otomatis, tandai baris sebagai Ditinjau sebelum diproses.', (new JournalImportQueueService())->entryIssue(
+            [
+                'source_type' => 'Expense',
+                'source_key' => 'Expense|11873',
+                'is_unbalanced' => false,
+                'is_duplicate' => false,
+                'exists_in_system' => false,
+                'lines' => [['debit' => 1, 'credit' => 0]],
+            ],
+            'update',
+            'auto_approved',
+            (object) ['is_reviewed' => false]
+        ));
+    }
+
+    public function test_bulk_discrepancy_approval_marks_selected_rows_reviewed_with_one_audit_reason(): void
+    {
+        $this->useSqliteDatabase();
+        $this->createDraftRowsTable();
+        foreach ([['mismatch', 'pending'], ['auto_approved', 'failed']] as $index => [$status, $processingStatus]) {
+            DB::table('accounting_journal_import_rows')->insert([
+                'id' => $index + 1,
+                'journal_import_id' => 20,
+                'business_id' => 3,
+                'entry_index' => $index + 1,
+                'source_type' => 'Expense',
+                'entry_data' => '{}',
+                'draft_data' => '{}',
+                'reconciliation_status' => $status,
+                'difference_amount' => 5,
+                'processing_status' => $processingStatus,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+
+        $rows = (new JournalImportQueueService())->approveDiscrepancies(20, 3, 8, [1, 2], 'Reviewed as one batch');
+
+        $this->assertCount(2, $rows);
+        foreach ($rows as $row) {
+            $this->assertSame('approved', $row->reconciliation_status);
+            $this->assertSame(8, (int) $row->difference_approved_by);
+            $this->assertSame(1, (int) $row->is_reviewed);
+            $this->assertSame(8, (int) $row->reviewed_by);
+            $this->assertSame('Reviewed as one batch', $row->difference_approval_reason);
+            $this->assertNotEmpty($row->difference_approved_at);
+        }
+    }
+
+    public function test_bulk_discrepancy_approval_is_atomic_when_a_selected_row_is_already_queued(): void
+    {
+        $this->useSqliteDatabase();
+        $this->createDraftRowsTable();
+        foreach ([['mismatch', 'pending'], ['auto_approved', 'queued']] as $index => [$status, $processingStatus]) {
+            DB::table('accounting_journal_import_rows')->insert([
+                'id' => $index + 1,
+                'journal_import_id' => 20,
+                'business_id' => 3,
+                'entry_index' => $index + 1,
+                'source_type' => 'Expense',
+                'entry_data' => '{}',
+                'draft_data' => '{}',
+                'reconciliation_status' => $status,
+                'difference_amount' => 5,
+                'processing_status' => $processingStatus,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+
+        try {
+            (new JournalImportQueueService())->approveDiscrepancies(20, 3, 8, [1, 2], 'Reviewed as one batch');
+            $this->fail('The selected set must be rejected as a whole if one row is already queued.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('row_ids', $exception->errors());
+        }
+        $this->assertSame('mismatch', DB::table('accounting_journal_import_rows')->where('id', 1)->value('reconciliation_status'));
+        $this->assertSame(0, (int) DB::table('accounting_journal_import_rows')->where('id', 1)->value('is_reviewed'));
     }
 
     private function createDraftRowsTable(): void
@@ -231,6 +351,8 @@ class JournalImportQueueServiceTest extends TestCase
             $table->longText('entry_data');
             $table->longText('draft_data')->nullable();
             $table->boolean('is_reviewed')->default(false);
+            $table->unsignedInteger('reviewed_by')->nullable();
+            $table->dateTime('reviewed_at')->nullable();
             $table->string('processing_status', 20)->default('pending');
             $table->unsignedInteger('processing_attempts')->default(0);
             $table->text('processing_message')->nullable();

@@ -3,6 +3,7 @@
 namespace Tests\Unit;
 
 use Illuminate\Container\Container;
+use Illuminate\Contracts\Bus\Dispatcher;
 use Illuminate\Database\Capsule\Manager as Capsule;
 use Illuminate\Support\DateFactory;
 use Illuminate\Support\Facades\DB;
@@ -21,10 +22,17 @@ class ProcessJournalImportJobDraftTest extends TestCase
 {
     private ?Capsule $database = null;
 
+    private ?Container $originalContainer = null;
+
+    private array $dispatchedJobs = [];
+
     protected function tearDown(): void
     {
         Facade::clearResolvedInstances();
         Facade::setFacadeApplication(null);
+        if ($this->originalContainer !== null) {
+            Container::setInstance($this->originalContainer);
+        }
         parent::tearDown();
     }
 
@@ -90,11 +98,11 @@ class ProcessJournalImportJobDraftTest extends TestCase
 
             return ['imported' => 1, 'skipped' => 0];
         });
-        $controller->shouldReceive('persistJournalTaxAccountMappings')->twice();
-        $controller->shouldReceive('reconcileJournalImportTaxes')->twice()->andReturn(['review' => 0]);
+        $controller->shouldReceive('persistJournalTaxAccountMappingsFromDraftRows')->once();
         $controller->shouldReceive('deleteTemporaryJournalFile')->twice();
 
         (new ProcessJournalImportJob(1))->handle($controller, new JournalImportQueueService(), Mockery::mock(JournalImportInvoiceService::class), Mockery::mock(JournalImportExpenseService::class), Mockery::mock(JournalImportPaymentService::class), Mockery::mock(JournalImportBankTransactionService::class));
+        $this->runTaxContinuation($controller);
 
         $this->assertSame('completed', DB::table('accounting_journal_import_rows')->where('id', 1)->value('processing_status'));
         $this->assertSame(1, DB::table('accounting_acc_trans_mappings')->count());
@@ -104,11 +112,11 @@ class ProcessJournalImportJobDraftTest extends TestCase
         DB::table('accounting_journal_imports')->where('id', 1)->update(['status' => 'queued_import']);
         $retryController = Mockery::mock(JournalEntryController::class);
         $retryController->shouldNotReceive('processJournalImportEntriesForBatch');
-        $retryController->shouldReceive('persistJournalTaxAccountMappings')->once();
-        $retryController->shouldReceive('reconcileJournalImportTaxes')->once()->andReturn(['review' => 0]);
+        $retryController->shouldReceive('persistJournalTaxAccountMappingsFromDraftRows')->once();
         $retryController->shouldReceive('deleteTemporaryJournalFile')->twice();
 
         (new ProcessJournalImportJob(1))->handle($retryController, new JournalImportQueueService(), Mockery::mock(JournalImportInvoiceService::class), Mockery::mock(JournalImportExpenseService::class), Mockery::mock(JournalImportPaymentService::class), Mockery::mock(JournalImportBankTransactionService::class));
+        $this->runTaxContinuation($retryController);
 
         $this->assertSame(1, DB::table('accounting_acc_trans_mappings')->count());
         $this->assertSame('completed', DB::table('accounting_journal_import_rows')->where('id', 1)->value('processing_status'));
@@ -166,8 +174,7 @@ class ProcessJournalImportJobDraftTest extends TestCase
 
         $controller = Mockery::mock(JournalEntryController::class);
         $controller->shouldNotReceive('processJournalImportEntriesForBatch');
-        $controller->shouldReceive('persistJournalTaxAccountMappings')->once();
-        $controller->shouldReceive('reconcileJournalImportTaxes')->once()->andReturn(['review' => 0]);
+        $controller->shouldReceive('persistJournalTaxAccountMappingsFromDraftRows')->once();
         $controller->shouldNotReceive('deleteTemporaryJournalFile');
 
         $paymentService = Mockery::mock(JournalImportPaymentService::class);
@@ -189,6 +196,7 @@ class ProcessJournalImportJobDraftTest extends TestCase
             $paymentService,
             Mockery::mock(JournalImportBankTransactionService::class)
         );
+        $this->runTaxContinuation($controller);
 
         $row = DB::table('accounting_journal_import_rows')->where('id', 1)->first();
         $this->assertSame('pending', $row->processing_status);
@@ -196,6 +204,133 @@ class ProcessJournalImportJobDraftTest extends TestCase
         $this->assertNull($row->source_record_id);
         $this->assertSame(0, DB::table('accounting_acc_trans_mappings')->count());
         $this->assertSame('partially_imported', DB::table('accounting_journal_imports')->where('id', 1)->value('status'));
+    }
+
+    public function test_job_processes_a_bounded_chunk_and_dispatches_a_continuation(): void
+    {
+        $this->useSqliteDatabase();
+        $this->createTables();
+        $now = now();
+        DB::table('accounting_journal_imports')->insert([
+            'id' => 1,
+            'business_id' => 3,
+            'created_by' => 8,
+            'status' => 'queued_import',
+            'import_options' => '{}',
+            'processed_entries' => 0,
+            'imported_entries' => 0,
+            'skipped_entries' => 0,
+            'total_entries' => 26,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+
+        $rows = [];
+        for ($index = 0; $index < 26; $index++) {
+            $sourceKey = 'Journal Entry|CHUNK-'.$index;
+            $entry = [
+                'source_type' => 'Journal Entry',
+                'source_number' => 'CHUNK-'.$index,
+                'source_key' => $sourceKey,
+                'date' => '2026-10-01',
+                'description' => 'Chunk row '.$index,
+                'is_unbalanced' => false,
+                'is_duplicate' => false,
+                'exists_in_system' => false,
+                'debit_total' => 100,
+                'credit_total' => 100,
+                'lines' => [['debit' => 100, 'credit' => 0], ['debit' => 0, 'credit' => 100]],
+            ];
+            $rows[] = [
+                'journal_import_id' => 1,
+                'business_id' => 3,
+                'entry_index' => $index,
+                'source_type' => 'Journal Entry',
+                'source_number' => $entry['source_number'],
+                'source_key' => $sourceKey,
+                'source_action' => 'journal',
+                'entry_data' => json_encode($entry),
+                'draft_data' => '{}',
+                'processing_status' => 'queued',
+                'processing_attempts' => 0,
+                'is_reviewed' => false,
+                'reconciliation_status' => 'not_checked',
+                'created_at' => $now,
+                'updated_at' => $now,
+            ];
+        }
+        DB::table('accounting_journal_import_rows')->insert($rows);
+
+        $controller = Mockery::mock(JournalEntryController::class);
+        $controller->shouldReceive('processJournalImportEntriesForBatch')
+            ->times(25)
+            ->andReturnUsing(function ($import, array $entries) {
+                DB::table('accounting_acc_trans_mappings')->insert([
+                    'business_id' => $import->business_id,
+                    'journal_import_id' => $import->id,
+                    'type' => 'journal_entry',
+                    'import_source_key' => $entries[0]['source_key'],
+                ]);
+
+                return ['imported' => 1, 'skipped' => 0];
+            });
+
+        (new ProcessJournalImportJob(1))->handle(
+            $controller,
+            new JournalImportQueueService(),
+            Mockery::mock(JournalImportInvoiceService::class),
+            Mockery::mock(JournalImportExpenseService::class),
+            Mockery::mock(JournalImportPaymentService::class),
+            Mockery::mock(JournalImportBankTransactionService::class)
+        );
+
+        $this->assertSame(25, DB::table('accounting_journal_import_rows')->where('processing_status', 'completed')->count());
+        $this->assertSame(1, DB::table('accounting_journal_import_rows')->where('processing_status', 'queued')->count());
+        $this->assertSame('importing', DB::table('accounting_journal_imports')->where('id', 1)->value('status'));
+        $this->assertCount(1, $this->dispatchedJobs);
+        $this->assertInstanceOf(ProcessJournalImportJob::class, $this->dispatchedJobs[0]);
+    }
+
+    public function test_prepare_phase_validates_once_and_yields_after_a_chunk(): void
+    {
+        $this->useSqliteDatabase();
+        $this->createTables();
+        $now = now();
+        DB::table('accounting_journal_imports')->insert([
+            'id' => 1,
+            'business_id' => 3,
+            'created_by' => 8,
+            'status' => 'preparing_import',
+            'import_options' => '{}',
+            'processed_entries' => 0,
+            'imported_entries' => 0,
+            'skipped_entries' => 0,
+            'total_entries' => 26,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+
+        $controller = Mockery::mock(JournalEntryController::class);
+        $controller->shouldReceive('validateJournalTaxAccountMappingSelectionsFromDraftRows')
+            ->once()
+            ->with(1, 3, []);
+        $queueService = Mockery::mock(JournalImportQueueService::class);
+        $queueService->shouldReceive('queueRowsForBatch')
+            ->once()
+            ->with(1, 3, [], 0, 25)
+            ->andReturn(['queued' => 25, 'last_id' => 25, 'has_more' => true]);
+
+        (new ProcessJournalImportJob(1, 'prepare'))->handle(
+            $controller,
+            $queueService,
+            Mockery::mock(JournalImportInvoiceService::class),
+            Mockery::mock(JournalImportExpenseService::class),
+            Mockery::mock(JournalImportPaymentService::class),
+            Mockery::mock(JournalImportBankTransactionService::class)
+        );
+
+        $this->assertSame('preparing_import', DB::table('accounting_journal_imports')->where('id', 1)->value('status'));
+        $this->assertCount(1, $this->dispatchedJobs);
     }
 
     public function test_payment_source_is_attached_to_the_imported_journal_mapping(): void
@@ -268,8 +403,7 @@ class ProcessJournalImportJobDraftTest extends TestCase
 
                 return ['imported' => 1, 'skipped' => 0];
             });
-        $controller->shouldReceive('persistJournalTaxAccountMappings')->once();
-        $controller->shouldReceive('reconcileJournalImportTaxes')->once()->andReturn(['review' => 0]);
+        $controller->shouldReceive('persistJournalTaxAccountMappingsFromDraftRows')->once();
         $controller->shouldReceive('deleteTemporaryJournalFile')->twice()->with(null);
 
         $queueService = Mockery::mock(JournalImportQueueService::class);
@@ -286,6 +420,7 @@ class ProcessJournalImportJobDraftTest extends TestCase
             $paymentService,
             Mockery::mock(JournalImportBankTransactionService::class)
         );
+        $this->runTaxContinuation($controller);
 
         $row = DB::table('accounting_journal_import_rows')->where('id', 1)->first();
         $this->assertSame('completed', $row->processing_status, (string) $row->processing_error);
@@ -369,8 +504,7 @@ class ProcessJournalImportJobDraftTest extends TestCase
 
                 return ['imported' => 1, 'skipped' => 0];
             });
-        $controller->shouldReceive('persistJournalTaxAccountMappings')->once();
-        $controller->shouldReceive('reconcileJournalImportTaxes')->once()->andReturn(['review' => 0]);
+        $controller->shouldReceive('persistJournalTaxAccountMappingsFromDraftRows')->once();
         $controller->shouldReceive('deleteTemporaryJournalFile')->twice()->with(null);
 
         (new ProcessJournalImportJob(1))->handle(
@@ -381,6 +515,7 @@ class ProcessJournalImportJobDraftTest extends TestCase
             Mockery::mock(JournalImportPaymentService::class),
             $bankService
         );
+        $this->runTaxContinuation($controller);
 
         $row = DB::table('accounting_journal_import_rows')->where('id', 1)->first();
         $this->assertSame('completed', $row->processing_status, (string) $row->processing_error);
@@ -402,6 +537,8 @@ class ProcessJournalImportJobDraftTest extends TestCase
             $table->integer('imported_entries')->default(0);
             $table->integer('skipped_entries')->default(0);
             $table->integer('total_entries')->default(0);
+            $table->unsignedBigInteger('prepare_cursor')->default(0);
+            $table->unsignedBigInteger('tax_reconciliation_cursor')->default(0);
             $table->text('last_message')->nullable();
             $table->text('error_message')->nullable();
             $table->string('file_path')->nullable();
@@ -454,12 +591,34 @@ class ProcessJournalImportJobDraftTest extends TestCase
             $this->markTestSkipped('PDO SQLite tidak tersedia pada PHP runtime ini.');
         }
 
+        $this->originalContainer = Container::getInstance();
         $container = new Container();
+        Container::setInstance($container);
         $this->database = new Capsule($container);
         $this->database->addConnection(['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => '']);
         $this->database->setAsGlobal();
         $container->instance('db', $this->database->getDatabaseManager());
         $container->instance('date', new DateFactory());
+        $this->dispatchedJobs = [];
+        $dispatcher = Mockery::mock(Dispatcher::class);
+        $dispatcher->shouldReceive('dispatch')->zeroOrMoreTimes()->andReturnUsing(function ($job) {
+            $this->dispatchedJobs[] = $job;
+
+            return $job;
+        });
+        $container->instance(Dispatcher::class, $dispatcher);
         Facade::setFacadeApplication($container);
+    }
+
+    private function runTaxContinuation(JournalEntryController $controller): void
+    {
+        (new ProcessJournalImportJob(1, 'tax'))->handle(
+            $controller,
+            new JournalImportQueueService(),
+            Mockery::mock(JournalImportInvoiceService::class),
+            Mockery::mock(JournalImportExpenseService::class),
+            Mockery::mock(JournalImportPaymentService::class),
+            Mockery::mock(JournalImportBankTransactionService::class)
+        );
     }
 }

@@ -15,6 +15,8 @@ class JournalImportExpenseService
 
     private $transactionUtil;
 
+    private $expenseTotalsService;
+
     public function __construct(
         JournalImportDraftService $draftService,
         JournalImportTaxResolver $taxResolver,
@@ -23,6 +25,7 @@ class JournalImportExpenseService
         $this->draftService = $draftService;
         $this->taxResolver = $taxResolver;
         $this->transactionUtil = $transactionUtil;
+        $this->expenseTotalsService = new JournalImportExpenseTotalsService($transactionUtil);
     }
 
     public function readinessIssue(object $row, array $entry, int $businessId, array $options = []): ?string
@@ -51,6 +54,33 @@ class JournalImportExpenseService
         } catch (\Throwable $exception) {
             return null;
         }
+    }
+
+    public function explainsTaxDifference(object $row, array $entry, int $businessId, float $journalTotal, array $options = []): bool
+    {
+        if (($row->source_type ?? null) !== 'Expense'
+            || ! in_array((string) ($row->source_action ?? ''), ['link', 'update'], true)
+            || ($row->source_record_type ?? null) !== Transaction::class
+            || empty($row->source_record_id)) {
+            return false;
+        }
+
+        $transaction = Transaction::where('business_id', $businessId)
+            ->where('type', 'expense')
+            ->find((int) $row->source_record_id);
+        if (! $transaction) {
+            return false;
+        }
+
+        $components = (new JournalImportAccountComponentService())->groupJournalLines($entry, $businessId, $options);
+        $expenseComponents = array_values(array_filter($components, fn ($component) => ! $component['is_tax'] && $component['debit'] > 0));
+        $taxComponents = array_values(array_filter($components, fn ($component) => $component['is_tax'] && $component['debit'] > 0));
+
+        return $this->expenseTotalsService->explainsTaxDifference([
+            'total_before_tax' => $transaction->total_before_tax,
+            'tax_amount' => $transaction->tax_amount,
+            'final_total' => $transaction->final_total,
+        ], $journalTotal, $expenseComponents, $taxComponents);
     }
 
     public function process(object $row, array $entry, object $import, array $options = []): Transaction
@@ -201,9 +231,6 @@ class JournalImportExpenseService
             if ($effectiveLocationId === null) {
                 throw new \RuntimeException('Pilih lokasi sebelum membuat Expense.');
             }
-            if ($effectiveCategoryId === null) {
-                throw new \RuntimeException('Pilih kategori Expense dari master data sebelum membuat Expense.');
-            }
             if ($entryDate === null) {
                 throw new \RuntimeException('Tanggal Expense wajib tersedia dan harus valid.');
             }
@@ -215,28 +242,63 @@ class JournalImportExpenseService
             if ($effectiveLocationId === null) {
                 throw new \RuntimeException('Pilih lokasi untuk melengkapi Expense.');
             }
-            if ($effectiveCategoryId === null && $existingLines === []) {
-                throw new \RuntimeException('Pilih kategori Expense sebelum menambahkan detail yang kosong.');
-            }
             if (empty($transaction->transaction_date) && $entryDate === null) {
                 throw new \RuntimeException('Tanggal Expense belum tersedia dan tanggal Journal tidak valid.');
             }
         }
 
-        $tax = $this->taxResolver->resolveForEntry($entry, $businessId, $options, true);
-        $totals = $this->totalsForSource($transaction, $journalTotal, $tax);
-        $line = null;
+        $components = (new JournalImportAccountComponentService())->groupJournalLines($entry, $businessId, $options);
+        $expenseComponents = array_values(array_filter($components, fn ($component) => ! $component['is_tax'] && $component['debit'] > 0));
+        $taxComponents = array_values(array_filter($components, fn ($component) => $component['is_tax'] && $component['debit'] > 0));
+        $taxableBase = $existingLines !== []
+            ? array_sum(array_map(fn ($line) => (float) $line->amount, $existingLines))
+            : null;
+        if (($taxableBase === null || $taxableBase <= 0) && $transaction && (float) $transaction->total_before_tax > 0) {
+            $taxableBase = (float) $transaction->total_before_tax;
+        }
+        if (($taxableBase === null || $taxableBase <= 0) && $expenseComponents !== []) {
+            $taxableBase = (float) collect($expenseComponents)->sum('debit');
+        }
+        $tax = $this->taxResolver->resolveForEntry($entry, $businessId, $taxableBase);
+        $totals = $this->totalsForSource($transaction, $journalTotal, $tax, $expenseComponents, $taxComponents);
+        $lines = [];
         $lineChanges = [];
         if ($existingLines === []) {
-            if ($effectiveCategoryId === null) {
-                throw new \RuntimeException('Pilih kategori Expense sebelum menambahkan detail.');
+            if ($expenseComponents === []) {
+                if ($effectiveCategoryId === null) {
+                    throw new \RuntimeException('Pilih kategori Expense sebelum menambahkan detail.');
+                }
+                $lines[] = [
+                    'category_id' => $effectiveCategoryId,
+                    'sub_category_id' => null,
+                    'description' => trim((string) ($entry['description'] ?? '')) ?: null,
+                    'amount' => $totals['total_before_tax'],
+                ];
+            } else {
+                $categoryMappings = is_array($draftData['expense_category_mappings'] ?? null)
+                    ? $draftData['expense_category_mappings']
+                    : [];
+                foreach ($expenseComponents as $component) {
+                    $categoryId = ! empty($categoryMappings[$component['account_key']])
+                        ? (int) $categoryMappings[$component['account_key']]
+                        : (count($expenseComponents) === 1 ? $effectiveCategoryId : null);
+                    if ($categoryId === null) {
+                        $label = $component['account_name'] !== '' ? $component['account_name'] : $component['account_no'];
+                        throw new \RuntimeException('Pilih kategori Expense untuk akun Journal "'.$label.'" sebelum melanjutkan.');
+                    }
+                    $accountLabel = trim($component['account_no'].' '.$component['account_name']);
+                    $description = trim((string) ($entry['description'] ?? ''));
+                    $lines[] = [
+                        'category_id' => $categoryId,
+                        'sub_category_id' => null,
+                        'description' => trim(implode(' · ', array_filter([$description, $accountLabel]))) ?: null,
+                        'amount' => $component['debit'],
+                    ];
+                }
             }
-            $line = [
-                'category_id' => $effectiveCategoryId,
-                'sub_category_id' => null,
-                'description' => trim((string) ($entry['description'] ?? '')) ?: null,
-                'amount' => $totals['total_before_tax'],
-            ];
+            if ($effectiveCategoryId === null && $lines !== []) {
+                $effectiveCategoryId = (int) $lines[0]['category_id'];
+            }
         } else {
             $lineTotal = array_sum(array_map(fn ($item) => (float) $item->amount, $existingLines));
             if (abs(round($lineTotal - (float) $totals['total_before_tax'], 4)) > 0.01) {
@@ -245,13 +307,16 @@ class JournalImportExpenseService
         }
 
         if ($tax !== null && abs((float) ($totals['calculated_tax'] ?? 0) - (float) $totals['tax']) > 0.01) {
-            throw new \RuntimeException('Pajak Expense hasil TaxRate tidak sesuai dengan total inklusif; tinjau pemetaan sebelum melanjutkan.');
+            throw new \RuntimeException('Pajak Expense hasil hitung tidak sesuai dengan total inklusif; tinjau komponen pajak sebelum melanjutkan.');
+        }
+        if ($taxComponents !== [] && abs((float) collect($taxComponents)->sum('debit') - (float) $totals['tax']) > 0.01) {
+            throw new \RuntimeException('Nilai akun pajak Journal berbeda dari nilai pajak Expense; tinjau transaksi sebelum melanjutkan.');
         }
         if ($transaction && $tax !== null) {
             $this->assertTaxDoesNotConflict($transaction, $tax, $totals);
         }
 
-        return compact('action', 'transaction', 'draftData', 'effectiveCategoryId', 'effectiveLocationId', 'entryDate', 'sourceNumber', 'journalTotal', 'tax', 'totals', 'line', 'existingLines', 'lineChanges') + [
+        return compact('action', 'transaction', 'draftData', 'effectiveCategoryId', 'effectiveLocationId', 'entryDate', 'sourceNumber', 'journalTotal', 'tax', 'totals', 'lines', 'existingLines', 'lineChanges') + [
             'category_id' => $effectiveCategoryId,
             'location_id' => $effectiveLocationId,
         ];
@@ -314,71 +379,37 @@ class JournalImportExpenseService
     {
         if (isset($totals['calculated_tax'])
             && abs((float) $totals['calculated_tax'] - (float) $totals['tax']) > 0.01) {
-            throw new \RuntimeException('Pajak Expense hasil TaxRate tidak sesuai dengan total inklusif; tinjau pemetaan sebelum melanjutkan.');
+            throw new \RuntimeException('Pajak Expense hasil hitung tidak sesuai dengan total inklusif; tinjau komponen pajak sebelum melanjutkan.');
         }
         if ($transaction->tax_id !== null && (int) $transaction->tax_id !== (int) $tax['id']) {
-            throw new \RuntimeException('TaxRate Expense berbeda dari mapping Journal; tinjau sumber sebelum melanjutkan.');
+            throw new \RuntimeException('TaxRate Expense berbeda dari hasil hitung komponen Journal; tinjau sumber sebelum melanjutkan.');
         }
         if ($transaction->tax_amount !== null && (float) $transaction->tax_amount > 0
             && abs((float) $transaction->tax_amount - (float) $totals['tax']) > 0.01) {
-            throw new \RuntimeException('Pajak Expense berbeda dari TaxRate hasil mapping; tinjau sumber sebelum melanjutkan.');
+            throw new \RuntimeException('Pajak Expense berbeda dari nominal komponen Journal; tinjau sumber sebelum melanjutkan.');
         }
-        if ($transaction->final_total !== null && abs((float) $transaction->final_total - (float) $totals['final_total']) > 0.01) {
-            throw new \RuntimeException('Total Expense berbeda dari TaxRate hasil mapping; tinjau sumber sebelum melanjutkan.');
+        $taxOnlyCorrection = (new JournalImportTaxCorrectionPolicy())->shouldCorrectFinalTotal(
+            $transaction->tax_amount,
+            $transaction->total_before_tax,
+            $transaction->final_total,
+            $totals
+        );
+        if ($transaction->final_total !== null
+            && abs((float) $transaction->final_total - (float) $totals['final_total']) > 0.01
+            && ! $taxOnlyCorrection) {
+            throw new \RuntimeException('Total Expense berbeda dari hasil hitung pajak Journal; tinjau sumber sebelum melanjutkan.');
         }
     }
 
-    private function totalsForSource(?Transaction $transaction, ?float $journalTotal, ?array $tax): array
+    private function totalsForSource(?Transaction $transaction, ?float $journalTotal, ?array $tax, array $expenseComponents = [], array $taxComponents = []): array
     {
-        if ($transaction === null) {
-            $finalTotal = (float) $journalTotal;
-            $base = $tax === null
-                ? $finalTotal
-                : (float) $this->transactionUtil->calc_percentage_base($finalTotal, $tax['rate']);
-            $base = round($base, 4);
-
-            return [
-                'total_before_tax' => $base,
-                'tax' => round($finalTotal - $base, 4),
-                'calculated_tax' => $tax === null ? 0.0 : round($base * (float) $tax['rate'] / 100, 4),
-                'final_total' => round($finalTotal, 4),
-            ];
-        }
-
-        $sourceFinal = $transaction->final_total === null ? null : (float) $transaction->final_total;
-        $sourceBase = $transaction->total_before_tax === null ? null : (float) $transaction->total_before_tax;
-        $sourceTax = $transaction->tax_amount === null ? null : (float) $transaction->tax_amount;
-
-        if ($tax !== null) {
-            $gross = $sourceFinal ?? $journalTotal;
-            if ($gross === null) {
-                throw new \RuntimeException('Total Journal tidak tersedia untuk menghitung pajak Expense.');
-            }
-            $base = $sourceBase ?? round((float) $this->transactionUtil->calc_percentage_base($gross, $tax['rate']), 4);
-            $calculatedTax = round($base * (float) $tax['rate'] / 100, 4);
-            $taxAmount = ($sourceTax !== null && $sourceTax > 0) ? $sourceTax : round($gross - $base, 4);
-            $finalTotal = $sourceFinal ?? round($base + $taxAmount, 4);
-
-            return [
-                'total_before_tax' => round($base, 4),
-                'tax' => round($taxAmount, 4),
-                'calculated_tax' => $calculatedTax,
-                'final_total' => round($finalTotal, 4),
-            ];
-        }
-
-        $base = $sourceBase ?? $sourceFinal ?? $journalTotal;
-        $taxAmount = $sourceTax ?? 0.0;
-        $finalTotal = $sourceFinal ?? ($base === null ? null : round((float) $base + $taxAmount, 4));
-        if ($base === null || $finalTotal === null) {
-            throw new \RuntimeException('Total Expense atau total debit Journal belum tersedia.');
-        }
-
-        return [
-            'total_before_tax' => round((float) $base, 4),
-            'tax' => round((float) $taxAmount, 4),
-            'final_total' => round((float) $finalTotal, 4),
+        $source = $transaction === null ? null : [
+            'total_before_tax' => $transaction->total_before_tax,
+            'tax_amount' => $transaction->tax_amount,
+            'final_total' => $transaction->final_total,
         ];
+
+        return $this->expenseTotalsService->forSource($source, $journalTotal, $tax, $expenseComponents, $taxComponents);
     }
 
     private function createExpense(object $row, array $entry, object $import, array $prepared): Transaction
@@ -416,7 +447,9 @@ class JournalImportExpenseService
             'discount_amount' => 0,
         ]);
 
-        $this->insertLine($transaction, $prepared['line']);
+        foreach ($prepared['lines'] as $line) {
+            $this->insertLine($transaction, $line);
+        }
 
         return $transaction;
     }
@@ -424,6 +457,12 @@ class JournalImportExpenseService
     private function applyUpdate(Transaction $transaction, array $entry, array $prepared): array
     {
         $draftData = $prepared['draftData'];
+        $correctMissingTaxTotal = (new JournalImportTaxCorrectionPolicy())->shouldCorrectFinalTotal(
+            $transaction->tax_amount,
+            $transaction->total_before_tax,
+            $transaction->final_total,
+            $prepared['totals']
+        );
         $before = [];
         $expected = [];
         $fields = [
@@ -463,15 +502,17 @@ class JournalImportExpenseService
             $transaction->tax_amount = $prepared['totals']['tax'];
             $expected['tax_amount'] = $transaction->tax_amount;
         }
-        if ($transaction->final_total === null) {
-            $before['final_total'] = null;
+        if ($transaction->final_total === null || $correctMissingTaxTotal) {
+            $before['final_total'] = $transaction->final_total;
             $transaction->final_total = $prepared['totals']['final_total'];
             $expected['final_total'] = $transaction->final_total;
         }
 
         $createdLineIds = [];
-        if ($prepared['existingLines'] === [] && $prepared['line'] !== null) {
-            $this->insertLine($transaction, $prepared['line']);
+        if ($prepared['existingLines'] === [] && $prepared['lines'] !== []) {
+            foreach ($prepared['lines'] as $line) {
+                $this->insertLine($transaction, $line);
+            }
             $createdLineIds = $this->lineIds($transaction);
         }
 

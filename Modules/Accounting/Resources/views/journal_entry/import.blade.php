@@ -6,6 +6,18 @@
 
 @include('accounting::layouts.nav')
 
+<style>
+    #journal_import_draft_table .journal-draft-select-disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+    }
+
+    #journal_import_draft_table td:first-child {
+        text-align: center;
+        vertical-align: middle;
+    }
+</style>
+
 <section class="content-header">
     <h1>Import Journal Entry</h1>
 </section>
@@ -171,11 +183,12 @@
                 data-rows-url="{{ url('accounting/journal-entry/import/'.$batch->id.'/draft-rows') }}"
                 data-row-url-base="{{ url('accounting/journal-entry/import/'.$batch->id.'/draft-rows') }}"
                 data-approve-url-base="{{ url('accounting/journal-entry/import/'.$batch->id.'/draft-rows') }}"
+                data-approve-bulk-url="{{ url('accounting/journal-entry/import/'.$batch->id.'/draft-rows/approve-differences') }}"
                 data-options-url="{{ url('accounting/journal-entry/import/'.$batch->id.'/draft-options') }}"
                 data-csrf-token="{{ csrf_token() }}"
                 data-default-type="{{ $activeDraftType }}">
                 <h4>Draft transaksi per jenis</h4>
-                <p class="help-block">Draft disimpan otomatis dan dapat dilanjutkan kembali oleh pengguna yang memiliki izin Journal pada business ini. Penanda ditinjau hanya untuk membantu pelacakan pekerjaan.</p>
+                <p class="help-block">Draft tersimpan otomatis. Selisih disetujui awal tetapi harus ditinjau sebelum diproses. Pilih beberapa selisih pada halaman ini untuk menyetujui dan menandainya Ditinjau sekaligus.</p>
                 <div class="journal-import-tab-scroll" role="region" aria-label="Jenis transaksi Journal" tabindex="0" style="overflow-x:auto; overflow-y:hidden;">
                     <ul class="nav nav-tabs journal-import-type-tabs" role="tablist" style="display:flex; flex-wrap:nowrap; min-width:max-content; margin-bottom:0;">
                         @foreach($draftTypeCounts ?? [] as $sourceType => $typeCount)
@@ -188,7 +201,19 @@
                     </ul>
                 </div>
                 <div class="row" style="margin-top: 12px;">
-                    <div class="col-sm-4 col-md-3">
+                    <div class="col-sm-4 col-md-4">
+                        <label for="journal_import_draft_search">Cari baris</label>
+                        <input id="journal_import_draft_search" type="search" class="form-control" maxlength="100" placeholder="Nomor, tanggal, deskripsi, atau akun">
+                    </div>
+                    <div class="col-sm-3 col-md-3">
+                        <label for="journal_import_status_filter">Status review</label>
+                        <select id="journal_import_status_filter" class="form-control">
+                            <option value="all">Semua status</option>
+                            <option value="errors">Ada error</option>
+                            <option value="differences">Ada selisih</option>
+                        </select>
+                    </div>
+                    <div class="col-sm-3 col-md-3">
                         <label for="journal_import_review_filter">Filter penanda</label>
                         <select id="journal_import_review_filter" class="form-control">
                             <option value="all">Semua baris</option>
@@ -196,14 +221,27 @@
                             <option value="reviewed">Sudah ditinjau</option>
                         </select>
                     </div>
-                    <div class="col-sm-8 col-md-9 text-right" style="padding-top: 24px;">
+                    <div class="col-sm-2 col-md-2 text-right" style="padding-top: 24px;">
                         <span id="journal_import_draft_status" class="text-muted" aria-live="polite"></span>
+                    </div>
+                </div>
+                <div class="row" style="margin-top: 8px;">
+                    <div class="col-sm-8">
+                        <label class="checkbox-inline">
+                            <input type="checkbox" id="journal_import_select_all_differences">
+                            Pilih semua selisih yang tampil di halaman ini
+                        </label>
+                        <button type="button" class="btn btn-warning btn-sm" id="journal_import_bulk_approve" disabled>Setujui terpilih</button>
+                    </div>
+                    <div class="col-sm-4 text-right">
+                        <small id="journal_import_selection_count" class="text-muted" aria-live="polite">Belum ada selisih dipilih.</small>
                     </div>
                 </div>
                 <div class="table-responsive" role="region" aria-label="Baris transaksi Journal import" tabindex="0" style="margin-top: 10px;">
                     <table class="table table-bordered table-striped" id="journal_import_draft_table">
                         <thead>
                             <tr>
+                                <th>Pilih</th>
                                 <th>Nomor / tanggal</th>
                                 <th>Deskripsi</th>
                                 <th>Status proses / selisih</th>
@@ -216,7 +254,7 @@
                             </tr>
                         </thead>
                         <tbody>
-                            <tr><td colspan="9" class="text-center text-muted">Memuat draft...</td></tr>
+                            <tr><td colspan="10" class="text-center text-muted">Memuat draft...</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -298,9 +336,20 @@
                                     </div>
                                     <div class="col-sm-6 journal-draft-field journal-draft-field-expense-category">
                                         <div class="form-group">
-                                            <label for="journal_draft_expense_category">Kategori expense</label>
+                                            <label for="journal_draft_expense_category">Kategori bawaan (satu akun biaya)</label>
                                             <select id="journal_draft_expense_category" class="form-control journal-draft-select" data-kind="expense_category" style="width:100%"></select>
+                                            <p class="help-block">Jika jurnal memiliki beberapa akun biaya, petakan kategori masing-masing di bawah. Nilai ini hanya menjadi fallback untuk satu akun biaya.</p>
                                         </div>
+                                    </div>
+                                </div>
+                                <div class="journal-draft-field journal-draft-field-expense-splits" style="display:none; margin-top: 8px;">
+                                    <h5>Pengelompokan akun Expense</h5>
+                                    <p class="help-block">Setiap akun debit biaya menjadi baris Expense terpisah. Akun pajak dipisahkan ke nilai pajak transaksi.</p>
+                                    <div class="table-responsive">
+                                        <table class="table table-condensed" id="journal_draft_expense_splits_table">
+                                            <thead><tr><th>Akun Journal</th><th class="text-right">Debit</th><th>Kategori Expense</th></tr></thead>
+                                            <tbody></tbody>
+                                        </table>
                                     </div>
                                 </div>
                                 <div class="journal-draft-field journal-draft-field-details">
@@ -336,10 +385,11 @@
                             </div>
                             <div class="modal-body">
                                 <input type="hidden" id="journal_import_difference_row_id">
+                                <input type="hidden" id="journal_import_difference_bulk" value="0">
                                 <p id="journal_import_difference_summary" class="help-block"></p>
                                 <label for="journal_import_difference_reason">Alasan persetujuan</label>
                                 <textarea id="journal_import_difference_reason" class="form-control" rows="4" maxlength="1000" required></textarea>
-                                <p class="help-block">Persetujuan ini terpisah dari penanda Ditinjau dan mencatat pengguna serta waktu.</p>
+                                <p class="help-block">Alasan dicatat bersama pengguna dan waktu. Persetujuan massal juga menandai semua baris terpilih sebagai Ditinjau.</p>
                             </div>
                             <div class="modal-footer">
                                 <button type="button" class="btn btn-default" data-dismiss="modal">Batal</button>
@@ -416,43 +466,10 @@
                 @endif
             @endif
 
-            @if(!empty($tax_mapping_accounts))
-                <h4>Mapping Akun GL ke TaxRate / Grup Pajak</h4>
-                <p class="help-block">Pilih TaxRate atau grup yang sesuai untuk akun GL pajak. Mapping disimpan per business dan digunakan pada import berikutnya. TaxRate baru tidak dibuat otomatis.</p>
-                <div class="table-responsive" style="max-height: 360px; overflow: auto;">
-                    <table class="table table-bordered table-condensed">
-                        <thead>
-                            <tr>
-                                <th>Nomor Akun Workbook</th>
-                                <th>Akun Workbook</th>
-                                <th>Akun GL Sistem</th>
-                                <th>TaxRate / Grup Pajak</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            @foreach($tax_mapping_accounts as $tax_account)
-                                @php
-                                    $selected_tax_rate = $tax_account['tax_rate_id']
-                                        ?? ($tax_account['clear_stale_mapping'] ? '__clear__' : '');
-                                @endphp
-                                <tr>
-                                    <td>{{ $tax_account['account_no'] }}</td>
-                                    <td>{{ $tax_account['account_name'] }}</td>
-                                    <td>{{ $tax_account['accounting_account_name'] ?: 'Belum terhubung; akan disimpan jika akun berhasil dipetakan saat import.' }}</td>
-                                    <td style="min-width: 300px;">
-                                        {!! Form::select(
-                                            'tax_account_mappings['.$tax_account['key'].']',
-                                            ['' => 'Tidak mengubah mapping', '__clear__' => 'Hapus mapping'] + $tax_rate_options,
-                                            $selected_tax_rate,
-                                            ['class' => 'form-control select2', 'style' => 'width: 100%;']
-                                        ) !!}
-                                    </td>
-                                </tr>
-                            @endforeach
-                        </tbody>
-                    </table>
-                </div>
-            @endif
+            <div class="alert alert-info">
+                <strong>Tarif pajak dihitung per transaksi.</strong>
+                Akun VAT In/VAT Out dikenali dari nama dan sisi debit/kredit jurnal. Sistem menghitung tarif dari nominal pajak dibanding basis biaya atau produk transaksi, lalu mencocokkannya dengan TaxRate business yang tersedia.
+            </div>
 
             @php
                 $duplicate_entries = collect($analysis['entries'])->filter(function ($entry) {
@@ -550,7 +567,7 @@
                 <tbody>
                     @forelse($imports as $import)
                         @php
-                            $isJournalImportActive = in_array($import->status, ['queued', 'analyzing', 'queued_import', 'importing', 'reconciling', 'processing']);
+                            $isJournalImportActive = in_array($import->status, ['queued', 'analyzing', 'preparing_import', 'queued_import', 'importing', 'reconciling', 'processing']);
                             $journalImportPercent = !empty($import->total_entries)
                                 ? min(100, (int) round(($import->processed_entries / $import->total_entries) * 100))
                                 : 0;
@@ -585,12 +602,12 @@
                                 @endif
                                 @if($isJournalImportActive)
                                     <div class="progress" style="margin-top: 5px; margin-bottom: 0;">
-                                        <div id="journal-import-progress-{{ $import->id }}" class="progress-bar progress-bar-striped active" role="progressbar" aria-valuenow="{{ $journalImportPercent }}" aria-valuemin="0" aria-valuemax="100" style="width: {{ in_array($import->status, ['queued', 'analyzing', 'queued_import']) ? '100' : $journalImportPercent }}%;">
-                                            {{ in_array($import->status, ['queued', 'analyzing', 'queued_import']) ? '' : $journalImportPercent.'%' }}
+                                        <div id="journal-import-progress-{{ $import->id }}" class="progress-bar progress-bar-striped active" role="progressbar" aria-valuenow="{{ $journalImportPercent }}" aria-valuemin="0" aria-valuemax="100" style="width: {{ in_array($import->status, ['queued', 'analyzing', 'preparing_import', 'queued_import']) ? '100' : $journalImportPercent }}%;">
+                                            {{ in_array($import->status, ['queued', 'analyzing', 'preparing_import', 'queued_import']) ? '' : $journalImportPercent.'%' }}
                                         </div>
                                     </div>
                                     <small id="journal-import-count-{{ $import->id }}" class="text-muted">
-                                        @if(in_array($import->status, ['importing', 'reconciling', 'processing']))
+                                        @if(in_array($import->status, ['preparing_import', 'importing', 'reconciling', 'processing']))
                                             {{ (int) $import->processed_entries }} / {{ (int) $import->total_entries }} entry
                                         @else
                                             Menunggu update worker

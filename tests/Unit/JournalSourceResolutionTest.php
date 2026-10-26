@@ -63,6 +63,7 @@ class JournalSourceResolutionTest extends TestCase
             $table->increments('id');
             $table->unsignedInteger('account_id');
             $table->unsignedInteger('accounting_account_id')->nullable();
+            $table->string('sub_type')->nullable();
             $table->string('reff_no')->nullable();
             $table->dateTime('operation_date')->nullable();
             $table->decimal('amount', 22, 4)->default(0);

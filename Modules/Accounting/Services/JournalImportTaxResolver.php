@@ -3,112 +3,156 @@
 namespace Modules\Accounting\Services;
 
 use App\TaxRate;
-use Illuminate\Support\Facades\DB;
-use Modules\Accounting\Entities\AccountingAccount;
 
 class JournalImportTaxResolver
 {
-    public function resolveForEntry(array $entry, int $businessId, array $options, bool $requireExplicitTaxDecision = false): ?array
+    private const RATE_TOLERANCE = 0.01;
+
+    public function resolveForEntry(array $entry, int $businessId, ?float $taxableBase = null): ?array
     {
-        $selections = $options['tax_account_mappings'] ?? [];
-        $accountMappings = $options['account_mappings'] ?? [];
-        $accountIds = [];
-        $taxRateIds = [];
-        $taxCandidates = [];
-
-        foreach ($entry['lines'] ?? [] as $line) {
-            $key = md5(strtolower(trim((string) ($line['account_no'] ?? '')).'|'.trim((string) ($line['account_name'] ?? ''))));
-            $selection = trim((string) ($selections[$key] ?? ''));
-            if ($selection === '__clear__') {
-                continue;
-            }
-            if ($selection !== '' && ctype_digit($selection)) {
-                $taxRateIds[(int) $selection] = true;
-
-                continue;
-            }
-
-            $accountId = null;
-            if (! empty($accountMappings[$key])) {
-                $accountId = AccountingAccount::where('business_id', $businessId)
-                    ->where('id', (int) $accountMappings[$key])
-                    ->value('id');
-            }
-            if (empty($accountId)) {
-                $accountNo = trim((string) ($line['account_no'] ?? ''));
-                $accountName = trim((string) ($line['account_name'] ?? ''));
-                $query = AccountingAccount::where('business_id', $businessId);
-                if ($accountNo !== '') {
-                    $query->where('gl_code', $accountNo);
-                } else {
-                    $query->whereRaw('LOWER(TRIM(name)) = ?', [mb_strtolower($accountName)]);
-                }
-                $accountId = $query->value('id');
-            }
-            if (! empty($accountId)) {
-                $accountIds[(int) $accountId] = true;
-            }
-            if ($requireExplicitTaxDecision && $selection === '' && $this->looksLikeTaxAccount($line)) {
-                $taxCandidates[] = [
-                    'account_id' => empty($accountId) ? null : (int) $accountId,
-                    'account_name' => trim((string) ($line['account_name'] ?? '')),
-                    'account_no' => trim((string) ($line['account_no'] ?? '')),
-                ];
-            }
-        }
-
-        $storedTaxMappedAccountIds = [];
-        if ($accountIds !== []) {
-            $storedTaxMappings = DB::table('accounting_journal_tax_account_mappings')
-                ->where('business_id', $businessId)
-                ->whereIn('accounting_account_id', array_keys($accountIds))
-                ->get(['accounting_account_id', 'tax_rate_id']);
-            foreach ($storedTaxMappings as $mapping) {
-                $storedTaxMappedAccountIds[(int) $mapping->accounting_account_id] = true;
-                $taxRateIds[(int) $mapping->tax_rate_id] = true;
-            }
-        }
-
-        if ($requireExplicitTaxDecision) {
-            foreach ($taxCandidates as $candidate) {
-                if ($candidate['account_id'] !== null && isset($storedTaxMappedAccountIds[$candidate['account_id']])) {
-                    continue;
-                }
-
-                $label = $candidate['account_name'] !== '' ? $candidate['account_name'] : $candidate['account_no'];
-                throw new \RuntimeException('Akun Journal "'.$label.'" tampak sebagai akun pajak tetapi belum dipetakan. Pilih TaxRate/grup pajak business yang tersedia, atau pilih "Hapus mapping" bila akun itu memang bukan akun pajak.');
-            }
-        }
-
-        if (count($taxRateIds) > 1) {
-            throw new \RuntimeException('Akun pajak Journal dipetakan ke lebih dari satu TaxRate/grup; pilih satu mapping sebelum melanjutkan.');
-        }
-        if ($taxRateIds === []) {
+        $components = (new JournalImportAccountComponentService())->groupJournalLines($entry, $businessId);
+        $taxComponents = array_values(array_filter($components, fn ($component) => $component['is_tax']));
+        if ($taxComponents === []) {
             return null;
         }
 
-        $taxRate = TaxRate::where('business_id', $businessId)
+        foreach ($taxComponents as $component) {
+            if ($component['tax_direction_conflict'] || $component['tax_direction'] === null) {
+                throw new \RuntimeException('Arah akun pajak Journal tidak dapat ditentukan dari nama akun dan sisi debit/kredit.');
+            }
+        }
+
+        $vatDirections = array_values(array_unique(array_filter(array_column($taxComponents, 'tax_direction'), fn ($direction) => in_array($direction, ['input', 'output'], true))));
+        if (count($vatDirections) > 1) {
+            throw new \RuntimeException('Satu transaksi memiliki VAT In dan VAT Out sekaligus; tarif pajaknya perlu ditinjau.');
+        }
+
+        $taxableBase = $this->resolveTaxableBase($taxableBase, $components, $taxComponents, $vatDirections);
+        if ($taxableBase === null || $taxableBase <= 0) {
+            throw new \RuntimeException('Basis kena pajak tidak tersedia dari detail transaksi atau komponen Journal.');
+        }
+
+        $taxRates = TaxRate::where('business_id', $businessId)
             ->whereNull('deleted_at')
             ->with('sub_taxes')
-            ->find(array_key_first($taxRateIds));
-        if (! $taxRate) {
-            throw new \RuntimeException('TaxRate hasil mapping tidak aktif pada business ini.');
+            ->get();
+        $simpleRates = $taxRates->filter(fn ($taxRate) => ! $taxRate->is_tax_group);
+        $componentRateIds = [];
+        $taxAmount = 0.0;
+
+        foreach ($taxComponents as $component) {
+            if ($component['debit'] > 0 && $component['credit'] > 0) {
+                throw new \RuntimeException('Akun pajak Journal memiliki nominal debit dan kredit sekaligus; komponennya perlu ditinjau.');
+            }
+
+            $amount = round((float) $component['debit'] + (float) $component['credit'], 4);
+            if ($amount <= 0) {
+                continue;
+            }
+            $signedAmount = $component['tax_direction'] === 'withholding' ? -$amount : $amount;
+            $componentRate = round($signedAmount / $taxableBase * 100, 4);
+            $componentMatches = $simpleRates->filter(function ($rate) use ($componentRate, $taxableBase, $signedAmount) {
+                return abs(round((float) $rate->amount - $componentRate, 4)) <= self::RATE_TOLERANCE
+                    && abs(round($taxableBase * (float) $rate->amount / 100 - $signedAmount, 2)) <= 0.01;
+            })->values();
+
+            if ($componentMatches->count() !== 1) {
+                $label = $component['account_name'] !== '' ? $component['account_name'] : $component['account_no'];
+                $percentage = number_format($componentRate, 4, '.', '');
+                throw new \RuntimeException($componentMatches->isEmpty()
+                    ? 'Tarif hasil hitung akun pajak Journal "'.$label.'" sebesar '.$percentage.'% tidak cocok dengan TaxRate aktif pada business ini.'
+                    : 'Tarif hasil hitung akun pajak Journal "'.$label.'" cocok dengan lebih dari satu TaxRate; transaksi perlu ditinjau.');
+            }
+
+            $componentRateIds[] = (int) $componentMatches[0]->id;
+            $taxAmount += $signedAmount;
+        }
+        $taxAmount = round($taxAmount, 4);
+        if ($taxAmount === 0.0 || $componentRateIds === []) {
+            throw new \RuntimeException('Nominal akun pajak Journal tidak menghasilkan tarif yang dapat digunakan.');
         }
 
-        $rate = $taxRate->is_tax_group
-            ? (float) $taxRate->sub_taxes->where('business_id', $businessId)->sum('amount')
-            : (float) $taxRate->amount;
-        if ($taxRate->is_tax_group && $rate <= 0) {
-            throw new \RuntimeException('Grup pajak tidak memiliki komponen aktif yang valid.');
+        $componentRateIds = array_values(array_unique($componentRateIds));
+        if (count($componentRateIds) === 1) {
+            $taxRate = $simpleRates->firstWhere('id', $componentRateIds[0]);
+            $rate = $taxRate ? (float) $taxRate->amount : null;
+            if ($rate === null || abs(round($taxableBase * $rate / 100 - $taxAmount, 2)) > 0.01) {
+                throw new \RuntimeException('Total komponen pajak Journal tidak sesuai dengan TaxRate hasil hitung.');
+            }
+        } else {
+            $sortedComponentIds = $componentRateIds;
+            sort($sortedComponentIds);
+            $matchingGroups = $taxRates->filter(function ($taxRate) use ($businessId, $sortedComponentIds) {
+                if (! $taxRate->is_tax_group) {
+                    return false;
+                }
+                $memberIds = $taxRate->sub_taxes
+                    ->where('business_id', $businessId)
+                    ->pluck('id')
+                    ->map(fn ($id) => (int) $id)
+                    ->sort()
+                    ->values()
+                    ->all();
+
+                return $memberIds === $sortedComponentIds;
+            })->values();
+
+            if ($matchingGroups->count() !== 1) {
+                throw new \RuntimeException('Komponen pajak Journal tidak cocok dengan satu grup pajak aktif yang unik.');
+            }
+
+            $taxRate = $matchingGroups[0];
+            $rate = (float) $taxRate->sub_taxes->where('business_id', $businessId)->sum('amount');
+            if (abs(round($taxableBase * $rate / 100 - $taxAmount, 2)) > 0.01) {
+                throw new \RuntimeException('Total komponen pajak Journal berbeda dari grup pajak hasil hitung.');
+            }
         }
 
-        return ['id' => (int) $taxRate->id, 'rate' => $rate];
+        return [
+            'id' => (int) $taxRate->id,
+            'rate' => round($rate, 4),
+            'taxable_base' => round($taxableBase, 4),
+            'tax_amount' => $taxAmount,
+            'effective_rate' => round($taxAmount / $taxableBase * 100, 4),
+            'direction' => $vatDirections[0] ?? 'withholding',
+        ];
     }
 
-    private function looksLikeTaxAccount(array $line): bool
+    private function resolveTaxableBase(?float $taxableBase, array $components, array $taxComponents, array $vatDirections): ?float
     {
-        $label = mb_strtolower(trim((string) ($line['account_no'] ?? '').' '.(string) ($line['account_name'] ?? '')));
+        if ($taxableBase !== null && is_finite($taxableBase) && $taxableBase > 0) {
+            return round($taxableBase, 4);
+        }
 
-        return preg_match('/(?:^|[^a-z0-9])(ppn|pph|pajak|vat|gst|tax)(?:[^a-z0-9]|$)/u', $label) === 1;
+        $baseSide = $vatDirections[0] ?? null;
+        if ($baseSide === 'input') {
+            $side = 'debit';
+        } elseif ($baseSide === 'output') {
+            $side = 'credit';
+        } else {
+            $taxSides = [];
+            foreach ($taxComponents as $component) {
+                if ($component['debit'] > 0) {
+                    $taxSides['debit'] = true;
+                }
+                if ($component['credit'] > 0) {
+                    $taxSides['credit'] = true;
+                }
+            }
+            if (count($taxSides) !== 1) {
+                return null;
+            }
+            $side = array_key_first($taxSides);
+        }
+
+        $base = 0.0;
+        foreach ($components as $component) {
+            if ($component['is_tax']) {
+                continue;
+            }
+            $base += (float) $component[$side];
+        }
+
+        return $base > 0 ? round($base, 4) : null;
     }
 }

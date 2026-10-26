@@ -756,9 +756,9 @@
     "semantic_hash": "80be89b790458e2ce79c56c686822abd"
   },
   "Modules/Accounting/Http/Controllers/JournalEntryController.php": {
-    "mtime": 1792951444.9662333,
-    "seen": 1792953555.168227,
-    "ast_hash": "f7f77e9f148173ca09c1476799df8f05",
+    "mtime": 1793012773.5551562,
+    "seen": 1793013489.0545318,
+    "ast_hash": "a6baa9481003c1af0dfb4f1a5e9b917b",
     "semantic_hash": ""
   },
   "Modules/Accounting/Http/Controllers/MediaController.php": {
@@ -810,9 +810,9 @@
     "semantic_hash": ""
   },
   "Modules/Accounting/Jobs/ProcessJournalImportJob.php": {
-    "mtime": 1792951629.3567765,
-    "seen": 1792953555.1692219,
-    "ast_hash": "5d1286da22c86a94da1af3897a1e7d09",
+    "mtime": 1793013223.3994977,
+    "seen": 1793013489.0545318,
+    "ast_hash": "ce89a919cfd000a804364a939e25da7c",
     "semantic_hash": ""
   },
   "Modules/Accounting/Listeners/MapExpenseTransactions.php": {
@@ -1122,9 +1122,9 @@
     "semantic_hash": "85fc45420789bb1efb265707d34af6e2"
   },
   "Modules/Accounting/Resources/views/journal_entry/import.blade.php": {
-    "mtime": 1792951742.0894687,
-    "seen": 1792953555.1692219,
-    "ast_hash": "20e1d81cecb045d474efd5a68ee0eb52",
+    "mtime": 1793012797.1466413,
+    "seen": 1793013489.0545318,
+    "ast_hash": "4666d46249b3e16fc1bbf6a412063a1c",
     "semantic_hash": ""
   },
   "Modules/Accounting/Resources/views/journal_entry/index.blade.php": {
@@ -1608,9 +1608,9 @@
     "semantic_hash": "34f27bfe161100880a4ad7cde5cf3181"
   },
   "Modules/Accounting/Routes/web.php": {
-    "mtime": 1792672784.1346674,
-    "seen": 1792926711.9418705,
-    "ast_hash": "7567851fbca052021bfa6236b6765c85",
+    "mtime": 1793001208.9069548,
+    "seen": 1793001681.8547544,
+    "ast_hash": "e8de8a606bcc8df5c987d3b7093bf9d5",
     "semantic_hash": ""
   },
   "Modules/Accounting/Services/AccountingReportService.php": {
@@ -6246,9 +6246,9 @@
     "semantic_hash": "a857baeb631ed4a2c6dfd7b5be4e64ec"
   },
   "app/Http/Controllers/PurchaseController.php": {
-    "mtime": 1787207628.8305216,
-    "seen": 1788970597.7115812,
-    "ast_hash": "d84db88a5a9e10db701ce1e669bab192",
+    "mtime": 1793024887.2916293,
+    "seen": 1793025105.9946628,
+    "ast_hash": "6d8f753e95d9a53934b903bf574eeb07",
     "semantic_hash": ""
   },
   "app/Http/Controllers/PurchaseOrderController.php": {
@@ -6918,9 +6918,9 @@
     "semantic_hash": "4ee07487117fae6b31d9d7dbfb053b77"
   },
   "app/Utils/TransactionUtil.php": {
-    "mtime": 1792600046.4554188,
-    "seen": 1792601078.6359043,
-    "ast_hash": "f5a242b385a07dc8f704a7d98fcbe1a2",
+    "mtime": 1793024859.197447,
+    "seen": 1793025105.995662,
+    "ast_hash": "00e8ec3d7556aec04a52d487b413a9ed",
     "semantic_hash": ""
   },
   "app/Utils/Util.php": {
@@ -10572,9 +10572,9 @@
     "semantic_hash": "ba80ccc0e1bbcdeda9e8a6143573b73e"
   },
   "resources/views/purchase/index.blade.php": {
-    "mtime": 1787204925.6348255,
-    "seen": 1788970597.714611,
-    "ast_hash": "c035e6838c457c3f6c27fd2347690116",
+    "mtime": 1793025697.242925,
+    "seen": 1793025842.2766874,
+    "ast_hash": "9becfe6c14a422ee045c41e3917650ef",
     "semantic_hash": ""
   },
   "resources/views/purchase/partials/edit_purchase_entry_row.blade.php": {
@@ -10620,9 +10620,9 @@
     "semantic_hash": "9515d424bc68acf97693f4ba5b6d257c"
   },
   "resources/views/purchase/partials/purchase_table.blade.php": {
-    "mtime": 1787204886.9159122,
-    "seen": 1788970597.714611,
-    "ast_hash": "872cebadbc9dc9a5f7b22f401ef7b4d0",
+    "mtime": 1793024859.2074418,
+    "seen": 1793025105.9996595,
+    "ast_hash": "228a2eadedf54ed8377e0b08ec299825",
     "semantic_hash": ""
   },
   "resources/views/purchase/partials/show_details.blade.php": {
@@ -13602,9 +13602,9 @@
     "semantic_hash": ""
   },
   "public/js/purchase.js": {
-    "mtime": 1787204973.070063,
-    "seen": 1788970597.713601,
-    "ast_hash": "4565bc2f456bca58bf1225eab29b264e",
+    "mtime": 1793024859.21044,
+    "seen": 1793025105.9976609,
+    "ast_hash": "6696f1cbe3092cb36e1920e88a88d70c",
     "semantic_hash": ""
   },
   "public/js/purchase_return.js": {
@@ -13944,9 +13944,9 @@
     "semantic_hash": ""
   },
   "resources/views/purchase/partials/products.blade.php": {
-    "mtime": 1787204876.9861488,
-    "seen": 1788970597.714611,
-    "ast_hash": "b3665f258da3fc2aadd6d8299f096d3b",
+    "mtime": 1793025697.241755,
+    "seen": 1793025842.2766874,
+    "ast_hash": "03085b472c811caf6f2bc2f4140795ac",
     "semantic_hash": ""
   },
   "app/Http/Controllers/SecurityAuditController.php": {
@@ -14706,9 +14706,9 @@
     "semantic_hash": ""
   },
   "Modules/Accounting/Services/JournalTaxReconciliationService.php": {
-    "mtime": 1792942667.7365973,
-    "seen": 1792950536.343142,
-    "ast_hash": "223b7d3133bbfe9a765c6ed8586db83f",
+    "mtime": 1793013177.5955002,
+    "seen": 1793013489.0560477,
+    "ast_hash": "7fc7a4da876dd15a1cac4204b25fed44",
     "semantic_hash": ""
   },
   "database/migrations/2026_10_21_000003_add_row_overrides_to_expense_import_batches.php": {
@@ -14718,15 +14718,15 @@
     "semantic_hash": ""
   },
   "Modules/Accounting/Resources/assets/js/journal_import.js": {
-    "mtime": 1792951423.1240263,
-    "seen": 1792953555.1692219,
-    "ast_hash": "c0e9c34ce249553e0f7242c6190f995c",
+    "mtime": 1793010118.7870605,
+    "seen": 1793010340.542811,
+    "ast_hash": "40e4266c6dcf8327fb7978db0d32185a",
     "semantic_hash": ""
   },
   "public/modules/accounting/js/journal_import.js": {
-    "mtime": 1792952544.202774,
-    "seen": 1792953555.1972787,
-    "ast_hash": "c0e9c34ce249553e0f7242c6190f995c",
+    "mtime": 1793010147.2941291,
+    "seen": 1793010340.553343,
+    "ast_hash": "40e4266c6dcf8327fb7978db0d32185a",
     "semantic_hash": ""
   },
   "Modules/Accounting/Database/Migrations/2026_10_22_000001_create_accounting_journal_import_rows_table.php": {
@@ -14736,9 +14736,9 @@
     "semantic_hash": ""
   },
   "Modules/Accounting/Services/JournalImportDraftService.php": {
-    "mtime": 1792951323.3587317,
-    "seen": 1792953555.1712277,
-    "ast_hash": "b8ed3c504abd10f6dd1972a2f62db601",
+    "mtime": 1792999284.5953264,
+    "seen": 1793000233.6431105,
+    "ast_hash": "61048bd10b438e407ca5a25f6036475c",
     "semantic_hash": ""
   },
   "Modules/Accounting/Database/Migrations/2026_10_22_000002_add_journal_import_queue_row_state.php": {
@@ -14748,9 +14748,9 @@
     "semantic_hash": ""
   },
   "Modules/Accounting/Services/JournalImportQueueService.php": {
-    "mtime": 1792951331.057128,
-    "seen": 1792953555.1712277,
-    "ast_hash": "5367c23acbd57c19bd2f45f7ffb32e16",
+    "mtime": 1793008157.1974306,
+    "seen": 1793008389.8774977,
+    "ast_hash": "7b1b00092ce9a932cd1b477f413c8088",
     "semantic_hash": ""
   },
   "Modules/Accounting/Database/Migrations/2026_10_25_000001_add_journal_import_source_mutation_snapshot.php": {
@@ -14772,15 +14772,15 @@
     "semantic_hash": ""
   },
   "Modules/Accounting/Services/JournalImportExpenseService.php": {
-    "mtime": 1792944521.5986896,
-    "seen": 1792950536.343142,
-    "ast_hash": "572e278777d7d6172c2c34cca11e5f90",
+    "mtime": 1793013177.5974984,
+    "seen": 1793013489.0555391,
+    "ast_hash": "3847939d699cf755d4879032247709b0",
     "semantic_hash": ""
   },
   "Modules/Accounting/Services/JournalImportInvoiceService.php": {
-    "mtime": 1792942667.7345698,
-    "seen": 1792950536.343142,
-    "ast_hash": "657a39c9848f4bbf45c6f65076480e4d",
+    "mtime": 1793013177.5984976,
+    "seen": 1793013489.0555391,
+    "ast_hash": "4ae0f0042dbbc568ec1130874c7fa2a0",
     "semantic_hash": ""
   },
   "Modules/Accounting/Services/JournalImportPaymentService.php": {
@@ -14790,15 +14790,51 @@
     "semantic_hash": ""
   },
   "Modules/Accounting/Services/JournalImportTaxResolver.php": {
-    "mtime": 1792944546.6630037,
-    "seen": 1792950536.343142,
-    "ast_hash": "6cb7fa14e5c63901a976ac1af95f6c55",
+    "mtime": 1793012623.7156396,
+    "seen": 1793013489.0560477,
+    "ast_hash": "16453a6ea59bccb5c3dc71b472419c00",
     "semantic_hash": ""
   },
   "Modules/Accounting/Services/JournalImportStockService.php": {
     "mtime": 1792953727.231295,
     "seen": 1792954119.7578712,
     "ast_hash": "6cb3e0489bb37c2982e7f7ac9d46e871",
+    "semantic_hash": ""
+  },
+  "Modules/Accounting/Database/Migrations/2026_10_26_000002_add_journal_import_chunk_cursors.php": {
+    "mtime": 1792995864.1226792,
+    "seen": 1792996620.7239995,
+    "ast_hash": "9f613b81ac81ff13c48536450a28cd9c",
+    "semantic_hash": ""
+  },
+  "Modules/Accounting/Services/JournalImportSourceMatcher.php": {
+    "mtime": 1792995039.9204438,
+    "seen": 1792996620.7260108,
+    "ast_hash": "36a9d0476c528d459d740518cd9a3449",
+    "semantic_hash": ""
+  },
+  "Modules/Accounting/Services/JournalImportAccountComponentService.php": {
+    "mtime": 1793012243.7326612,
+    "seen": 1793013489.0555391,
+    "ast_hash": "29b1d31049c8db8ce65532bb596c48d2",
+    "semantic_hash": ""
+  },
+  "Modules/Accounting/Services/JournalImportTaxCorrectionPolicy.php": {
+    "mtime": 1792999991.782908,
+    "seen": 1793000233.6431105,
+    "ast_hash": "8eaaec6f53e164a0f4a2fbfef658ac48",
+    "semantic_hash": ""
+  },
+  "Modules/Accounting/Services/JournalImportExpenseTotalsService.php": {
+    "mtime": 1793008157.1927464,
+    "seen": 1793008389.8774977,
+    "ast_hash": "bd1b4f17e1b9685883915200df1c01a8",
+    "semantic_hash": ""
+  },
+  "app/Presenters/PurchaseIndexProductPresenter.php": {
+    "mtime": 1793024859.1889403,
+    "seen": 1793025105.9946628,
+    "ast_hash": "b4e43f359245f265570e5e7917d9306f",
     "semantic_hash": ""
   }
 }

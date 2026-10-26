@@ -718,6 +718,7 @@ $(document).ready(function () {
             { data: 'tags', name: 'tags' },
             { data: 'status', name: 'status' },
             { data: 'payment_status', name: 'payment_status' },
+            { data: 'total_before_tax', name: 'transactions.total_before_tax' },
             { data: 'final_total', name: 'final_total' },
             { data: 'payment_due', name: 'payment_due', orderable: false, searchable: false },
 
@@ -734,11 +735,14 @@ $(document).ready(function () {
         },
         "footerCallback": function (row, data, start, end, display) {
             var total_purchase = 0;
+            var total_purchase_before_tax = 0;
             var total_due = 0;
             var total_purchase_return_due = 0;
             for (var r in data) {
                 total_purchase += $(data[r].final_total).data('orig-value') ?
                     parseFloat($(data[r].final_total).data('orig-value')) : 0;
+                total_purchase_before_tax += $(data[r].total_before_tax).data('orig-value') ?
+                    parseFloat($(data[r].total_before_tax).data('orig-value')) : 0;
                 var payment_due_obj = $('<div>' + data[r].payment_due + '</div>');
                 total_due += payment_due_obj.find('.payment_due').data('orig-value') ?
                     parseFloat(payment_due_obj.find('.payment_due').data('orig-value')) : 0;
@@ -748,6 +752,7 @@ $(document).ready(function () {
             }
 
             $('.footer_purchase_total').html(__currency_trans_from_en(total_purchase));
+            $('.footer_purchase_subtotal_before_tax').html(__currency_trans_from_en(total_purchase_before_tax));
             $('.footer_total_due').html(__currency_trans_from_en(total_due));
             $('.footer_total_purchase_return_due').html(__currency_trans_from_en(total_purchase_return_due));
             $('.footer_status_count').html(__count_status(data, 'status'));

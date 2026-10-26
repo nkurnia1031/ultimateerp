@@ -262,8 +262,6 @@ class JournalEntryController extends Controller
                 ]);
         }
         $this->journalImportDraftService->persistEntries((int) $batch->id, (int) $business_id, $analysis['entries']);
-        $tax_mapping_accounts = $this->getJournalTaxMappingAccounts($analysis['entries'], $business_id);
-        $tax_rate_options = $this->getJournalTaxRateOptions($business_id);
         $path = $batch->file_path;
         $analysis_path = $batch->analysis_path;
         $original_file_name = $batch->file_name;
@@ -296,7 +294,7 @@ class JournalEntryController extends Controller
             });
 
         return view('accounting::journal_entry.import')
-            ->with(compact('batch', 'analysis', 'path', 'analysis_path', 'imports', 'original_file_name', 'account_options', 'main_account_options', 'tax_mapping_accounts', 'tax_rate_options', 'taxReconciliationReviews', 'draftTypeCounts'));
+            ->with(compact('batch', 'analysis', 'path', 'analysis_path', 'imports', 'original_file_name', 'account_options', 'main_account_options', 'taxReconciliationReviews', 'draftTypeCounts'));
     }
 
     public function draftRows(Request $request, $id)
@@ -315,6 +313,8 @@ class JournalEntryController extends Controller
         $request->validate([
             'type' => 'required|string',
             'review_filter' => 'nullable|in:all,reviewed,unreviewed',
+            'status_filter' => 'nullable|in:all,errors,differences',
+            'search' => 'nullable|string|max:100',
             'page' => 'nullable|integer|min:1',
             'per_page' => 'nullable|integer|min:1|max:100',
         ]);
@@ -327,16 +327,51 @@ class JournalEntryController extends Controller
             ->where('journal_import_id', $batch->id)
             ->where('business_id', $business_id)
             ->where('source_type', $type);
+        $search = trim((string) $request->input('search', ''));
+        if ($search !== '') {
+            $like = '%'.$search.'%';
+            $query->where(function ($builder) use ($like) {
+                $builder->where('source_number', 'like', $like)
+                    ->orWhere('entry_data', 'like', $like)
+                    ->orWhere('draft_data', 'like', $like)
+                    ->orWhere('processing_message', 'like', $like)
+                    ->orWhere('processing_error', 'like', $like);
+            });
+        }
+        if ($request->input('status_filter') === 'errors') {
+            $query->where(function ($builder) {
+                $builder->where('processing_status', 'failed')
+                    ->orWhere(function ($messageQuery) {
+                        $messageQuery->whereNotNull('processing_error')->where('processing_error', '<>', '');
+                    });
+            });
+        } elseif ($request->input('status_filter') === 'differences') {
+            $query->whereIn('reconciliation_status', ['mismatch', 'approved', 'auto_approved']);
+        }
         if ($request->input('review_filter') === 'reviewed') {
             $query->where('is_reviewed', 1);
         } elseif ($request->input('review_filter') === 'unreviewed') {
             $query->where('is_reviewed', 0);
         }
 
+        $importOptions = ! empty($batch->import_options) ? json_decode($batch->import_options, true) : [];
+        $importOptions = is_array($importOptions) ? $importOptions : [];
         $perPage = min(100, max(1, (int) $request->input('per_page', 50)));
         $rows = $query->orderBy('entry_index')->paginate($perPage);
-        $rows->getCollection()->transform(function ($row) {
-            return $this->journalImportDraftRowResponse($row);
+        $sourceIds = $rows->getCollection()
+            ->filter(fn ($row) => ($row->source_record_type ?? null) === \App\Transaction::class && ! empty($row->source_record_id))
+            ->pluck('source_record_id')->unique()->values()->all();
+        $sourceComponentsById = $sourceIds === [] ? [] : DB::table('transactions')
+            ->where('business_id', $business_id)
+            ->whereIn('id', $sourceIds)
+            ->get(['id', 'total_before_tax', 'tax_amount', 'final_total'])
+            ->keyBy('id')->map(fn ($source) => [
+                'base' => $source->total_before_tax === null ? null : (float) $source->total_before_tax,
+                'tax' => $source->tax_amount === null ? null : (float) $source->tax_amount,
+                'total' => $source->final_total === null ? null : (float) $source->final_total,
+            ])->all();
+        $rows->getCollection()->transform(function ($row) use ($importOptions, $sourceComponentsById) {
+            return $this->journalImportDraftRowResponse($row, $importOptions, $sourceComponentsById);
         });
 
         return response()->json([
@@ -426,9 +461,15 @@ class JournalEntryController extends Controller
         $draftData = array_key_exists('draft_data', $validated)
             ? $this->validateJournalImportDraftData($validated['draft_data'], $business_id, $row->source_type, (int) $batch->id)
             : (json_decode((string) $row->draft_data, true) ?: []);
+        $hasReviewMutation = array_key_exists('draft_data', $validated)
+            || array_key_exists('source_action', $validated)
+            || array_key_exists('source_record_type', $validated)
+            || array_key_exists('source_record_id', $validated);
         $reviewed = array_key_exists('is_reviewed', $validated)
             ? (bool) $validated['is_reviewed']
-            : (bool) $row->is_reviewed;
+            : ($hasReviewMutation ? false : (bool) $row->is_reviewed);
+        $importOptions = ! empty($batch->import_options) ? json_decode($batch->import_options, true) : [];
+        $importOptions = is_array($importOptions) ? $importOptions : [];
 
         DB::table('accounting_journal_import_rows')
             ->where('id', $row->id)
@@ -446,8 +487,6 @@ class JournalEntryController extends Controller
 
         if (in_array($row->source_type, ['Sales Invoice', 'Purchase Invoice', 'Expense', 'Receive Payment', 'Purchase Payment', 'Bank Deposit', 'Bank Transfer', 'Bank Withdrawal', 'Reversal', 'Stock Adjustment', 'Stock In/Out', 'Opening Balance'], true)) {
             $updatedRow = DB::table('accounting_journal_import_rows')->where('id', $row->id)->first();
-            $importOptions = ! empty($batch->import_options) ? json_decode($batch->import_options, true) : [];
-            $importOptions = is_array($importOptions) ? $importOptions : [];
             $serviceClass = $row->source_type === 'Expense'
                 ? \Modules\Accounting\Services\JournalImportExpenseService::class
                 : (in_array($row->source_type, ['Receive Payment', 'Purchase Payment'], true)
@@ -485,7 +524,7 @@ class JournalEntryController extends Controller
 
         return response()->json([
             'success' => 1,
-            'row' => $this->journalImportDraftRowResponse($updatedRow),
+            'row' => $this->journalImportDraftRowResponse($updatedRow, $importOptions),
             'msg' => 'Draft tersimpan.',
         ]);
     }
@@ -530,6 +569,60 @@ class JournalEntryController extends Controller
             'success' => 1,
             'row' => $this->journalImportDraftRowResponse($row),
             'msg' => 'Persetujuan selisih tersimpan dengan audit.',
+        ]);
+    }
+
+    public function approveDraftDiscrepancies(Request $request, $id)
+    {
+        $business_id = (int) $request->session()->get('user.business_id');
+        $this->authorizeJournalImportDraftAccess($business_id);
+
+        $batch = DB::table('accounting_journal_imports')
+            ->where('business_id', $business_id)
+            ->where('id', $id)
+            ->first();
+        if (empty($batch)) {
+            abort(404);
+        }
+        if (! in_array($batch->status, ['analyzed', 'partially_imported', 'failed'], true)) {
+            return response()->json(['success' => 0, 'msg' => 'Tunggu antrean selesai sebelum menyetujui selisih.'], 409);
+        }
+
+        $validated = $request->validate([
+            'row_ids' => 'required|array|min:1|max:100',
+            'row_ids.*' => 'required|integer|min:1|distinct',
+            'reason' => 'required|string|min:5|max:1000',
+        ]);
+        $rows = $this->journalImportQueueService->approveDiscrepancies(
+            (int) $batch->id,
+            $business_id,
+            (int) $request->session()->get('user.id'),
+            $validated['row_ids'],
+            $validated['reason']
+        );
+
+        $importOptions = ! empty($batch->import_options) ? json_decode($batch->import_options, true) : [];
+        $importOptions = is_array($importOptions) ? $importOptions : [];
+        $sourceIds = collect($rows)
+            ->filter(fn ($row) => ($row->source_record_type ?? null) === \App\Transaction::class && ! empty($row->source_record_id))
+            ->pluck('source_record_id')->unique()->values()->all();
+        $sourceComponentsById = $sourceIds === [] ? [] : DB::table('transactions')
+            ->where('business_id', $business_id)
+            ->whereIn('id', $sourceIds)
+            ->get(['id', 'total_before_tax', 'tax_amount', 'final_total'])
+            ->keyBy('id')->map(fn ($source) => [
+                'base' => $source->total_before_tax === null ? null : (float) $source->total_before_tax,
+                'tax' => $source->tax_amount === null ? null : (float) $source->tax_amount,
+                'total' => $source->final_total === null ? null : (float) $source->final_total,
+            ])->all();
+
+        return response()->json([
+            'success' => 1,
+            'rows' => array_map(
+                fn ($row) => $this->journalImportDraftRowResponse($row, $importOptions, $sourceComponentsById),
+                $rows
+            ),
+            'msg' => count($rows).' selisih disetujui dan ditandai ditinjau.',
         ]);
     }
 
@@ -838,9 +931,37 @@ class JournalEntryController extends Controller
         }
     }
 
-    private function journalImportDraftRowResponse($row): array
+    private function journalImportDraftRowResponse($row, array $importOptions = [], ?array $sourceComponentsById = null): array
     {
-        return $this->journalImportDraftService->rowResponse($row);
+        $response = $this->journalImportDraftService->rowResponse($row);
+        $entry = json_decode((string) $row->entry_data, true) ?: [];
+        $components = app(\Modules\Accounting\Services\JournalImportAccountComponentService::class)
+            ->groupJournalLines($entry, (int) $row->business_id, $importOptions);
+        $response['journal_components'] = $components;
+        $componentSide = $row->source_type === 'Sales Invoice' ? 'credit' : 'debit';
+        $response['journal_base_total'] = round((float) collect($components)->reject(fn ($component) => $component['is_tax'])->sum($componentSide), 4);
+        $response['journal_tax_total'] = round((float) collect($components)->filter(fn ($component) => $component['is_tax'])->sum($componentSide), 4);
+        $response['source_components'] = null;
+
+        if (($row->source_record_type ?? null) === \App\Transaction::class && ! empty($row->source_record_id)) {
+            if ($sourceComponentsById !== null) {
+                $response['source_components'] = $sourceComponentsById[$row->source_record_id] ?? null;
+            } else {
+                $source = DB::table('transactions')
+                    ->where('id', $row->source_record_id)
+                    ->where('business_id', $row->business_id)
+                    ->first(['total_before_tax', 'tax_amount', 'final_total']);
+                if ($source) {
+                    $response['source_components'] = [
+                        'base' => $source->total_before_tax === null ? null : (float) $source->total_before_tax,
+                        'tax' => $source->tax_amount === null ? null : (float) $source->tax_amount,
+                        'total' => $source->final_total === null ? null : (float) $source->final_total,
+                    ];
+                }
+            }
+        }
+
+        return $response;
     }
 
     private function validateJournalImportDraftData(array $draft_data, int $business_id, string $source_type, ?int $import_id = null): array
@@ -911,8 +1032,6 @@ class JournalEntryController extends Controller
 
         $request->validate([
             'import_id' => 'required|integer',
-            'tax_account_mappings' => 'sometimes|array',
-            'tax_account_mappings.*' => 'nullable|string',
         ]);
 
         $batch = DB::table('accounting_journal_imports')
@@ -927,23 +1046,19 @@ class JournalEntryController extends Controller
             ], 422);
         }
 
-        $analysis = $this->analysisFromJournalDraftRows((int) $batch->id, (int) $business_id, $batch->summary);
-        if (empty($analysis['entries'])) {
+        $hasDraftRows = DB::table('accounting_journal_import_rows')
+            ->where('journal_import_id', $batch->id)
+            ->where('business_id', $business_id)
+            ->exists();
+        if (! $hasDraftRows) {
             return response()->json(['success' => 0, 'msg' => 'Draft belum memiliki baris untuk diproses.'], 422);
         }
-        $this->validateJournalTaxAccountMappingSelections(
-            $request->input('tax_account_mappings', []),
-            $business_id,
-            $analysis['entries'],
-            $request->input('account_mappings', [])
-        );
 
         $options = $request->only([
             'create_missing_accounts',
             'create_missing_main_accounts',
             'account_mappings',
             'main_account_mappings',
-            'tax_account_mappings',
         ]);
         $queueResult = DB::transaction(function () use ($batch, $business_id, $options) {
             $lockedBatch = DB::table('accounting_journal_imports')
@@ -956,35 +1071,22 @@ class JournalEntryController extends Controller
                 return ['error' => 'Batch sedang diproses atau tidak dapat dilanjutkan.'];
             }
 
-            $queued = $this->journalImportQueueService->queueRowsForBatch((int) $lockedBatch->id, (int) $business_id, $options);
-
-            $counts = $this->journalDraftProcessingCounts((int) $lockedBatch->id, (int) $business_id);
-            $allComplete = $counts['pending'] === 0 && $counts['queued'] === 0 && $counts['running'] === 0 && $counts['failed'] === 0;
-            $status = $queued > 0 ? 'queued_import' : ($allComplete ? 'imported' : 'partially_imported');
-            $message = $queued > 0
-                ? 'Menunggu worker queue imports untuk memproses '.$queued.' baris valid.'
-                : ($allComplete
-                    ? 'Semua baris draft sudah selesai diproses.'
-                    : 'Belum ada baris yang siap diproses; baris lain tetap tersimpan di draft.');
-
             DB::table('accounting_journal_imports')
                 ->where('id', $lockedBatch->id)
                 ->where('business_id', $business_id)
                 ->update([
-                    'status' => $status,
-                    'processed_entries' => $counts['completed'] + $counts['failed'],
-                    'imported_entries' => $counts['completed'],
-                    'skipped_entries' => $counts['failed'],
+                    'status' => 'preparing_import',
+                    'prepare_cursor' => 0,
+                    'tax_reconciliation_cursor' => 0,
                     'import_options' => json_encode($options, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
-                    'last_message' => $message,
+                    'last_message' => 'Memvalidasi dan menyiapkan antrean import dalam beberapa bagian.',
                     'error_message' => null,
                     'updated_at' => now(),
                 ]);
 
             return [
-                'queued' => $queued,
-                'status' => $status,
-                'last_message' => $message,
+                'status' => 'preparing_import',
+                'last_message' => 'Memvalidasi dan menyiapkan antrean import dalam beberapa bagian.',
             ];
         });
 
@@ -992,41 +1094,26 @@ class JournalEntryController extends Controller
             return response()->json(['success' => 0, 'msg' => $queueResult['error']], 409);
         }
 
-        if ($queueResult['queued'] > 0) {
-            try {
-                ProcessJournalImportJob::dispatch($batch->id);
-            } catch (\Throwable $exception) {
-                DB::transaction(function () use ($batch, $business_id, $exception) {
-                    DB::table('accounting_journal_import_rows')
-                        ->where('journal_import_id', $batch->id)
-                        ->where('business_id', $business_id)
-                        ->where('processing_status', 'queued')
-                        ->update([
-                            'processing_status' => 'pending',
-                            'processing_message' => 'Job belum terkirim; coba antrekan kembali.',
-                            'processing_error' => mb_substr($exception->getMessage(), 0, 2000),
-                            'updated_at' => now(),
-                        ]);
+        try {
+            ProcessJournalImportJob::dispatch($batch->id, 'prepare');
+        } catch (\Throwable $exception) {
+            DB::table('accounting_journal_imports')
+                ->where('id', $batch->id)
+                ->where('business_id', $business_id)
+                ->update([
+                    'status' => 'failed',
+                    'last_message' => 'Persiapan import belum masuk ke worker queue.',
+                    'error_message' => mb_substr($exception->getMessage(), 0, 2000),
+                    'updated_at' => now(),
+                ]);
 
-                    DB::table('accounting_journal_imports')
-                        ->where('id', $batch->id)
-                        ->where('business_id', $business_id)
-                        ->update([
-                            'status' => 'failed',
-                            'last_message' => 'Import belum masuk ke worker queue.',
-                            'error_message' => mb_substr($exception->getMessage(), 0, 2000),
-                            'updated_at' => now(),
-                        ]);
-                });
-
-                return response()->json(['success' => 0, 'msg' => 'Gagal mengirim baris ke worker queue.'], 500);
-            }
+            return response()->json(['success' => 0, 'msg' => 'Gagal mengirim persiapan import ke worker queue.'], 500);
         }
 
         return response()->json([
             'success' => 1,
             'import_id' => $batch->id,
-            'total_entries' => $queueResult['queued'],
+            'total_entries' => (int) $batch->total_entries,
             'status' => $queueResult['status'],
             'last_message' => $queueResult['last_message'],
         ]);
@@ -1259,85 +1346,6 @@ class JournalEntryController extends Controller
         }
 
         return compact('imported', 'skipped');
-    }
-
-    public function persistJournalTaxAccountMappings(array $analysis, int $business_id, int $user_id, array $options): void
-    {
-        $selections = $options['tax_account_mappings'] ?? [];
-        $account_mappings = $options['account_mappings'] ?? [];
-
-        $this->validateJournalTaxAccountMappingSelections(
-            $selections,
-            $business_id,
-            $analysis['entries'] ?? [],
-            $account_mappings
-        );
-
-        $lines_by_key = [];
-        foreach ($analysis['entries'] ?? [] as $entry) {
-            foreach ($entry['lines'] ?? [] as $line) {
-                $lines_by_key[$this->journalLineAccountKey($line)] = $line;
-            }
-        }
-
-        $account_cache = $this->getAccountingAccountCache($business_id);
-        foreach ($selections as $account_key => $selection) {
-            $selection = trim((string) $selection);
-            if ($selection === '') {
-                continue;
-            }
-
-            $line = $lines_by_key[$account_key] ?? null;
-            if ($line === null) {
-                continue;
-            }
-
-            $accounting_account_id = null;
-            if (! empty($account_mappings[$account_key])) {
-                $accounting_account_id = AccountingAccount::where('business_id', $business_id)
-                    ->where('id', (int) $account_mappings[$account_key])
-                    ->value('id');
-            }
-            if (empty($accounting_account_id)) {
-                $account = $this->findAccountInCache($line, $account_cache);
-                $accounting_account_id = $account['id'] ?? null;
-            }
-            if (empty($accounting_account_id)) {
-                continue;
-            }
-
-            $mapping_query = DB::table('accounting_journal_tax_account_mappings')
-                ->where('business_id', $business_id)
-                ->where('accounting_account_id', $accounting_account_id);
-
-            if ($selection === '__clear__') {
-                $mapping_query->delete();
-                continue;
-            }
-
-            $existing_mapping = $mapping_query->first();
-            if (! empty($existing_mapping) && (int) $existing_mapping->tax_rate_id === (int) $selection) {
-                continue;
-            }
-
-            $now = now();
-            if (empty($existing_mapping)) {
-                DB::table('accounting_journal_tax_account_mappings')->insert([
-                    'business_id' => $business_id,
-                    'accounting_account_id' => $accounting_account_id,
-                    'tax_rate_id' => (int) $selection,
-                    'created_by' => $user_id,
-                    'created_at' => $now,
-                    'updated_at' => $now,
-                ]);
-            } else {
-                $mapping_query->update([
-                    'tax_rate_id' => (int) $selection,
-                    'created_by' => $user_id,
-                    'updated_at' => $now,
-                ]);
-            }
-        }
     }
 
     public function reconcileJournalImportTaxes(int $journalImportId, int $businessId): array
@@ -1839,6 +1847,7 @@ class JournalEntryController extends Controller
 
     private function resolveJournalSourceLinks(array $entries, int $business_id): array
     {
+        $sourceMatcher = app(\Modules\Accounting\Services\JournalImportSourceMatcher::class);
         $definitions = [
             'Journal Entry' => ['model' => null, 'record_type' => null],
             'Sales Invoice' => ['model' => 'transaction', 'record_type' => Transaction::class, 'types' => ['sell']],
@@ -1973,54 +1982,16 @@ class JournalEntryController extends Controller
                 }
             }
 
+            $candidateIndex = $sourceMatcher->indexCandidates($candidates->all());
+
             foreach ($typedEntries as [$key, $entry]) {
                 $sourceNumber = trim((string) ($entry['source_number'] ?? ''));
-                $matches = $candidates->filter(function ($candidate) use ($sourceNumber) {
-                    if ($sourceNumber === '') {
-                        return false;
-                    }
-                    foreach ($candidate['references'] as $reference) {
-                        if (strcasecmp($reference, $sourceNumber) === 0) {
-                            return true;
-                        }
-                    }
-
-                    return false;
-                })->unique('id')->values();
-
-                if ($matches->isEmpty() && $sourceNumber !== '') {
-                    $matches = $candidates->filter(function ($candidate) use ($sourceNumber) {
-                        if ((string) $candidate['id'] === $sourceNumber) {
-                            return true;
-                        }
-
-                        if (preg_match('/^(\d+)\/(.+)$/', $sourceNumber, $idAndReference)
-                            && (string) $candidate['id'] === $idAndReference[1]) {
-                            foreach ($candidate['references'] as $reference) {
-                                if (strcasecmp($reference, $idAndReference[2]) === 0) {
-                                    return true;
-                                }
-                            }
-                        }
-
-                        return false;
-                    })->unique('id')->values();
-                }
-
-                if ($matches->count() > 1) {
-                    $dateMatches = $matches->filter(fn ($candidate) => $candidate['date'] === $entry['date'])->values();
-                    if ($dateMatches->count() === 1) {
-                        $matches = $dateMatches;
-                    } else {
-                        $amountCandidates = $dateMatches->isNotEmpty() ? $dateMatches : $matches;
-                        $amountMatches = $amountCandidates
-                            ->filter(fn ($candidate) => abs((float) $candidate['amount'] - (float) $entry['debit_total']) <= 0.01)
-                            ->values();
-                        if ($amountMatches->count() === 1) {
-                            $matches = $amountMatches;
-                        }
-                    }
-                }
+                $matches = collect($sourceMatcher->match(
+                    $sourceNumber,
+                    (string) ($entry['date'] ?? ''),
+                    (float) ($entry['debit_total'] ?? 0),
+                    $candidateIndex
+                ));
 
                 if ($matches->count() === 1) {
                     $candidate = $matches->first();
@@ -2297,211 +2268,6 @@ class JournalEntryController extends Controller
                 'mapping.journal_total_amount',
                 'mapping.recalculated_final_total',
             ]);
-    }
-
-    private function getJournalTaxMappingAccounts(array $entries, int $business_id): array
-    {
-        $account_cache = $this->getAccountingAccountCache($business_id);
-        $accounts = [];
-
-        foreach ($entries as $entry) {
-            foreach ($entry['lines'] ?? [] as $line) {
-                $key = $this->journalLineAccountKey($line);
-                if (isset($accounts[$key])) {
-                    continue;
-                }
-
-                $system_account = $this->findAccountInCache($line, $account_cache);
-                $accounts[$key] = [
-                    'key' => $key,
-                    'account_no' => $line['account_no'],
-                    'account_name' => $line['account_name'],
-                    'accounting_account_id' => $system_account['id'] ?? null,
-                    'accounting_account_name' => $system_account['name'] ?? null,
-                    'tax_rate_id' => null,
-                    'clear_stale_mapping' => false,
-                ];
-            }
-        }
-
-        $account_ids = collect($accounts)
-            ->pluck('accounting_account_id')
-            ->filter()
-            ->unique()
-            ->values();
-
-        if ($account_ids->isEmpty()) {
-            return array_values($accounts);
-        }
-
-        $mappings = DB::table('accounting_journal_tax_account_mappings as journal_tax_mappings')
-            ->leftJoin('tax_rates as mapped_tax_rates', function ($join) {
-                $join->on('mapped_tax_rates.id', '=', 'journal_tax_mappings.tax_rate_id')
-                    ->on('mapped_tax_rates.business_id', '=', 'journal_tax_mappings.business_id')
-                    ->whereNull('mapped_tax_rates.deleted_at');
-            })
-            ->where('journal_tax_mappings.business_id', $business_id)
-            ->whereIn('journal_tax_mappings.accounting_account_id', $account_ids)
-            ->select(
-                'journal_tax_mappings.accounting_account_id',
-                'journal_tax_mappings.tax_rate_id',
-                'mapped_tax_rates.id as active_tax_rate_id'
-            )
-            ->get()
-            ->keyBy('accounting_account_id');
-
-        foreach ($accounts as &$account) {
-            $mapping = $mappings->get($account['accounting_account_id']);
-            if (empty($mapping)) {
-                continue;
-            }
-
-            if (empty($mapping->active_tax_rate_id)) {
-                $account['clear_stale_mapping'] = true;
-            } else {
-                $account['tax_rate_id'] = (string) $mapping->tax_rate_id;
-            }
-        }
-        unset($account);
-
-        return array_values($accounts);
-    }
-
-    private function getJournalTaxRateOptions(int $business_id): array
-    {
-        return DB::table('tax_rates')
-            ->where('business_id', $business_id)
-            ->whereNull('deleted_at')
-            ->orderBy('is_tax_group')
-            ->orderBy('name')
-            ->get(['id', 'name', 'amount', 'is_tax_group'])
-            ->mapWithKeys(function ($tax_rate) {
-                $prefix = $tax_rate->is_tax_group ? 'Grup: ' : '';
-                $label = $prefix.$tax_rate->name;
-                if (! $tax_rate->is_tax_group && is_numeric($tax_rate->amount)) {
-                    $amount = rtrim(rtrim(number_format((float) $tax_rate->amount, 4, '.', ''), '0'), '.');
-                    $label .= ' ('.$amount.'%)';
-                }
-
-                return [$tax_rate->id => $label];
-            })
-            ->all();
-    }
-
-    private function validateJournalTaxAccountMappingSelections($selections, int $business_id, array $entries = [], $account_mappings = []): void
-    {
-        if (! is_array($selections) || ! is_array($account_mappings)) {
-            throw ValidationException::withMessages([
-                'tax_account_mappings' => 'Format pemetaan akun pajak tidak valid.',
-            ]);
-        }
-
-        $tax_rate_ids = [];
-        foreach ($selections as $account_key => $selection) {
-            if (! is_string($selection) && ! is_numeric($selection) && $selection !== null) {
-                throw ValidationException::withMessages([
-                    'tax_account_mappings' => 'Pilihan TaxRate tidak valid.',
-                ]);
-            }
-
-            $selection = trim((string) $selection);
-            if ($selection === '' || $selection === '__clear__') {
-                continue;
-            }
-
-            if (! ctype_digit($selection)) {
-                throw ValidationException::withMessages([
-                    'tax_account_mappings' => 'Pilihan TaxRate harus berasal dari daftar business ini.',
-                ]);
-            }
-
-            $tax_rate_ids[] = (int) $selection;
-        }
-
-        $tax_rate_ids = array_values(array_unique($tax_rate_ids));
-        if ($tax_rate_ids !== []) {
-            $valid_tax_rate_ids = DB::table('tax_rates')
-                ->where('business_id', $business_id)
-                ->whereNull('deleted_at')
-                ->whereIn('id', $tax_rate_ids)
-                ->pluck('id')
-                ->map(fn ($id) => (int) $id)
-                ->all();
-
-            if (count($valid_tax_rate_ids) !== count($tax_rate_ids)) {
-                throw ValidationException::withMessages([
-                    'tax_account_mappings' => 'TaxRate atau grup pajak harus berasal dari business yang aktif.',
-                ]);
-            }
-        }
-
-        $selected_keys = collect($selections)
-            ->filter(fn ($selection) => trim((string) $selection) !== '')
-            ->keys();
-        if ($selected_keys->isEmpty() || $entries === []) {
-            return;
-        }
-
-        $lines_by_key = [];
-        foreach ($entries as $entry) {
-            foreach ($entry['lines'] ?? [] as $line) {
-                $lines_by_key[$this->journalLineAccountKey($line)] = $line;
-            }
-        }
-
-        $missing_keys = $selected_keys->filter(fn ($key) => ! isset($lines_by_key[$key]));
-        if ($missing_keys->isNotEmpty()) {
-            throw ValidationException::withMessages([
-                'tax_account_mappings' => 'Pemetaan akun pajak tidak sesuai dengan akun pada workbook.',
-            ]);
-        }
-
-        $account_cache = $this->getAccountingAccountCache($business_id);
-        $account_mapping_ids = collect($account_mappings)
-            ->filter(fn ($id) => is_scalar($id) && ctype_digit((string) $id))
-            ->map(fn ($id) => (int) $id)
-            ->unique()
-            ->values();
-        $valid_account_mapping_ids = $account_mapping_ids->isEmpty()
-            ? collect()
-            : AccountingAccount::where('business_id', $business_id)
-                ->whereIn('id', $account_mapping_ids)
-                ->pluck('id')
-                ->mapWithKeys(fn ($id) => [(int) $id => true]);
-
-        $resolved_selections = [];
-        foreach ($selections as $account_key => $selection) {
-            $selection = trim((string) $selection);
-            if ($selection === '') {
-                continue;
-            }
-
-            $line = $lines_by_key[$account_key];
-            $account_id = null;
-            $requested_account_id = $account_mappings[$account_key] ?? null;
-            if (is_scalar($requested_account_id)
-                && ctype_digit((string) $requested_account_id)
-                && $valid_account_mapping_ids->has((int) $requested_account_id)) {
-                $account_id = (int) $requested_account_id;
-            } else {
-                $account = $this->findAccountInCache($line, $account_cache);
-                $account_id = $account['id'] ?? null;
-            }
-
-            if ($account_id) {
-                $identity = 'account:'.$account_id;
-            } elseif (trim((string) $line['account_no']) !== '') {
-                $identity = 'new-gl:'.strtolower(trim((string) $line['account_no']));
-            } else {
-                $identity = 'new-name:'.strtolower(trim((string) $line['account_name']));
-            }
-            if (isset($resolved_selections[$identity]) && $resolved_selections[$identity] !== $selection) {
-                throw ValidationException::withMessages([
-                    'tax_account_mappings' => 'Satu akun GL tidak dapat dipetakan ke lebih dari satu TaxRate atau grup dalam import yang sama.',
-                ]);
-            }
-            $resolved_selections[$identity] = $selection;
-        }
     }
 
     private function getAccountingAccountOptions($business_id)

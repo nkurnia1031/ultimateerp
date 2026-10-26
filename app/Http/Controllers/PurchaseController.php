@@ -8,6 +8,7 @@ use App\BusinessLocation;
 use App\Contact;
 use App\CustomerGroup;
 use App\Product;
+use App\Presenters\PurchaseIndexProductPresenter;
 use App\PurchaseLine;
 use App\TaxRate;
 use App\Transaction;
@@ -129,6 +130,8 @@ class PurchaseController extends Controller
             if (! auth()->user()->can('purchase.view') && auth()->user()->can('view_own_purchase')) {
                 $purchases->where('transactions.created_by', request()->session()->get('user.id'));
             }
+            $productPresenter = app(PurchaseIndexProductPresenter::class);
+
             return Datatables::of($purchases)
                 ->addColumn('action', function ($row) {
                     $html = '<div class="btn-group">
@@ -206,36 +209,8 @@ class PurchaseController extends Controller
 
                     return (string) view('purchase.partials.tags', ['tags' => $row->tags]);
                 })
-                ->editColumn('products', function ($row) {
-                    $products = $row->purchase_lines
-                        ->map(function ($line) {
-                            $product = $line->product;
-                            if (! $product) {
-                                return null;
-                            }
-
-                            $label = trim((string) $product->name);
-                            if ($product->type === 'variable') {
-                                $variation = $line->variation;
-                                $variationParts = [
-                                    optional($variation?->product_variation)->name,
-                                    optional($variation)->name,
-                                ];
-                                foreach ($variationParts as $variationPart) {
-                                    $variationPart = trim((string) $variationPart);
-                                    if ($variationPart !== '') {
-                                        $label .= ' - ' . $variationPart;
-                                    }
-                                }
-                            }
-
-                            return $label;
-                        })
-                        ->filter()
-                        ->unique()
-                        ->sort()
-                        ->implode('||');
-
+                ->editColumn('products', function ($row) use ($productPresenter) {
+                    $products = $productPresenter->summarize($row->purchase_lines);
                     return (string) view('purchase.partials.products', ['products' => $products]);
                 })
                 ->filterColumn('tags', function ($query, $keyword) {
@@ -266,6 +241,10 @@ class PurchaseController extends Controller
                         ->groupBy('transactions.id') // penting biar nggak duplikat row
                         ->orderByRaw("GROUP_CONCAT(tags.name ORDER BY tags.name ASC SEPARATOR ', ') {$order}");
                 })
+                ->editColumn(
+                    'total_before_tax',
+                    '<span class="total_before_tax" data-orig-value="{{$total_before_tax}}">@format_currency($total_before_tax)</span>'
+                )
                 ->editColumn(
                     'final_total',
                     '<span class="final_total" data-orig-value="{{$final_total}}">@format_currency($final_total)</span>'
@@ -305,7 +284,7 @@ class PurchaseController extends Controller
                         }
                     },
                 ])
-                ->rawColumns(['final_total', 'action', 'payment_due', 'tags', 'products', 'payment_status', 'status', 'ref_no', 'name'])
+                ->rawColumns(['total_before_tax', 'final_total', 'action', 'payment_due', 'tags', 'products', 'payment_status', 'status', 'ref_no', 'name'])
                 ->make(true);
         }
 

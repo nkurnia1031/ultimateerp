@@ -6,6 +6,7 @@ use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Queue\Middleware\WithoutOverlapping;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\DB;
 use Modules\Accounting\Http\Controllers\JournalEntryController;
@@ -15,22 +16,46 @@ use Modules\Accounting\Services\JournalImportPaymentService;
 use Modules\Accounting\Services\JournalImportBankTransactionService;
 use Modules\Accounting\Services\JournalImportQueueService;
 use Modules\Accounting\Services\JournalImportStockService;
+use Modules\Accounting\Services\JournalTaxReconciliationService;
 
 class ProcessJournalImportJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
+    private const CHUNK_SIZE = 25;
+
+    private const CHUNK_DELAY_SECONDS = 2;
+
     // Match the queue worker timeout and stay below database retry_after.
-    public $timeout = 1800;
+    public $timeout = 300;
 
     public $tries = 1;
 
     protected $importId;
 
-    public function __construct($importId)
+    protected $phase;
+
+    protected $afterMappingId;
+
+    protected $afterRowId;
+
+    public function __construct($importId, string $phase = 'entries', int $afterMappingId = 0, int $afterRowId = 0)
     {
         $this->importId = $importId;
+        $this->phase = $phase;
+        $this->afterMappingId = $afterMappingId;
+        $this->afterRowId = $afterRowId;
         $this->onQueue('imports');
+    }
+
+    public function middleware(): array
+    {
+        // Avoid overlapping deliveries that share this batch's persisted cursors.
+        return [
+            (new WithoutOverlapping('journal-import-'.$this->importId))
+                ->dontRelease()
+                ->expireAfter($this->timeout + 30),
+        ];
     }
 
     public function handle(
@@ -48,18 +73,38 @@ class ProcessJournalImportJob implements ShouldQueue
             return;
         }
 
-        // Only one delivery may own a batch. A duplicate queue delivery should
-        // not race the first worker or make the batch look resumable mid-run.
-        $claimedBatch = DB::table('accounting_journal_imports')
-            ->where('id', $this->importId)
-            ->where('status', 'queued_import')
-            ->update([
-                'status' => 'importing',
-                'last_message' => 'Worker mengambil alih batch Journal Import.',
-                'updated_at' => now(),
-            ]);
+        if ($this->phase === 'prepare') {
+            if ($import->status !== 'preparing_import') {
+                return;
+            }
+            if ($this->afterRowId < (int) $import->prepare_cursor) {
+                return;
+            }
+        } elseif ($this->phase === 'entries') {
+            if ($import->status === 'queued_import') {
+                // Only the first delivery claims a new batch. Continuations run
+                // while the batch remains in importing state.
+                $claimedBatch = DB::table('accounting_journal_imports')
+                    ->where('id', $this->importId)
+                    ->where('status', 'queued_import')
+                    ->update([
+                        'status' => 'importing',
+                        'last_message' => 'Worker mengambil alih batch Journal Import.',
+                        'updated_at' => now(),
+                    ]);
 
-        if (! $claimedBatch) {
+                if (! $claimedBatch) {
+                    return;
+                }
+            } elseif ($import->status !== 'importing') {
+                return;
+            }
+        } elseif ($this->phase === 'tax') {
+            if ($import->status !== 'reconciling'
+                || $this->afterMappingId < (int) $import->tax_reconciliation_cursor) {
+                return;
+            }
+        } else {
             return;
         }
 
@@ -70,18 +115,28 @@ class ProcessJournalImportJob implements ShouldQueue
 
         $options = ! empty($import->import_options) ? json_decode($import->import_options, true) : [];
         $options = is_array($options) ? $options : [];
+
+        if ($this->phase === 'prepare') {
+            $this->prepareImportChunk($import, $options, $controller, $queueService);
+
+            return;
+        }
+
         $rows = DB::table('accounting_journal_import_rows')
             ->where('journal_import_id', $this->importId)
             ->where('business_id', $import->business_id)
             ->where('processing_status', 'queued')
             ->orderByRaw("CASE source_type WHEN 'Sales Invoice' THEN 0 WHEN 'Purchase Invoice' THEN 1 WHEN 'Expense' THEN 2 WHEN 'Receive Payment' THEN 3 WHEN 'Purchase Payment' THEN 4 WHEN 'Bank Deposit' THEN 5 WHEN 'Bank Transfer' THEN 6 WHEN 'Bank Withdrawal' THEN 7 WHEN 'Reversal' THEN 8 WHEN 'Stock Adjustment' THEN 9 WHEN 'Stock In/Out' THEN 10 WHEN 'Opening Balance' THEN 11 ELSE 12 END")
             ->orderBy('entry_index')
+            ->limit(self::CHUNK_SIZE)
             ->get();
 
-        DB::table('accounting_journal_imports')->where('id', $this->importId)->update([
-            'last_message' => 'Worker memulai '.$rows->count().' baris siap proses dari draft tersimpan.',
-            'updated_at' => now(),
-        ]);
+        if ($this->phase === 'entries') {
+            DB::table('accounting_journal_imports')->where('id', $this->importId)->update([
+                'last_message' => 'Worker memproses maksimal '.self::CHUNK_SIZE.' baris dari draft tersimpan.',
+                'updated_at' => now(),
+            ]);
+        }
 
         foreach ($rows as $queuedRow) {
             $claimed = DB::table('accounting_journal_import_rows')
@@ -243,6 +298,9 @@ class ProcessJournalImportJob implements ShouldQueue
                     ]);
             }
 
+        }
+
+        if ($this->phase === 'entries') {
             $counts = $this->processingCounts((int) $import->id, (int) $import->business_id);
             $queueProcessed = $counts['completed'] + $counts['failed'];
             $queueTotal = $counts['completed'] + $counts['failed'] + $counts['queued'] + $counts['running'];
@@ -254,62 +312,29 @@ class ProcessJournalImportJob implements ShouldQueue
                     .' baris; '.$counts['completed'].' selesai, '.$counts['failed'].' gagal.',
                 'updated_at' => now(),
             ]);
-        }
 
-        $entries = DB::table('accounting_journal_import_rows')
-            ->where('journal_import_id', $import->id)
-            ->where('business_id', $import->business_id)
-            ->orderBy('entry_index')
-            ->get(['entry_data'])
-            ->map(function ($row) {
-                return json_decode((string) $row->entry_data, true) ?: [];
-            })->all();
+            $hasQueuedRows = DB::table('accounting_journal_import_rows')
+                ->where('journal_import_id', $import->id)
+                ->where('business_id', $import->business_id)
+                ->where('processing_status', 'queued')
+                ->exists();
 
-        DB::table('accounting_journal_imports')->where('id', $import->id)->update([
-            'status' => 'reconciling',
-            'last_message' => 'Queue Journal Import selesai; memeriksa pemetaan pajak dan sumber yang sudah tersedia.',
-            'updated_at' => now(),
-        ]);
+            if ($hasQueuedRows) {
+                self::dispatch($this->importId, 'entries')->delay(now()->addSeconds(self::CHUNK_DELAY_SECONDS));
+                return;
+            }
 
-        try {
-            DB::transaction(function () use ($controller, $import, $options, $entries) {
-                $analysis = ['entries' => $entries];
-                $controller->persistJournalTaxAccountMappings(
-                    $analysis,
-                    $import->business_id,
-                    $import->created_by,
-                    $options
-                );
-                $controller->reconcileJournalImportTaxes((int) $import->id, (int) $import->business_id);
-            });
-        } catch (\Throwable $exception) {
             DB::table('accounting_journal_imports')->where('id', $import->id)->update([
-                'last_message' => 'Journal Entry sudah diproses; rekonsiliasi pajak perlu dicoba kembali.',
-                'error_message' => mb_substr($exception->getMessage(), 0, 2000),
+                'status' => 'reconciling',
+                'last_message' => 'Queue Journal Import selesai; menghitung pajak dari akun Journal dan memeriksa sumber dalam beberapa bagian.',
                 'updated_at' => now(),
             ]);
+            self::dispatch($this->importId, 'tax')->delay(now()->addSeconds(self::CHUNK_DELAY_SECONDS));
+
+            return;
         }
 
-        $counts = $this->processingCounts((int) $import->id, (int) $import->business_id);
-        $queueTotal = $counts['completed'] + $counts['failed'] + $counts['queued'] + $counts['running'];
-        $allComplete = $counts['pending'] === 0 && $queueTotal === $counts['completed'];
-        $status = $allComplete ? 'imported' : ($counts['completed'] === 0 && $counts['failed'] > 0 && $counts['pending'] === 0 ? 'failed' : 'partially_imported');
-        $lastMessage = 'Queue selesai: '.$counts['completed'].' baris berhasil, '.$counts['failed'].' gagal, '
-            .$counts['pending'].' menunggu kelengkapan atau handler transaksi.';
-
-        DB::table('accounting_journal_imports')->where('id', $import->id)->update([
-            'status' => $status,
-            'processed_entries' => $counts['completed'] + $counts['failed'],
-            'imported_entries' => $counts['completed'],
-            'skipped_entries' => $counts['failed'],
-            'last_message' => $lastMessage,
-            'updated_at' => now(),
-        ]);
-
-        if ($allComplete) {
-            $controller->deleteTemporaryJournalFile($import->file_path);
-            $controller->deleteTemporaryJournalFile($import->analysis_path);
-        }
+        $this->processTaxReconciliationChunk($import, $controller, app(JournalTaxReconciliationService::class));
     }
 
     public function failed(\Throwable $exception): void
@@ -326,7 +351,7 @@ class ProcessJournalImportJob implements ShouldQueue
 
         DB::table('accounting_journal_imports')
             ->where('id', $this->importId)
-            ->whereIn('status', ['queued_import', 'importing', 'reconciling', 'processing'])
+            ->whereIn('status', ['preparing_import', 'queued_import', 'importing', 'reconciling', 'processing'])
             ->update([
                 'status' => 'failed',
                 'last_message' => 'Worker menghentikan import sebelum selesai.',
@@ -351,5 +376,123 @@ class ProcessJournalImportJob implements ShouldQueue
             });
 
         return $counts;
+    }
+
+    private function processTaxReconciliationChunk(
+        object $import,
+        JournalEntryController $controller,
+        JournalTaxReconciliationService $taxService
+    ): void {
+        try {
+            $chunk = $taxService->reconcileImportChunk(
+                (int) $import->id,
+                (int) $import->business_id,
+                $this->afterMappingId,
+                self::CHUNK_SIZE
+            );
+        } catch (\Throwable $exception) {
+            DB::table('accounting_journal_imports')->where('id', $import->id)->update([
+                'last_message' => 'Journal Entry sudah diproses; rekonsiliasi pajak belum selesai.',
+                'error_message' => mb_substr($exception->getMessage(), 0, 2000),
+                'updated_at' => now(),
+            ]);
+
+            $this->finishImport($import, $controller);
+
+            return;
+        }
+
+        if ($chunk['has_more']) {
+            DB::table('accounting_journal_imports')->where('id', $import->id)->update([
+                'tax_reconciliation_cursor' => (int) $chunk['last_id'],
+                'last_message' => 'Rekonsiliasi pajak: entri sampai ID '.$chunk['last_id'].'; lanjut setelah jeda.',
+                'updated_at' => now(),
+            ]);
+            self::dispatch($this->importId, 'tax', (int) $chunk['last_id'])
+                ->delay(now()->addSeconds(self::CHUNK_DELAY_SECONDS));
+
+            return;
+        }
+
+        $this->finishImport($import, $controller);
+    }
+
+    private function prepareImportChunk(
+        object $import,
+        array $options,
+        JournalEntryController $controller,
+        JournalImportQueueService $queueService
+    ): void {
+        $chunk = DB::transaction(function () use ($queueService, $import, $options) {
+            return $queueService->queueRowsForBatch(
+                (int) $import->id,
+                (int) $import->business_id,
+                $options,
+                $this->afterRowId,
+                self::CHUNK_SIZE
+            );
+        });
+
+        if ($chunk['has_more']) {
+            DB::table('accounting_journal_imports')->where('id', $import->id)->update([
+                'prepare_cursor' => (int) $chunk['last_id'],
+                'last_message' => 'Menyiapkan antrean import sampai baris '.$chunk['last_id'].'; lanjut setelah jeda.',
+                'updated_at' => now(),
+            ]);
+            self::dispatch($this->importId, 'prepare', 0, (int) $chunk['last_id'])
+                ->delay(now()->addSeconds(self::CHUNK_DELAY_SECONDS));
+
+            return;
+        }
+
+        $counts = $this->processingCounts((int) $import->id, (int) $import->business_id);
+        $allComplete = $counts['pending'] === 0 && $counts['queued'] === 0 && $counts['running'] === 0 && $counts['failed'] === 0;
+        $status = $counts['queued'] > 0 ? 'queued_import' : ($allComplete ? 'imported' : 'partially_imported');
+        $message = $counts['queued'] > 0
+            ? 'Menunggu worker queue imports untuk memproses '.$counts['queued'].' baris valid.'
+            : ($allComplete
+                ? 'Semua baris draft sudah selesai diproses.'
+                : 'Belum ada baris yang siap diproses; baris lain tetap tersimpan di draft.');
+
+        DB::table('accounting_journal_imports')->where('id', $import->id)->update([
+            'status' => $status,
+            'processed_entries' => $counts['completed'] + $counts['failed'],
+            'imported_entries' => $counts['completed'],
+            'skipped_entries' => $counts['failed'],
+            'last_message' => $message,
+            'error_message' => null,
+            'updated_at' => now(),
+        ]);
+
+        if ($counts['queued'] > 0) {
+            self::dispatch($this->importId, 'entries')->delay(now()->addSeconds(self::CHUNK_DELAY_SECONDS));
+        } elseif ($allComplete) {
+            $controller->deleteTemporaryJournalFile($import->file_path);
+            $controller->deleteTemporaryJournalFile($import->analysis_path);
+        }
+    }
+
+    private function finishImport(object $import, JournalEntryController $controller): void
+    {
+        $counts = $this->processingCounts((int) $import->id, (int) $import->business_id);
+        $queueTotal = $counts['completed'] + $counts['failed'] + $counts['queued'] + $counts['running'];
+        $allComplete = $counts['pending'] === 0 && $queueTotal === $counts['completed'];
+        $status = $allComplete ? 'imported' : ($counts['completed'] === 0 && $counts['failed'] > 0 && $counts['pending'] === 0 ? 'failed' : 'partially_imported');
+        $lastMessage = 'Queue selesai: '.$counts['completed'].' baris berhasil, '.$counts['failed'].' gagal, '
+            .$counts['pending'].' menunggu kelengkapan atau handler transaksi.';
+
+        DB::table('accounting_journal_imports')->where('id', $import->id)->update([
+            'status' => $status,
+            'processed_entries' => $counts['completed'] + $counts['failed'],
+            'imported_entries' => $counts['completed'],
+            'skipped_entries' => $counts['failed'],
+            'last_message' => $lastMessage,
+            'updated_at' => now(),
+        ]);
+
+        if ($allComplete) {
+            $controller->deleteTemporaryJournalFile($import->file_path);
+            $controller->deleteTemporaryJournalFile($import->analysis_path);
+        }
     }
 }

@@ -185,7 +185,7 @@ class JournalImportDraftService
 
     public function validateDraftData(array $draftData, int $businessId, string $sourceType, ?int $importId = null): array
     {
-        $allowedFields = ['contact_id', 'location_id', 'payment_account_id', 'transfer_account_id', 'reversal_target_id', 'movement_direction', 'payment_method', 'invoice_reference', 'expense_category_id', 'details'];
+        $allowedFields = ['contact_id', 'location_id', 'payment_account_id', 'transfer_account_id', 'reversal_target_id', 'movement_direction', 'payment_method', 'invoice_reference', 'expense_category_id', 'expense_category_mappings', 'details'];
         if (array_diff(array_keys($draftData), $allowedFields) !== []) {
             throw ValidationException::withMessages([
                 'draft_data' => 'Draft berisi field yang tidak didukung.',
@@ -210,6 +210,8 @@ class JournalImportDraftService
             'payment_method' => 'nullable|string|in:cash,card,cheque,bank_transfer,other,custom_pay_1,custom_pay_2,custom_pay_3,custom_pay_4,custom_pay_5,custom_pay_6,custom_pay_7',
             'invoice_reference' => ['nullable', 'string', 'max:64', 'regex:/^(transaction|draft):[1-9][0-9]*$/'],
             'expense_category_id' => 'nullable|integer|min:1',
+            'expense_category_mappings' => 'sometimes|array|max:100',
+            'expense_category_mappings.*' => 'nullable|integer|min:1',
             'details' => 'sometimes|array|max:100',
             'details.*.variation_id' => 'nullable|integer|min:1',
             'details.*.unit_id' => 'nullable|integer|min:1',
@@ -218,6 +220,19 @@ class JournalImportDraftService
             'details.*.account_id' => 'nullable|integer|min:1',
             'details.*.description' => 'nullable|string|max:255',
         ])->validate();
+
+        if (! in_array($sourceType, ['Expense'], true) && ! empty($validated['expense_category_mappings'])) {
+            throw ValidationException::withMessages([
+                'draft_data.expense_category_mappings' => 'Mapping kategori akun hanya didukung untuk Expense.',
+            ]);
+        }
+        foreach (array_keys($validated['expense_category_mappings'] ?? []) as $accountKey) {
+            if (! preg_match('/^[a-f0-9]{32}$/', (string) $accountKey)) {
+                throw ValidationException::withMessages([
+                    'draft_data.expense_category_mappings' => 'Kunci akun Expense tidak valid.',
+                ]);
+            }
+        }
 
         $paymentTypes = ['Receive Payment', 'Purchase Payment'];
         if (! in_array($sourceType, $paymentTypes, true)
@@ -318,6 +333,23 @@ class JournalImportDraftService
             }
         }
 
+        $mappedExpenseCategoryIds = array_values(array_unique(array_filter(array_map(
+            'intval',
+            $validated['expense_category_mappings'] ?? []
+        ))));
+        if ($mappedExpenseCategoryIds !== []) {
+            if ($sourceType !== 'Expense' || DB::table('expense_categories')
+                ->where('business_id', $businessId)
+                ->whereNull('deleted_at')
+                ->whereNull('parent_id')
+                ->whereIn('id', $mappedExpenseCategoryIds)
+                ->count() !== count($mappedExpenseCategoryIds)) {
+                throw ValidationException::withMessages([
+                    'draft_data.expense_category_mappings' => 'Kategori mapping Expense harus berupa kategori utama dari business aktif.',
+                ]);
+            }
+        }
+
         if (! empty($validated['reversal_target_id'])) {
             $targetExists = DB::table('account_transactions as target')
                 ->join('accounts as target_account', 'target_account.id', '=', 'target.account_id')
@@ -380,11 +412,20 @@ class JournalImportDraftService
 
     public function persistEntries(int $importId, int $businessId, array $entries): void
     {
+        $existingIndexes = DB::table('accounting_journal_import_rows')
+            ->where('journal_import_id', $importId)
+            ->where('business_id', $businessId)
+            ->pluck('entry_index')
+            ->flip();
         $now = now();
 
         foreach (array_chunk(array_values($entries), 200, true) as $chunk) {
             $rows = [];
             foreach ($chunk as $entryIndex => $entry) {
+                if (isset($existingIndexes[$entryIndex])) {
+                    continue;
+                }
+
                 $rows[] = [
                     'journal_import_id' => $importId,
                     'business_id' => $businessId,

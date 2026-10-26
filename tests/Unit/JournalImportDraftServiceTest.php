@@ -173,6 +173,40 @@ class JournalImportDraftServiceTest extends TestCase
         $this->assertSame($draftData, $validated);
     }
 
+    public function test_expense_account_category_mapping_accepts_only_parent_categories_in_the_active_business(): void
+    {
+        $this->useSqliteDatabase();
+        $this->database->schema()->create('expense_categories', function ($table) {
+            $table->increments('id');
+            $table->unsignedInteger('business_id');
+            $table->unsignedInteger('parent_id')->nullable();
+            $table->dateTime('deleted_at')->nullable();
+        });
+        DB::table('expense_categories')->insert([
+            ['id' => 57, 'business_id' => 3, 'parent_id' => null, 'deleted_at' => null],
+            ['id' => 58, 'business_id' => 4, 'parent_id' => null, 'deleted_at' => null],
+            ['id' => 59, 'business_id' => 3, 'parent_id' => 57, 'deleted_at' => null],
+        ]);
+        $key = md5('6101|office supplies');
+        $service = new JournalImportDraftService();
+
+        $validated = $service->validateDraftData([
+            'expense_category_mappings' => [$key => 57],
+        ], 3, 'Expense');
+        $this->assertSame(57, (int) $validated['expense_category_mappings'][$key]);
+
+        foreach ([58, 59] as $invalidCategoryId) {
+            try {
+                $service->validateDraftData([
+                    'expense_category_mappings' => [$key => $invalidCategoryId],
+                ], 3, 'Expense');
+                $this->fail('A cross-business or child expense category must not be accepted.');
+            } catch (\Illuminate\Validation\ValidationException $exception) {
+                $this->assertArrayHasKey('draft_data.expense_category_mappings', $exception->errors());
+            }
+        }
+    }
+
     private function useSqliteDatabase(): void
     {
         if (! in_array('sqlite', \PDO::getAvailableDrivers(), true)) {

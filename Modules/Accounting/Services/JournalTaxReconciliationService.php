@@ -7,6 +7,7 @@ use App\TaxRate;
 use App\Transaction;
 use App\TransactionSellLine;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Modules\Accounting\Entities\AccountingAccTransMapping;
 
 class JournalTaxReconciliationService
@@ -14,25 +15,70 @@ class JournalTaxReconciliationService
     private const MATCH_TOLERANCE = 0.01;
 
     /**
-     * Apply mapped Journal tax to uniquely linked source invoices and expenses.
+     * Derive Journal tax from account labels, posting sides, and source detail,
+     * then apply it to uniquely linked source invoices and expenses.
      * Sales and purchase line taxes are only changed when their full calculated
      * tax matches the Journal amount; otherwise the source remains unchanged.
      */
     public function reconcileImport(int $journalImportId, int $businessId): array
     {
         $result = ['reconciled' => 0, 'review' => 0, 'not_applicable' => 0];
+        $afterId = 0;
+
+        do {
+            $chunk = $this->reconcileImportChunk($journalImportId, $businessId, $afterId);
+            foreach ($chunk['result'] as $status => $count) {
+                $result[$status] += $count;
+            }
+            $afterId = $chunk['last_id'];
+        } while ($chunk['has_more']);
+
+        return $result;
+    }
+
+    public function reconcileImportChunk(int $journalImportId, int $businessId, int $afterId, int $limit = 50): array
+    {
         $mappings = AccountingAccTransMapping::where('journal_import_id', $journalImportId)
             ->where('business_id', $businessId)
             ->where('source_link_status', 'matched')
             ->whereNotNull('source_record_id')
+            ->where('id', '>', $afterId)
+            ->orderBy('id')
+            ->limit($limit + 1)
             ->get();
+        $hasMore = $mappings->count() > $limit;
+        $mappings = $mappings->take($limit);
+        $result = ['reconciled' => 0, 'review' => 0, 'not_applicable' => 0];
+        $lastId = $afterId;
 
         foreach ($mappings as $mapping) {
-            $status = $this->reconcileMapping($mapping, $businessId);
+            $lastId = (int) $mapping->id;
+
+            try {
+                $status = DB::transaction(function () use ($mapping, $businessId) {
+                    return $this->reconcileMapping($mapping, $businessId);
+                });
+            } catch (\Throwable $exception) {
+                Log::warning('Journal Import tax reconciliation failed for a mapping.', [
+                    'journal_import_id' => $journalImportId,
+                    'mapping_id' => $mapping->id,
+                    'exception' => $exception->getMessage(),
+                ]);
+                $mapping->refresh();
+                $mapping->tax_reconciliation_status = 'review';
+                $mapping->tax_reconciliation_note = 'Rekonsiliasi otomatis gagal; transaksi sumber tidak diubah. Periksa log dan tinjau manual.';
+                $mapping->save();
+                $status = 'review';
+            }
+
             $result[$status]++;
         }
 
-        return $result;
+        return [
+            'result' => $result,
+            'last_id' => $lastId,
+            'has_more' => $hasMore,
+        ];
     }
 
     public function revertImport(int $journalImportId, int $businessId): int
@@ -121,67 +167,57 @@ class JournalTaxReconciliationService
             return $this->saveResult($mapping, 'not_applicable', 'Transaksi sumber hanya ditautkan; data pajak dan total sumber tidak diubah.', null, null);
         }
 
-        $journalLines = DB::table('accounting_accounts_transactions')
-            ->where('acc_trans_mapping_id', $mapping->id)
-            ->where('sub_type', 'journal_entry')
-            ->get(['accounting_account_id', 'amount', 'type']);
+        $journalLines = DB::table('accounting_accounts_transactions as journal_line')
+            ->leftJoin('accounting_accounts as account', function ($join) use ($businessId) {
+                $join->on('account.id', '=', 'journal_line.accounting_account_id')
+                    ->where('account.business_id', '=', $businessId);
+            })
+            ->where('journal_line.acc_trans_mapping_id', $mapping->id)
+            ->where('journal_line.sub_type', 'journal_entry')
+            ->get([
+                'journal_line.accounting_account_id',
+                'journal_line.amount',
+                'journal_line.type',
+                'account.gl_code as account_no',
+                'account.name as account_name',
+            ]);
 
         if ($journalLines->isEmpty()) {
             return $this->saveResult($mapping, 'review', 'Baris GL Journal untuk sumber ini tidak ditemukan.', null, null);
         }
         $journalTotal = $this->journalTransactionTotal($journalLines);
 
-        $accountIds = $journalLines->pluck('accounting_account_id')->unique()->values();
-        $taxMappings = DB::table('accounting_journal_tax_account_mappings as tax_mapping')
-            ->leftJoin('tax_rates as tax_rate', function ($join) {
-                $join->on('tax_rate.id', '=', 'tax_mapping.tax_rate_id')
-                    ->on('tax_rate.business_id', '=', 'tax_mapping.business_id')
-                    ->whereNull('tax_rate.deleted_at');
-            })
-            ->where('tax_mapping.business_id', $businessId)
-            ->whereIn('tax_mapping.accounting_account_id', $accountIds)
-            ->select(
-                'tax_mapping.accounting_account_id',
-                'tax_mapping.tax_rate_id',
-                'tax_rate.id as active_tax_rate_id'
-            )
-            ->get()
-            ->keyBy('accounting_account_id');
+        $entry = ['lines' => $journalLines->map(fn ($line) => [
+            'account_no' => (string) ($line->account_no ?? ''),
+            'account_name' => (string) ($line->account_name ?? ''),
+            'type' => (string) $line->type,
+            'amount' => (float) $line->amount,
+        ])->all()];
+        $taxableBase = $this->sourceTaxableBase($source);
+        try {
+            $resolvedTax = (new JournalImportTaxResolver())->resolveForEntry($entry, $businessId, $taxableBase);
+        } catch (\Throwable $exception) {
+            return $this->saveResult($mapping, 'review', $exception->getMessage(), null, null, null, $journalTotal);
+        }
 
-        $mappedLines = $journalLines->filter(fn ($line) => $taxMappings->has($line->accounting_account_id))->values();
-        if ($mappedLines->isEmpty()) {
+        if ($resolvedTax === null) {
             $status = $this->sourceHasTax($source) ? 'review' : 'not_applicable';
             $note = $status === 'review'
-                ? 'Transaksi sumber memiliki pajak, tetapi entry Journal tidak memiliki akun pajak yang dipetakan.'
-                : 'Tidak ada akun pajak GL yang dipetakan dan transaksi sumber tidak memiliki pajak.';
+                ? 'Transaksi sumber memiliki pajak, tetapi komponen pajak Journal tidak dapat dikenali dari nama akun dan sisi debit/kredit.'
+                : 'Tidak ada komponen pajak Journal yang terdeteksi dan transaksi sumber tidak memiliki pajak.';
 
             return $this->saveResult($mapping, $status, $note, null, null, null, $journalTotal);
         }
 
-        $journalTax = $this->journalTaxAmount($mappedLines, $source->type);
-
-        $taxRateIds = [];
-        foreach ($mappedLines as $line) {
-            $taxMapping = $taxMappings->get($line->accounting_account_id);
-            if (empty($taxMapping->active_tax_rate_id)) {
-                return $this->saveResult($mapping, 'review', 'Mapping akun pajak mengarah ke TaxRate yang tidak aktif.', $journalTax, null, null, $journalTotal);
-            }
-            $taxRateIds[(int) $taxMapping->tax_rate_id] = true;
-        }
-
-        if (count($taxRateIds) !== 1) {
-            return $this->saveResult($mapping, 'review', 'Akun pajak Journal dipetakan ke lebih dari satu TaxRate/grup; transaksi tidak diubah.', $journalTax, null, null, $journalTotal);
-        }
-
-        $taxRate = TaxRate::where('business_id', $businessId)->with('sub_taxes')->find(array_key_first($taxRateIds));
+        $journalTax = (float) $resolvedTax['tax_amount'];
+        $taxRate = TaxRate::where('business_id', $businessId)
+            ->whereNull('deleted_at')
+            ->find((int) $resolvedTax['id']);
         if (! $taxRate) {
-            return $this->saveResult($mapping, 'review', 'TaxRate hasil mapping tidak aktif pada business ini.', $journalTax, null, null, $journalTotal);
+            return $this->saveResult($mapping, 'review', 'TaxRate hasil hitung tidak aktif pada business ini.', $journalTax, null, null, $journalTotal);
         }
 
-        $rate = $this->taxRateAmount($taxRate, $businessId);
-        if ($rate === null) {
-            return $this->saveResult($mapping, 'review', 'Grup pajak tidak memiliki komponen aktif yang valid.', $journalTax, null, null, $journalTotal);
-        }
+        $rate = (float) $resolvedTax['rate'];
 
         if ($journalTax < -self::MATCH_TOLERANCE) {
             return $this->saveResult($mapping, 'review', 'Arah debit/kredit akun pajak berlawanan dengan jenis transaksi; sumber tidak diubah.', $journalTax, null, null, $journalTotal);
@@ -189,11 +225,11 @@ class JournalTaxReconciliationService
         $journalTax = max(0, $journalTax);
 
         if ($source->type === 'expense') {
-            if ($source->total_before_tax === null) {
+            if ($taxableBase === null || $taxableBase <= 0) {
                 return $this->saveResult($mapping, 'review', 'Basis total Expense kosong; sumber tidak diubah.', $journalTax, null);
             }
 
-            $finalTotal = (float) $source->total_before_tax + $journalTax;
+            $finalTotal = $taxableBase + $journalTax;
             $totalMismatch = abs(round($finalTotal - $journalTotal, 4)) > self::MATCH_TOLERANCE;
             $note = 'Tax Expense diperbarui dari akun pajak Journal; basis transaksi dipertahankan.';
             if ($totalMismatch) {
@@ -205,7 +241,7 @@ class JournalTaxReconciliationService
                 'transaction_after' => [
                     'tax_id' => (int) $taxRate->id,
                     'tax_amount' => $journalTax,
-                    'total_before_tax' => (float) $source->total_before_tax,
+                    'total_before_tax' => $taxableBase,
                     'final_total' => $finalTotal,
                 ],
                 'lines' => [],
@@ -213,6 +249,7 @@ class JournalTaxReconciliationService
 
             $source->tax_id = $taxRate->id;
             $source->tax_amount = $journalTax;
+            $source->total_before_tax = $taxableBase;
             $source->final_total = $finalTotal;
             $source->save();
 
@@ -238,11 +275,11 @@ class JournalTaxReconciliationService
             );
         }
 
-        if ($source->total_before_tax === null) {
+        if ($taxableBase === null || $taxableBase <= 0) {
             return $this->saveResult($mapping, 'review', 'Basis total invoice kosong; sumber tidak diubah.', $journalTax, $calculatedTax, null, $journalTotal);
         }
 
-        $finalTotal = (float) $source->total_before_tax + $journalTax;
+        $finalTotal = $taxableBase + $journalTax;
         $totalMismatch = abs(round($finalTotal - $journalTotal, 4)) > self::MATCH_TOLERANCE;
         $note = 'Tax item dan header diperbarui dari Journal; basis total invoice dipertahankan.';
         if ($totalMismatch) {
@@ -254,7 +291,7 @@ class JournalTaxReconciliationService
             'transaction_after' => [
                 'tax_id' => (int) $taxRate->id,
                 'tax_amount' => $journalTax,
-                'total_before_tax' => (float) $source->total_before_tax,
+                'total_before_tax' => $taxableBase,
                 'final_total' => $finalTotal,
             ],
             'lines' => [],
@@ -276,6 +313,7 @@ class JournalTaxReconciliationService
 
         $source->tax_id = $taxRate->id;
         $source->tax_amount = $journalTax;
+        $source->total_before_tax = $taxableBase;
         $source->final_total = $finalTotal;
         $source->save();
 
@@ -353,32 +391,48 @@ class JournalTaxReconciliationService
         return ['lines' => $lines, 'tax_amount' => round($taxAmount, 4), 'error' => null];
     }
 
-    private function taxRateAmount(TaxRate $taxRate, int $businessId): ?float
+    private function sourceTaxableBase(Transaction $source): ?float
     {
-        if (! $taxRate->is_tax_group) {
-            return (float) $taxRate->amount;
+        if ($source->total_before_tax !== null && (float) $source->total_before_tax > 0) {
+            return round((float) $source->total_before_tax, 4);
         }
 
-        $subTaxes = $taxRate->sub_taxes->where('business_id', $businessId);
-        if ($subTaxes->isEmpty()) {
-            return null;
+        if ($source->type === 'expense' && DB::getSchemaBuilder()->hasTable('expense_lines')) {
+            $base = (float) DB::table('expense_lines')->where('transaction_id', $source->id)->sum('amount');
+
+            return $base > 0 ? round($base, 4) : null;
         }
 
-        return (float) $subTaxes->sum('amount');
-    }
+        if ($source->type === 'sell' && $source->sub_type === 'project_invoice' && DB::getSchemaBuilder()->hasTable('pjt_invoice_lines')) {
+            $base = (float) DB::table('pjt_invoice_lines')
+                ->where('transaction_id', $source->id)
+                ->get(['quantity', 'rate'])
+                ->sum(fn ($line) => (float) $line->quantity * (float) $line->rate);
 
-    private function journalTaxAmount($mappedLines, string $sourceType): float
-    {
-        $amount = 0.0;
-        foreach ($mappedLines as $line) {
-            $lineAmount = (float) $line->amount;
-            $isDebit = strtolower((string) $line->type) === 'debit';
-            $amount += $sourceType === 'sell'
-                ? ($isDebit ? -$lineAmount : $lineAmount)
-                : ($isDebit ? $lineAmount : -$lineAmount);
+            return $base > 0 ? round($base, 4) : null;
         }
 
-        return round($amount, 4);
+        if ($source->type === 'sell') {
+            $lines = DB::table('transaction_sell_lines')->where('transaction_id', $source->id);
+            if (DB::getSchemaBuilder()->hasColumn('transaction_sell_lines', 'parent_sell_line_id')) {
+                $lines->whereNull('parent_sell_line_id');
+            }
+            $base = (float) $lines->get(['quantity', 'unit_price'])
+                ->sum(fn ($line) => (float) $line->quantity * (float) $line->unit_price);
+
+            return $base > 0 ? round($base, 4) : null;
+        }
+
+        if ($source->type === 'purchase') {
+            $base = (float) DB::table('purchase_lines')
+                ->where('transaction_id', $source->id)
+                ->get(['quantity', 'purchase_price'])
+                ->sum(fn ($line) => (float) $line->quantity * (float) $line->purchase_price);
+
+            return $base > 0 ? round($base, 4) : null;
+        }
+
+        return null;
     }
 
     private function journalTransactionTotal($journalLines): float

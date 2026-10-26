@@ -228,7 +228,14 @@ class JournalImportInvoiceService
         }
 
         $effectiveDetails = $existingLines !== [] ? $existingLines : $details;
-        $tax = $this->taxResolver->resolveForEntry($entry, $businessId, $options);
+        $taxableBase = round(array_sum(array_map(
+            fn ($detail) => (float) $detail['quantity'] * (float) $detail['unit_price'],
+            $effectiveDetails
+        )), 4);
+        if ($taxableBase <= 0 && $transaction && (float) $transaction->total_before_tax > 0) {
+            $taxableBase = (float) $transaction->total_before_tax;
+        }
+        $tax = $this->taxResolver->resolveForEntry($entry, $businessId, $taxableBase > 0 ? $taxableBase : null);
         $totals = $this->calculateTotals($effectiveDetails, $tax);
         if ($action === 'update' && $tax !== null) {
             $this->assertTaxDoesNotConflict($transaction, $existingLines, $tax, $totals);
@@ -289,6 +296,12 @@ class JournalImportInvoiceService
     {
         $draftData = $prepared['draft_data'];
         $tax = $prepared['tax'];
+        $correctMissingTaxTotal = (new JournalImportTaxCorrectionPolicy())->shouldCorrectFinalTotal(
+            $transaction->tax_amount,
+            $transaction->total_before_tax,
+            $transaction->final_total,
+            $prepared['totals']
+        );
         $before = [];
         $expected = [];
         $invoiceNo = null;
@@ -338,8 +351,8 @@ class JournalImportInvoiceService
             $transaction->tax_amount = $prepared['totals']['tax'];
             $expected['tax_amount'] = $transaction->tax_amount;
         }
-        if ($transaction->final_total === null) {
-            $before['final_total'] = null;
+        if ($transaction->final_total === null || $correctMissingTaxTotal) {
+            $before['final_total'] = $transaction->final_total;
             $transaction->final_total = $prepared['totals']['final_total'];
             $expected['final_total'] = $transaction->final_total;
         }
@@ -493,14 +506,22 @@ class JournalImportInvoiceService
     private function assertTaxDoesNotConflict(Transaction $transaction, array $existingLines, array $tax, array $totals): void
     {
         if ($transaction->tax_id !== null && (int) $transaction->tax_id !== (int) $tax['id']) {
-            throw new \RuntimeException('TaxRate header invoice berbeda dari mapping Journal; tinjau invoice sebelum melanjutkan.');
+            throw new \RuntimeException('TaxRate header invoice berbeda dari hasil hitung komponen Journal; tinjau invoice sebelum melanjutkan.');
         }
         if ($transaction->tax_amount !== null && (float) $transaction->tax_amount > 0
             && abs((float) $transaction->tax_amount - (float) $totals['tax']) > 0.01) {
-            throw new \RuntimeException('Nilai pajak header invoice berbeda dari mapping Journal; tinjau invoice sebelum melanjutkan.');
+            throw new \RuntimeException('Nilai pajak header invoice berbeda dari nominal komponen Journal; tinjau invoice sebelum melanjutkan.');
         }
-        if ($transaction->final_total !== null && abs((float) $transaction->final_total - (float) $totals['final_total']) > 0.01) {
-            throw new \RuntimeException('Total invoice berbeda dari detail dan TaxRate hasil mapping; tinjau invoice sebelum melanjutkan.');
+        $taxOnlyCorrection = (new JournalImportTaxCorrectionPolicy())->shouldCorrectFinalTotal(
+            $transaction->tax_amount,
+            $transaction->total_before_tax,
+            $transaction->final_total,
+            $totals
+        );
+        if ($transaction->final_total !== null
+            && abs((float) $transaction->final_total - (float) $totals['final_total']) > 0.01
+            && ! $taxOnlyCorrection) {
+            throw new \RuntimeException('Total invoice berbeda dari detail dan hasil hitung pajak Journal; tinjau invoice sebelum melanjutkan.');
         }
 
         $table = $transaction->type === 'sell' ? 'transaction_sell_lines' : 'purchase_lines';
@@ -508,13 +529,13 @@ class JournalImportInvoiceService
         $incColumn = $transaction->type === 'sell' ? 'unit_price_inc_tax' : 'purchase_price_inc_tax';
         foreach (DB::table($table)->where('transaction_id', $transaction->id)->get() as $line) {
             if ($line->tax_id !== null && (int) $line->tax_id !== (int) $tax['id']) {
-                throw new \RuntimeException('TaxRate pada item invoice berbeda dari mapping Journal; tinjau invoice sebelum melanjutkan.');
+                throw new \RuntimeException('TaxRate pada item invoice berbeda dari hasil hitung komponen Journal; tinjau invoice sebelum melanjutkan.');
             }
             if ($line->tax_id !== null) {
                 $expectedTax = round((float) $line->{$priceColumn} * $tax['rate'] / 100, 4);
                 if (abs((float) $line->item_tax - $expectedTax) > 0.01
                     || abs((float) $line->{$incColumn} - ((float) $line->{$priceColumn} + $expectedTax)) > 0.01) {
-                    throw new \RuntimeException('Nilai pajak item invoice berbeda dari TaxRate hasil mapping; tinjau invoice sebelum melanjutkan.');
+                    throw new \RuntimeException('Nilai pajak item invoice berbeda dari nominal komponen Journal; tinjau invoice sebelum melanjutkan.');
                 }
             }
         }
@@ -573,7 +594,7 @@ class JournalImportInvoiceService
         foreach ($lines as $line) {
             $unitTax = round((float) $line->{$priceColumn} * $rate / 100, 4);
             if ($line->tax_id !== null && (int) $line->tax_id !== (int) $tax['id']) {
-                throw new \RuntimeException('TaxRate pada item invoice berbeda dari mapping Journal; tinjau invoice sebelum melanjutkan.');
+                throw new \RuntimeException('TaxRate pada item invoice berbeda dari hasil hitung komponen Journal; tinjau invoice sebelum melanjutkan.');
             }
             if ($line->tax_id === null) {
                 $before = [
@@ -604,7 +625,7 @@ class JournalImportInvoiceService
         if ($transaction->tax_id === null) {
             $transaction->tax_id = $tax['id'];
         } elseif ((int) $transaction->tax_id !== (int) $tax['id']) {
-            throw new \RuntimeException('TaxRate header invoice berbeda dari mapping Journal; tinjau invoice sebelum melanjutkan.');
+            throw new \RuntimeException('TaxRate header invoice berbeda dari hasil hitung komponen Journal; tinjau invoice sebelum melanjutkan.');
         }
         if ($transaction->tax_amount === null || (float) $transaction->tax_amount == 0.0) {
             $transaction->tax_amount = $totals['tax'];

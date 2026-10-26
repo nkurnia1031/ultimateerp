@@ -23,13 +23,6 @@
             font-size: 11px;
         }
 
-        .purchase-index .purchase-product-list__more {
-            margin-top: 3px;
-            color: #64748b;
-            font-size: 12px;
-            font-weight: 600;
-        }
-
         .purchase-index .select2-container--default .select2-selection--single {
             min-height: 34px;
         }

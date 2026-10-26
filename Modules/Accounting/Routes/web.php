@@ -28,6 +28,7 @@ Route::middleware('web', 'SetSessionData', 'auth', 'language', 'timezone', 'Admi
     Route::get('journal-entry/import/{id}/review', [\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'reviewImport']);
     Route::get('journal-entry/import/{id}/status', [\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'importStatus']);
     Route::get('journal-entry/import/{id}/draft-rows', [\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'draftRows']);
+    Route::patch('journal-entry/import/{id}/draft-rows/approve-differences', [\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'approveDraftDiscrepancies']);
     Route::patch('journal-entry/import/{id}/draft-rows/{row_id}', [\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'updateDraftRow']);
     Route::patch('journal-entry/import/{id}/draft-rows/{row_id}/approve-difference', [\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'approveDraftDiscrepancy']);
     Route::get('journal-entry/import/{id}/draft-options', [\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'draftOptions']);

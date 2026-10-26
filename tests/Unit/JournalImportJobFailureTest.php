@@ -27,7 +27,7 @@ class JournalImportJobFailureTest extends TestCase
         $this->assertFailedBatchUpdate(
             new ProcessJournalImportJob(24),
             24,
-            ['queued_import', 'importing', 'reconciling', 'processing'],
+            ['preparing_import', 'queued_import', 'importing', 'reconciling', 'processing'],
             'Worker menghentikan import sebelum selesai.',
             'queue retry window elapsed',
             true

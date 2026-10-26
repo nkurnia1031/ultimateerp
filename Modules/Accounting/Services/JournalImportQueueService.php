@@ -7,7 +7,13 @@ use Illuminate\Validation\ValidationException;
 
 class JournalImportQueueService
 {
-    public function queueRowsForBatch(int $importId, int $businessId, ?array $optionsOverride = null): int
+    public function queueRowsForBatch(
+        int $importId,
+        int $businessId,
+        ?array $optionsOverride = null,
+        ?int $afterRowId = null,
+        ?int $limit = null
+    )
     {
         $import = DB::table('accounting_journal_imports')
             ->where('id', $importId)
@@ -15,14 +21,25 @@ class JournalImportQueueService
             ->first();
         $options = $optionsOverride ?? (! empty($import->import_options) ? json_decode($import->import_options, true) : []);
         $options = is_array($options) ? $options : [];
-        $rows = DB::table('accounting_journal_import_rows')
+        $rowsQuery = DB::table('accounting_journal_import_rows')
             ->where('journal_import_id', $importId)
             ->where('business_id', $businessId)
-            ->whereIn('processing_status', ['pending', 'failed'])
-            ->orderByRaw("CASE source_type WHEN 'Sales Invoice' THEN 0 WHEN 'Purchase Invoice' THEN 1 WHEN 'Expense' THEN 2 WHEN 'Receive Payment' THEN 3 WHEN 'Purchase Payment' THEN 4 WHEN 'Bank Deposit' THEN 5 WHEN 'Bank Transfer' THEN 6 WHEN 'Bank Withdrawal' THEN 7 WHEN 'Reversal' THEN 8 WHEN 'Stock Adjustment' THEN 9 WHEN 'Stock In/Out' THEN 10 WHEN 'Opening Balance' THEN 11 ELSE 12 END")
-            ->orderBy('entry_index')
-            ->lockForUpdate()
-            ->get();
+            ->whereIn('processing_status', ['pending', 'failed']);
+        if ($afterRowId !== null) {
+            $rowsQuery->where('id', '>', $afterRowId)->orderBy('id');
+        } else {
+            $rowsQuery->orderByRaw("CASE source_type WHEN 'Sales Invoice' THEN 0 WHEN 'Purchase Invoice' THEN 1 WHEN 'Expense' THEN 2 WHEN 'Receive Payment' THEN 3 WHEN 'Purchase Payment' THEN 4 WHEN 'Bank Deposit' THEN 5 WHEN 'Bank Transfer' THEN 6 WHEN 'Bank Withdrawal' THEN 7 WHEN 'Reversal' THEN 8 WHEN 'Stock Adjustment' THEN 9 WHEN 'Stock In/Out' THEN 10 WHEN 'Opening Balance' THEN 11 ELSE 12 END")
+                ->orderBy('entry_index');
+        }
+        if ($limit !== null) {
+            $rowsQuery->limit($limit + 1);
+        }
+        $rows = $rowsQuery->lockForUpdate()->get();
+        $hasMore = $limit !== null && $rows->count() > $limit;
+        if ($hasMore) {
+            $rows = $rows->take($limit);
+        }
+        $lastRowId = (int) ($rows->last()->id ?? $afterRowId ?? 0);
 
         $queued = 0;
         foreach ($rows as $row) {
@@ -65,7 +82,12 @@ class JournalImportQueueService
                     : null;
                 $journalTotal = $this->journalTotal($entry);
                 if ($businessTotal !== null && $journalTotal !== null) {
-                    $this->recordReconciliation((int) $row->id, $businessId, $businessTotal, $journalTotal);
+                    $differenceExplained = false;
+                    if ($row->source_type === 'Expense' && abs($businessTotal - $journalTotal) > 0.01) {
+                        $differenceExplained = app(JournalImportExpenseService::class)
+                            ->explainsTaxDifference($row, $entry, $businessId, $journalTotal, $options);
+                    }
+                    $this->recordReconciliation((int) $row->id, $businessId, $businessTotal, $journalTotal, 0.01, $differenceExplained);
                 } else {
                     $this->clearReconciliation((int) $row->id, $businessId);
                 }
@@ -99,6 +121,14 @@ class JournalImportQueueService
                 'updated_at' => now(),
             ]);
             $queued++;
+        }
+
+        if ($limit !== null) {
+            return [
+                'queued' => $queued,
+                'last_id' => $lastRowId,
+                'has_more' => $hasMore,
+            ];
         }
 
         return $queued;
@@ -202,8 +232,12 @@ class JournalImportQueueService
             return 'Kunci atau baris akun GL belum lengkap.';
         }
 
+        if ($reconciliationStatus === 'auto_approved' && $row !== null && empty($row->is_reviewed)) {
+            return 'Selisih disetujui otomatis, tandai baris sebagai Ditinjau sebelum diproses.';
+        }
+
         if ($reconciliationStatus === 'mismatch') {
-            return 'Selisih total harus disetujui dengan alasan sebelum diproses.';
+            return 'Selisih belum disetujui; tinjau dan setujui secara manual sebelum diproses.';
         }
 
         if ($isInvoice && $row !== null && empty($row->draft_data) && $action !== 'link') {
@@ -213,7 +247,7 @@ class JournalImportQueueService
         return null;
     }
 
-    public function recordReconciliation(int $rowId, int $businessId, float $businessTotal, float $journalTotal, float $tolerance = 0.01): object
+    public function recordReconciliation(int $rowId, int $businessId, float $businessTotal, float $journalTotal, float $tolerance = 0.01, bool $differenceExplained = false): object
     {
         if (! is_finite($businessTotal) || ! is_finite($journalTotal) || ! is_finite($tolerance) || $tolerance < 0) {
             throw ValidationException::withMessages([
@@ -221,7 +255,7 @@ class JournalImportQueueService
             ]);
         }
 
-        return DB::transaction(function () use ($rowId, $businessId, $businessTotal, $journalTotal, $tolerance) {
+        return DB::transaction(function () use ($rowId, $businessId, $businessTotal, $journalTotal, $tolerance, $differenceExplained) {
             $row = DB::table('accounting_journal_import_rows')
                 ->where('id', $rowId)
                 ->where('business_id', $businessId)
@@ -238,12 +272,13 @@ class JournalImportQueueService
             $isMismatch = abs($difference) > $tolerance;
             $sameReconciliation = round((float) ($row->business_total ?? 0), 4) === round($businessTotal, 4)
                 && round((float) ($row->journal_total ?? 0), 4) === round($journalTotal, 4);
-            $preserveApproval = $isMismatch
+            $preserveManualApproval = $isMismatch
                 && $sameReconciliation
                 && $row->reconciliation_status === 'approved'
                 && ! empty($row->difference_approved_by)
                 && ! empty($row->difference_approved_at)
                 && trim((string) ($row->difference_approval_reason ?? '')) !== '';
+            $approvalReason = $preserveManualApproval ? $row->difference_approval_reason : null;
 
             DB::table('accounting_journal_import_rows')
                 ->where('id', $rowId)
@@ -252,10 +287,12 @@ class JournalImportQueueService
                     'journal_total' => $journalTotal,
                     'business_total' => $businessTotal,
                     'difference_amount' => $difference,
-                    'reconciliation_status' => $isMismatch ? ($preserveApproval ? 'approved' : 'mismatch') : 'matched',
-                    'difference_approved_by' => $preserveApproval ? $row->difference_approved_by : null,
-                    'difference_approved_at' => $preserveApproval ? $row->difference_approved_at : null,
-                    'difference_approval_reason' => $preserveApproval ? $row->difference_approval_reason : null,
+                    'reconciliation_status' => $isMismatch
+                        ? ($preserveManualApproval ? 'approved' : ($differenceExplained ? 'auto_approved' : 'mismatch'))
+                        : 'matched',
+                    'difference_approved_by' => $preserveManualApproval ? $row->difference_approved_by : null,
+                    'difference_approved_at' => $preserveManualApproval ? $row->difference_approved_at : null,
+                    'difference_approval_reason' => $approvalReason,
                     'updated_at' => now(),
                 ]);
 
@@ -315,6 +352,75 @@ class JournalImportQueueService
                 ->where('id', $rowId)
                 ->where('business_id', $businessId)
                 ->first();
+        });
+    }
+
+    public function approveDiscrepancies(int $importId, int $businessId, int $userId, array $rowIds, string $reason): array
+    {
+        $rowIds = array_values(array_unique(array_filter(array_map('intval', $rowIds))));
+        $reason = trim($reason);
+        if ($rowIds === [] || count($rowIds) > 100) {
+            throw ValidationException::withMessages([
+                'row_ids' => 'Pilih 1 sampai 100 baris selisih untuk persetujuan massal.',
+            ]);
+        }
+        if ($reason === '' || mb_strlen($reason) < 5 || mb_strlen($reason) > 1000) {
+            throw ValidationException::withMessages([
+                'reason' => 'Alasan persetujuan wajib diisi 5 sampai 1000 karakter.',
+            ]);
+        }
+
+        return DB::transaction(function () use ($importId, $businessId, $userId, $rowIds, $reason) {
+            $rows = DB::table('accounting_journal_import_rows')
+                ->where('journal_import_id', $importId)
+                ->where('business_id', $businessId)
+                ->whereIn('id', $rowIds)
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get();
+
+            if ($rows->count() !== count($rowIds)) {
+                throw ValidationException::withMessages([
+                    'row_ids' => 'Sebagian baris tidak ditemukan pada batch dan business aktif.',
+                ]);
+            }
+
+            foreach ($rows as $row) {
+                if (! in_array($row->reconciliation_status, ['mismatch', 'auto_approved', 'approved'], true)) {
+                    throw ValidationException::withMessages([
+                        'row_ids' => 'Semua baris terpilih harus memiliki selisih yang masih tercatat.',
+                    ]);
+                }
+                if (! in_array($row->processing_status, ['pending', 'failed'], true)) {
+                    throw ValidationException::withMessages([
+                        'row_ids' => 'Baris yang sudah masuk antrean atau selesai tidak dapat disetujui ulang.',
+                    ]);
+                }
+            }
+
+            $reviewedAt = now();
+            DB::table('accounting_journal_import_rows')
+                ->where('journal_import_id', $importId)
+                ->where('business_id', $businessId)
+                ->whereIn('id', $rowIds)
+                ->update([
+                    'reconciliation_status' => 'approved',
+                    'difference_approved_by' => $userId,
+                    'difference_approved_at' => $reviewedAt,
+                    'difference_approval_reason' => $reason,
+                    'is_reviewed' => 1,
+                    'reviewed_by' => $userId,
+                    'reviewed_at' => $reviewedAt,
+                    'updated_at' => $reviewedAt,
+                ]);
+
+            return DB::table('accounting_journal_import_rows')
+                ->where('journal_import_id', $importId)
+                ->where('business_id', $businessId)
+                ->whereIn('id', $rowIds)
+                ->orderBy('entry_index')
+                ->get()
+                ->all();
         });
     }
 

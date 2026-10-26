@@ -125,9 +125,13 @@ This section is the canonical starting point for a new coding session. Read it b
   Verify the command reports success and that source/runtime copies are byte-identical. Never hand-edit the matching file in `public/modules/<module>/js/`.
 - Run `node --check <script>` for changed JavaScript and verify the Blade view points to the intended canonical/runtime asset.
 
+### Engineering workflow
+
+For every new feature, issue, or substantial UX change, start with the `/ask-matt` router before choosing a workflow or changing code. Read the router and the complete `SKILL.md` for each selected skill. Follow [`docs/agents/engineering-workflow.md`](docs/agents/engineering-workflow.md) to choose the path, ground work in GitHub Issues, and handle changes that were already implemented before the workflow was followed.
+
 ### Issue workflow checkpoint
 
-For every issue, finish implementation and the relevant non-E2E checks first. Then report the changes, check results, and any known risks to the user, and pause before starting E2E testing or code review. Wait for the user's feedback or direction before entering either stage.
+For every issue, finish implementation and the relevant non-E2E checks first. Then report the changes, check results, and any known risks to the user, and pause before starting E2E testing or code review. Wait for the user's feedback or direction before entering either stage. Use Playwright for local E2E as specified above.
 
 ### Verification checklist
 

@@ -10,6 +10,7 @@ use Illuminate\Translation\Translator;
 use Illuminate\Validation\Factory as ValidatorFactory;
 use Mockery;
 use Modules\Accounting\Services\JournalImportDraftService;
+use Modules\Accounting\Services\JournalImportAccountComponentService;
 use Modules\Accounting\Services\JournalImportExpenseService;
 use Modules\Accounting\Services\JournalImportTaxResolver;
 use PHPUnit\Framework\TestCase;
@@ -74,7 +75,7 @@ class JournalImportExpenseServiceTest extends TestCase
         $this->assertSame('Pilih lokasi sebelum membuat Expense.', $issue);
     }
 
-    public function test_tax_account_without_a_tax_decision_stays_in_review(): void
+    public function test_tax_account_is_detected_automatically_without_a_rate_mapping(): void
     {
         $draftService = Mockery::mock(JournalImportDraftService::class);
         $draftService->shouldReceive('isValidSourceDecision')->once()->andReturnTrue();
@@ -87,8 +88,8 @@ class JournalImportExpenseServiceTest extends TestCase
         $taxResolver = Mockery::mock(JournalImportTaxResolver::class);
         $taxResolver->shouldReceive('resolveForEntry')
             ->once()
-            ->with(Mockery::type('array'), 3, [], true)
-            ->andThrow(new \RuntimeException('Akun Journal "Prepaid Income Tax - PPh 23" tampak sebagai akun pajak tetapi belum dipetakan.'));
+            ->with(Mockery::type('array'), 3, 100.0)
+            ->andReturn(['id' => 9, 'rate' => 10]);
 
         $service = new JournalImportExpenseService(
             $draftService,
@@ -110,13 +111,128 @@ class JournalImportExpenseServiceTest extends TestCase
             'date' => '2026-10-25',
             'debit_total' => 110,
             'lines' => [
-                ['account_no' => '1-10502', 'account_name' => 'Prepaid Income Tax - PPh 23', 'type' => 'debit', 'amount' => 10],
+                ['account_no' => '5-50000', 'account_name' => 'Cost of Sales', 'type' => 'debit', 'amount' => 100],
+                ['account_no' => '1-10502', 'account_name' => 'VAT In', 'type' => 'debit', 'amount' => 10],
             ],
         ];
 
         $issue = $service->readinessIssue($row, $entry, 3);
 
-        $this->assertStringContainsString('akun pajak tetapi belum dipetakan', $issue);
+        $this->assertNull($issue);
+    }
+
+    public function test_multiple_expense_accounts_require_and_accept_a_category_per_group(): void
+    {
+        $entry = [
+            'source_type' => 'Expense',
+            'source_link_status' => 'unmatched',
+            'source_link_candidate_details' => [],
+            'source_number' => 'EXP-GROUP-1',
+            'date' => '2026-10-25',
+            'debit_total' => 130,
+            'lines' => [
+                ['account_no' => '6101', 'account_name' => 'Office Supplies', 'type' => 'debit', 'amount' => 100],
+                ['account_no' => '6201', 'account_name' => 'Transportation', 'type' => 'debit', 'amount' => 30],
+            ],
+        ];
+        $componentService = new JournalImportAccountComponentService();
+        $components = $componentService->groupJournalLines($entry, 3);
+        $categoryMappings = [
+            $components[0]['account_key'] => 57,
+            $components[1]['account_key'] => 58,
+        ];
+
+        $draftService = Mockery::mock(JournalImportDraftService::class);
+        $draftService->shouldReceive('isValidSourceDecision')->once()->andReturnTrue();
+        $draftService->shouldReceive('validateDraftData')->once()->andReturn([
+            'location_id' => 2,
+            'expense_category_mappings' => $categoryMappings,
+        ]);
+        $taxResolver = Mockery::mock(JournalImportTaxResolver::class);
+        $taxResolver->shouldReceive('resolveForEntry')->once()->with($entry, 3, 130.0)->andReturn(null);
+        $service = new JournalImportExpenseService($draftService, $taxResolver, Mockery::mock(TransactionUtil::class));
+        $row = (object) [
+            'source_type' => 'Expense',
+            'source_action' => 'create',
+            'source_record_type' => null,
+            'source_record_id' => null,
+            'draft_data' => json_encode(['location_id' => 2, 'expense_category_mappings' => $categoryMappings]),
+        ];
+
+        $this->assertNull($service->readinessIssue($row, $entry, 3));
+    }
+
+    public function test_multiple_expense_accounts_are_not_merged_into_the_single_fallback_category(): void
+    {
+        $entry = [
+            'source_type' => 'Expense',
+            'source_link_status' => 'unmatched',
+            'source_link_candidate_details' => [],
+            'source_number' => 'EXP-GROUP-2',
+            'date' => '2026-10-25',
+            'debit_total' => 130,
+            'lines' => [
+                ['account_no' => '6101', 'account_name' => 'Office Supplies', 'type' => 'debit', 'amount' => 100],
+                ['account_no' => '6201', 'account_name' => 'Transportation', 'type' => 'debit', 'amount' => 30],
+            ],
+        ];
+        $draftService = Mockery::mock(JournalImportDraftService::class);
+        $draftService->shouldReceive('isValidSourceDecision')->once()->andReturnTrue();
+        $draftService->shouldReceive('validateDraftData')->once()->andReturn([
+            'location_id' => 2,
+            'expense_category_id' => 57,
+        ]);
+        $taxResolver = Mockery::mock(JournalImportTaxResolver::class);
+        $taxResolver->shouldReceive('resolveForEntry')->once()->with($entry, 3, 130.0)->andReturn(null);
+        $service = new JournalImportExpenseService($draftService, $taxResolver, Mockery::mock(TransactionUtil::class));
+        $row = (object) [
+            'source_type' => 'Expense',
+            'source_action' => 'create',
+            'source_record_type' => null,
+            'source_record_id' => null,
+            'draft_data' => '{"location_id":2,"expense_category_id":57}',
+        ];
+
+        $issue = $service->readinessIssue($row, $entry, 3);
+
+        $this->assertStringContainsString('Pilih kategori Expense untuk akun Journal', $issue);
+    }
+
+    public function test_vat_in_is_accounted_for_separately_from_expense_base(): void
+    {
+        $entry = [
+            'source_type' => 'Expense',
+            'source_link_status' => 'unmatched',
+            'source_link_candidate_details' => [],
+            'source_number' => 'EXP-VAT-1',
+            'date' => '2026-10-25',
+            'debit_total' => 110,
+            'lines' => [
+                ['account_no' => '6101', 'account_name' => 'Office Supplies', 'type' => 'debit', 'amount' => 100],
+                ['account_no' => '2101', 'account_name' => 'VAT IN', 'type' => 'debit', 'amount' => 10],
+            ],
+        ];
+        $components = (new JournalImportAccountComponentService())->groupJournalLines($entry, 3);
+        $draftService = Mockery::mock(JournalImportDraftService::class);
+        $draftService->shouldReceive('isValidSourceDecision')->once()->andReturnTrue();
+        $draftService->shouldReceive('validateDraftData')->once()->andReturn([
+            'location_id' => 2,
+            'expense_category_mappings' => [$components[0]['account_key'] => 57],
+        ]);
+        $taxResolver = Mockery::mock(JournalImportTaxResolver::class);
+        $taxResolver->shouldReceive('resolveForEntry')->once()->with($entry, 3, 100.0)->andReturn(['id' => 9, 'rate' => 10]);
+        $transactionUtil = Mockery::mock(TransactionUtil::class);
+        $transactionUtil->shouldNotReceive('calc_percentage_base');
+        $service = new JournalImportExpenseService($draftService, $taxResolver, $transactionUtil);
+        $row = (object) [
+            'source_type' => 'Expense',
+            'source_action' => 'create',
+            'source_record_type' => null,
+            'source_record_id' => null,
+            'draft_data' => json_encode(['location_id' => 2, 'expense_category_mappings' => [$components[0]['account_key'] => 57]]),
+        ];
+
+        $this->assertSame(110.0, $service->draftTotal($row, $entry, (object) ['business_id' => 3]));
     }
 
     private function makeService(): JournalImportExpenseService

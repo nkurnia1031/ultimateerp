@@ -10,7 +10,7 @@
     }
 
     function isActive(status) {
-        return ['queued', 'analyzing', 'queued_import', 'importing', 'reconciling', 'processing'].indexOf(status) !== -1;
+        return ['queued', 'analyzing', 'preparing_import', 'queued_import', 'importing', 'reconciling', 'processing'].indexOf(status) !== -1;
     }
 
     function statusLabel(status) {
@@ -18,6 +18,7 @@
             queued: 'Menunggu worker',
             analyzing: 'Menganalisis workbook',
             analyzed: 'Siap ditinjau',
+            preparing_import: 'Menyiapkan antrean import',
             queued_import: 'Menunggu worker import',
             importing: 'Menyimpan entry',
             reconciling: 'Merekonsiliasi pajak',
@@ -58,7 +59,7 @@
     }
 
     function indeterminate(response) {
-        return (['queued', 'analyzing', 'queued_import'].indexOf(response.status) !== -1 && Number(response.queue_total || 0) <= 0) ||
+        return (['queued', 'analyzing', 'preparing_import', 'queued_import'].indexOf(response.status) !== -1 && Number(response.queue_total || 0) <= 0) ||
             (response.status === 'importing' && Number(response.queue_total || response.total_entries || 0) <= 0);
     }
 
@@ -107,7 +108,7 @@
         }
 
         var countText;
-        if (Number(response.queue_total || 0) > 0 || ['importing', 'reconciling', 'processing', 'imported', 'partially_imported', 'failed'].indexOf(status) !== -1) {
+        if (Number(response.queue_total || 0) > 0 || ['preparing_import', 'importing', 'reconciling', 'processing', 'imported', 'partially_imported', 'failed'].indexOf(status) !== -1) {
             var queueCounts = response.queue_counts || {};
             countText = (response.queue_processed || 0) + ' / ' + (response.queue_total || 0) + ' baris queue ('
                 + (queueCounts.completed || 0) + ' selesai, ' + (queueCounts.failed || 0) + ' gagal, '
@@ -278,12 +279,16 @@
 
     var draftPage = 1;
     var draftLastPage = 1;
+    var draftTotal = 0;
+    var draftPerPage = 50;
     var draftType = null;
     var draftRowsById = {};
     var activeDetailRow = null;
     var detailSaveTimer = null;
     var detailSaveInFlight = false;
     var detailSavePending = null;
+    var draftSearchTimer = null;
+    var draftRequestNumber = 0;
 
     function draftActionLabel(action) {
         var labels = {
@@ -333,6 +338,30 @@
     function renderDraftRow(row) {
         draftRowsById[String(row.id)] = row;
         var tr = $('<tr>').attr('data-row-id', row.id).data('draft-row', row);
+        var selectionCell = $('<td>');
+        var hasDifference = ['mismatch', 'auto_approved', 'approved'].indexOf(row.reconciliation_status) !== -1;
+        var canBulkApprove = hasDifference
+            && !row.is_reviewed
+            && ['pending', 'failed'].indexOf(row.processing_status) !== -1;
+        if (canBulkApprove) {
+            selectionCell.append($('<input type="checkbox" class="journal-draft-select-difference">')
+                .attr('aria-label', 'Pilih selisih ' + (row.source_number || row.id)));
+        } else if (['mismatch', 'auto_approved', 'approved'].indexOf(row.reconciliation_status) !== -1) {
+            selectionCell.append($('<span class="text-muted" title="Sudah ditinjau atau sedang diproses">').text('—'));
+        }
+        if (!canBulkApprove && !hasDifference) {
+            var unavailableReason = row.is_reviewed
+                ? 'Baris ini sudah ditinjau.'
+                : (['queued', 'running', 'completed'].indexOf(row.processing_status) !== -1
+                    ? 'Baris ini sudah masuk antrean atau selesai diproses.'
+                    : (row.reconciliation_status === 'not_checked'
+                        ? 'Selisih belum direkonsiliasi; sistem akan memeriksanya sebelum antrean.'
+                        : 'Tidak ada selisih yang perlu disetujui pada baris ini.'));
+            selectionCell.append($('<input type="checkbox" class="journal-draft-select-disabled" disabled>')
+                .attr('aria-label', unavailableReason)
+                .attr('title', unavailableReason));
+        }
+        tr.append(selectionCell);
         var dateNumber = $('<strong>').text(row.source_type + ' #' + (row.source_number || '—'));
         var date = $('<small class="text-muted" style="display:block">').text(row.date || 'Tanggal kosong');
         tr.append($('<td>').append(dateNumber).append(date));
@@ -360,10 +389,40 @@
                 processCell.append($('<button type="button" class="btn btn-warning btn-xs journal-draft-approve-difference" style="margin-top:4px">')
                     .text('Setujui selisih'));
             }
-        } else if (row.reconciliation_status === 'approved') {
+        } else if (row.reconciliation_status === 'auto_approved') {
+            processCell.append($('<span class="label label-warning" style="display:inline-block;margin-top:4px">').text('Selisih disetujui otomatis · perlu ditinjau'));
             processCell.append($('<small class="text-muted" style="display:block">').text(
-                'Selisih disetujui: ' + (row.difference_approval_reason || 'alasan tercatat')
+                'Selisih total: ' + formatDraftNumber(row.difference_amount)
             ));
+        } else if (row.reconciliation_status === 'approved') {
+            processCell.append($('<span class="label label-success" style="display:inline-block;margin-top:4px">').text('Selisih disetujui manual'));
+            processCell.append($('<small class="text-muted" style="display:block">').text(row.difference_approval_reason || 'Alasan tercatat'));
+        }
+        if (Array.isArray(row.journal_components) && row.journal_components.length) {
+            row.journal_components.forEach(function (component) {
+                var label = component.account_name || component.account_no || 'Akun tanpa nama';
+                var type = component.is_tax ? 'Pajak' : (row.source_type === 'Expense' ? 'Biaya' : 'Akun');
+                var sideAmounts = [];
+                if (Number(component.debit || 0) > 0) sideAmounts.push('D ' + formatDraftNumber(component.debit));
+                if (Number(component.credit || 0) > 0) sideAmounts.push('K ' + formatDraftNumber(component.credit));
+                processCell.append($('<small class="text-muted" style="display:block">').text(
+                    type + ' · ' + label + ': ' + sideAmounts.join(' / ')
+                ));
+            });
+        }
+        if (row.source_components) {
+            var baseDifference = row.source_components.base === null
+                ? null
+                : Number(row.source_components.base) - Number(row.journal_base_total || 0);
+            var taxDifference = row.source_components.tax === null
+                ? null
+                : Number(row.source_components.tax) - Number(row.journal_tax_total || 0);
+            if (baseDifference !== null || taxDifference !== null) {
+                var breakdown = [];
+                if (baseDifference !== null) breakdown.push('basis ' + formatDraftNumber(baseDifference));
+                if (taxDifference !== null) breakdown.push('pajak ' + formatDraftNumber(taxDifference));
+                processCell.append($('<small class="text-warning" style="display:block">').text('Selisih transaksi − jurnal: ' + breakdown.join(' · ')));
+            }
         }
         tr.append(processCell);
         tr.append($('<td class="text-right">').text(formatDraftNumber(row.debit_total)));
@@ -430,16 +489,85 @@
         return tr;
     }
 
+    function selectedDifferenceIds() {
+        return $('#journal_import_draft_table tbody .journal-draft-select-difference:checked').map(function () {
+            return Number($(this).closest('tr').data('row-id'));
+        }).get().filter(function (id) { return id > 0; });
+    }
+
+    function syncDifferenceSelection() {
+        var count = selectedDifferenceIds().length;
+        var available = $('#journal_import_draft_table tbody .journal-draft-select-difference').length;
+        var rowsOnPage = $('#journal_import_draft_table tbody tr[data-row-id]').length;
+        $('#journal_import_bulk_approve').prop('disabled', count === 0);
+        $('#journal_import_selection_count').text(count
+            ? (count + ' selisih dipilih.')
+            : (rowsOnPage > 0 && available === 0
+                ? 'Belum ada selisih yang siap dipilih di halaman ini.'
+                : 'Belum ada selisih dipilih.'));
+        $('#journal_import_select_all_differences')
+            .prop('disabled', available === 0)
+            .prop('checked', available > 0 && count === available)
+            .prop('indeterminate', count > 0 && count < available);
+    }
+
+    function rowMatchesVisibleFilters(row) {
+        var reviewFilter = $('#journal_import_review_filter').val() || 'all';
+        var statusFilter = $('#journal_import_status_filter').val() || 'all';
+        if (reviewFilter === 'unreviewed' && row.is_reviewed) return false;
+        if (reviewFilter === 'reviewed' && !row.is_reviewed) return false;
+        if (statusFilter === 'errors' && row.processing_status !== 'failed' && !row.processing_error) return false;
+        if (statusFilter === 'differences' && ['mismatch', 'auto_approved', 'approved'].indexOf(row.reconciliation_status) === -1) return false;
+        return true;
+    }
+
+    function updateDraftPaginationDisplay() {
+        var first = draftTotal ? ((draftPage - 1) * draftPerPage) + 1 : 0;
+        var last = Math.min(draftPage * draftPerPage, draftTotal);
+        $('#journal_import_draft_pagination_info').text(first + '–' + last + ' dari ' + draftTotal + ' baris');
+        draftLastPage = Math.max(1, Math.ceil(draftTotal / draftPerPage));
+        $('#journal_import_draft_previous').prop('disabled', draftPage <= 1);
+        $('#journal_import_draft_next').prop('disabled', draftPage >= draftLastPage);
+    }
+
+    function updateDraftRowsInline(rows) {
+        var removed = 0;
+        rows.forEach(function (row) {
+            var rowId = String(row.id);
+            draftRowsById[rowId] = row;
+            var current = $('#journal_import_draft_table tbody tr').filter(function () {
+                return String($(this).data('row-id')) === rowId;
+            });
+            if (!current.length) return;
+            if (rowMatchesVisibleFilters(row)) {
+                current.replaceWith(renderDraftRow(row));
+            } else {
+                current.remove();
+                removed++;
+            }
+        });
+        if (removed) draftTotal = Math.max(0, draftTotal - removed);
+        if (!$('#journal_import_draft_table tbody tr').length) {
+            $('#journal_import_draft_table tbody').append(
+                $('<tr>').append($('<td colspan="10" class="text-center text-muted">').text('Tidak ada baris untuk filter ini.'))
+            );
+        }
+        updateDraftPaginationDisplay();
+        syncDifferenceSelection();
+    }
+
     function loadDraftRows(pageNumber) {
         var draft = $('#journal_import_draft');
         if (!draft.length || !draftType) {
             return;
         }
         draftPage = pageNumber || 1;
+        var requestNumber = ++draftRequestNumber;
         $('#journal_import_draft_status').text('Memuat baris...');
         $('#journal_import_draft_table tbody').empty().append(
-            $('<tr>').append($('<td colspan="9" class="text-center text-muted">').text('Memuat draft...'))
+            $('<tr>').append($('<td colspan="10" class="text-center text-muted">').text('Memuat draft...'))
         );
+        syncDifferenceSelection();
 
         $.ajax({
             method: 'GET',
@@ -448,20 +576,27 @@
             data: {
                 type: draftType,
                 review_filter: $('#journal_import_review_filter').val() || 'all',
+                status_filter: $('#journal_import_status_filter').val() || 'all',
+                search: $('#journal_import_draft_search').val() || '',
                 page: draftPage,
                 per_page: 50
             }
         }).done(function (response) {
+            if (requestNumber !== draftRequestNumber) return;
             var tbody = $('#journal_import_draft_table tbody').empty();
             if (!response.success || !response.rows.length) {
-                tbody.append($('<tr>').append($('<td colspan="9" class="text-center text-muted">').text('Tidak ada baris untuk filter ini.')));
+                tbody.append($('<tr>').append($('<td colspan="10" class="text-center text-muted">').text('Tidak ada baris untuk filter ini.')));
             } else {
                 response.rows.forEach(function (row) {
                     tbody.append(renderDraftRow(row));
                 });
             }
 
+            draftPage = Number(response.page || 1);
+            draftTotal = Number(response.total || 0);
+            draftPerPage = Number(response.per_page || 50);
             draftLastPage = Number(response.last_page || 1);
+            syncDifferenceSelection();
             var first = response.total ? ((response.page - 1) * response.per_page) + 1 : 0;
             var last = Math.min(response.page * response.per_page, response.total);
             $('#journal_import_draft_pagination_info').text(first + '–' + last + ' dari ' + response.total + ' baris');
@@ -469,10 +604,11 @@
             $('#journal_import_draft_next').prop('disabled', response.page >= draftLastPage);
             $('#journal_import_draft_status').text('Draft tersimpan otomatis.');
         }).fail(function (xhr) {
+            if (requestNumber !== draftRequestNumber) return;
             var message = xhr.responseJSON && xhr.responseJSON.msg ? xhr.responseJSON.msg : 'Gagal memuat baris draft.';
             $('#journal_import_draft_status').text(message).addClass('text-danger');
             $('#journal_import_draft_table tbody').empty().append(
-                $('<tr>').append($('<td colspan="9" class="text-center text-danger">').text(message))
+                $('<tr>').append($('<td colspan="10" class="text-center text-danger">').text(message))
             );
         });
     }
@@ -606,6 +742,7 @@
         $('.journal-draft-field-payment-method').toggle(invoicePaymentTypes.indexOf(sourceType) !== -1);
         $('.journal-draft-field-invoice').toggle(invoicePaymentTypes.indexOf(sourceType) !== -1);
         $('.journal-draft-field-expense-category').toggle(sourceType === 'Expense');
+        $('.journal-draft-field-expense-splits').toggle(sourceType === 'Expense');
         $('.journal-draft-field-details').toggle(detailTypes.indexOf(sourceType) !== -1);
         $('.journal-draft-field-stock-direction').toggle(sourceType === 'Stock In/Out');
         var accountLabel = sourceType === 'Bank Deposit' ? 'Akun penerima deposit'
@@ -652,8 +789,41 @@
             payment_method: $('#journal_draft_payment_method').val() || null,
             invoice_reference: $('#journal_draft_invoice').val() || null,
             expense_category_id: $('#journal_draft_expense_category').val() || null,
+            expense_category_mappings: collectExpenseCategoryMappings(),
             details: collectDraftDetails()
         };
+    }
+
+    function collectExpenseCategoryMappings() {
+        var mappings = {};
+        $('#journal_draft_expense_splits_table tbody tr').each(function () {
+            var key = String($(this).data('account-key') || '');
+            if (key) mappings[key] = $(this).find('.journal-draft-expense-category').val() || null;
+        });
+        return mappings;
+    }
+
+    function renderExpenseCategorySplits(row, draftData) {
+        var tbody = $('#journal_draft_expense_splits_table tbody').empty();
+        var components = (Array.isArray(row.journal_components) ? row.journal_components : [])
+            .filter(function (component) { return !component.is_tax; });
+        components.forEach(function (component) {
+            var key = String(component.account_key || '');
+            if (!key) return;
+            var line = $('<tr>').attr('data-account-key', key);
+            var label = [component.account_no, component.account_name].filter(Boolean).join(' · ') || 'Akun tanpa nama';
+            line.append($('<td>').text(label));
+            line.append($('<td class="text-right">').text(formatDraftNumber(component.debit)));
+            var select = $('<select class="form-control journal-draft-select journal-draft-expense-category" style="width:100%">').append($('<option>'));
+            line.append($('<td>').append(select));
+            tbody.append(line);
+            var selectedId = (draftData.expense_category_mappings || {})[key] || null;
+            if (!selectedId && components.length === 1) selectedId = draftData.expense_category_id || null;
+            configureDraftSelect(select, 'expense_category', 'Expense', selectedId);
+        });
+        if (!components.length) {
+            tbody.append($('<tr>').append($('<td colspan="3" class="text-muted">').text('Akun biaya jurnal belum teridentifikasi. Isi kategori bawaan dan tinjau total sebelum diproses.')));
+        }
     }
 
     function saveDraftDetails(snapshot, closeAfterSave) {
@@ -742,6 +912,7 @@
         configureDraftSelect('#journal_draft_invoice', 'invoice', row.source_type, data.invoice_reference || null);
         configureDraftSelect('#journal_draft_payment_method', 'payment_method', row.source_type, data.payment_method || null);
         configureDraftSelect('#journal_draft_expense_category', 'expense_category', row.source_type, data.expense_category_id || null);
+        renderExpenseCategorySplits(row, data);
         (Array.isArray(data.details) ? data.details : []).forEach(function (detail) {
             addDraftDetailLine(detail, row.source_type);
         });
@@ -774,6 +945,36 @@
 
     $(document).on('change', '#journal_import_review_filter', function () {
         loadDraftRows(1);
+    });
+    $(document).on('change', '#journal_import_status_filter', function () {
+        loadDraftRows(1);
+    });
+    $(document).on('change', '#journal_import_select_all_differences', function () {
+        $('#journal_import_draft_table tbody .journal-draft-select-difference').prop('checked', $(this).is(':checked'));
+        syncDifferenceSelection();
+    });
+    $(document).on('change', '.journal-draft-select-difference', syncDifferenceSelection);
+    $(document).on('click', '#journal_import_bulk_approve', function () {
+        var ids = selectedDifferenceIds();
+        if (!ids.length) return;
+        var totalDifference = ids.reduce(function (total, id) {
+            var row = draftRowsById[String(id)] || {};
+            return total + Number(row.difference_amount || 0);
+        }, 0);
+        $('#journal_import_difference_bulk').val('1');
+        $('#journal_import_difference_row_id').val('');
+        $('#journal_import_difference_reason').val('');
+        $('#journal_import_difference_summary').text(
+            ids.length + ' selisih dipilih · total net selisih ' + formatDraftNumber(totalDifference)
+        );
+        $('#journal_import_difference_modal').modal('show');
+    });
+    $(document).on('input', '#journal_import_draft_search', function () {
+        if (draftSearchTimer) window.clearTimeout(draftSearchTimer);
+        draftSearchTimer = window.setTimeout(function () {
+            draftSearchTimer = null;
+            loadDraftRows(1);
+        }, 300);
     });
     $(document).on('click', '#journal_import_draft_previous', function () {
         if (draftPage > 1) loadDraftRows(draftPage - 1);
@@ -843,6 +1044,7 @@
 
     $(document).on('click', '.journal-draft-approve-difference', function () {
         var row = $(this).closest('tr').data('draft-row') || {};
+        $('#journal_import_difference_bulk').val('0');
         $('#journal_import_difference_row_id').val(row.id || '');
         $('#journal_import_difference_reason').val('');
         $('#journal_import_difference_summary').text(
@@ -857,31 +1059,42 @@
         event.preventDefault();
         var draft = $('#journal_import_draft');
         var rowId = $('#journal_import_difference_row_id').val();
+        var isBulk = $('#journal_import_difference_bulk').val() === '1';
+        var rowIds = isBulk ? selectedDifferenceIds() : [Number(rowId)];
         var reason = String($('#journal_import_difference_reason').val() || '').trim();
-        if (!rowId || reason.length < 5) {
+        if ((!isBulk && !rowId) || !rowIds.length || reason.length < 5) {
             toastr.error('Masukkan alasan persetujuan minimal 5 karakter.');
             return;
         }
 
         var submitButton = $(this).find('button[type="submit"]').prop('disabled', true);
+        $('#journal_import_draft_status').removeClass('text-danger').text(isBulk
+            ? 'Menyetujui ' + rowIds.length + ' selisih...'
+            : 'Menyimpan persetujuan selisih...');
         $.ajax({
             method: 'PATCH',
-            url: draft.data('approve-url-base') + '/' + encodeURIComponent(rowId) + '/approve-difference',
+            url: isBulk
+                ? draft.data('approve-bulk-url')
+                : draft.data('approve-url-base') + '/' + encodeURIComponent(rowId) + '/approve-difference',
             contentType: 'application/json',
             dataType: 'json',
             headers: { 'X-CSRF-TOKEN': draft.data('csrf-token') },
-            data: JSON.stringify({ reason: reason })
+            data: JSON.stringify(isBulk ? { row_ids: rowIds, reason: reason } : { reason: reason })
         }).done(function (response) {
-            if (response.success && response.row) {
-                draftRowsById[String(rowId)] = response.row;
+            if (response.success && (response.row || Array.isArray(response.rows))) {
+                updateDraftRowsInline(isBulk ? response.rows : [response.row]);
                 $('#journal_import_difference_modal').modal('hide');
-                loadDraftRows(draftPage);
+                $('#journal_import_draft_status').removeClass('text-danger').text(response.msg || 'Persetujuan selisih tersimpan.');
                 toastr.success(response.msg || 'Persetujuan selisih tersimpan.');
             }
         }).fail(function (xhr) {
-            var message = xhr.responseJSON && xhr.responseJSON.message
-                ? xhr.responseJSON.message
-                : 'Persetujuan selisih gagal disimpan.';
+            var response = xhr.responseJSON || {};
+            var message = response.msg || response.message || 'Persetujuan selisih gagal disimpan.';
+            if (response.errors) {
+                var firstErrorKey = Object.keys(response.errors)[0];
+                message = (response.errors[firstErrorKey] || [message])[0] || message;
+            }
+            $('#journal_import_draft_status').addClass('text-danger').text(message);
             toastr.error(message);
         }).always(function () {
             submitButton.prop('disabled', false);

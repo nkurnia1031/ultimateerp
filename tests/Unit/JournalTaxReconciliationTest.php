@@ -79,6 +79,45 @@ class JournalTaxReconciliationTest extends TestCase
         $this->assertSame($originalSnapshot, $retryMapping->source_tax_snapshot);
     }
 
+    public function test_expense_rate_is_computed_from_source_basis_without_a_gl_tax_rate_mapping(): void
+    {
+        $this->createTransaction(105, 'expense', 27272727, 0, 27272727);
+        DB::table('expense_lines')->insert([
+            'transaction_id' => 105,
+            'amount' => 27272727,
+        ]);
+        $this->createJournalMapping(505, 105);
+        $this->createJournalLines(505, [
+            [10, 27272727, 'debit'],
+            [20, 2727272.7, 'debit'],
+            [40, 29999999.7, 'credit'],
+        ]);
+
+        $result = $this->service->reconcileImport(50, 1);
+
+        $this->assertSame(['reconciled' => 1, 'review' => 0, 'not_applicable' => 0], $result);
+        $source = Transaction::find(105);
+        $this->assertSame(2, (int) $source->tax_id);
+        $this->assertSame(2727272.7, (float) $source->tax_amount);
+        $this->assertSame(29999999.7, (float) $source->final_total);
+    }
+
+    public function test_reconciliation_returns_bounded_id_ordered_chunks(): void
+    {
+        $this->createJournalMapping(510, 999);
+        $this->createJournalMapping(511, 998);
+
+        $first = $this->service->reconcileImportChunk(50, 1, 0, 1);
+        $second = $this->service->reconcileImportChunk(50, 1, $first['last_id'], 1);
+
+        $this->assertSame(510, $first['last_id']);
+        $this->assertTrue($first['has_more']);
+        $this->assertSame(['reconciled' => 0, 'review' => 1, 'not_applicable' => 0], $first['result']);
+        $this->assertSame(511, $second['last_id']);
+        $this->assertFalse($second['has_more']);
+        $this->assertSame(['reconciled' => 0, 'review' => 1, 'not_applicable' => 0], $second['result']);
+    }
+
     public function test_sales_item_tax_is_updated_but_total_mismatch_is_reported_for_review(): void
     {
         $this->createTransaction(101, 'sell', 100, 5, 105);
@@ -96,7 +135,7 @@ class JournalTaxReconciliationTest extends TestCase
         $this->createJournalMapping(501, 101);
         $this->createJournalLines(501, [
             [10, 120, 'debit'],
-            [20, 10, 'credit'],
+            [21, 10, 'credit'],
             [30, 110, 'credit'],
         ]);
 
@@ -159,20 +198,15 @@ class JournalTaxReconciliationTest extends TestCase
         $this->assertSame(105.0, (float) Transaction::find(102)->final_total);
     }
 
-    public function test_multiple_tax_rates_for_one_journal_entry_are_flagged_without_changing_source(): void
+    public function test_unmatched_transaction_derived_rate_is_flagged_without_changing_source(): void
     {
         $this->createTransaction(103, 'sell', 100, 5, 105);
         $this->createJournalMapping(503, 103);
-        DB::table('accounting_journal_tax_account_mappings')->insert([
-            'business_id' => 1,
-            'accounting_account_id' => 30,
-            'tax_rate_id' => 1,
-        ]);
         $this->createJournalLines(503, [
             [10, 115, 'debit'],
-            [20, 10, 'credit'],
-            [30, 5, 'credit'],
-            [40, 100, 'credit'],
+            [21, 10, 'credit'],
+            [50, 5, 'credit'],
+            [30, 100, 'credit'],
         ]);
 
         $result = $this->service->reconcileImport(50, 1);
@@ -184,7 +218,7 @@ class JournalTaxReconciliationTest extends TestCase
         $this->assertSame(5.0, (float) $source->tax_amount);
         $this->assertSame(105.0, (float) $source->final_total);
         $this->assertSame('review', $mapping->tax_reconciliation_status);
-        $this->assertStringContainsString('lebih dari satu TaxRate/grup', $mapping->tax_reconciliation_note);
+        $this->assertStringContainsString('tidak cocok dengan TaxRate aktif', $mapping->tax_reconciliation_note);
     }
 
     public function test_sales_with_multiple_invoice_items_reconciles_each_item_from_journal_group_tax(): void
@@ -198,11 +232,6 @@ class JournalTaxReconciliationTest extends TestCase
             ['group_tax_id' => 3, 'tax_id' => 4],
             ['group_tax_id' => 3, 'tax_id' => 5],
         ]);
-        DB::table('accounting_journal_tax_account_mappings')
-            ->where('business_id', 1)
-            ->where('accounting_account_id', 20)
-            ->update(['tax_rate_id' => 3]);
-
         $this->createTransaction(104, 'sell', 200, 5, 205);
         DB::table('transaction_sell_lines')->insert([
             [
@@ -219,7 +248,8 @@ class JournalTaxReconciliationTest extends TestCase
         $this->createJournalMapping(504, 104);
         $this->createJournalLines(504, [
             [10, 220, 'debit'],
-            [20, 20, 'credit'],
+            [21, 8, 'credit'],
+            [22, 12, 'credit'],
             [40, 200, 'credit'],
         ]);
 
@@ -287,11 +317,23 @@ class JournalTaxReconciliationTest extends TestCase
             $table->decimal('amount', 22, 4);
             $table->string('type');
         });
-        $schema->create('accounting_journal_tax_account_mappings', function ($table) {
+        $schema->create('accounting_accounts', function ($table) {
             $table->increments('id');
             $table->unsignedInteger('business_id');
-            $table->unsignedInteger('accounting_account_id');
-            $table->unsignedInteger('tax_rate_id');
+            $table->string('gl_code')->nullable();
+            $table->string('name');
+        });
+        $schema->create('expense_lines', function ($table) {
+            $table->increments('id');
+            $table->unsignedInteger('transaction_id');
+            $table->decimal('amount', 22, 4);
+        });
+        $schema->create('accounting_journal_import_rows', function ($table) {
+            $table->increments('id');
+            $table->unsignedInteger('journal_import_id');
+            $table->unsignedInteger('business_id');
+            $table->unsignedInteger('journal_mapping_id')->nullable();
+            $table->string('source_action')->nullable();
         });
         $schema->create('transaction_sell_lines', function ($table) {
             $table->increments('id');
@@ -321,10 +363,14 @@ class JournalTaxReconciliationTest extends TestCase
             ['id' => 1, 'business_id' => 1, 'name' => 'Old VAT', 'amount' => 5, 'is_tax_group' => false],
             ['id' => 2, 'business_id' => 1, 'name' => 'VAT', 'amount' => 10, 'is_tax_group' => false],
         ]);
-        DB::table('accounting_journal_tax_account_mappings')->insert([
-            'business_id' => 1,
-            'accounting_account_id' => 20,
-            'tax_rate_id' => 2,
+        DB::table('accounting_accounts')->insert([
+            ['id' => 10, 'business_id' => 1, 'gl_code' => '5100', 'name' => 'Cost of Sales'],
+            ['id' => 20, 'business_id' => 1, 'gl_code' => '10500', 'name' => 'VAT In'],
+            ['id' => 21, 'business_id' => 1, 'gl_code' => '20500', 'name' => 'VAT Out'],
+            ['id' => 22, 'business_id' => 1, 'gl_code' => '20501', 'name' => 'VAT Out Additional'],
+            ['id' => 30, 'business_id' => 1, 'gl_code' => '4000', 'name' => 'Sales Revenue'],
+            ['id' => 40, 'business_id' => 1, 'gl_code' => '1000', 'name' => 'Cash'],
+            ['id' => 50, 'business_id' => 1, 'gl_code' => '20510', 'name' => 'PPh 23'],
         ]);
     }
 

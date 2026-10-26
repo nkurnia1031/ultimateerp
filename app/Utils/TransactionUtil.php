@@ -5201,7 +5201,9 @@ class TransactionUtil extends Util
         $purchases = Transaction::with([
             'tags',
             'purchase_lines.product',
+            'purchase_lines.product.unit',
             'purchase_lines.variation.product_variation',
+            'purchase_lines.sub_unit',
         ])
             ->leftJoin('contacts', 'transactions.contact_id', '=', 'contacts.id')
             ->join(
@@ -5228,6 +5230,7 @@ class TransactionUtil extends Util
                 'contacts.supplier_business_name',
                 'transactions.status',
                 'transactions.payment_status',
+                'transactions.total_before_tax',
                 'transactions.final_total',
                 'BS.name as location_name',
                 'transactions.pay_term_number',
