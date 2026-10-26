@@ -39,6 +39,7 @@ class BackfillGeneralLedger extends Command
         $this->line('Applied groups: '.(int) $summary['applied_groups']);
         $this->line('Already linked: '.(int) $summary['already_linked']);
         $this->line('Groups using current location maps: '.(int) $summary['current_map_groups']);
+        $this->line('Auto-mapped groups: '.(int) ($summary['auto_mapped_groups'] ?? 0));
         $this->line('Groups with separated VAT: '.(int) ($summary['vat_split_groups'] ?? 0));
         $this->line('Ambiguous VAT accounts: '.(int) $summary['ambiguous_vat_accounts']);
         $this->line('Missing VAT accounts: '.(int) $summary['missing_vat_accounts']);
@@ -52,6 +53,7 @@ class BackfillGeneralLedger extends Command
         $this->line('  Ambiguous account_id matches: '.(int) $accountAudit['ambiguous_account_id']);
         $this->line('  Ambiguous exact names: '.(int) $accountAudit['ambiguous_exact_name']);
         $this->line('  Conflicting crosswalks: '.(int) $accountAudit['conflicting_crosswalk']);
+        $this->line('  Nearest CoA matches: '.(int) ($accountAudit['nearest_matches'] ?? 0));
         $this->line('  Unmatched main accounts: '.(int) $accountAudit['unmatched']);
         if (! empty($accountAudit['matches'])) {
             $this->line('  Safe account matches:');
@@ -63,6 +65,19 @@ class BackfillGeneralLedger extends Command
                     $match['accounting_account_id'],
                     $match['accounting_name'],
                     $match['method']
+                ));
+            }
+        }
+        if (! empty($accountAudit['nearest_suggestions'])) {
+            $this->line('  Automatic nearest account mappings (not saved as one-to-one crosswalks):');
+            foreach ($accountAudit['nearest_suggestions'] as $match) {
+                $this->line(sprintf(
+                    '    account #%d %s -> accounting #%d %s [score %s]',
+                    $match['account_id'],
+                    $match['account_name'],
+                    $match['accounting_account_id'],
+                    $match['accounting_name'],
+                    number_format((float) $match['score'], 4, '.', '')
                 ));
             }
         }
@@ -78,6 +93,24 @@ class BackfillGeneralLedger extends Command
                     $map['payment_account_name'],
                     $map['deposit_to_id'],
                     $map['deposit_to_name'],
+                    $map['groups']
+                ));
+            }
+        }
+
+        if (! empty($summary['auto_map_details'])) {
+            $this->line('Automatic nearest CoA mappings used:');
+            foreach ($summary['auto_map_details'] as $map) {
+                $this->line(sprintf(
+                    '  location #%d [%s]: payment_account #%d %s (score %s); deposit_to #%d %s (score %s); groups=%d',
+                    $map['location_id'],
+                    $map['mapping_key'],
+                    $map['payment_account_id'],
+                    $map['payment_account_name'],
+                    $map['payment_account_score'] === null ? 'location-map' : number_format((float) $map['payment_account_score'], 4, '.', ''),
+                    $map['deposit_to_id'],
+                    $map['deposit_to_name'],
+                    $map['deposit_to_score'] === null ? 'location-map' : number_format((float) $map['deposit_to_score'], 4, '.', ''),
                     $map['groups']
                 ));
             }

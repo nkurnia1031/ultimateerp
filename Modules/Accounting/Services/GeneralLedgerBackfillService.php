@@ -18,6 +18,10 @@ class GeneralLedgerBackfillService
 
     private $locationMapsCache = [];
 
+    private $expenseCategoriesCache = [];
+
+    private $expensePaymentGroupsCache = [];
+
     public function __construct(JournalImportAccountComponentService $accountComponentService)
     {
         $this->accountComponentService = $accountComponentService;
@@ -51,6 +55,15 @@ class GeneralLedgerBackfillService
                 return [(int) $location->id => is_array($mapping) ? $mapping : []];
             })
             ->all();
+        $this->expenseCategoriesCache[$businessId] = Schema::hasTable('expense_categories')
+            ? DB::table('expense_categories')
+                ->where('business_id', $businessId)
+                ->when(Schema::hasColumn('expense_categories', 'deleted_at'), fn ($query) => $query->whereNull('deleted_at'))
+                ->get(['id', 'name'])
+                ->keyBy('id')
+                ->all()
+            : [];
+        $this->expensePaymentGroupsCache[$businessId] = $this->loadExpensePaymentGroups($businessId);
 
         $summary = [
             'business_name' => (string) $business->name,
@@ -62,6 +75,8 @@ class GeneralLedgerBackfillService
             'account_links' => [],
             'current_map_details' => [],
             'current_map_groups' => 0,
+            'auto_map_details' => [],
+            'auto_mapped_groups' => 0,
             'ambiguous_vat_accounts' => 0,
             'missing_vat_accounts' => 0,
             'skipped' => [],
@@ -92,6 +107,7 @@ class GeneralLedgerBackfillService
 
         $summary['account_links'] = array_values($summary['account_links']);
         $summary['current_map_details'] = array_values($summary['current_map_details']);
+        $summary['auto_map_details'] = array_values($summary['auto_map_details']);
         $summary['date_range'] = $summary['date_start'] === null
             ? '—'
             : $summary['date_start'].' — '.$summary['date_end'];
@@ -113,8 +129,10 @@ class GeneralLedgerBackfillService
             'ambiguous_account_id' => 0,
             'ambiguous_exact_name' => 0,
             'conflicting_crosswalk' => 0,
+            'nearest_matches' => 0,
             'unmatched' => 0,
             'matches' => [],
+            'nearest_suggestions' => [],
         ];
 
         foreach ($query->get(['id', 'name']) as $mainAccount) {
@@ -155,6 +173,21 @@ class GeneralLedgerBackfillService
             $audit['matches'][] = $this->accountMappingMatch($mainAccount, $nameMatches[0], 'exact_name');
         }
 
+        foreach ($query->get(['id', 'name']) as $mainAccount) {
+            $resolved = $this->mainAccountMapping($businessId, (int) $mainAccount->id);
+            if (empty($resolved['automatic_nearest'])) {
+                continue;
+            }
+            $audit['nearest_matches']++;
+            $audit['nearest_suggestions'][] = $this->accountMappingMatch(
+                $mainAccount,
+                $resolved['account'],
+                'nearest_name'
+            ) + ['score' => $resolved['score']];
+        }
+
+        $audit['unmatched'] = max(0, $audit['unmatched'] - $audit['nearest_matches']);
+
         return $audit;
     }
 
@@ -190,13 +223,22 @@ class GeneralLedgerBackfillService
             $locationMap = $this->locationMap($businessId, (int) ($transaction->location_id ?? 0));
             $mappingKey = $type === 'sell' ? 'sale' : ($type === 'purchase' ? 'purchases' : 'expense');
             if ($type === 'expense' && ! empty($transaction->expense_category_id)) {
-                $categoryKey = 'expense_'.$transaction->expense_category_id;
-                if (! empty($locationMap[$categoryKey]['payment_account']) && ! empty($locationMap[$categoryKey]['deposit_to'])) {
-                    $mappingKey = $categoryKey;
-                }
+                $mappingKey = 'expense_'.$transaction->expense_category_id;
             }
             $accountMap = $locationMap[$mappingKey] ?? [];
             $pair = $this->resolveAccountingPair($businessId, $accountMap);
+            $autoMap = null;
+            if (! empty($pair['reason']) && in_array($type, ['sell', 'purchase'], true)) {
+                $autoMap = $this->inferTransactionPair($businessId, $type);
+                if (empty($autoMap['reason'])) {
+                    $pair = $autoMap['pair'];
+                }
+            } elseif (! empty($pair['reason']) && $type === 'expense') {
+                $autoMap = $this->inferExpensePair($businessId, $transaction);
+                if (empty($autoMap['reason'])) {
+                    $pair = $autoMap['pair'];
+                }
+            }
             if (! empty($pair['reason'])) {
                 yield ['skip_reason' => $pair['reason']];
                 continue;
@@ -224,7 +266,7 @@ class GeneralLedgerBackfillService
                     }
                     $lines[] = $this->line((int) $vat['account']->id, 'credit', $tax);
                 }
-            } else {
+            } elseif ($type === 'purchase') {
                 if ($base > 0) {
                     $lines[] = $this->line((int) $pair['deposit_to']->id, 'debit', $base);
                 }
@@ -237,10 +279,29 @@ class GeneralLedgerBackfillService
                     $lines[] = $this->line((int) $vat['account']->id, 'debit', $tax);
                 }
                 $lines[] = $this->line((int) $pair['payment_account']->id, 'credit', $total);
+            } else {
+                if ($base > 0) {
+                    $lines[] = $this->line((int) $pair['deposit_to']->id, 'debit', $base);
+                }
+                if ($tax > 0) {
+                    $vat = $this->resolveVatAccount($businessId, 'input');
+                    if (! empty($vat['reason'])) {
+                        yield ['skip_reason' => $vat['reason']];
+                        continue;
+                    }
+                    $lines[] = $this->line((int) $vat['account']->id, 'debit', $tax);
+                }
+                if ($autoMap !== null && ! empty($autoMap['payment_lines'])) {
+                    foreach ($autoMap['payment_lines'] as $paymentLine) {
+                        $lines[] = $paymentLine;
+                    }
+                } else {
+                    $lines[] = $this->line((int) $pair['payment_account']->id, 'credit', $total);
+                }
             }
 
             $date = (string) ($transaction->transaction_date ?? '');
-            yield $this->group(
+            $candidate = $this->group(
                 $businessId,
                 Transaction::class,
                 (int) $transaction->id,
@@ -248,16 +309,27 @@ class GeneralLedgerBackfillService
                 $date,
                 (int) ($transaction->created_by ?? 1),
                 (string) ($transaction->invoice_no ?: $transaction->ref_no ?: strtoupper($type).'-'.$transaction->id),
-                'Backfill dari transaksi '.$type.' #'.$transaction->id.' dengan mapping lokasi saat ini.',
+                $autoMap === null
+                    ? 'Backfill dari transaksi '.$type.' #'.$transaction->id.' dengan mapping lokasi saat ini.'
+                    : 'Backfill dari transaksi '.$type.' #'.$transaction->id.' dengan pemetaan CoA terdekat otomatis.',
                 $lines,
-                true,
+                $autoMap === null,
                 (int) $transaction->id,
                 null,
-                [],
+                $autoMap['account_links'] ?? [],
                 $tax > 0,
                 null,
-                $this->mapInfo((int) ($transaction->location_id ?? 0), $mappingKey, $pair)
+                $this->mapInfo(
+                    (int) ($transaction->location_id ?? 0),
+                    $mappingKey,
+                    $pair,
+                    $autoMap === null ? 'location' : 'automatic_nearest',
+                    $autoMap['payment_account_score'] ?? null,
+                    $autoMap['deposit_to_score'] ?? null
+                )
             );
+            $candidate['uses_auto_map'] = $autoMap !== null;
+            yield $candidate;
         }
     }
 
@@ -326,13 +398,18 @@ class GeneralLedgerBackfillService
             $counterpartId = (int) ($type === 'sell'
                 ? ($map['payment_account'] ?? 0)
                 : ($map['deposit_to'] ?? 0));
-            if ($counterpartId < 1) {
-                yield ['skip_reason' => 'mapping_akun_lawan_tidak_lengkap'];
-                continue;
-            }
-            $counterpart = collect($this->accountingAccountsCache[$businessId] ?? [])->firstWhere('id', $counterpartId);
+            $counterpart = $counterpartId > 0
+                ? collect($this->accountingAccountsCache[$businessId] ?? [])->firstWhere('id', $counterpartId)
+                : null;
+            $autoMap = null;
             if (! $counterpart) {
-                yield ['skip_reason' => 'akun_lawan_tidak_ada_di_business'];
+                $autoMap = $this->inferOperationalRoleAccount($businessId, $type === 'sell' ? 'receivable' : 'payable');
+                $counterpart = $autoMap['account'] ?? null;
+            }
+            if (! $counterpart) {
+                yield ['skip_reason' => $autoMap['reason'] ?? ($counterpartId < 1
+                    ? 'mapping_akun_lawan_tidak_lengkap'
+                    : 'akun_lawan_tidak_ada_di_business')];
                 continue;
             }
             if ((int) $counterpart->id === (int) $sourceAccount['account']->id) {
@@ -355,7 +432,21 @@ class GeneralLedgerBackfillService
                 ];
             }
             $links = $sourceAccount['crosswalk'] ? [$sourceAccount['crosswalk']] : [];
-            yield $this->group(
+            $usesAutoMap = $autoMap !== null || ! empty($sourceAccount['automatic_nearest']);
+            $paymentScore = $autoMap !== null && $type === 'sell'
+                ? $autoMap['score']
+                : ($type === 'purchase' && ! empty($sourceAccount['automatic_nearest']) ? $sourceAccount['score'] : null);
+            $depositScore = $autoMap !== null && $type === 'purchase'
+                ? $autoMap['score']
+                : ($type === 'sell' && ! empty($sourceAccount['automatic_nearest']) ? $sourceAccount['score'] : null);
+            $mappingNote = 'Akun kas/bank dari transaction_payments.account_id; akun lawan dari mapping lokasi saat ini.';
+            if ($autoMap !== null) {
+                $mappingNote = 'Akun lawan '.$autoMap['source_name'].' dipetakan otomatis ke CoA terdekat.';
+            }
+            if (! empty($sourceAccount['automatic_nearest'])) {
+                $mappingNote .= ' Akun operasional '.$sourceAccount['source_name'].' dipetakan ke CoA terdekat dengan skor '.number_format((float) $sourceAccount['score'], 4, '.', '').'.';
+            }
+            $candidate = $this->group(
                 $businessId,
                 TransactionPayment::class,
                 (int) $payment->payment_id,
@@ -363,16 +454,25 @@ class GeneralLedgerBackfillService
                 (string) $payment->paid_on,
                 (int) ($payment->payment_created_by ?: 1),
                 (string) ($payment->ref_no ?: $payment->invoice_no ?: 'PAYMENT-'.$payment->payment_id),
-                'Akun kas/bank dari transaction_payments.account_id; akun lawan dari mapping lokasi saat ini.',
+                $mappingNote,
                 $lines,
-                true,
+                ! $usesAutoMap,
                 null,
                 (int) $payment->payment_id,
                 $links,
                 false,
                 null,
-                $this->mapInfo((int) ($payment->location_id ?? 0), $mapType, $pair)
+                $this->mapInfo(
+                    (int) ($payment->location_id ?? 0),
+                    $mapType,
+                    $pair,
+                    $usesAutoMap ? 'automatic_nearest' : 'location',
+                    $paymentScore,
+                    $depositScore
+                )
             );
+            $candidate['uses_auto_map'] = $usesAutoMap;
+            yield $candidate;
         }
     }
 
@@ -551,6 +651,22 @@ class GeneralLedgerBackfillService
                 $summary['current_map_details'][$key]['groups']++;
             }
         }
+        if (! empty($candidate['uses_auto_map'])) {
+            $summary['auto_mapped_groups']++;
+            if (! empty($candidate['map_info'])) {
+                $info = $candidate['map_info'];
+                $key = implode(':', [
+                    $info['location_id'],
+                    $info['mapping_key'],
+                    $info['payment_account_id'],
+                    $info['deposit_to_id'],
+                ]);
+                if (! isset($summary['auto_map_details'][$key])) {
+                    $summary['auto_map_details'][$key] = $info + ['groups' => 0];
+                }
+                $summary['auto_map_details'][$key]['groups']++;
+            }
+        }
         if (! empty($candidate['requires_vat_account'])) {
             $summary['vat_split_groups'] = ($summary['vat_split_groups'] ?? 0) + 1;
         }
@@ -717,15 +833,24 @@ class GeneralLedgerBackfillService
         ];
     }
 
-    private function mapInfo(int $locationId, string $mappingKey, array $pair): array
-    {
+    private function mapInfo(
+        int $locationId,
+        string $mappingKey,
+        array $pair,
+        string $mappingSource = 'location',
+        ?float $paymentAccountScore = null,
+        ?float $depositToScore = null
+    ): array {
         return [
             'location_id' => $locationId,
             'mapping_key' => $mappingKey,
+            'mapping_source' => $mappingSource,
             'payment_account_id' => (int) $pair['payment_account']->id,
             'payment_account_name' => (string) $pair['payment_account']->name,
+            'payment_account_score' => $paymentAccountScore,
             'deposit_to_id' => (int) $pair['deposit_to']->id,
             'deposit_to_name' => (string) $pair['deposit_to']->name,
+            'deposit_to_score' => $depositToScore,
         ];
     }
 
@@ -757,6 +882,365 @@ class GeneralLedgerBackfillService
         }
 
         return ['payment_account' => $payment, 'deposit_to' => $deposit];
+    }
+
+    private function inferTransactionPair(int $businessId, string $type): array
+    {
+        if ($type === 'sell') {
+            $revenue = $this->nearestAccountingAccount($businessId, 'Sales', ['income']);
+            $receivable = $this->inferOperationalRoleAccount($businessId, 'receivable');
+            if (! empty($revenue['reason']) || ! empty($receivable['reason'])) {
+                return ['reason' => $revenue['reason'] ?? $receivable['reason']];
+            }
+
+            return [
+                'pair' => ['payment_account' => $revenue['account'], 'deposit_to' => $receivable['account']],
+                'payment_account_score' => $revenue['score'],
+                'deposit_to_score' => $receivable['score'],
+                'account_links' => $receivable['crosswalk'] ? [$receivable['crosswalk']] : [],
+            ];
+        }
+
+        if ($type === 'purchase') {
+            $purchase = $this->nearestAccountingAccount($businessId, 'Purchases', ['expenses']);
+            $payable = $this->inferOperationalRoleAccount($businessId, 'payable');
+            if (! empty($purchase['reason']) || ! empty($payable['reason'])) {
+                return ['reason' => $purchase['reason'] ?? $payable['reason']];
+            }
+
+            return [
+                'pair' => ['payment_account' => $payable['account'], 'deposit_to' => $purchase['account']],
+                'payment_account_score' => $payable['score'],
+                'deposit_to_score' => $purchase['score'],
+                'account_links' => $payable['crosswalk'] ? [$payable['crosswalk']] : [],
+            ];
+        }
+
+        return ['reason' => 'jenis_transaksi_tidak_mendukung_pemetaan_otomatis'];
+    }
+
+    private function loadExpensePaymentGroups(int $businessId): array
+    {
+        if (! Schema::hasTable('transaction_payments')) {
+            return [];
+        }
+
+        $query = DB::table('transaction_payments as payment')
+            ->join('transactions as transaction', 'transaction.id', '=', 'payment.transaction_id')
+            ->where('transaction.business_id', $businessId)
+            ->where('payment.business_id', $businessId)
+            ->where('transaction.type', 'expense')
+            ->where('transaction.status', 'final')
+            ->groupBy('payment.transaction_id', 'payment.account_id')
+            ->selectRaw('payment.transaction_id, payment.account_id, SUM(payment.amount) as amount');
+
+        if (Schema::hasColumn('transaction_payments', 'deleted_at')) {
+            $query->whereNull('payment.deleted_at');
+        }
+        if (Schema::hasColumn('transactions', 'deleted_at')) {
+            $query->whereNull('transaction.deleted_at');
+        }
+        if (Schema::hasColumn('transaction_payments', 'is_return')) {
+            $query->where('payment.is_return', 0);
+        }
+        if (Schema::hasColumn('transaction_payments', 'is_advance')) {
+            $query->where('payment.is_advance', 0);
+        }
+
+        return $query->get()->groupBy('transaction_id')->all();
+    }
+
+    private function inferExpensePair(int $businessId, object $transaction): array
+    {
+        $category = $this->expenseCategoriesCache[$businessId][(int) ($transaction->expense_category_id ?? 0)] ?? null;
+        if (! $category) {
+            return ['reason' => 'kategori_biaya_tidak_ditemukan'];
+        }
+
+        $expenseAccount = $this->nearestAccountingAccount(
+            $businessId,
+            (string) $category->name,
+            $this->accountTypesForExpenseCategory((string) $category->name)
+        );
+        if (! empty($expenseAccount['reason'])) {
+            return $expenseAccount;
+        }
+
+        $total = round((float) ($transaction->final_total ?? 0), 4);
+        $payments = collect($this->expensePaymentGroupsCache[$businessId][(int) $transaction->id] ?? []);
+        $paidTotal = round((float) $payments->sum(fn ($payment) => (float) ($payment->amount ?? 0)), 4);
+        if ($paidTotal > $total + 0.0001) {
+            return ['reason' => 'pembayaran_melebihi_total_transaksi'];
+        }
+
+        $paymentLines = [];
+        $accountLinks = [];
+        $paymentAccounts = [];
+        foreach ($payments as $payment) {
+            $amount = round((float) ($payment->amount ?? 0), 4);
+            if ($amount == 0.0) {
+                continue;
+            }
+            $operationalAccountId = (int) ($payment->account_id ?? 0);
+            if ($operationalAccountId < 1) {
+                return ['reason' => 'akun_pembayaran_operasional_kosong'];
+            }
+
+            $resolved = $this->mainAccountMapping($businessId, $operationalAccountId);
+            if (! empty($resolved['reason'])) {
+                return $resolved;
+            }
+
+            $paymentAccounts[] = [
+                'account' => $resolved['account'],
+                'score' => $resolved['score'] ?? 1.0,
+                'source_name' => $resolved['source_name'] ?? '',
+            ];
+            if (! empty($resolved['crosswalk'])) {
+                $accountLinks[] = $resolved['crosswalk'];
+            }
+            $paymentLines[] = $this->line(
+                (int) $resolved['account']->id,
+                $amount > 0 ? 'credit' : 'debit',
+                abs($amount)
+            );
+        }
+
+        if ($paidTotal < $total - 0.0001) {
+            $payable = $this->inferOperationalRoleAccount($businessId, 'payable');
+            if (! empty($payable['reason'])) {
+                return $payable;
+            }
+            $paymentLines[] = $this->line((int) $payable['account']->id, 'credit', $total - $paidTotal);
+            $paymentAccounts[] = [
+                'account' => $payable['account'],
+                'score' => $payable['score'],
+                'source_name' => $payable['source_name'],
+            ];
+        }
+
+        if ($paymentAccounts === []) {
+            return ['reason' => 'akun_pembayaran_operasional_kosong'];
+        }
+
+        $primaryPayment = $paymentAccounts[0];
+        return [
+            'pair' => [
+                'payment_account' => $primaryPayment['account'],
+                'deposit_to' => $expenseAccount['account'],
+            ],
+            'payment_account_score' => $primaryPayment['score'],
+            'deposit_to_score' => $expenseAccount['score'],
+            'payment_lines' => $paymentLines,
+            'account_links' => array_values(array_unique($accountLinks, SORT_REGULAR)),
+            'payment_source_names' => array_values(array_unique(array_filter(array_column($paymentAccounts, 'source_name')))),
+        ];
+    }
+
+    private function inferOperationalRoleAccount(int $businessId, string $role): array
+    {
+        $roles = [
+            'receivable' => [
+                'operational_names' => ['Account Receivable', 'Accounts Receivable', 'Piutang Usaha'],
+                'coa_name' => 'Accounts Receivable',
+                'account_types' => ['asset'],
+            ],
+            'payable' => [
+                'operational_names' => ['Trade Payable', 'Account Payable', 'Accounts Payable', 'Utang Usaha', 'Hutang Usaha'],
+                'coa_name' => 'Trade Payable',
+                'account_types' => ['liability'],
+            ],
+        ];
+        if (! isset($roles[$role])) {
+            return ['reason' => 'peran_akun_operasional_tidak_dikenal'];
+        }
+
+        $roleConfig = $roles[$role];
+        $aliases = array_map([$this, 'normalizeAccountName'], $roleConfig['operational_names']);
+        $query = DB::table('accounts')->where('business_id', $businessId);
+        if (Schema::hasColumn('accounts', 'deleted_at')) {
+            $query->whereNull('deleted_at');
+        }
+        $operationalAccounts = $query->get(['id', 'name'])
+            ->filter(fn ($account) => in_array($this->normalizeAccountName((string) $account->name), $aliases, true))
+            ->values();
+
+        if ($operationalAccounts->count() === 1) {
+            $mapped = $this->mainAccountMapping($businessId, (int) $operationalAccounts[0]->id);
+            if (! empty($mapped['reason'])) {
+                return $mapped;
+            }
+
+            return [
+                'account' => $mapped['account'],
+                'score' => $mapped['score'] ?? 1.0,
+                'source_name' => (string) $operationalAccounts[0]->name,
+                'method' => ! empty($mapped['automatic_nearest'])
+                    ? 'nearest_name'
+                    : ($mapped['crosswalk'] === null ? 'account_id' : 'exact_name'),
+                'automatic_nearest' => ! empty($mapped['automatic_nearest']),
+                'crosswalk' => $mapped['crosswalk'] ?? null,
+            ];
+        }
+
+        $nearest = $this->nearestAccountingAccount($businessId, $roleConfig['coa_name'], $roleConfig['account_types']);
+        if (! empty($nearest['reason'])) {
+            return $nearest;
+        }
+
+        return $nearest + ['source_name' => $roleConfig['coa_name']];
+    }
+
+    private function nearestAccountingAccount(int $businessId, string $sourceName, array $allowedTypes): array
+    {
+        $candidates = array_values(array_filter(
+            $this->accountingAccountsCache[$businessId] ?? [],
+            fn ($account) => in_array(strtolower((string) ($account->account_primary_type ?? '')), $allowedTypes, true)
+        ));
+        if ($candidates === []) {
+            return ['reason' => 'akun_coa_untuk_tipe_tidak_ditemukan'];
+        }
+
+        $ranked = [];
+        foreach ($candidates as $account) {
+            $ranked[] = [
+                'account' => $account,
+                'score' => $this->accountNameSimilarity($sourceName, (string) $account->name),
+            ];
+        }
+        usort($ranked, function ($left, $right) {
+            $scoreOrder = $right['score'] <=> $left['score'];
+            if ($scoreOrder !== 0) {
+                return $scoreOrder;
+            }
+
+            return (int) $left['account']->id <=> (int) $right['account']->id;
+        });
+
+        return [
+            'account' => $ranked[0]['account'],
+            'score' => round((float) $ranked[0]['score'], 4),
+            'source_name' => $sourceName,
+            'method' => 'nearest_name',
+        ];
+    }
+
+    private function accountNameSimilarity(string $sourceName, string $candidateName): float
+    {
+        $source = $this->normalizeAccountName($sourceName);
+        $candidate = $this->normalizeAccountName($candidateName);
+        if ($source === '' || $candidate === '') {
+            return 0.0;
+        }
+        if ($source === $candidate) {
+            return 1.0;
+        }
+
+        $sourceTokens = array_values(array_unique(explode(' ', $source)));
+        $candidateTokens = array_values(array_unique(explode(' ', $candidate)));
+        $intersection = count(array_intersect($sourceTokens, $candidateTokens));
+        $union = count(array_unique(array_merge($sourceTokens, $candidateTokens)));
+        $tokenScore = $union > 0 ? $intersection / $union : 0.0;
+        $maxLength = max(strlen($source), strlen($candidate));
+        $stringScore = $maxLength > 0 ? 1 - (levenshtein($source, $candidate) / $maxLength) : 0.0;
+
+        return (0.7 * $tokenScore) + (0.3 * $stringScore);
+    }
+
+    private function normalizeAccountName(string $name): string
+    {
+        $name = strtolower(str_replace('&', ' and ', trim($name)));
+        $name = preg_replace('/[^a-z0-9]+/', ' ', $name) ?: '';
+        $tokens = array_filter(explode(' ', trim($name)), fn ($token) => $token !== '');
+        $aliases = [
+            'accounts' => 'account',
+            'receivables' => 'receivable',
+            'payables' => 'payable',
+            'purchases' => 'purchase',
+            'sales' => 'sale',
+            'expenses' => 'expense',
+            'travelling' => 'travel',
+            'transportation' => 'travel',
+            'transport' => 'travel',
+            'fuel' => 'travel',
+            'toll' => 'travel',
+            'parking' => 'travel',
+            'jalan' => 'travel',
+            'freight' => 'shipping',
+            'delivery' => 'shipping',
+            'shippingan' => 'shipping',
+            'repair' => 'maintenance',
+            'meals' => 'meal',
+            'food' => 'meal',
+            'entertainment' => 'meal',
+            'electricity' => 'utilities',
+            'water' => 'utilities',
+            'communication' => 'utilities',
+            'salaries' => 'wage',
+            'salary' => 'wage',
+            'overtime' => 'wage',
+            'bonus' => 'wage',
+            'thr' => 'wage',
+            'incentive' => 'wage',
+            'allowances' => 'wage',
+            'benefit' => 'wage',
+            'commission' => 'commission',
+            'fees' => 'commission',
+            'fee' => 'commission',
+            'administration' => 'charge',
+            'admin' => 'charge',
+            'charges' => 'charge',
+            'charge' => 'charge',
+            'amortisation' => 'depreciation',
+            'amortization' => 'depreciation',
+            'license' => 'tax',
+            'licenses' => 'tax',
+            'taxes' => 'tax',
+            'pph' => 'tax',
+            'loan' => 'debt',
+            'kasbon' => 'receivable',
+            'miscellaneous' => 'other',
+            'misc' => 'other',
+            'donations' => 'other',
+            'donation' => 'other',
+            'securities' => 'other',
+            'production' => 'cost',
+            'hpp' => 'cost',
+            'cos' => 'cost',
+            'discounts' => 'discount',
+            'souvenir' => 'advertising',
+        ];
+
+        return implode(' ', array_map(fn ($token) => $aliases[$token] ?? $token, $tokens));
+    }
+
+    private function accountTypesForOperationalAccount(string $name): array
+    {
+        $normalized = $this->normalizeAccountName($name);
+        if (preg_match('/\b(receivable|depreciation|cash|bank|giro|mandiri|petty)\b/', $normalized)) {
+            return ['asset'];
+        }
+        if (preg_match('/\b(payable|debt|utang|hutang)\b/', $normalized)) {
+            return ['liability'];
+        }
+        if (preg_match('/\b(expense|wage|discount|commission|charge)\b/', $normalized)) {
+            return ['expenses'];
+        }
+
+        return ['asset', 'liability', 'expenses', 'income', 'equity'];
+    }
+
+    private function accountTypesForExpenseCategory(string $name): array
+    {
+        $normalized = $this->normalizeAccountName($name);
+        if (preg_match('/\b(receivable)\b/', $normalized)) {
+            return ['asset'];
+        }
+        if (preg_match('/\b(debt|loan)\b/', $normalized)) {
+            return ['liability', 'expenses'];
+        }
+
+        return ['expenses'];
     }
 
     private function resolveVatAccount(int $businessId, string $direction): array
@@ -821,7 +1305,22 @@ class GeneralLedgerBackfillService
             return $this->mainAccountCache[$cacheKey] = ['reason' => 'nama_akun_utama_ambigu'];
         }
         if ($matches === []) {
-            return $this->mainAccountCache[$cacheKey] = ['reason' => 'akun_utama_belum_dimapping'];
+            $nearest = $this->nearestAccountingAccount(
+                $businessId,
+                $mainAccountName,
+                $this->accountTypesForOperationalAccount($mainAccountName)
+            );
+            if (! empty($nearest['reason'])) {
+                return $this->mainAccountCache[$cacheKey] = ['reason' => 'akun_utama_belum_dimapping'];
+            }
+
+            return $this->mainAccountCache[$cacheKey] = [
+                'account' => $nearest['account'],
+                'crosswalk' => null,
+                'automatic_nearest' => true,
+                'score' => $nearest['score'],
+                'source_name' => $mainAccountName,
+            ];
         }
         if (! empty($matches[0]->account_id) && (int) $matches[0]->account_id !== $accountId) {
             return $this->mainAccountCache[$cacheKey] = ['reason' => 'crosswalk_akun_bertentangan'];

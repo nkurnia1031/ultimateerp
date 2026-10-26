@@ -169,6 +169,187 @@ class GeneralLedgerBackfillCommandTest extends TestCase
         $this->assertSame(3, DB::table('accounting_acc_trans_mappings')->count());
     }
 
+    public function test_backfills_sales_and_purchase_groups_when_location_defaults_are_missing(): void
+    {
+        DB::table('business_locations')->where('id', 70)->update(['accounting_default_map' => null]);
+        DB::table('accounts')->insert([
+            ['id' => 204, 'business_id' => 7, 'name' => 'Account Receivable'],
+            ['id' => 203, 'business_id' => 7, 'name' => 'Account Payable'],
+        ]);
+        DB::table('accounting_accounts')->where('id', 107)->update(['name' => 'Trade Payable']);
+        DB::table('accounting_accounts')->insert([
+            ['id' => 113, 'business_id' => 7, 'name' => 'Sales', 'account_primary_type' => 'income', 'status' => 'active', 'created_by' => 1],
+            ['id' => 114, 'business_id' => 7, 'name' => 'Purchases', 'account_primary_type' => 'expenses', 'status' => 'active', 'created_by' => 1],
+        ]);
+        DB::table('transactions')->insert([
+            [
+                'id' => 930,
+                'business_id' => 7,
+                'location_id' => 70,
+                'type' => 'sell',
+                'status' => 'final',
+                'transaction_date' => '2023-04-01 10:00:00',
+                'final_total' => 110,
+                'total_before_tax' => 100,
+                'tax_amount' => 10,
+                'created_by' => 1,
+                'invoice_no' => 'INV-930',
+                'ref_no' => 'SALE-930',
+            ],
+            [
+                'id' => 931,
+                'business_id' => 7,
+                'location_id' => 70,
+                'type' => 'purchase',
+                'status' => 'received',
+                'transaction_date' => '2023-04-02 10:00:00',
+                'final_total' => 220,
+                'total_before_tax' => 200,
+                'tax_amount' => 20,
+                'created_by' => 1,
+                'invoice_no' => 'PUR-931',
+                'ref_no' => 'PURCHASE-931',
+            ],
+        ]);
+        DB::table('transaction_payments')->insert([
+            [
+                'id' => 530,
+                'transaction_id' => 930,
+                'business_id' => 7,
+                'account_id' => 201,
+                'amount' => 50,
+                'paid_on' => '2023-04-03 10:00:00',
+                'created_by' => 1,
+                'is_return' => 0,
+                'is_advance' => 0,
+            ],
+            [
+                'id' => 531,
+                'transaction_id' => 931,
+                'business_id' => 7,
+                'account_id' => 201,
+                'amount' => 100,
+                'paid_on' => '2023-04-04 10:00:00',
+                'created_by' => 1,
+                'is_return' => 0,
+                'is_advance' => 0,
+            ],
+        ]);
+
+        $this->artisan('accounting:backfill-general-ledger', ['business_id' => 7])
+            ->expectsOutputToContain('Planned groups: 4')
+            ->expectsOutputToContain('Auto-mapped groups: 4')
+            ->expectsOutputToContain('Nearest CoA matches: 2')
+            ->expectsOutputToContain('deposit_to #101 Accounts Receivable')
+            ->expectsOutputToContain('payment_account #107 Trade Payable')
+            ->expectsOutputToContain('Debit total: 480.00')
+            ->expectsOutputToContain('Credit total: 480.00')
+            ->assertExitCode(0);
+
+        $this->assertSame(0, DB::table('accounting_accounts_transactions')->count());
+
+        $this->artisan('accounting:backfill-general-ledger', ['business_id' => 7, '--apply' => true])
+            ->expectsOutputToContain('Applied groups: 4')
+            ->assertExitCode(0);
+
+        $rows = DB::table('accounting_accounts_transactions')->get();
+        $this->assertCount(10, $rows);
+        $this->assertSame(480.0, (float) $rows->where('type', 'debit')->sum('amount'));
+        $this->assertSame(480.0, (float) $rows->where('type', 'credit')->sum('amount'));
+        $this->assertSame(201, (int) DB::table('accounting_accounts')->where('id', 104)->value('account_id'));
+        $this->assertNull(DB::table('accounting_accounts')->where('id', 101)->value('account_id'));
+        $this->assertNull(DB::table('accounting_accounts')->where('id', 107)->value('account_id'));
+        $this->assertSame(1, DB::table('accounting_accounts_transactions')->where('accounting_account_id', 103)->count());
+        $this->assertSame(1, DB::table('accounting_accounts_transactions')->where('accounting_account_id', 105)->count());
+    }
+
+    public function test_expense_category_nearest_mapping_takes_precedence_over_generic_location_default(): void
+    {
+        DB::table('business_locations')->where('id', 70)->update([
+            'accounting_default_map' => json_encode([
+                'expense' => ['payment_account' => 107, 'deposit_to' => 116],
+            ]),
+        ]);
+        DB::table('accounts')->insert([
+            ['id' => 203, 'business_id' => 7, 'name' => 'Trade Payable'],
+            ['id' => 205, 'business_id' => 7, 'name' => 'Cash'],
+        ]);
+        DB::table('expense_categories')->insert(['id' => 5, 'business_id' => 7, 'name' => 'Meals']);
+        DB::table('accounting_accounts')->where('business_id', 7)->delete();
+        DB::table('accounting_accounts')->insert([
+            ['id' => 107, 'business_id' => 7, 'name' => 'Trade Payable', 'account_primary_type' => 'liability', 'account_id' => 203, 'status' => 'active', 'created_by' => 1],
+            ['id' => 103, 'business_id' => 7, 'name' => 'VAT Out', 'account_primary_type' => 'liability', 'account_id' => null, 'status' => 'active', 'created_by' => 1],
+            ['id' => 105, 'business_id' => 7, 'name' => 'VAT In', 'account_primary_type' => 'asset', 'account_id' => null, 'status' => 'active', 'created_by' => 1],
+            ['id' => 115, 'business_id' => 7, 'name' => 'Cash and cash equivalents', 'account_primary_type' => 'asset', 'account_id' => null, 'status' => 'active', 'created_by' => 1],
+            ['id' => 116, 'business_id' => 7, 'name' => 'Meals and entertainment', 'account_primary_type' => 'expenses', 'account_id' => null, 'status' => 'active', 'created_by' => 1],
+        ]);
+        DB::table('transactions')->insert([
+            [
+                'id' => 940,
+                'business_id' => 7,
+                'location_id' => 70,
+                'type' => 'expense',
+                'status' => 'final',
+                'expense_category_id' => 5,
+                'transaction_date' => '2023-05-01 10:00:00',
+                'final_total' => 55,
+                'total_before_tax' => 50,
+                'tax_amount' => 5,
+                'created_by' => 1,
+                'invoice_no' => 'EXP-940',
+                'ref_no' => 'EXPENSE-940',
+            ],
+            [
+                'id' => 941,
+                'business_id' => 7,
+                'location_id' => 70,
+                'type' => 'expense',
+                'status' => 'final',
+                'expense_category_id' => 5,
+                'transaction_date' => '2023-05-02 10:00:00',
+                'final_total' => 22,
+                'total_before_tax' => 22,
+                'tax_amount' => 0,
+                'created_by' => 1,
+                'invoice_no' => 'EXP-941',
+                'ref_no' => 'EXPENSE-941',
+            ],
+        ]);
+        DB::table('transaction_payments')->insert([
+            'id' => 540,
+            'transaction_id' => 940,
+            'business_id' => 7,
+            'account_id' => 205,
+            'amount' => 55,
+            'paid_on' => '2023-05-01 10:00:00',
+            'created_by' => 1,
+            'is_return' => 0,
+            'is_advance' => 0,
+        ]);
+
+        $this->artisan('accounting:backfill-general-ledger', ['business_id' => 7])
+            ->expectsOutputToContain('Planned groups: 2')
+            ->expectsOutputToContain('Auto-mapped groups: 2')
+            ->expectsOutputToContain('Automatic nearest CoA mappings used:')
+            ->expectsOutputToContain('[expense_5]')
+            ->expectsOutputToContain('Trade Payable')
+            ->expectsOutputToContain('Debit total: 77.00')
+            ->expectsOutputToContain('Credit total: 77.00')
+            ->assertExitCode(0);
+
+        $this->artisan('accounting:backfill-general-ledger', ['business_id' => 7, '--apply' => true])
+            ->expectsOutputToContain('Applied groups: 2')
+            ->assertExitCode(0);
+
+        $rows = DB::table('accounting_accounts_transactions')->orderBy('id')->get();
+        $this->assertCount(5, $rows);
+        $this->assertSame(72.0, (float) $rows->where('accounting_account_id', 116)->sum('amount'));
+        $this->assertSame(5.0, (float) $rows->where('accounting_account_id', 105)->sum('amount'));
+        $this->assertSame(55.0, (float) $rows->where('accounting_account_id', 115)->sum('amount'));
+        $this->assertSame(22.0, (float) $rows->where('accounting_account_id', 107)->sum('amount'));
+        $this->assertNull(DB::table('accounting_accounts')->where('id', 115)->value('account_id'));
+    }
+
     public function test_purchase_and_expense_split_input_vat_using_location_mappings(): void
     {
         DB::table('transactions')->insert([
@@ -334,6 +515,12 @@ class GeneralLedgerBackfillCommandTest extends TestCase
             $table->text('accounting_default_map')->nullable();
         });
         Schema::create('accounts', function (Blueprint $table) {
+            $table->increments('id');
+            $table->unsignedInteger('business_id');
+            $table->string('name');
+            $table->softDeletes();
+        });
+        Schema::create('expense_categories', function (Blueprint $table) {
             $table->increments('id');
             $table->unsignedInteger('business_id');
             $table->string('name');
