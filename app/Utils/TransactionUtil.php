@@ -5463,39 +5463,15 @@ class TransactionUtil extends Util
     }
 
     /**
-     * Build the compact product and variation labels used by the Sell list.
+     * Build product, variation, and quantity rows for the Sell list.
      */
-    public function formatSellProductSummary($sellLines): string
+    public function formatSellProductSummary($sellLines): array
     {
-        return collect($sellLines)
+        $sellLines = collect($sellLines)
             ->filter(fn ($line) => empty($line->parent_sell_line_id) && ! empty($line->product_id))
-            ->map(function ($line) {
-                $product = $line->product;
-                if (! $product) {
-                    return null;
-                }
+            ->values();
 
-                $label = trim((string) $product->name);
-                if ($product->type === 'variable') {
-                    $variation = $line->variations;
-                    $variationParts = [
-                        optional($variation?->product_variation)->name,
-                        optional($variation)->name,
-                    ];
-                    foreach ($variationParts as $variationPart) {
-                        $variationPart = trim((string) $variationPart);
-                        if ($variationPart !== '') {
-                            $label .= ' - ' . $variationPart;
-                        }
-                    }
-                }
-
-                return $label;
-            })
-            ->filter()
-            ->unique()
-            ->sort()
-            ->implode('||');
+        return (new \App\Presenters\PurchaseIndexProductPresenter())->summarize($sellLines);
     }
 
     /**

@@ -120,9 +120,11 @@ class SellController extends Controller
                 'sell_lines' => function ($query) {
                     $query->whereNull('parent_sell_line_id')
                         ->whereNotNull('product_id')
-                        ->select('id', 'transaction_id', 'product_id', 'variation_id');
+                        ->select('id', 'transaction_id', 'product_id', 'variation_id', 'quantity', 'sub_unit_id', 'parent_sell_line_id');
                 },
-                'sell_lines.product:id,name,type',
+                'sell_lines.product:id,name,type,unit_id',
+                'sell_lines.product.unit:id,short_name',
+                'sell_lines.sub_unit:id,short_name',
                 'sell_lines.variations:id,name,product_variation_id',
                 'sell_lines.variations.product_variation:id,name',
             ]);

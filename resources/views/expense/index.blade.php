@@ -144,6 +144,7 @@
                                     <th>@lang('sale.payment_status')</th>
                                     <th>@lang('Tags')</th>
                                     <th>@lang('product.tax')</th>
+                                    <th>@lang('purchase.total_before_tax')</th>
                                     <th>@lang('sale.total_amount')</th>
                                     <th>@lang('purchase.payment_due')</th>
                                     <th>@lang('expense.expense_for')</th>
@@ -157,6 +158,8 @@
                                     <td colspan="8"><strong>@lang('sale.total'):</strong></td>
                                     <td class="footer_payment_status_count"></td>
                                     <td></td>
+                                    <td></td>
+                                    <td class="footer_expense_subtotal_before_tax"></td>
                                     <td class="footer_expense_total"></td>
                                     <td class="footer_total_due"></td>
                                     <td colspan="4"></td>
@@ -259,6 +262,11 @@
                         name: 'tr.name'
                     },
                     {
+                        data: 'total_before_tax',
+                        name: 'transactions.total_before_tax',
+                        searchable: false
+                    },
+                    {
                         data: 'final_total',
                         name: 'final_total'
                     },
@@ -284,9 +292,11 @@
                     }
                 ],
                 fnDrawCallback: function(row, data, start, end, display) {
+                    var expense_subtotal_before_tax = sum_table_col($('#expense_table'), 'total-before-tax');
                     var expense_total = sum_table_col($('#expense_table'), 'final-total');
                     var total_due = sum_table_col($('#expense_table'), 'payment_due');
 
+                    $('.footer_expense_subtotal_before_tax').html(__currency_trans_from_en(expense_subtotal_before_tax));
                     $('.footer_expense_total').html(__currency_trans_from_en(expense_total));
                     $('.footer_total_due').html(__currency_trans_from_en(total_due));
 

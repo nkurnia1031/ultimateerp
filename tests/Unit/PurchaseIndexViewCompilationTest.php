@@ -31,6 +31,22 @@ class PurchaseIndexViewCompilationTest extends TestCase
         }
     }
 
+    public function test_sales_and_expense_index_views_compile_with_before_tax_columns(): void
+    {
+        foreach (['sell/index.blade.php', 'expense/index.blade.php'] as $view) {
+            $source = file_get_contents(dirname(__DIR__, 2).'/resources/views/'.$view);
+            $compiledView = $this->compiler()->compileString($source);
+
+            try {
+                token_get_all($compiledView, TOKEN_PARSE);
+            } catch (ParseError $error) {
+                $this->fail($view.' compiles to invalid PHP: '.$error->getMessage());
+            }
+
+            $this->assertStringContainsString("@lang('purchase.total_before_tax')", $source);
+        }
+    }
+
     public function test_purchase_product_partial_displays_every_product(): void
     {
         $compiledView = $this->compiler()->compileString(file_get_contents(

@@ -77,6 +77,7 @@
 
                             <th>@lang('sale.payment_status')</th>
                             <th>@lang('lang_v1.payment_method')</th>
+                            <th>@lang('purchase.total_before_tax')</th>
                             <th>@lang('sale.total_amount')</th>
                             <th>@lang('sale.total_paid')</th>
                             <th>@lang('lang_v1.sell_due')</th>
@@ -109,6 +110,7 @@
 
                             <td class="footer_payment_status_count"></td>
                             <td class="payment_method_count"></td>
+                            <td class="footer_total_before_tax"></td>
                             <td class="footer_sale_total"></td>
                             <td class="footer_total_paid"></td>
                             <td class="footer_total_remaining"></td>
@@ -257,6 +259,11 @@
                         "searchable": false
                     },
                     {
+                        data: 'total_before_tax',
+                        name: 'transactions.total_before_tax',
+                        searchable: false
+                    },
+                    {
                         data: 'final_total',
                         name: 'final_total'
                     },
@@ -361,10 +368,12 @@
                 },
                 "footerCallback": function(row, data, start, end, display) {
                     var footer_sale_total = 0;
+                    var footer_total_before_tax = 0;
                     var footer_total_paid = 0;
                     var footer_total_remaining = 0;
                     var footer_total_sell_return_due = 0;
                     for (var r in data) {
+                        footer_total_before_tax += parseFloat($(data[r].total_before_tax).data('orig-value')) || 0;
                         footer_sale_total += $(data[r].final_total).data('orig-value') ? parseFloat($(
                             data[r].final_total).data('orig-value')) : 0;
                         footer_total_paid += $(data[r].total_paid).data('orig-value') ? parseFloat($(
@@ -380,6 +389,7 @@
                         footer_total_sell_return_due));
                     $('.footer_total_remaining').html(__currency_trans_from_en(footer_total_remaining));
                     $('.footer_total_paid').html(__currency_trans_from_en(footer_total_paid));
+                    $('.footer_total_before_tax').html(__currency_trans_from_en(footer_total_before_tax));
                     $('.footer_sale_total').html(__currency_trans_from_en(footer_sale_total));
 
                     $('.footer_payment_status_count').html(__count_status(data, 'payment_status'));

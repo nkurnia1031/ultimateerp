@@ -135,31 +135,69 @@ class SellProductSearchTest extends TestCase
     public function test_product_summary_includes_variation_parts_and_ignores_child_lines(): void
     {
         $variation = (object) [
+            'id' => 13,
             'name' => 'Large',
             'product_variation' => (object) ['name' => 'Size'],
         ];
+        $product = (object) [
+            'id' => 10,
+            'name' => 'Safety Vest',
+            'type' => 'variable',
+            'unit' => (object) ['short_name' => 'Pcs'],
+        ];
         $variableLine = (object) [
             'product_id' => 10,
+            'variation_id' => 13,
+            'sub_unit_id' => null,
+            'quantity' => 1.25,
             'parent_sell_line_id' => null,
-            'product' => (object) ['name' => 'Safety Vest', 'type' => 'variable'],
+            'product' => $product,
+            'variations' => $variation,
+        ];
+        $sameVariationLine = (object) [
+            'product_id' => 10,
+            'variation_id' => 13,
+            'sub_unit_id' => null,
+            'quantity' => 2.75,
+            'parent_sell_line_id' => null,
+            'product' => $product,
             'variations' => $variation,
         ];
         $singleLine = (object) [
             'product_id' => 11,
+            'variation_id' => null,
+            'sub_unit_id' => null,
+            'quantity' => 2,
             'parent_sell_line_id' => null,
-            'product' => (object) ['name' => 'Work Boots', 'type' => 'single'],
+            'product' => (object) [
+                'id' => 11,
+                'name' => 'Work Boots',
+                'type' => 'single',
+                'unit' => (object) ['short_name' => 'Pcs'],
+            ],
             'variations' => null,
         ];
         $childLine = (object) [
             'product_id' => 12,
+            'variation_id' => null,
+            'sub_unit_id' => null,
+            'quantity' => 99,
             'parent_sell_line_id' => 10,
             'product' => (object) ['name' => 'Child modifier', 'type' => 'single'],
             'variations' => null,
         ];
 
-        $summary = $this->transactionUtil->formatSellProductSummary(collect([$variableLine, $singleLine, $childLine]));
+        $summary = $this->transactionUtil->formatSellProductSummary(collect([
+            $variableLine,
+            $sameVariationLine,
+            $singleLine,
+            $childLine,
+        ]));
 
-        $this->assertSame('Safety Vest - Size - Large||Work Boots', $summary);
+        $this->assertSame([
+            ['name' => 'Safety Vest - Size - Large', 'quantity' => 4.0, 'unit' => 'Pcs'],
+            ['name' => 'Work Boots', 'quantity' => 2.0, 'unit' => 'Pcs'],
+        ], $summary);
     }
 
     private function sellQuery()

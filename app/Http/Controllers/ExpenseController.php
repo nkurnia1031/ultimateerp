@@ -166,6 +166,7 @@ class ExpenseController extends Controller
                     DB::raw("(SELECT GROUP_CONCAT(el.description SEPARATOR '\n') FROM expense_lines el WHERE el.transaction_id = transactions.id ) AS deskripsi"),
                     'payment_status',
                     'additional_notes',
+                    'transactions.total_before_tax',
                     'final_total',
                     'transactions.is_recurring',
                     'transactions.recur_interval',
@@ -302,6 +303,10 @@ class ExpenseController extends Controller
                     </ul></div>')
                 ->removeColumn('id')
                 ->editColumn(
+                    'total_before_tax',
+                    '<span class="display_currency total-before-tax" data-currency_symbol="true" data-orig-value="@if($type=="expense_refund"){{-1 * $total_before_tax}}@else{{$total_before_tax}}@endif">@if($type=="expense_refund") - @endif @format_currency($total_before_tax)</span>'
+                )
+                ->editColumn(
                     'final_total',
                     '<span class="display_currency final-total" data-currency_symbol="true" data-orig-value="@if($type=="expense_refund"){{-1 * $final_total}}@else{{$final_total}}@endif">@if($type=="expense_refund") - @endif @format_currency($final_total)</span>'
                 )
@@ -420,7 +425,7 @@ class ExpenseController extends Controller
 
                     return $ref_no;
                 })
-                ->rawColumns(['deskripsi', 'tags', 'final_total', 'action', 'payment_status', 'contact_name', 'payment_due', 'ref_no', 'recur_details'])
+                ->rawColumns(['deskripsi', 'tags', 'total_before_tax', 'final_total', 'action', 'payment_status', 'contact_name', 'payment_due', 'ref_no', 'recur_details'])
                 ->make(true);
         }
 

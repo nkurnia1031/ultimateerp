@@ -106,4 +106,11 @@ class PurchaseIndexQueryTest extends TestCase
         $this->assertSame(250.0, (float) $purchase->total_before_tax);
         $this->assertNotSame((float) $purchase->final_total, (float) $purchase->total_before_tax);
     }
+
+    public function test_sales_index_query_selects_the_transaction_before_tax_total(): void
+    {
+        $salesQuery = (new TransactionUtil())->getListSells(1)->getQuery();
+
+        $this->assertContains('transactions.total_before_tax', $salesQuery->columns);
+    }
 }

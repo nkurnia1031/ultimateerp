@@ -16,7 +16,7 @@ class PurchaseIndexProductPresenter
 
             $name = trim((string) $product->name);
             if ($product->type === 'variable') {
-                $variation = $line->variation ?? null;
+                $variation = $line->variation ?? $line->variations ?? null;
                 $variationParts = [
                     data_get($variation, 'product_variation.name'),
                     data_get($variation, 'name'),
