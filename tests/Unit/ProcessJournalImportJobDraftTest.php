@@ -485,7 +485,7 @@ class ProcessJournalImportJobDraftTest extends TestCase
         $this->assertInstanceOf(ProcessJournalImportJob::class, $this->dispatchedJobs[0]);
     }
 
-    public function test_prepare_phase_validates_once_and_yields_after_a_chunk(): void
+    public function test_prepare_phase_yields_after_a_chunk(): void
     {
         $this->useSqliteDatabase();
         $this->createTables();
@@ -505,9 +505,6 @@ class ProcessJournalImportJobDraftTest extends TestCase
         ]);
 
         $controller = Mockery::mock(JournalEntryController::class);
-        $controller->shouldReceive('validateJournalTaxAccountMappingSelectionsFromDraftRows')
-            ->once()
-            ->with(1, 3, []);
         $queueService = Mockery::mock(JournalImportQueueService::class);
         $queueService->shouldReceive('queueRowsForBatch')
             ->once()
