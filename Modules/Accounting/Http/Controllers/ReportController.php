@@ -56,7 +56,7 @@ class ReportController extends Controller
     {
         $businessId = (int) $request->session()->get('user.business_id');
         $this->authorizeReports($businessId);
-        $filters = $this->generalLedgerFilters($request, $businessId);
+        $filters = $this->generalLedgerFilters($request, $businessId, $generalLedgerReportService);
         $report = $generalLedgerReportService->paginate(
             $businessId,
             $filters['start_date'],
@@ -64,10 +64,11 @@ class ReportController extends Controller
             $filters['account_id'],
             (int) ($request->input('page', 1))
         );
-        $accounts = AccountingAccount::where('business_id', $businessId)
-            ->orderBy('gl_code')
-            ->orderBy('name')
-            ->get(['id', 'name', 'gl_code']);
+        $accounts = $generalLedgerReportService->mappedCashBankAccounts($businessId);
+        $canManageAccounts = auth()->user()->can('accounting.manage_accounts');
+        $mappingAccounts = $canManageAccounts
+            ? $generalLedgerReportService->accountMappingReview($businessId, $filters['start_date'], $filters['end_date'])
+            : collect();
         $reportRows = $report->getCollection();
         $businessName = session('business.name') ?: get_business_name();
         $currencyPrecision = max(0, min(4, (int) session('business.currency_precision', 2)));
@@ -76,16 +77,42 @@ class ReportController extends Controller
         $thousandSeparator = $currency['thousand_separator'] ?? ',';
 
         return view('accounting::report.general_ledger', compact(
-            'accounts', 'report', 'reportRows', 'businessName', 'currencyPrecision',
+            'accounts', 'mappingAccounts', 'canManageAccounts', 'report', 'reportRows', 'businessName', 'currencyPrecision',
             'decimalSeparator', 'thousandSeparator'
         ) + $filters);
+    }
+
+    public function saveGeneralLedgerAccountMappings(Request $request, GeneralLedgerReportService $generalLedgerReportService)
+    {
+        $businessId = (int) $request->session()->get('user.business_id');
+        $this->authorizeManageAccounts($businessId);
+        $validated = $request->validate([
+            'mappings' => 'required|array',
+            'mappings.*' => 'nullable|in:cash,bank,excluded',
+            'start_date' => 'nullable|date_format:Y-m-d',
+            'end_date' => 'nullable|date_format:Y-m-d|after_or_equal:start_date',
+        ]);
+
+        $saved = $generalLedgerReportService->saveCashBankAccountMappings(
+            $businessId,
+            (int) $request->user()->id,
+            $validated['mappings']
+        );
+
+        $filters = array_filter([
+            'start_date' => $validated['start_date'] ?? null,
+            'end_date' => $validated['end_date'] ?? null,
+        ], fn ($value) => $value !== null && $value !== '');
+
+        return redirect()->route('accounting.generalLedger', $filters)
+            ->with('status', $saved > 0 ? 'Pemetaan akun kas/bank berhasil disimpan.' : 'Tidak ada perubahan pemetaan akun.');
     }
 
     public function exportGeneralLedger(Request $request, GeneralLedgerReportService $generalLedgerReportService)
     {
         $businessId = (int) $request->session()->get('user.business_id');
         $this->authorizeReports($businessId);
-        $filters = $this->generalLedgerFilters($request, $businessId);
+        $filters = $this->generalLedgerFilters($request, $businessId, $generalLedgerReportService);
         $reportRows = $generalLedgerReportService->all(
             $businessId,
             $filters['start_date'],
@@ -114,7 +141,16 @@ class ReportController extends Controller
         }
     }
 
-    private function generalLedgerFilters(Request $request, int $businessId): array
+    private function authorizeManageAccounts(int $businessId): void
+    {
+        if (! (auth()->user()->can('superadmin') ||
+            $this->moduleUtil->hasThePermissionInSubscription($businessId, 'accounting_module')) ||
+            ! auth()->user()->can('accounting.manage_accounts')) {
+            abort(403, 'Unauthorized action.');
+        }
+    }
+
+    private function generalLedgerFilters(Request $request, int $businessId, GeneralLedgerReportService $generalLedgerReportService): array
     {
         $validated = $request->validate([
             'start_date' => 'nullable|required_with:end_date|date_format:Y-m-d',
@@ -132,7 +168,12 @@ class ReportController extends Controller
         }
 
         $accountId = empty($validated['account_id']) ? null : (int) $validated['account_id'];
-        if ($accountId !== null && ! AccountingAccount::where('business_id', $businessId)->where('id', $accountId)->exists()) {
+        $mappedAccount = $accountId === null
+            ? true
+            : $generalLedgerReportService->mappedCashBankAccounts($businessId)->contains(function ($account) use ($accountId) {
+                return (int) $account->id === $accountId;
+            });
+        if (! $mappedAccount) {
             abort(404);
         }
 

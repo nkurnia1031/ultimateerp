@@ -63,6 +63,16 @@ class GeneralLedgerExportTest extends TestCase
             $table->string('source_record_type')->nullable();
             $table->unsignedInteger('source_record_id')->nullable();
         });
+        Schema::create('accounting_general_ledger_cash_bank_mappings', function (Blueprint $table) {
+            $table->increments('id');
+            $table->unsignedInteger('business_id');
+            $table->unsignedInteger('accounting_account_id');
+            $table->string('classification', 20);
+            $table->unsignedInteger('created_by')->nullable();
+            $table->unsignedInteger('updated_by')->nullable();
+            $table->timestamps();
+            $table->unique(['business_id', 'accounting_account_id']);
+        });
         Schema::create('system', function (Blueprint $table) {
             $table->increments('id');
             $table->string('key')->unique();
@@ -78,6 +88,7 @@ class GeneralLedgerExportTest extends TestCase
             ['id' => 2, 'name' => 'Bank Lain', 'gl_code' => '1002', 'business_id' => 1, 'account_primary_type' => 'asset', 'status' => 'active'],
             ['id' => 3, 'name' => 'Akun Business Lain', 'gl_code' => '1003', 'business_id' => 2, 'account_primary_type' => 'asset', 'status' => 'active'],
         ]);
+        $this->mapAccounts([1, 2]);
         DB::table('accounting_accounts_transactions')->insert([
             ['id' => 1, 'accounting_account_id' => 1, 'amount' => 100, 'type' => 'debit', 'sub_type' => 'opening_balance', 'operation_date' => '2021-12-31 10:00:00', 'note' => 'Opening sebelum periode'],
             ['id' => 2, 'accounting_account_id' => 1, 'amount' => 20, 'type' => 'debit', 'sub_type' => 'journal_entry', 'operation_date' => '2022-01-10 10:00:00', 'note' => 'BARIS YANG HARUS DIEKSPOR'],
@@ -141,6 +152,7 @@ class GeneralLedgerExportTest extends TestCase
             'account_primary_type' => 'asset',
             'status' => 'active',
         ]);
+        $this->mapAccounts([1]);
         DB::table('accounting_accounts_transactions')->insert([
             'id' => 1,
             'accounting_account_id' => 1,
@@ -179,12 +191,12 @@ class GeneralLedgerExportTest extends TestCase
         unset($spreadsheet);
         unlink($spreadsheetPath);
 
-        $this->assertStringContainsString('Akun Dormant', $workbookText);
+        $this->assertStringContainsString('Kas/Bank Gabungan', $workbookText);
         $this->assertStringContainsString('Saldo Awal', $workbookText);
         $this->assertStringContainsString('250', $workbookText);
     }
 
-    public function test_paginated_report_carries_each_accounts_balance_across_pages(): void
+    public function test_paginated_report_carries_the_combined_balance_across_pages(): void
     {
         DB::table('accounting_accounts')->insert([
             'id' => 1,
@@ -194,6 +206,7 @@ class GeneralLedgerExportTest extends TestCase
             'account_primary_type' => 'asset',
             'status' => 'active',
         ]);
+        $this->mapAccounts([1]);
         DB::table('accounting_accounts_transactions')->insert([
             ['id' => 1, 'accounting_account_id' => 1, 'amount' => 100, 'type' => 'debit', 'sub_type' => 'opening_balance', 'operation_date' => '2021-12-31 10:00:00', 'note' => 'Opening'],
         ]);
@@ -226,6 +239,133 @@ class GeneralLedgerExportTest extends TestCase
         $this->assertCount(1, $report->items());
         $this->assertSame('LAST PAGE', $report->items()[0]['note']);
         $this->assertSame(195.0, $report->items()[0]['balance']);
+    }
+
+    public function test_consolidated_report_has_one_opening_balance_and_neutralizes_only_internal_transfers(): void
+    {
+        DB::table('accounting_accounts')->insert([
+            ['id' => 1, 'name' => 'Kas Utama', 'gl_code' => '1001', 'business_id' => 1, 'account_primary_type' => 'asset', 'status' => 'active'],
+            ['id' => 2, 'name' => 'Bank Utama', 'gl_code' => '1002', 'business_id' => 1, 'account_primary_type' => 'asset', 'status' => 'active'],
+            ['id' => 3, 'name' => 'Akun Tidak Dipetakan', 'gl_code' => '1003', 'business_id' => 1, 'account_primary_type' => 'asset', 'status' => 'active'],
+        ]);
+        $this->mapAccounts([1, 2]);
+        DB::table('accounting_acc_trans_mappings')->insert([
+            'id' => 1,
+            'business_id' => 1,
+            'ref_no' => 'REF-TRANSFER-INTERNAL',
+            'type' => 'transfer',
+            'note' => 'Transfer kas ke bank',
+        ]);
+        DB::table('accounting_accounts_transactions')->insert([
+            ['id' => 1, 'accounting_account_id' => 1, 'amount' => 100, 'type' => 'debit', 'sub_type' => 'opening_balance', 'operation_date' => '2021-12-31 10:00:00', 'note' => 'Opening kas'],
+            ['id' => 2, 'accounting_account_id' => 2, 'amount' => 50, 'type' => 'debit', 'sub_type' => 'opening_balance', 'operation_date' => '2021-12-31 10:00:00', 'note' => 'Opening bank'],
+            ['id' => 3, 'accounting_account_id' => 1, 'amount' => 20, 'type' => 'debit', 'sub_type' => 'journal_entry', 'operation_date' => '2022-01-03 10:00:00', 'note' => 'Kas masuk'],
+            ['id' => 4, 'accounting_account_id' => 2, 'amount' => 5, 'type' => 'credit', 'sub_type' => 'journal_entry', 'operation_date' => '2022-01-04 10:00:00', 'note' => 'Bank keluar'],
+            ['id' => 5, 'accounting_account_id' => 1, 'acc_trans_mapping_id' => 1, 'amount' => 10, 'type' => 'debit', 'sub_type' => 'transfer', 'operation_date' => '2022-01-05 10:00:00', 'note' => 'Transfer'],
+            ['id' => 6, 'accounting_account_id' => 2, 'acc_trans_mapping_id' => 1, 'amount' => 10, 'type' => 'credit', 'sub_type' => 'transfer', 'operation_date' => '2022-01-05 10:00:00', 'note' => 'Transfer'],
+            ['id' => 7, 'accounting_account_id' => 3, 'amount' => 999, 'type' => 'debit', 'sub_type' => 'journal_entry', 'operation_date' => '2022-01-06 10:00:00', 'note' => 'Tidak dipetakan'],
+        ]);
+
+        $service = app(GeneralLedgerReportService::class);
+        $report = $service->paginate(1, '2022-01-01', '2022-01-31', null);
+
+        $this->assertSame(2, $report->total());
+        $this->assertSame([
+            ['Saldo Awal', 150.0],
+            ['Kas masuk', 170.0],
+            ['Bank keluar', 165.0],
+        ], array_map(fn ($row) => [$row['description'], $row['balance']], $report->items()));
+        $this->assertSame(
+            array_column($report->items(), 'balance'),
+            array_column($service->all(1, '2022-01-01', '2022-01-31'), 'balance')
+        );
+
+        $user = Mockery::mock(User::class)->makePartial();
+        $user->shouldReceive('can')->with('superadmin')->andReturn(true);
+        $user->shouldReceive('can')->with('accounting.view_reports')->andReturn(true);
+        $response = $this->withoutMiddleware([
+            \App\Http\Middleware\SetSessionData::class,
+            \App\Http\Middleware\Language::class,
+            \App\Http\Middleware\Timezone::class,
+            \App\Http\Middleware\AdminSidebarMenu::class,
+        ])->actingAs($user)
+            ->withSession([
+                'user' => ['business_id' => 1],
+                'business' => ['name' => 'CV Demo', 'currency_precision' => 2, 'quantity_precision' => 2],
+                'currency' => ['decimal_separator' => '.', 'thousand_separator' => ','],
+            ])
+            ->get(route('accounting.generalLedger.export', [
+                'start_date' => '2022-01-01',
+                'end_date' => '2022-01-31',
+            ]));
+        $response->assertOk();
+        $spreadsheetPath = $response->baseResponse->getFile()->getPathname();
+        $spreadsheet = IOFactory::load($spreadsheetPath);
+        $exportText = $this->spreadsheetText($spreadsheet);
+        $spreadsheet->disconnectWorksheets();
+        unset($spreadsheet);
+        unlink($spreadsheetPath);
+        $this->assertStringContainsString('Kas/Bank Gabungan', $exportText);
+        $this->assertStringContainsString('Kas Utama', $exportText);
+        $this->assertStringContainsString('Bank Utama', $exportText);
+        $this->assertStringNotContainsString('REF-TRANSFER-INTERNAL', $exportText);
+        $this->assertStringNotContainsString('Tidak dipetakan', $exportText);
+
+        $singleAccount = $service->paginate(1, '2022-01-01', '2022-01-31', 1);
+        $this->assertSame(2, $singleAccount->total());
+        $this->assertSame('Transfer', $singleAccount->items()[2]['description']);
+        $this->assertSame(130.0, $singleAccount->items()[2]['balance']);
+    }
+
+    public function test_cash_bank_mapping_endpoint_is_scoped_to_the_active_business(): void
+    {
+        DB::table('accounting_accounts')->insert([
+            ['id' => 1, 'name' => 'Kas Business Aktif', 'gl_code' => '1001', 'business_id' => 1, 'account_primary_type' => 'asset', 'status' => 'active'],
+            ['id' => 2, 'name' => 'Akun Business Lain', 'gl_code' => '1002', 'business_id' => 2, 'account_primary_type' => 'asset', 'status' => 'active'],
+        ]);
+
+        $user = Mockery::mock(User::class)->makePartial();
+        $user->setAttribute('id', 9);
+        $user->shouldReceive('can')->with('superadmin')->andReturn(true);
+        $user->shouldReceive('can')->with('accounting.view_reports')->andReturn(true);
+        $user->shouldReceive('can')->with('accounting.manage_accounts')->andReturn(true);
+        $middleware = [
+            \App\Http\Middleware\SetSessionData::class,
+            \App\Http\Middleware\Language::class,
+            \App\Http\Middleware\Timezone::class,
+            \App\Http\Middleware\AdminSidebarMenu::class,
+        ];
+
+        $this->withoutMiddleware($middleware)->actingAs($user)->withSession([
+            'user' => ['business_id' => 1],
+            'business' => ['name' => 'CV Demo', 'currency_precision' => 2, 'quantity_precision' => 2],
+        ])->post(route('accounting.generalLedger.accountMappings.save'), [
+            'start_date' => '2022-01-01',
+            'end_date' => '2022-01-31',
+            'mappings' => [1 => 'cash'],
+        ])->assertRedirect(route('accounting.generalLedger', [
+            'start_date' => '2022-01-01',
+            'end_date' => '2022-01-31',
+        ]));
+
+        $response = $this->from(route('accounting.generalLedger'))->actingAs($user)->withSession([
+            'user' => ['business_id' => 1],
+            'business' => ['name' => 'CV Demo', 'currency_precision' => 2, 'quantity_precision' => 2],
+        ])->post(route('accounting.generalLedger.accountMappings.save'), [
+            'start_date' => '2022-01-01',
+            'end_date' => '2022-01-31',
+            'mappings' => [2 => 'bank'],
+        ]);
+
+        $response->assertSessionHasErrors('mappings');
+        $this->assertDatabaseHas('accounting_general_ledger_cash_bank_mappings', [
+            'business_id' => 1,
+            'accounting_account_id' => 1,
+            'classification' => 'cash',
+        ]);
+        $this->assertDatabaseMissing('accounting_general_ledger_cash_bank_mappings', [
+            'accounting_account_id' => 2,
+        ]);
     }
 
     public function test_plate_uses_related_asset_unit_before_tags_and_tags_as_fallback(): void
@@ -305,5 +445,20 @@ class GeneralLedgerExportTest extends TestCase
         return implode("\n", array_map(function ($row) {
             return implode(' ', array_map('strval', $row));
         }, $spreadsheet->getActiveSheet()->toArray(null, true, true, false)));
+    }
+
+    private function mapAccounts(array $accountIds): void
+    {
+        foreach ($accountIds as $index => $accountId) {
+            DB::table('accounting_general_ledger_cash_bank_mappings')->insert([
+                'business_id' => 1,
+                'accounting_account_id' => $accountId,
+                'classification' => $index === 0 ? 'cash' : 'bank',
+                'created_by' => 1,
+                'updated_by' => 1,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
     }
 }

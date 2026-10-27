@@ -5,7 +5,8 @@
     .general-ledger-table .text-center, .general-ledger-table .report-title, .general-ledger-table .report-period { text-align: center; }
     .general-ledger-table .report-title { font-size: 16px; font-weight: bold; }
     .general-ledger-table .report-period { font-size: 13px; font-weight: bold; }
-    .general-ledger-table .account-heading th { background-color: #e9eef4; font-weight: bold; }
+    .general-ledger-table .ledger-account-source, .general-ledger-table .ledger-detail-label { color: #555; font-size: 10px; }
+    .general-ledger-table .ledger-detail-label { font-weight: bold; }
 </style>
 
 @include('accounting::report.partials.general_ledger_table', ['isExport' => true])

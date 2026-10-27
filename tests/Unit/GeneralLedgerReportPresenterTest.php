@@ -84,6 +84,32 @@ class GeneralLedgerReportPresenterTest extends TestCase
         $this->assertSame(0.4, $rows[99]['balance']);
     }
 
+    public function test_it_keeps_source_category_labels_and_classification_review_on_presented_rows(): void
+    {
+        $rows = (new GeneralLedgerReportPresenter())->presentAccountEntries('asset', [[
+            'id' => 1,
+            'operation_date' => '2022-01-01',
+            'type' => 'debit',
+            'amount' => 20,
+            'description' => 'Pembelian Perlengkapan',
+            'needs_classification_review' => false,
+            'products' => [[
+                'name' => 'Sparepart',
+                'quantity' => 2,
+                'net_amount' => 20,
+                'tax_amount' => 0,
+                'description' => 'Pembelian Perlengkapan',
+                'detail_label' => 'Sparepart',
+                'needs_classification_review' => false,
+            ]],
+        ]], 150, 2);
+
+        $this->assertSame('Pembelian Perlengkapan', $rows[0]['description']);
+        $this->assertSame('Sparepart', $rows[0]['detail_label']);
+        $this->assertFalse($rows[0]['needs_classification_review']);
+        $this->assertSame(170.0, $rows[0]['balance']);
+    }
+
     public function test_it_keeps_a_posting_on_one_row_when_product_amounts_cannot_be_matched(): void
     {
         $rows = (new GeneralLedgerReportPresenter())->presentAccountEntries('expense', [[

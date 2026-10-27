@@ -46,6 +46,12 @@ class GeneralLedgerReportPresenter
 
             $product = null;
             if ($products !== []) {
+                $productDescriptions = array_values(array_unique(array_filter(array_map(function ($item) {
+                    return trim((string) ($item['description'] ?? ''));
+                }, $products))));
+                $detailLabels = array_values(array_unique(array_filter(array_map(function ($item) {
+                    return trim((string) ($item['detail_label'] ?? ''));
+                }, $products))));
                 $product = [
                     'name' => implode('; ', array_values(array_filter(array_map(function ($item) {
                         return trim((string) ($item['name'] ?? ''));
@@ -53,6 +59,9 @@ class GeneralLedgerReportPresenter
                     'quantity' => array_sum(array_map(function ($item) {
                         return (float) ($item['quantity'] ?? 0);
                     }, $products)),
+                    'description' => count($productDescriptions) === 1 ? $productDescriptions[0] : ($entry['description'] ?? ''),
+                    'detail_label' => count($detailLabels) === 1 ? $detailLabels[0] : '',
+                    'needs_classification_review' => ! empty($entry['needs_classification_review']) || count($productDescriptions) > 1,
                 ];
             }
 
@@ -74,6 +83,11 @@ class GeneralLedgerReportPresenter
         $row['product'] = trim((string) ($product['name'] ?? ''));
         $row['quantity'] = isset($product['quantity']) ? (float) $product['quantity'] : null;
         $row['unit'] = trim((string) ($product['unit'] ?? ''));
+        if ($product && array_key_exists('description', $product)) {
+            $row['description'] = $product['description'];
+            $row['detail_label'] = $product['detail_label'] ?? '';
+            $row['needs_classification_review'] = ! empty($product['needs_classification_review']);
+        }
         $row['amount'] = $amount;
         $row['debit'] = $isDebit ? $amount : 0.0;
         $row['credit'] = $isDebit ? 0.0 : $amount;

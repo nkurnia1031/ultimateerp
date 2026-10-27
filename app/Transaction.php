@@ -85,6 +85,16 @@ class Transaction extends Model
         return $this->hasMany(\App\ExpenseLine::class, 'transaction_id');
     }
 
+    public function expense_category()
+    {
+        return $this->belongsTo(\App\ExpenseCategory::class, 'expense_category_id');
+    }
+
+    public function expense_sub_category()
+    {
+        return $this->belongsTo(\App\ExpenseCategory::class, 'expense_sub_category_id');
+    }
+
     public function location()
     {
         return $this->belongsTo(\App\BusinessLocation::class, 'location_id');

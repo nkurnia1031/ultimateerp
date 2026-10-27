@@ -22,24 +22,23 @@
         </tr>
     </thead>
     <tbody>
-        @php $lastAccountId = null; @endphp
         @forelse($reportRows as $row)
-            @if($lastAccountId !== $row['account_id'])
-                <tr class="account-heading">
-                    <th colspan="9">
-                        Akun: {{ $row['account_name'] }}
-                        @if(!empty($row['gl_code'])) <span class="account-code">({{ $row['gl_code'] }})</span> @endif
-                    </th>
-                </tr>
-                @php $lastAccountId = $row['account_id']; @endphp
-            @endif
-            <tr class="{{ !empty($row['is_opening_balance']) ? 'opening-balance-row' : '' }}">
+            <tr class="{{ !empty($row['is_opening_balance']) ? 'opening-balance-row' : '' }} {{ !empty($row['needs_classification_review']) ? 'needs-classification-review' : '' }}">
                 <td>{{ \Carbon::parse($row['operation_date'])->format('d/m/Y') }}</td>
                 <td>
                     <strong>{{ $row['description'] ?? '' }}</strong>
-                    @if(!empty($row['reference']))<div>{{ $row['reference'] }}</div>@endif
+                    @if(!empty($row['account_name']))
+                        <div class="ledger-account-source">Akun: {{ $row['account_name'] }}@if(!empty($row['gl_code'])) ({{ $row['gl_code'] }})@endif</div>
+                    @endif
+                    @if(!empty($row['detail_label']))<div class="ledger-detail-label">{{ $row['detail_label'] }}</div>@endif
+                    @if(!empty($row['needs_classification_review']))
+                        <span class="label label-warning">Perlu klasifikasi</span>
+                    @endif
                 </td>
-                <td>{{ $row['note'] ?? '' }}</td>
+                <td>
+                    @if(!empty($row['reference']))<div>{{ $row['reference'] }}</div>@endif
+                    @if(!empty($row['note']) && ($row['note'] ?? '') !== ($row['description'] ?? ''))<div>{{ $row['note'] }}</div>@endif
+                </td>
                 <td>
                     {{ $row['product'] ?? '' }}
                     @if(isset($row['quantity']))

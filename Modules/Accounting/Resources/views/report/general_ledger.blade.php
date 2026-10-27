@@ -12,10 +12,12 @@
         .general-ledger-table { min-width: 1120px; font-size: 13px; }
         .general-ledger-table th, .general-ledger-table td { vertical-align: top !important; padding: 6px 8px !important; }
         .general-ledger-table thead th { background: #f5f5f5; white-space: nowrap; }
-        .general-ledger-table .account-heading th { background: #e9eef4; font-size: 13px; }
-        .general-ledger-table .account-code { color: #555; font-weight: normal; }
         .general-ledger-table .opening-balance-row { font-weight: 600; }
         .general-ledger-table .product-quantity { white-space: nowrap; }
+        .general-ledger-table .ledger-account-source, .general-ledger-table .ledger-detail-label { color: #666; font-size: 12px; }
+        .general-ledger-table .ledger-detail-label { font-weight: 600; }
+        .general-ledger-mapping-list { max-height: 420px; overflow: auto; }
+        .general-ledger-mapping-list .form-control { min-width: 170px; }
         .general-ledger-pagination { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
         @media print {
             .content-header, .general-ledger-filters, .general-ledger-pagination, .accounting-navigation { display: none !important; }
@@ -32,6 +34,67 @@
     </section>
 
     <section class="content">
+        @if(session('status'))
+            <div class="alert alert-success">{{ session('status') }}</div>
+        @endif
+
+        @if($accounts->isEmpty())
+            <div class="alert alert-warning">
+                Belum ada akun Kas/Bank yang dipetakan. Laporan tetap kosong sampai akun diklasifikasikan secara eksplisit.
+            </div>
+        @endif
+
+        @if($canManageAccounts)
+        <div class="box box-default">
+            <div class="box-header with-border">
+                <h3 class="box-title">Pemetaan akun untuk Buku Kas/Bank</h3>
+                <span class="pull-right">{{ $accounts->count() }} akun Kas/Bank aktif</span>
+            </div>
+            <div class="box-body">
+                <p class="text-muted">Pilih Kas atau Bank hanya untuk akun yang memang menampung uang. Tandai akun lain sebagai bukan kas/bank; jenis akun CoA tidak dipakai untuk menebak pemetaan.</p>
+                <details {{ $accounts->isEmpty() ? 'open' : '' }}>
+                    <summary>Kelola pemetaan dan akun yang perlu ditinjau ({{ $mappingAccounts->count() }} akun CoA)</summary>
+                    <form method="post" action="{{ route('accounting.generalLedger.accountMappings.save') }}" class="m-t-10">
+                        @csrf
+                        <input type="hidden" name="start_date" value="{{ $start_date }}">
+                        <input type="hidden" name="end_date" value="{{ $end_date }}">
+                        <div class="table-responsive general-ledger-mapping-list">
+                            <table class="table table-condensed table-striped">
+                                <thead>
+                                    <tr>
+                                        <th>Akun CoA</th>
+                                        <th>Posting tersedia</th>
+                                        <th>Klasifikasi Buku Kas/Bank</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach($mappingAccounts as $mappingAccount)
+                                        <tr>
+                                            <td>
+                                                @if($mappingAccount->gl_code)<strong>{{ $mappingAccount->gl_code }}</strong> — @endif
+                                                {{ $mappingAccount->name }}
+                                            </td>
+                                            <td>{{ number_format((int) ($mappingAccount->posting_count ?? 0)) }}</td>
+                                            <td>
+                                                <select class="form-control input-sm" name="mappings[{{ $mappingAccount->id }}]">
+                                                    <option value="" {{ empty($mappingAccount->classification) ? 'selected' : '' }}>Belum ditinjau</option>
+                                                    <option value="cash" {{ $mappingAccount->classification === 'cash' ? 'selected' : '' }}>Kas</option>
+                                                    <option value="bank" {{ $mappingAccount->classification === 'bank' ? 'selected' : '' }}>Bank</option>
+                                                    <option value="excluded" {{ $mappingAccount->classification === 'excluded' ? 'selected' : '' }}>Bukan kas/bank</option>
+                                                </select>
+                                            </td>
+                                        </tr>
+                                    @endforeach
+                                </tbody>
+                            </table>
+                        </div>
+                        <button type="submit" class="btn btn-primary">Simpan pemetaan</button>
+                    </form>
+                </details>
+            </div>
+        </div>
+        @endif
+
         <div class="box box-warning general-ledger-filters">
             <div class="box-body">
                 <form method="get" action="{{ route('accounting.generalLedger') }}">
@@ -50,12 +113,12 @@
                         </div>
                         <div class="col-md-4">
                             <div class="form-group">
-                                <label for="account_id">Akun</label>
+                                <label for="account_id">Filter akun Kas/Bank</label>
                                 <select class="form-control select2" id="account_id" name="account_id">
-                                    <option value="">Semua akun</option>
+                                    <option value="">Semua Kas/Bank</option>
                                     @foreach($accounts as $account)
                                         <option value="{{ $account->id }}" {{ (string) $account_id === (string) $account->id ? 'selected' : '' }}>
-                                            {{ $account->gl_code ? $account->gl_code.' — ' : '' }}{{ $account->name }}
+                                            {{ $account->classification === 'bank' ? 'Bank' : 'Kas' }} — {{ $account->gl_code ? $account->gl_code.' — ' : '' }}{{ $account->name }}
                                         </option>
                                     @endforeach
                                 </select>
@@ -79,7 +142,7 @@
                 <div class="general-ledger-heading">
                     <h2>{{ $businessName }}</h2>
                     <h3>BUKU BESAR</h3>
-                    <p>PERIODE {{ \Carbon::parse($start_date)->format('d/m/Y') }} — {{ \Carbon::parse($end_date)->format('d/m/Y') }}</p>
+                    <p>BUKU KAS/BANK GABUNGAN · PERIODE {{ \Carbon::parse($start_date)->format('d/m/Y') }} — {{ \Carbon::parse($end_date)->format('d/m/Y') }}</p>
                 </div>
 
                 <div class="general-ledger-wrap">
@@ -88,7 +151,7 @@
 
                 @if($report->total() > 0)
                     <div class="general-ledger-pagination">
-                        <span>Menampilkan posting {{ $report->firstItem() }}–{{ $report->lastItem() }} dari {{ $report->total() }}. Produk ditampilkan pada baris masing-masing.</span>
+                        <span>Menampilkan {{ $report->firstItem() }}–{{ $report->lastItem() }} dari {{ $report->total() }} posting. Saldo menggabungkan akun Kas/Bank terpetakan.</span>
                         {{ $report->appends(request()->except('page'))->links() }}
                     </div>
                 @endif

@@ -15,34 +15,33 @@ class GeneralLedgerReportService
 
     private $accountComponentService;
 
+    private $cashBankMappingService;
+
     public function __construct(
         GeneralLedgerReportPresenter $presenter,
-        JournalImportAccountComponentService $accountComponentService
+        JournalImportAccountComponentService $accountComponentService,
+        GeneralLedgerCashBankMappingService $cashBankMappingService
     ) {
         $this->presenter = $presenter;
         $this->accountComponentService = $accountComponentService;
+        $this->cashBankMappingService = $cashBankMappingService;
     }
 
     public function paginate(int $businessId, string $startDate, string $endDate, ?int $accountId, int $page = 1): LengthAwarePaginator
     {
-        $query = $this->entryQuery($businessId, $startDate, $endDate, $accountId);
+        $accountIds = $this->cashBankMappingService->accountIds($businessId, $accountId);
+        $query = $this->entryQuery($businessId, $startDate, $endDate, $accountIds);
         $total = (clone $query)->count('aat.id');
         $page = max(1, $page);
         $offset = ($page - 1) * self::DEFAULT_PAGE_SIZE;
-        $periodAccountIds = (clone $query)
-            ->distinct()
-            ->pluck('aat.accounting_account_id')
-            ->map(fn ($id) => (int) $id)
-            ->all();
         $entries = (clone $query)
-            ->orderBy('aa.id')
             ->orderBy('aat.operation_date')
             ->orderBy('aat.id')
             ->offset($offset)
             ->limit(self::DEFAULT_PAGE_SIZE)
             ->get();
 
-        $rows = $this->presentPage($businessId, $entries, $startDate, $endDate, $accountId, $periodAccountIds, $page);
+        $rows = $this->presentPage($businessId, $entries, $startDate, $accountIds, $page);
 
         return new LengthAwarePaginator(
             $rows,
@@ -55,16 +54,31 @@ class GeneralLedgerReportService
 
     public function all(int $businessId, string $startDate, string $endDate, ?int $accountId = null): array
     {
-        $entries = $this->entryQuery($businessId, $startDate, $endDate, $accountId)
-            ->orderBy('aa.id')
+        $accountIds = $this->cashBankMappingService->accountIds($businessId, $accountId);
+        $entries = $this->entryQuery($businessId, $startDate, $endDate, $accountIds)
             ->orderBy('aat.operation_date')
             ->orderBy('aat.id')
             ->get();
 
-        return $this->presentAll($businessId, $entries, $startDate, $endDate, $accountId);
+        return $this->presentAll($businessId, $entries, $startDate, $accountIds);
     }
 
-    private function entryQuery(int $businessId, string $startDate, string $endDate, ?int $accountId)
+    public function mappedCashBankAccounts(int $businessId)
+    {
+        return $this->cashBankMappingService->mappedAccounts($businessId);
+    }
+
+    public function accountMappingReview(int $businessId, string $startDate, string $endDate)
+    {
+        return $this->cashBankMappingService->reviewAccounts($businessId, $startDate, $endDate);
+    }
+
+    public function saveCashBankAccountMappings(int $businessId, int $userId, array $mappings): int
+    {
+        return $this->cashBankMappingService->save($businessId, $userId, $mappings);
+    }
+
+    private function entryQuery(int $businessId, string $startDate, string $endDate, array $accountIds)
     {
         $query = DB::table('accounting_accounts_transactions as aat')
             ->join('accounting_accounts as aa', 'aa.id', '=', 'aat.accounting_account_id')
@@ -94,232 +108,191 @@ class GeneralLedgerReportService
                 'atm.source_record_type',
                 'atm.source_record_id',
             ]);
+        $this->applyActivePostingScope($query);
 
-        if ($accountId !== null) {
-            $query->where('aa.id', $accountId);
+        if ($accountIds === []) {
+            $query->whereRaw('1 = 0');
+
+            return $query;
+        }
+
+        $query->whereIn('aa.id', $accountIds);
+        $neutralTransferIds = $this->internalTransferMappingIds($businessId, $startDate, $endDate, $accountIds);
+        if ($neutralTransferIds !== []) {
+            $query->where(function ($query) use ($neutralTransferIds) {
+                $query->whereNull('aat.acc_trans_mapping_id')
+                    ->orWhereNotIn('aat.acc_trans_mapping_id', $neutralTransferIds);
+            });
         }
 
         return $query;
     }
 
-    private function presentPage(int $businessId, $entries, string $startDate, string $endDate, ?int $accountId, array $periodAccountIds, int $page): array
+    private function internalTransferMappingIds(int $businessId, string $startDate, string $endDate, array $accountIds): array
     {
-        if ($entries->isEmpty()) {
-            return $page === 1
-                ? $this->openingOnlyRows($businessId, $startDate, $accountId, $periodAccountIds)
-                : [];
-        }
-
-        $accountIds = $entries->pluck('accounting_account_id')->unique()->map(fn ($id) => (int) $id)->all();
-        $openingBalances = $this->balancesBefore($businessId, $accountIds, $startDate);
-        $cutoffs = [];
-        foreach ($entries->groupBy('accounting_account_id') as $accountId => $accountEntries) {
-            $first = $accountEntries->first();
-            $cutoffs[(int) $accountId] = [
-                'date' => $first->operation_date,
-                'id' => (int) $first->id,
-            ];
-        }
-        $priorBalances = $this->balancesBeforePageRows($businessId, $accountIds, $cutoffs, $startDate, $endDate);
-        $sourceContext = $this->loadTransactions($businessId, $entries);
-        $transactions = $sourceContext['transactions'];
-        $plates = $this->loadPlates($businessId, $transactions->keys()->map(fn ($id) => (int) $id)->all());
-        $pageRows = [];
-
-        foreach ($entries->groupBy('accounting_account_id') as $groupAccountId => $accountEntries) {
-            $account = $accountEntries->first();
-            $openingBalance = (float) ($openingBalances[(int) $groupAccountId] ?? 0);
-            $prior = $priorBalances[(int) $groupAccountId] ?? ['balance' => 0, 'count' => 0];
-            $startingBalance = $openingBalance + (float) $prior['balance'];
-
-            if ((int) $prior['count'] === 0 && abs($openingBalance) > 0.00001) {
-                $pageRows[] = $this->openingBalanceRow($account, $startDate, $openingBalance);
-            }
-
-            $accountEntriesForPresenter = $this->presenterEntries($businessId, $accountEntries, $transactions, $plates, $sourceContext['payment_transaction_ids']);
-            $presented = $this->presenter->presentAccountEntries(
-                (string) ($account->account_primary_type ?? ''),
-                $accountEntriesForPresenter,
-                $startingBalance,
-                $this->currencyPrecision()
-            );
-
-            foreach ($presented as $row) {
-                $row['account_id'] = (int) $groupAccountId;
-                $row['account_name'] = $account->account_name;
-                $row['gl_code'] = $account->gl_code;
-                $pageRows[] = $row;
-            }
-        }
-
-        if ($page === 1) {
-            $pageRows = array_merge($pageRows, $this->openingOnlyRows($businessId, $startDate, $accountId, $periodAccountIds));
-        }
-
-        usort($pageRows, function ($left, $right) {
-            $accountOrder = (int) $left['account_id'] <=> (int) $right['account_id'];
-            if ($accountOrder !== 0) {
-                return $accountOrder;
-            }
-            $dateOrder = strcmp((string) $left['operation_date'], (string) $right['operation_date']);
-
-            return $dateOrder !== 0 ? $dateOrder : ((int) ($left['id'] ?? 0) <=> (int) ($right['id'] ?? 0));
-        });
-
-        return $pageRows;
-    }
-
-    private function presentAll(int $businessId, $entries, string $startDate, string $endDate, ?int $accountId): array
-    {
-        $periodAccountIds = $entries->pluck('accounting_account_id')->unique()->map(fn ($id) => (int) $id)->all();
-        $openingOnlyRows = $this->openingOnlyRows($businessId, $startDate, $accountId, $periodAccountIds);
-        if ($entries->isEmpty()) {
-            return $openingOnlyRows;
-        }
-
-        $accountIds = $entries->pluck('accounting_account_id')->unique()->map(fn ($id) => (int) $id)->all();
-        $openingBalances = $this->balancesBefore($businessId, $accountIds, $startDate);
-        $sourceContext = $this->loadTransactions($businessId, $entries);
-        $transactions = $sourceContext['transactions'];
-        $plates = $this->loadPlates($businessId, $transactions->keys()->map(fn ($id) => (int) $id)->all());
-        $rows = [];
-
-        foreach ($entries->groupBy('accounting_account_id') as $accountId => $accountEntries) {
-            $account = $accountEntries->first();
-            $openingBalance = (float) ($openingBalances[(int) $accountId] ?? 0);
-            if (abs($openingBalance) > 0.00001) {
-                $rows[] = $this->openingBalanceRow($account, $startDate, $openingBalance);
-            }
-
-            $presented = $this->presenter->presentAccountEntries(
-                (string) ($account->account_primary_type ?? ''),
-                $this->presenterEntries($businessId, $accountEntries, $transactions, $plates, $sourceContext['payment_transaction_ids']),
-                $openingBalance,
-                $this->currencyPrecision()
-            );
-
-            foreach ($presented as $row) {
-                $row['account_id'] = (int) $accountId;
-                $row['account_name'] = $account->account_name;
-                $row['gl_code'] = $account->gl_code;
-                $rows[] = $row;
-            }
-        }
-
-        $rows = array_merge($rows, $openingOnlyRows);
-        usort($rows, function ($left, $right) {
-            $accountOrder = (int) $left['account_id'] <=> (int) $right['account_id'];
-            if ($accountOrder !== 0) {
-                return $accountOrder;
-            }
-            $dateOrder = strcmp((string) $left['operation_date'], (string) $right['operation_date']);
-
-            return $dateOrder !== 0 ? $dateOrder : ((int) ($left['id'] ?? 0) <=> (int) ($right['id'] ?? 0));
-        });
-
-        return $rows;
-    }
-
-    private function openingOnlyRows(int $businessId, string $startDate, ?int $accountId, array $periodAccountIds): array
-    {
-        $accountsQuery = DB::table('accounting_accounts as aa')->where('aa.business_id', $businessId);
-        if ($accountId !== null) {
-            $accountsQuery->where('aa.id', $accountId);
-        }
-        if ($periodAccountIds !== []) {
-            $accountsQuery->whereNotIn('aa.id', $periodAccountIds);
-        }
-
-        $accounts = $accountsQuery->orderBy('aa.id')->get([
-            'aa.id as accounting_account_id',
-            'aa.name as account_name',
-            'aa.gl_code',
-            'aa.account_primary_type',
-        ]);
-        if ($accounts->isEmpty()) {
+        if ($accountIds === [] || ! Schema::hasTable('accounting_acc_trans_mappings')) {
             return [];
         }
 
-        $balances = $this->balancesBefore(
-            $businessId,
-            $accounts->pluck('accounting_account_id')->map(fn ($id) => (int) $id)->all(),
-            $startDate
-        );
-        $rows = [];
-        foreach ($accounts as $account) {
-            $balance = (float) ($balances[(int) $account->accounting_account_id] ?? 0);
-            if (abs($balance) > 0.00001) {
-                $rows[] = $this->openingBalanceRow($account, $startDate, $balance);
-            }
-        }
+        $start = $startDate.' 00:00:00';
+        $end = \Carbon::parse($endDate)->endOfDay()->format('Y-m-d H:i:s');
+        $candidateQuery = DB::table('accounting_accounts_transactions as aat')
+            ->join('accounting_accounts as aa', 'aa.id', '=', 'aat.accounting_account_id')
+            ->join('accounting_acc_trans_mappings as atm', function ($join) {
+                $join->on('atm.id', '=', 'aat.acc_trans_mapping_id')
+                    ->on('atm.business_id', '=', 'aa.business_id');
+            })
+            ->where('aa.business_id', $businessId)
+            ->whereIn('aa.id', $accountIds)
+            ->whereBetween('aat.operation_date', [$start, $end])
+            ->where(function ($query) {
+                $query->where('atm.type', 'transfer')
+                    ->orWhere('aat.sub_type', 'transfer');
+            })
+            ->whereNotNull('aat.acc_trans_mapping_id')
+            ->distinct();
+        $this->applyActivePostingScope($candidateQuery);
+        $candidateIds = $candidateQuery->pluck('aat.acc_trans_mapping_id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
 
-        return $rows;
+        if ($candidateIds === []) {
+            return [];
+        }
+        $placeholders = implode(', ', array_fill(0, count($accountIds), '?'));
+        $outsideScope = "SUM(CASE WHEN aat.accounting_account_id NOT IN ({$placeholders}) THEN 1 ELSE 0 END)";
+
+        $transferGroupQuery = DB::table('accounting_accounts_transactions as aat')
+            ->join('accounting_accounts as aa', 'aa.id', '=', 'aat.accounting_account_id')
+            ->where('aa.business_id', $businessId)
+            ->whereIn('aat.acc_trans_mapping_id', $candidateIds)
+            ->select('aat.acc_trans_mapping_id')
+            ->selectRaw('COUNT(DISTINCT aat.accounting_account_id) as account_count')
+            ->selectRaw($outsideScope.' as outside_scope_count', $accountIds)
+            ->selectRaw("SUM(CASE WHEN aat.type = 'debit' THEN aat.amount ELSE 0 END) as debit_total")
+            ->selectRaw("SUM(CASE WHEN aat.type = 'credit' THEN aat.amount ELSE 0 END) as credit_total")
+            ->groupBy('aat.acc_trans_mapping_id')
+            ->havingRaw('COUNT(DISTINCT aat.accounting_account_id) > 1')
+            ->havingRaw($outsideScope.' = 0', $accountIds)
+            ->havingRaw('MIN(aat.operation_date) >= ?', [$start])
+            ->havingRaw('MAX(aat.operation_date) <= ?', [$end])
+            ->havingRaw("SUM(CASE WHEN aat.type = 'debit' THEN aat.amount ELSE 0 END) = SUM(CASE WHEN aat.type = 'credit' THEN aat.amount ELSE 0 END)");
+        $this->applyActivePostingScope($transferGroupQuery);
+
+        return $transferGroupQuery->pluck('aat.acc_trans_mapping_id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
     }
 
-    private function balancesBefore(int $businessId, array $accountIds, string $startDate): array
+    private function presentPage(int $businessId, $entries, string $startDate, array $accountIds, int $page): array
     {
         if ($accountIds === []) {
             return [];
         }
 
-        return DB::table('accounting_accounts_transactions as aat')
-            ->join('accounting_accounts as aa', 'aa.id', '=', 'aat.accounting_account_id')
-            ->where('aa.business_id', $businessId)
-            ->whereIn('aa.id', $accountIds)
-            ->where('aat.operation_date', '<', $startDate.' 00:00:00')
-            ->select('aat.accounting_account_id')
-            ->selectRaw($this->balanceExpression().' as balance')
-            ->groupBy('aat.accounting_account_id')
-            ->get()
-            ->mapWithKeys(fn ($row) => [(int) $row->accounting_account_id => (float) $row->balance])
-            ->all();
+        $openingBalance = $this->balanceBefore($businessId, $accountIds, $startDate);
+        if ($entries->isEmpty()) {
+            return $page === 1 ? [$this->combinedOpeningBalanceRow($startDate, $openingBalance)] : [];
+        }
+
+        $first = $entries->first();
+        $priorBalance = $page > 1
+            ? $this->balanceBeforePosting($businessId, $accountIds, $startDate, $first->operation_date, (int) $first->id)
+            : 0.0;
+        $sourceContext = $this->loadTransactions($businessId, $entries);
+        $transactions = $sourceContext['transactions'];
+        $plates = $this->loadPlates($businessId, $transactions->keys()->map(fn ($id) => (int) $id)->all());
+        $presented = $this->presenter->presentAccountEntries(
+            'asset',
+            $this->presenterEntries($businessId, $entries, $transactions, $plates, $sourceContext['payment_transaction_ids']),
+            $openingBalance + $priorBalance,
+            $this->currencyPrecision()
+        );
+
+        if ($page === 1) {
+            array_unshift($presented, $this->combinedOpeningBalanceRow($startDate, $openingBalance));
+        }
+
+        return $presented;
     }
 
-    private function balancesBeforePageRows(int $businessId, array $accountIds, array $cutoffs, string $startDate, string $endDate): array
+    private function presentAll(int $businessId, $entries, string $startDate, array $accountIds): array
     {
-        if ($cutoffs === []) {
+        if ($accountIds === []) {
             return [];
+        }
+
+        $openingBalance = $this->balanceBefore($businessId, $accountIds, $startDate);
+        $rows = [$this->combinedOpeningBalanceRow($startDate, $openingBalance)];
+        if ($entries->isEmpty()) {
+            return $rows;
+        }
+
+        $sourceContext = $this->loadTransactions($businessId, $entries);
+        $transactions = $sourceContext['transactions'];
+        $plates = $this->loadPlates($businessId, $transactions->keys()->map(fn ($id) => (int) $id)->all());
+        $rows = array_merge($rows, $this->presenter->presentAccountEntries(
+            'asset',
+            $this->presenterEntries($businessId, $entries, $transactions, $plates, $sourceContext['payment_transaction_ids']),
+            $openingBalance,
+            $this->currencyPrecision()
+        ));
+
+        return $rows;
+    }
+
+    private function balanceBefore(int $businessId, array $accountIds, string $startDate): float
+    {
+        if ($accountIds === []) {
+            return 0.0;
         }
 
         $query = DB::table('accounting_accounts_transactions as aat')
             ->join('accounting_accounts as aa', 'aa.id', '=', 'aat.accounting_account_id')
             ->where('aa.business_id', $businessId)
             ->whereIn('aa.id', $accountIds)
-            ->where('aat.operation_date', '>=', $startDate.' 00:00:00')
-            ->where('aat.operation_date', '<=', \Carbon::parse($endDate)->endOfDay()->format('Y-m-d H:i:s'))
-            ->where(function ($query) use ($cutoffs) {
-                foreach ($cutoffs as $accountId => $cutoff) {
-                    $query->orWhere(function ($query) use ($accountId, $cutoff) {
-                        $query->where('aat.accounting_account_id', $accountId)
-                            ->where(function ($query) use ($cutoff) {
-                                $query->where('aat.operation_date', '<', $cutoff['date'])
-                                    ->orWhere(function ($query) use ($cutoff) {
-                                        $query->where('aat.operation_date', '=', $cutoff['date'])
-                                            ->where('aat.id', '<', $cutoff['id']);
-                                    });
-                            });
-                    });
-                }
-            });
+            ->where('aat.operation_date', '<', $startDate.' 00:00:00')
+            ->selectRaw("COALESCE(SUM(CASE WHEN aat.type = 'debit' THEN aat.amount ELSE -1 * aat.amount END), 0) as balance");
+        $this->applyActivePostingScope($query);
+        $balance = $query->value('balance');
 
-        return $query->select('aat.accounting_account_id')
-            ->selectRaw($this->balanceExpression().' as balance')
-            ->selectRaw('COUNT(aat.id) as entry_count')
-            ->groupBy('aat.accounting_account_id')
-            ->get()
-            ->mapWithKeys(fn ($row) => [(int) $row->accounting_account_id => [
-                'balance' => (float) $row->balance,
-                'count' => (int) $row->entry_count,
-            ]])
-            ->all();
+        return (float) $balance;
     }
 
-    private function balanceExpression(): string
+    private function balanceBeforePosting(int $businessId, array $accountIds, string $startDate, string $operationDate, int $entryId): float
     {
-        return "SUM(CASE
-            WHEN ((aa.account_primary_type IN ('asset', 'expense', 'expenses') AND aat.type = 'debit')
-                OR (aa.account_primary_type IN ('income', 'equity', 'liability') AND aat.type = 'credit'))
-            THEN aat.amount ELSE -1 * aat.amount END)";
+        $query = DB::table('accounting_accounts_transactions as aat')
+            ->join('accounting_accounts as aa', 'aa.id', '=', 'aat.accounting_account_id')
+            ->where('aa.business_id', $businessId)
+            ->whereIn('aa.id', $accountIds)
+            ->where('aat.operation_date', '>=', $startDate.' 00:00:00')
+            ->where(function ($query) use ($operationDate, $entryId) {
+                $query->where('aat.operation_date', '<', $operationDate)
+                    ->orWhere(function ($query) use ($operationDate, $entryId) {
+                        $query->where('aat.operation_date', '=', $operationDate)
+                            ->where('aat.id', '<', $entryId);
+                    });
+            })
+            ->selectRaw("COALESCE(SUM(CASE WHEN aat.type = 'debit' THEN aat.amount ELSE -1 * aat.amount END), 0) as balance");
+        $this->applyActivePostingScope($query);
+        $balance = $query->value('balance');
+
+        return (float) $balance;
+    }
+
+    private function applyActivePostingScope($query): void
+    {
+        if (! Schema::hasTable('accounting_journal_imports')
+            || ! Schema::hasColumn('accounting_accounts_transactions', 'journal_import_id')) {
+            return;
+        }
+
+        $query->whereNotExists(function ($query) {
+            $query->select(DB::raw(1))
+                ->from('accounting_journal_imports as reverted_import')
+                ->whereColumn('reverted_import.id', 'aat.journal_import_id')
+                ->where('reverted_import.status', 'reverted');
+        });
     }
 
     private function presenterEntries(int $businessId, $accountEntries, $transactions, array $plates, array $paymentTransactionIds): array
@@ -330,6 +303,14 @@ class GeneralLedgerReportService
             $transactionId = $this->resolveTransactionId($entry, $paymentTransactionIds);
             $transaction = $transactionId ? $transactions->get($transactionId) : null;
             $productLines = $this->productLines($transaction);
+            $label = $this->transactionLabel($entry, $transaction);
+            foreach ($productLines as &$productLine) {
+                $lineLabel = $this->transactionLabel($entry, $transaction, $productLine);
+                $productLine['description'] = $lineLabel['label'];
+                $productLine['detail_label'] = $lineLabel['detail'];
+                $productLine['needs_classification_review'] = $lineLabel['needs_classification_review'];
+            }
+            unset($productLine);
             $classification = $this->accountComponentService->groupJournalLines([
                 'lines' => [[
                     'account_no' => (string) ($entry->gl_code ?? ''),
@@ -341,17 +322,21 @@ class GeneralLedgerReportService
             $contact = $transaction && $transaction->contact
                 ? (trim((string) $transaction->contact->supplier_business_name) ?: trim((string) $transaction->contact->name))
                 : '';
-            $label = $this->transactionLabel($entry, $transaction);
 
             $result[] = [
                 'id' => (int) $entry->id,
                 'accounting_account_id' => (int) $entry->accounting_account_id,
+                'account_id' => (int) $entry->accounting_account_id,
+                'account_name' => (string) ($entry->account_name ?? ''),
+                'gl_code' => (string) ($entry->gl_code ?? ''),
                 'operation_date' => $entry->operation_date,
                 'type' => (string) $entry->type,
                 'amount' => (float) $entry->amount,
                 'is_tax_account' => ! empty($classification[0]['is_tax']),
                 'products' => $productLines,
-                'description' => $label,
+                'description' => $label['label'],
+                'detail_label' => $label['detail'],
+                'needs_classification_review' => $label['needs_classification_review'],
                 'reference' => $this->reference($entry, $transaction),
                 'note' => $this->note($entry, $transaction),
                 'contact' => $contact,
@@ -402,13 +387,19 @@ class GeneralLedgerReportService
             ->with([
                 'contact',
                 'purchase_lines.product.unit',
+                'purchase_lines.product.category',
+                'purchase_lines.product.sub_category',
                 'purchase_lines.variations.product_variation',
                 'purchase_lines.sub_unit',
                 'sell_lines.product.unit',
+                'sell_lines.product.category',
+                'sell_lines.product.sub_category',
                 'sell_lines.variations.product_variation',
                 'sell_lines.sub_unit',
                 'expense_lines.category',
                 'expense_lines.subCategory',
+                'expense_category',
+                'expense_sub_category',
             ])
             ->get()
             ->keyBy('id');
@@ -470,6 +461,9 @@ class GeneralLedgerReportService
                 'unit' => '',
                 'net_amount' => $netAmount,
                 'tax_amount' => $expenseTotal > 0 ? $taxTotal * $netAmount / $expenseTotal : 0,
+                'category_name' => trim((string) ($line->category->name ?? '')),
+                'sub_category_name' => trim((string) ($line->subCategory->name ?? '')),
+                'source_description' => trim((string) $line->description),
             ];
         }
 
@@ -499,6 +493,8 @@ class GeneralLedgerReportService
             'unit' => trim((string) (data_get($line, 'sub_unit.short_name') ?: data_get($product, 'unit.short_name', ''))),
             'net_amount' => $netAmount,
             'tax_amount' => (float) ($line->item_tax ?? 0) * $quantity,
+            'category_name' => trim((string) data_get($product, 'category.name', '')),
+            'sub_category_name' => trim((string) data_get($product, 'sub_category.name', '')),
         ];
     }
 
@@ -586,26 +582,120 @@ class GeneralLedgerReportService
         return $plates;
     }
 
-    private function transactionLabel($entry, $transaction): string
+    private function transactionLabel($entry, $transaction, ?array $sourceLine = null): array
     {
         $type = strtolower((string) ($entry->sub_type ?? $entry->mapping_type ?? ''));
         if ($transaction && ! empty($transaction->type)) {
             $type = strtolower((string) $transaction->type);
         }
+
+        if ($type === 'opening_balance') {
+            return ['label' => 'Saldo Awal', 'detail' => '', 'needs_classification_review' => false];
+        }
+        if ($type === 'transfer') {
+            return ['label' => 'Transfer', 'detail' => '', 'needs_classification_review' => false];
+        }
+
+        $category = trim((string) ($sourceLine['category_name'] ?? ''));
+        $subCategory = trim((string) ($sourceLine['sub_category_name'] ?? ''));
+        $sourceDescription = trim((string) ($sourceLine['source_description'] ?? ''));
+        $journalDescription = trim((string) ($entry->mapping_note ?: $entry->journal_note));
+        if ($category === '' && $transaction && in_array($type, ['expense', 'expense_refund'], true)) {
+            $category = trim((string) ($transaction->expense_category->name ?? ''));
+            $subCategory = $subCategory ?: trim((string) ($transaction->expense_sub_category->name ?? ''));
+        }
+        if ($category === '' && $subCategory !== '') {
+            $category = $subCategory;
+            $subCategory = '';
+        }
+
+        $taxonomies = ['HPP', 'Operasional', 'Asset Lancar', 'Pendapatan Usaha'];
+        if ($transaction && in_array($type, ['purchase', 'purchase_return'], true) && $category !== '') {
+            $prefix = $type === 'purchase_return' ? 'Retur Pembelian' : 'Pembelian';
+            $label = in_array($category, $taxonomies, true) || stripos($category, $prefix.' ') === 0
+                ? $category
+                : $prefix.' '.$category;
+
+            return [
+                'label' => $label,
+                'detail' => $subCategory ?: $sourceDescription,
+                'needs_classification_review' => false,
+            ];
+        }
+
+        if ($transaction && in_array($type, ['purchase', 'purchase_return'], true) && $category === '') {
+            return [
+                'label' => $journalDescription ?: ($type === 'purchase_return' ? 'Retur Pembelian' : 'Pembelian'),
+                'detail' => $sourceDescription,
+                'needs_classification_review' => true,
+            ];
+        }
+
+        if ($transaction && in_array($type, ['expense', 'expense_refund'], true) && $category !== '') {
+            $label = in_array($category, $taxonomies, true)
+                ? $category
+                : ($type === 'expense_refund' ? 'Pengembalian Biaya' : 'Biaya Operasional');
+
+            return [
+                'label' => $label,
+                'detail' => $subCategory ?: ($sourceDescription ?: $category),
+                'needs_classification_review' => false,
+            ];
+        }
+
+        if ($transaction && in_array($type, ['expense', 'expense_refund'], true) && $category === '') {
+            return [
+                'label' => $journalDescription ?: ($type === 'expense_refund' ? 'Pengembalian Biaya' : 'Biaya Operasional'),
+                'detail' => $sourceDescription,
+                'needs_classification_review' => true,
+            ];
+        }
+
+        if ($transaction && in_array($type, ['sell', 'sell_return'], true)) {
+            $label = $category !== '' && $category === 'Pendapatan Usaha'
+                ? $category
+                : ($type === 'sell_return' ? 'Retur Penjualan' : 'Pendapatan Usaha');
+
+            return [
+                'label' => $label,
+                'detail' => $subCategory ?: $category,
+                'needs_classification_review' => false,
+            ];
+        }
+
+        if ($transaction && $type !== '' && $type !== 'journal_entry') {
+            $labels = [
+                'sell' => 'Pendapatan Usaha',
+                'sell_return' => 'Retur Penjualan',
+                'purchase' => 'Pembelian',
+                'purchase_return' => 'Retur Pembelian',
+                'expense' => 'Biaya Operasional',
+                'expense_refund' => 'Pengembalian Biaya',
+                'payroll' => 'Payroll',
+            ];
+            $label = $labels[$type] ?? ucwords(str_replace('_', ' ', $type));
+
+            return [
+                'label' => $label,
+                'detail' => $subCategory ?: ($category ?: $sourceDescription),
+                'needs_classification_review' => in_array($type, ['purchase', 'expense'], true),
+            ];
+        }
+
+        if ($journalDescription !== '') {
+            return ['label' => $journalDescription, 'detail' => '', 'needs_classification_review' => true];
+        }
+
         $labels = [
-            'sell' => 'Penjualan',
-            'sell_return' => 'Retur Penjualan',
-            'purchase' => 'Pembelian',
-            'purchase_return' => 'Retur Pembelian',
-            'expense' => 'Biaya Operasional',
-            'expense_refund' => 'Pengembalian Biaya',
-            'journal_entry' => 'Journal Entry',
-            'opening_balance' => 'Saldo Awal',
+            'journal_entry' => 'Jurnal',
             'payroll' => 'Payroll',
-            'transfer' => 'Transfer',
         ];
 
-        return $labels[$type] ?? ($type !== '' ? ucwords(str_replace('_', ' ', $type)) : 'Jurnal');
+        return [
+            'label' => $labels[$type] ?? ($type !== '' ? ucwords(str_replace('_', ' ', $type)) : 'Jurnal'),
+            'detail' => '',
+            'needs_classification_review' => true,
+        ];
     }
 
     private function reference($entry, $transaction): string
