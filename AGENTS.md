@@ -132,7 +132,7 @@ For every new feature, issue, or substantial UX change, start with the `/ask-mat
 
 ### Issue workflow checkpoint
 
-For every issue, finish implementation and relevant static checks first. Pushes run PHPUnit on GitHub Actions. Then report the changes, results, and risks to the user, and pause before opening/updating a pull request that starts E2E or before code review. Wait for the user's feedback or direction before entering either stage. After direction, use GitHub Actions for Playwright E2E and wait for its result; do not run tests locally unless the user asks for local testing.
+For every issue, work directly on `main`; do not create a feature branch or pull request unless the user explicitly asks. Finish implementation and relevant static checks, commit and push to `main` for PHPUnit on GitHub Actions, then report the changes, results, and risks. Pause before starting E2E or code review and wait for the user's feedback or direction. After direction, manually dispatch the GitHub Actions Playwright workflow and wait for its result; do not run tests locally unless the user asks for local testing.
 
 ### Verification checklist
 

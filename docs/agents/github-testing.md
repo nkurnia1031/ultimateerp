@@ -6,19 +6,19 @@ GitHub Actions is the canonical test runner for this repository. The workflow is
 
 | GitHub event | PHPUnit unit and feature suites | Playwright E2E |
 |---|---:|---:|
-| Push to a feature branch | Yes | No |
-| Pull request | Yes | Yes, after PHPUnit succeeds |
-| Push to `main` | Yes | Yes, after PHPUnit succeeds |
+| Push to `main` | Yes | No |
+| Push to another branch | Yes | No |
+| Pull request | Yes | No |
 | Manual `workflow_dispatch` | Yes | Only when `run_e2e` is selected |
 
-The feature-branch push gate lets an issue reach its user checkpoint before browser E2E starts. E2E runs after the user directs that stage, through a pull request or an approved manual dispatch.
+Normal work goes directly to `main`; do not create feature branches or pull requests unless the user explicitly asks. PHPUnit runs on every push. Playwright E2E is manual so work can reach the required user checkpoint first; after the user directs that stage, dispatch it with `run_e2e=true`. It starts only if the PHPUnit job succeeds.
 
 ## Run and inspect results
 
-After pushing a feature branch, list its runs:
+After pushing to `main`, list its runs:
 
 ```sh
-gh run list --workflow tests.yml --branch <branch> --limit 5
+gh run list --workflow tests.yml --branch main --limit 5
 ```
 
 Wait for a specific run and return its exit status:
@@ -27,7 +27,13 @@ Wait for a specific run and return its exit status:
 gh run watch <run-id> --exit-status
 ```
 
-After the issue checkpoint, open/update a pull request to run Playwright, or manually dispatch `tests.yml` with `run_e2e=true` when the workflow is available on the default branch. Playwright traces, reports, and Laravel logs are uploaded as workflow artifacts when the E2E job runs.
+After the issue checkpoint and the user's direction, manually dispatch `tests.yml` against `main` with `run_e2e=true`:
+
+```sh
+gh workflow run tests.yml --ref main -f run_e2e=true
+```
+
+Playwright traces, reports, and Laravel logs are uploaded as workflow artifacts when the E2E job runs.
 
 Do not report tests as passing until the corresponding GitHub Actions job has completed successfully. Diagnose failures from the run logs and uploaded artifacts first; use the local demo only when the user requests local testing or remote evidence cannot isolate the problem.
 
