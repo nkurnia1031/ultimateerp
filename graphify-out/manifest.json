@@ -6876,10 +6876,10 @@
     "semantic_hash": "b3b10c9c14631370e1060e4c64c2959f"
   },
   "app/Utils/ModuleUtil.php": {
-    "mtime": 1765111939.0,
-    "seen": 1788970597.7115812,
-    "ast_hash": "f24d7aca9cb9b13b7b22a3654a3d81b0",
-    "semantic_hash": "f24d7aca9cb9b13b7b22a3654a3d81b0"
+    "mtime": 1793093720.4340093,
+    "seen": 1793093896.5224192,
+    "ast_hash": "9b12f9fbd94dad2d36258565a2812a1a",
+    "semantic_hash": ""
   },
   "app/Utils/NotificationUtil.php": {
     "mtime": 1762624297.0,

@@ -9,6 +9,7 @@ use App\System;
 use App\Transaction;
 use App\User;
 use Composer\Semver\Comparator;
+use Illuminate\Support\Facades\Schema;
 use Module;
 
 class ModuleUtil extends Util
@@ -21,9 +22,14 @@ class ModuleUtil extends Util
      */
     public function isModuleInstalled($module_name)
     {
-        if($module_name=='crm'){
+        if (strtolower((string) $module_name) === 'crm') {
             return true;
         }
+
+        if (! Schema::hasTable('system')) {
+            return false;
+        }
+
         $is_available = Module::has($module_name);
 
         if ($is_available) {
