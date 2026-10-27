@@ -9006,10 +9006,10 @@
     "semantic_hash": ""
   },
   "database/migrations/2025_09_17_144352_update_id_bans.php": {
-    "mtime": 1758622482.0,
-    "seen": 1788970597.713601,
-    "ast_hash": "1dbb23bd8d6f7271bf0299fafec568ec",
-    "semantic_hash": "1dbb23bd8d6f7271bf0299fafec568ec"
+    "mtime": 1793094572.4066036,
+    "seen": 1793094736.1486735,
+    "ast_hash": "b12d04bef640e8c8182c0c0c2b047020",
+    "semantic_hash": ""
   },
   "database/migrations/2025_09_21_190206_add_account_id_to_users_table.php": {
     "mtime": 1758622482.0,

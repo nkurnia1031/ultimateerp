@@ -97,4 +97,18 @@ class JournalImportChunkCursorMigrationTest extends TestCase
             $this->assertFalse($this->database->schema()->hasTable($tableName));
         }
     }
+
+    public function test_legacy_ban_update_skips_tables_absent_from_a_fresh_database(): void
+    {
+        $migrationPath = dirname(__DIR__, 2).DIRECTORY_SEPARATOR.'database'.DIRECTORY_SEPARATOR.'migrations'
+            .DIRECTORY_SEPARATOR.'2025_09_17_144352_update_id_bans.php';
+        $migration = require $migrationPath;
+
+        $migration->up();
+        $migration->down();
+
+        foreach (['bans', 'ban_pemasangan', 'ban_riwayats'] as $tableName) {
+            $this->assertFalse($this->database->schema()->hasTable($tableName));
+        }
+    }
 }

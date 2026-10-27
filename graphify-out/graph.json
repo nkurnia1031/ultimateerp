@@ -60338,7 +60338,7 @@
       "file_type": "code",
       "norm_label": "down()",
       "source_file": "database/migrations/2025_09_17_144352_update_id_bans.php",
-      "source_location": "L36"
+      "source_location": "L25"
     },
     {
       "id": "database_migrations_2025_09_17_144352_update_id_bans_up",
@@ -285759,7 +285759,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "database/migrations/2025_09_17_144352_update_id_bans.php",
-      "source_location": "L36",
+      "source_location": "L25",
       "weight": 1.0
     },
     {
@@ -395788,5 +395788,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "bfb1ba1112a5d68a381cd25687cceefcefc38abd"
+  "built_at_commit": "39cea2ea4748b71de1426cc95b2955fa4ecfa7f1"
 }
