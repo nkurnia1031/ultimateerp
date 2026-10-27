@@ -1,0 +1,193 @@
+name: Application tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      run_e2e:
+        description: Run the Playwright E2E suite after PHPUnit succeeds
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: application-tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  phpunit:
+    name: PHPUnit (unit and feature)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: ultimateerp_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+
+    env:
+      APP_ENV: testing
+      APP_DEBUG: false
+      APP_URL: http://127.0.0.1:8000
+      DB_CONNECTION: mysql
+      DB_HOST: 127.0.0.1
+      DB_PORT: 3306
+      DB_DATABASE: ultimateerp_test
+      DB_USERNAME: root
+      DB_PASSWORD: root
+      CACHE_DRIVER: array
+      SESSION_DRIVER: file
+      QUEUE_CONNECTION: sync
+      MAIL_MAILER: array
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: bcmath, gd, intl, mbstring, pdo_mysql, zip
+          coverage: none
+
+      - name: Prepare Laravel environment
+        run: cp .env.example .env
+
+      - name: Install Composer dependencies
+        run: composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Generate application key
+        run: php artisan key:generate --force
+
+      - name: Migrate and seed test database
+        run: php artisan migrate --force --seed
+
+      - name: Run PHPUnit unit and feature suites
+        run: vendor/bin/phpunit --testdox
+
+  playwright-e2e:
+    name: Playwright E2E
+    if: >-
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && inputs.run_e2e)
+    needs: phpunit
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: ultimateerp_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+
+    env:
+      APP_ENV: testing
+      APP_DEBUG: false
+      APP_URL: http://127.0.0.1:8000
+      DB_CONNECTION: mysql
+      DB_HOST: 127.0.0.1
+      DB_PORT: 3306
+      DB_DATABASE: ultimateerp_test
+      DB_USERNAME: root
+      DB_PASSWORD: root
+      CACHE_DRIVER: file
+      SESSION_DRIVER: file
+      QUEUE_CONNECTION: database
+      MAIL_MAILER: array
+      E2E_USERNAME: journal-ci
+      E2E_PASSWORD: ci-journal-import-only
+      PLAYWRIGHT_TEST_BASE_URL: http://127.0.0.1:8000
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: bcmath, gd, intl, mbstring, pdo_mysql, zip
+          coverage: none
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Prepare Laravel environment
+        run: cp .env.example .env
+
+      - name: Install Composer dependencies
+        run: composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Generate application key
+        run: php artisan key:generate --force
+
+      - name: Migrate and seed test database
+        run: php artisan migrate --force --seed
+
+      - name: Seed isolated Journal Import browser fixture
+        run: php artisan db:seed --force --class=JournalImportE2ESeeder
+
+      - name: Install Playwright dependencies
+        working-directory: tests/e2e
+        run: npm ci
+
+      - name: Install Chromium and system dependencies
+        working-directory: tests/e2e
+        run: npx playwright install --with-deps chromium
+
+      - name: Start Laravel
+        run: |
+          php artisan serve --host=0.0.0.0 --port=8000 > storage/logs/e2e-server.log 2>&1 &
+          echo $! > /tmp/ultimateerp-e2e-server.pid
+
+      - name: Wait for Laravel
+        run: |
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:8000/login > /dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          cat storage/logs/e2e-server.log
+          exit 1
+
+      - name: Run Playwright E2E suite
+        working-directory: tests/e2e
+        run: npx playwright test
+
+      - name: Upload Playwright results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: playwright-results
+          path: |
+            tests/e2e/test-results/
+            tests/e2e/playwright-report/
+            storage/logs/laravel.log
+            storage/logs/e2e-server.log
+          retention-days: 14

@@ -49,6 +49,7 @@ class AnalyzeJournalImportJob implements ShouldQueue
         try {
             $claimed = DB::table('accounting_journal_imports')
                 ->where('id', $this->importId)
+                ->where('status', 'queued')
                 ->whereNull('cancel_requested_at')
                 ->update([
                 'status' => 'analyzing',

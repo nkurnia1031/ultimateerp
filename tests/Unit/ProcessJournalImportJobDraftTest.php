@@ -246,6 +246,36 @@ class ProcessJournalImportJobDraftTest extends TestCase
         $this->assertSame(0, DB::table('accounting_journal_import_rows')->count());
     }
 
+    public function test_duplicate_analysis_job_does_not_reopen_an_already_analyzed_batch(): void
+    {
+        $this->useSqliteDatabase();
+        $this->createTables();
+        $now = now();
+        DB::table('accounting_journal_imports')->insert([
+            'id' => 1,
+            'business_id' => 3,
+            'created_by' => 8,
+            'status' => 'analyzed',
+            'file_path' => 'uploads/journal-imports/test.xlsx',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+
+        $controller = Mockery::mock(JournalEntryController::class);
+        $controller->shouldNotReceive('analyzeJournalWorkbook');
+        $controller->shouldNotReceive('writeTemporaryJournalAnalysis');
+        $draftService = Mockery::mock(JournalImportDraftService::class);
+        $draftService->shouldNotReceive('persistEntries');
+
+        (new AnalyzeJournalImportJob(1))->handle(
+            $controller,
+            $draftService,
+            new JournalImportCancellationService()
+        );
+
+        $this->assertSame('analyzed', DB::table('accounting_journal_imports')->where('id', 1)->value('status'));
+    }
+
     public function test_stop_requested_during_final_tax_chunk_finishes_cancellation(): void
     {
         $this->useSqliteDatabase();

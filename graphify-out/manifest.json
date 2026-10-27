@@ -804,9 +804,9 @@
     "semantic_hash": "b12b6dbaa1dd4c18df1950ac718e060c"
   },
   "Modules/Accounting/Jobs/AnalyzeJournalImportJob.php": {
-    "mtime": 1793084326.2018633,
-    "seen": 1793084557.0273943,
-    "ast_hash": "6d45c139f857f9c0700321daf3674704",
+    "mtime": 1793092571.5034688,
+    "seen": 1793093233.068614,
+    "ast_hash": "07f3322b761b66c5981bbae9de28fbf2",
     "semantic_hash": ""
   },
   "Modules/Accounting/Jobs/ProcessJournalImportJob.php": {
@@ -14913,6 +14913,12 @@
     "mtime": 1793089542.6798,
     "seen": 1793089735.4470856,
     "ast_hash": "37ea483233c0b328538e5a8aaac2d647",
+    "semantic_hash": ""
+  },
+  "database/seeders/JournalImportE2ESeeder.php": {
+    "mtime": 1793092971.774796,
+    "seen": 1793093233.0790575,
+    "ast_hash": "3bd93af6ca33aad849038e1695d4678c",
     "semantic_hash": ""
   }
 }

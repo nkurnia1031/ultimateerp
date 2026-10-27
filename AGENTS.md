@@ -25,7 +25,8 @@ Rules:
 - URL: `http://localhost/2025/ultimateerp/public/`
 - Username: `direktur_cv`
 - Password: `cv123456`
-- For local UI end-to-end (E2E) tests, use Playwright and keep the test within this local URL.
+- GitHub Actions is the canonical runner for PHPUnit and Playwright E2E tests. Follow [`docs/agents/github-testing.md`](docs/agents/github-testing.md) for triggers and result handling.
+- Use the local demo for browser diagnostics only when the user requests local testing or a GitHub failure needs a local reproduction. Use Playwright and keep those diagnostics within the local URL above.
 
 ## Session handoff / operational context
 
@@ -63,7 +64,7 @@ This section is the canonical starting point for a new coding session. Read it b
    `graphify query "<focused question>"`.
    Use `graphify path` or `graphify explain` for relationships or one concept instead of scanning the whole repository.
 4. Inspect existing routes, controllers, services, jobs, and views before adding a parallel implementation.
-5. For UI verification, use the local demo and Playwright; reproduce the issue, inspect the network/status response, and check Laravel logs before changing code.
+5. For automated UI verification, use the GitHub Actions Playwright workflow. Use the local demo for a Playwright reproduction only when the user requests it or remote artifacts and logs cannot explain a failure.
 6. After code changes run the relevant lint/tests, publish module JavaScript when applicable, and finish with `graphify update .`.
 
 ### Local demo and testing
@@ -131,7 +132,7 @@ For every new feature, issue, or substantial UX change, start with the `/ask-mat
 
 ### Issue workflow checkpoint
 
-For every issue, finish implementation and the relevant non-E2E checks first. Then report the changes, check results, and any known risks to the user, and pause before starting E2E testing or code review. Wait for the user's feedback or direction before entering either stage. Use Playwright for local E2E as specified above.
+For every issue, finish implementation and relevant static checks first. Pushes run PHPUnit on GitHub Actions. Then report the changes, results, and risks to the user, and pause before opening/updating a pull request that starts E2E or before code review. Wait for the user's feedback or direction before entering either stage. After direction, use GitHub Actions for Playwright E2E and wait for its result; do not run tests locally unless the user asks for local testing.
 
 ### Verification checklist
 
@@ -147,7 +148,7 @@ php scripts/publish-module-js.php Accounting
 graphify update .
 ```
 
-Then perform a Playwright E2E smoke test on the local URL: login, open the affected page, upload a small representative workbook, observe the AJAX status/polling, preview errors, correct one invalid row if relevant, confirm only after preview completion, and verify the resulting data. For issue work, do this only after the user has provided feedback at the issue workflow checkpoint.
+After the issue workflow checkpoint and user direction, run the GitHub Actions Playwright E2E workflow and wait for completion. For import/queue changes, cover login, the affected page, a small representative workbook, AJAX status/polling, relevant preview correction, confirmation, and resulting data. Use local Playwright only when explicitly requested or when GitHub artifacts do not isolate a failure.
 
 ### Known pitfalls and diagnostics
 

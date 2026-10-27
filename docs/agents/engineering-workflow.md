@@ -17,6 +17,6 @@ Use this sequence for new features, issue work, and substantial UX changes in th
 
 ## Implement and pause at the checkpoint
 
-Use the implementation and testing skills selected by `/ask-matt`. Finish implementation and relevant non-E2E checks, then report the changes, results, and risks. Stop before E2E or code review and wait for the user's feedback, as required by the checkpoint in `AGENTS.md`. Use Playwright for local E2E after the user directs that stage. Record issue progress against its acceptance criteria; close an issue only when its criteria are complete.
+Use the implementation and testing skills selected by `/ask-matt`. Finish implementation and relevant static checks, then report the changes and risks. Pushes run PHPUnit on GitHub Actions. Stop before opening/updating a pull request that starts Playwright E2E or before code review, and wait for the user's feedback as required by the checkpoint in `AGENTS.md`. After the user directs that stage, use GitHub Actions for Playwright E2E and wait for its result. Run tests locally only when the user requests local testing. Record issue progress against its acceptance criteria; close an issue only when its criteria are complete.
 
 After the work is complete, use `/retro` when the session exposed a process or environment improvement worth preserving.
