@@ -84,8 +84,8 @@ return new class extends Migration
         if (! Schema::hasTable('heavy_equipment_settlement_kasbons')) {
             Schema::create('heavy_equipment_settlement_kasbons', function (Blueprint $table) {
                 $table->unsignedInteger('settlement_id');
-                // The legacy kasbon table uses a signed INT primary key.
-                $table->integer('kasbon_id');
+                // bonus_ayak_kasbon.id is created with increments() and is unsigned.
+                $table->unsignedInteger('kasbon_id');
                 $table->unsignedInteger('business_id');
                 $table->timestamps();
                 $table->primary(['settlement_id', 'kasbon_id']);
