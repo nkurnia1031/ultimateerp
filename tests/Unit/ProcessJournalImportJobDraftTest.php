@@ -31,10 +31,14 @@ class ProcessJournalImportJobDraftTest extends TestCase
 
     protected function tearDown(): void
     {
-        Facade::clearResolvedInstances();
-        Facade::setFacadeApplication(null);
-        if ($this->originalContainer !== null) {
-            Container::setInstance($this->originalContainer);
+        try {
+            Mockery::close();
+        } finally {
+            Facade::clearResolvedInstances();
+            Facade::setFacadeApplication(null);
+            if ($this->originalContainer !== null) {
+                Container::setInstance($this->originalContainer);
+            }
         }
         parent::tearDown();
     }
@@ -101,7 +105,6 @@ class ProcessJournalImportJobDraftTest extends TestCase
 
             return ['imported' => 1, 'skipped' => 0];
         });
-        $controller->shouldReceive('persistJournalTaxAccountMappingsFromDraftRows')->once();
         $controller->shouldReceive('deleteTemporaryJournalFile')->twice();
 
         (new ProcessJournalImportJob(1))->handle($controller, new JournalImportQueueService(), Mockery::mock(JournalImportInvoiceService::class), Mockery::mock(JournalImportExpenseService::class), Mockery::mock(JournalImportPaymentService::class), Mockery::mock(JournalImportBankTransactionService::class));
@@ -115,7 +118,6 @@ class ProcessJournalImportJobDraftTest extends TestCase
         DB::table('accounting_journal_imports')->where('id', 1)->update(['status' => 'queued_import']);
         $retryController = Mockery::mock(JournalEntryController::class);
         $retryController->shouldNotReceive('processJournalImportEntriesForBatch');
-        $retryController->shouldReceive('persistJournalTaxAccountMappingsFromDraftRows')->once();
         $retryController->shouldReceive('deleteTemporaryJournalFile')->twice();
 
         (new ProcessJournalImportJob(1))->handle($retryController, new JournalImportQueueService(), Mockery::mock(JournalImportInvoiceService::class), Mockery::mock(JournalImportExpenseService::class), Mockery::mock(JournalImportPaymentService::class), Mockery::mock(JournalImportBankTransactionService::class));
@@ -191,7 +193,6 @@ class ProcessJournalImportJobDraftTest extends TestCase
 
             return ['imported' => 1, 'skipped' => 0];
         });
-        $controller->shouldNotReceive('persistJournalTaxAccountMappingsFromDraftRows');
         $controller->shouldNotReceive('deleteTemporaryJournalFile');
 
         (new ProcessJournalImportJob(1))->handle(
@@ -368,7 +369,6 @@ class ProcessJournalImportJobDraftTest extends TestCase
 
         $controller = Mockery::mock(JournalEntryController::class);
         $controller->shouldNotReceive('processJournalImportEntriesForBatch');
-        $controller->shouldReceive('persistJournalTaxAccountMappingsFromDraftRows')->once();
         $controller->shouldNotReceive('deleteTemporaryJournalFile');
 
         $paymentService = Mockery::mock(JournalImportPaymentService::class);
@@ -597,7 +597,6 @@ class ProcessJournalImportJobDraftTest extends TestCase
 
                 return ['imported' => 1, 'skipped' => 0];
             });
-        $controller->shouldReceive('persistJournalTaxAccountMappingsFromDraftRows')->once();
         $controller->shouldReceive('deleteTemporaryJournalFile')->twice()->with(null);
 
         $queueService = Mockery::mock(JournalImportQueueService::class);
@@ -698,7 +697,6 @@ class ProcessJournalImportJobDraftTest extends TestCase
 
                 return ['imported' => 1, 'skipped' => 0];
             });
-        $controller->shouldReceive('persistJournalTaxAccountMappingsFromDraftRows')->once();
         $controller->shouldReceive('deleteTemporaryJournalFile')->twice()->with(null);
 
         (new ProcessJournalImportJob(1))->handle(

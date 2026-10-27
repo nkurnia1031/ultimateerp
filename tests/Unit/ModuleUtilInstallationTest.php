@@ -10,7 +10,7 @@ class ModuleUtilInstallationTest extends TestCase
 {
     public function test_crm_module_detection_is_case_insensitive_before_the_system_table_exists(): void
     {
-        Schema::shouldNotReceive('hasTable');
+        Schema::shouldReceive('hasTable')->never();
 
         $this->assertTrue((new ModuleUtil())->isModuleInstalled('Crm'));
     }

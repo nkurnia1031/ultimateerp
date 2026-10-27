@@ -6,15 +6,10 @@ use Tests\TestCase;
 
 class ExampleTest extends TestCase
 {
-    /**
-     * A basic test example.
-     *
-     * @return void
-     */
-    public function testBasicTest()
+    public function test_login_page_is_available()
     {
-        $response = $this->get('/');
+        $response = $this->get('/login');
 
-        $response->assertStatus(200);
+        $response->assertOk();
     }
 }
