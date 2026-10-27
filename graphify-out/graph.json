@@ -31946,7 +31946,7 @@
       "file_type": "code",
       "norm_label": "down()",
       "source_file": "database/migrations/2025_09_15_004812_update_solar_tables_add_id_and_timestamps.php",
-      "source_location": "L42"
+      "source_location": "L26"
     },
     {
       "id": "database_migrations_2025_09_15_004812_update_solar_tables_add_id_and_timestamps_up",
@@ -285737,7 +285737,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "database/migrations/2025_09_15_004812_update_solar_tables_add_id_and_timestamps.php",
-      "source_location": "L42",
+      "source_location": "L26",
       "weight": 1.0
     },
     {
@@ -395788,5 +395788,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "4da82c437714cb00246719f4922c3a3978e3efca"
+  "built_at_commit": "bfb1ba1112a5d68a381cd25687cceefcefc38abd"
 }

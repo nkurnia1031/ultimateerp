@@ -83,4 +83,18 @@ class JournalImportChunkCursorMigrationTest extends TestCase
             $this->assertFalse($this->database->schema()->hasColumn('accounting_journal_imports', $column));
         }
     }
+
+    public function test_legacy_solar_update_skips_ledgers_absent_from_a_fresh_database(): void
+    {
+        $migrationPath = dirname(__DIR__, 2).DIRECTORY_SEPARATOR.'database'.DIRECTORY_SEPARATOR.'migrations'
+            .DIRECTORY_SEPARATOR.'2025_09_15_004812_update_solar_tables_add_id_and_timestamps.php';
+        $migration = require $migrationPath;
+
+        $migration->up();
+        $migration->down();
+
+        foreach (['solar_mess', 'solar_pool', 'solar_stock'] as $tableName) {
+            $this->assertFalse($this->database->schema()->hasTable($tableName));
+        }
+    }
 }
