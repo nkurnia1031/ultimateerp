@@ -61,7 +61,7 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.2'
-          extensions: bcmath, gd, intl, mbstring, pdo_mysql, zip
+          extensions: bcmath, gd, intl, mbstring, pdo_mysql, sodium, zip
           coverage: none
 
       - name: Prepare Laravel environment
@@ -129,7 +129,7 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.2'
-          extensions: bcmath, gd, intl, mbstring, pdo_mysql, zip
+          extensions: bcmath, gd, intl, mbstring, pdo_mysql, sodium, zip
           coverage: none
 
       - name: Set up Node.js
