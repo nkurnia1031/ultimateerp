@@ -13,6 +13,8 @@ GitHub Actions is the canonical test runner for this repository. The workflow is
 
 Normal work goes directly to `main`; do not create feature branches or pull requests unless the user explicitly asks. PHPUnit runs on every push. Playwright E2E is manual so work can reach the required user checkpoint first; after the user directs that stage, dispatch it with `run_e2e=true`. It starts only if the PHPUnit job succeeds.
 
+A Playwright job marked `skipped` on a push is not a test result and must never be reported as a pass. Run the manual workflow after the user checkpoint when E2E evidence is required.
+
 ## Run and inspect results
 
 After pushing to `main`, list its runs:
@@ -35,7 +37,7 @@ gh workflow run tests.yml --ref main -f run_e2e=true
 
 Playwright traces, reports, and Laravel logs are uploaded as workflow artifacts when the E2E job runs.
 
-Do not report tests as passing until the corresponding GitHub Actions job has completed successfully. Diagnose failures from the run logs and uploaded artifacts first; use the local demo only when the user requests local testing or remote evidence cannot isolate the problem.
+Do not report tests as passing until the corresponding GitHub Actions job has completed successfully. For a failure, inspect the failed step and uploaded artifacts first. In the Playwright trace, check whether the expected UI action fired and whether its network request reached the application before diagnosing the endpoint or state transition. Fix the cause instead of blindly rerunning the same commit. After a fix, complete the relevant non-E2E checks, report the new result and risks, and return to the issue checkpoint before dispatching another E2E run. Use the local demo only when the user requests local testing or remote artifacts cannot isolate the problem.
 
 ## Add browser coverage
 
