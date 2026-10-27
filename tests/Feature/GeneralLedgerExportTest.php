@@ -257,13 +257,13 @@ class GeneralLedgerExportTest extends TestCase
             'note' => 'Transfer kas ke bank',
         ]);
         DB::table('accounting_accounts_transactions')->insert([
-            ['id' => 1, 'accounting_account_id' => 1, 'amount' => 100, 'type' => 'debit', 'sub_type' => 'opening_balance', 'operation_date' => '2021-12-31 10:00:00', 'note' => 'Opening kas'],
-            ['id' => 2, 'accounting_account_id' => 2, 'amount' => 50, 'type' => 'debit', 'sub_type' => 'opening_balance', 'operation_date' => '2021-12-31 10:00:00', 'note' => 'Opening bank'],
-            ['id' => 3, 'accounting_account_id' => 1, 'amount' => 20, 'type' => 'debit', 'sub_type' => 'journal_entry', 'operation_date' => '2022-01-03 10:00:00', 'note' => 'Kas masuk'],
-            ['id' => 4, 'accounting_account_id' => 2, 'amount' => 5, 'type' => 'credit', 'sub_type' => 'journal_entry', 'operation_date' => '2022-01-04 10:00:00', 'note' => 'Bank keluar'],
+            ['id' => 1, 'accounting_account_id' => 1, 'acc_trans_mapping_id' => null, 'amount' => 100, 'type' => 'debit', 'sub_type' => 'opening_balance', 'operation_date' => '2021-12-31 10:00:00', 'note' => 'Opening kas'],
+            ['id' => 2, 'accounting_account_id' => 2, 'acc_trans_mapping_id' => null, 'amount' => 50, 'type' => 'debit', 'sub_type' => 'opening_balance', 'operation_date' => '2021-12-31 10:00:00', 'note' => 'Opening bank'],
+            ['id' => 3, 'accounting_account_id' => 1, 'acc_trans_mapping_id' => null, 'amount' => 20, 'type' => 'debit', 'sub_type' => 'journal_entry', 'operation_date' => '2022-01-03 10:00:00', 'note' => 'Kas masuk'],
+            ['id' => 4, 'accounting_account_id' => 2, 'acc_trans_mapping_id' => null, 'amount' => 5, 'type' => 'credit', 'sub_type' => 'journal_entry', 'operation_date' => '2022-01-04 10:00:00', 'note' => 'Bank keluar'],
             ['id' => 5, 'accounting_account_id' => 1, 'acc_trans_mapping_id' => 1, 'amount' => 10, 'type' => 'debit', 'sub_type' => 'transfer', 'operation_date' => '2022-01-05 10:00:00', 'note' => 'Transfer'],
             ['id' => 6, 'accounting_account_id' => 2, 'acc_trans_mapping_id' => 1, 'amount' => 10, 'type' => 'credit', 'sub_type' => 'transfer', 'operation_date' => '2022-01-05 10:00:00', 'note' => 'Transfer'],
-            ['id' => 7, 'accounting_account_id' => 3, 'amount' => 999, 'type' => 'debit', 'sub_type' => 'journal_entry', 'operation_date' => '2022-01-06 10:00:00', 'note' => 'Tidak dipetakan'],
+            ['id' => 7, 'accounting_account_id' => 3, 'acc_trans_mapping_id' => null, 'amount' => 999, 'type' => 'debit', 'sub_type' => 'journal_entry', 'operation_date' => '2022-01-06 10:00:00', 'note' => 'Tidak dipetakan'],
         ]);
 
         $service = app(GeneralLedgerReportService::class);

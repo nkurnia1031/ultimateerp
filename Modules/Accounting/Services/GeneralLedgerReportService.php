@@ -740,6 +740,33 @@ class GeneralLedgerReportService
         ];
     }
 
+    private function combinedOpeningBalanceRow(string $startDate, float $openingBalance): array
+    {
+        $amount = abs($openingBalance);
+        $isDebit = $openingBalance >= 0;
+
+        return [
+            'id' => null,
+            'accounting_account_id' => null,
+            'account_id' => null,
+            'account_name' => 'Kas/Bank Gabungan',
+            'gl_code' => '',
+            'operation_date' => $startDate,
+            'description' => 'Saldo Awal',
+            'reference' => '',
+            'note' => '',
+            'contact' => '',
+            'plate' => '',
+            'product' => '',
+            'quantity' => null,
+            'amount' => $amount,
+            'debit' => $isDebit ? $amount : 0.0,
+            'credit' => $isDebit ? 0.0 : $amount,
+            'balance' => $openingBalance,
+            'is_opening_balance' => true,
+        ];
+    }
+
     private function currencyPrecision(): int
     {
         return max(0, min(4, (int) session('business.currency_precision', 2)));
