@@ -58,8 +58,13 @@ class JournalImportJobFailureTest extends TestCase
             DB::shouldReceive('table')->once()->with('accounting_journal_import_rows')->andReturn($rowQuery);
         }
 
+        $lookupQuery = Mockery::mock();
+        $lookupQuery->shouldReceive('where')->once()->with('id', $importId)->andReturnSelf();
+        $lookupQuery->shouldReceive('first')->once()->andReturn(null);
+
         $query = Mockery::mock();
         $query->shouldReceive('where')->once()->with('id', $importId)->andReturnSelf();
+        $query->shouldReceive('whereNull')->once()->with('cancel_requested_at')->andReturnSelf();
         $query->shouldReceive('whereIn')->once()->with('status', $activeStatuses)->andReturnSelf();
 
         $updates = null;
@@ -69,7 +74,7 @@ class JournalImportJobFailureTest extends TestCase
             return 1;
         });
 
-        DB::shouldReceive('table')->once()->with('accounting_journal_imports')->andReturn($query);
+        DB::shouldReceive('table')->twice()->with('accounting_journal_imports')->andReturn($lookupQuery, $query);
 
         $job->failed(new MaxAttemptsExceededException($errorMessage));
 

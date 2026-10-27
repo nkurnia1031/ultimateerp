@@ -9,6 +9,8 @@ use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\DB;
 use Modules\Accounting\Http\Controllers\JournalEntryController;
+use Modules\Accounting\Services\JournalImportCancellationRequestedException;
+use Modules\Accounting\Services\JournalImportCancellationService;
 use Modules\Accounting\Services\JournalImportDraftService;
 
 class AnalyzeJournalImportJob implements ShouldQueue
@@ -28,7 +30,11 @@ class AnalyzeJournalImportJob implements ShouldQueue
         $this->onQueue('imports');
     }
 
-    public function handle(JournalEntryController $controller, JournalImportDraftService $draftService)
+    public function handle(
+        JournalEntryController $controller,
+        JournalImportDraftService $draftService,
+        JournalImportCancellationService $cancellationService
+    )
     {
         $import = DB::table('accounting_journal_imports')->where('id', $this->importId)->first();
 
@@ -36,27 +42,54 @@ class AnalyzeJournalImportJob implements ShouldQueue
             return;
         }
 
+        if ($cancellationService->stopIfRequested((int) $import->id, (int) $import->business_id)) {
+            return;
+        }
+
         try {
-            DB::table('accounting_journal_imports')->where('id', $this->importId)->update([
+            $claimed = DB::table('accounting_journal_imports')
+                ->where('id', $this->importId)
+                ->whereNull('cancel_requested_at')
+                ->update([
                 'status' => 'analyzing',
                 'last_message' => 'Worker mulai membuka workbook.',
                 'updated_at' => now(),
             ]);
+            if (! $claimed) {
+                $cancellationService->stopIfRequested((int) $import->id, (int) $import->business_id);
+                return;
+            }
 
             $analysis = $controller->analyzeJournalWorkbook(
                 $import->file_path,
                 $import->business_id,
-                function (array $progress) {
+                function (array $progress) use ($cancellationService, $import) {
+                    if ($cancellationService->stopIfRequested((int) $import->id, (int) $import->business_id)) {
+                        throw new JournalImportCancellationRequestedException('Analisis dihentikan atas permintaan pengguna.');
+                    }
+
                     DB::table('accounting_journal_imports')->where('id', $this->importId)->update([
                         'last_message' => $progress['message'] ?? 'Analisis workbook berjalan.',
                         'updated_at' => now(),
                     ]);
                 }
             );
+
+            if ($cancellationService->stopIfRequested((int) $import->id, (int) $import->business_id)) {
+                return;
+            }
+
             $analysisPath = $controller->writeTemporaryJournalAnalysis($analysis);
             $draftService->persistEntries((int) $import->id, (int) $import->business_id, $analysis['entries']);
 
-            DB::table('accounting_journal_imports')->where('id', $this->importId)->update([
+            if ($cancellationService->stopIfRequested((int) $import->id, (int) $import->business_id)) {
+                return;
+            }
+
+            $updated = DB::table('accounting_journal_imports')
+                ->where('id', $this->importId)
+                ->whereNull('cancel_requested_at')
+                ->update([
                 'analysis_path' => $analysisPath,
                 'source_date_range' => $analysis['source_date_range'],
                 'total_entries' => $analysis['total_entries'],
@@ -70,13 +103,29 @@ class AnalyzeJournalImportJob implements ShouldQueue
                 'last_message' => 'Analisis selesai; draft baris tersimpan dan preview siap ditinjau.',
                 'updated_at' => now(),
             ]);
+            if (! $updated) {
+                $cancellationService->stopIfRequested((int) $import->id, (int) $import->business_id);
+            }
+        } catch (JournalImportCancellationRequestedException $e) {
+            $cancellationService->stopIfRequested((int) $import->id, (int) $import->business_id);
         } catch (\Throwable $e) {
-            DB::table('accounting_journal_imports')->where('id', $this->importId)->update([
-                'status' => 'failed',
-                'last_message' => 'Analisis gagal. Buka detail batch untuk melihat kesalahan.',
-                'error_message' => $e->getMessage(),
-                'updated_at' => now(),
-            ]);
+            if ($cancellationService->stopIfRequested((int) $import->id, (int) $import->business_id)) {
+                return;
+            }
+
+            $failed = DB::table('accounting_journal_imports')
+                ->where('id', $this->importId)
+                ->whereNull('cancel_requested_at')
+                ->whereIn('status', ['queued', 'analyzing'])
+                ->update([
+                    'status' => 'failed',
+                    'last_message' => 'Analisis gagal. Buka detail batch untuk melihat kesalahan.',
+                    'error_message' => $e->getMessage(),
+                    'updated_at' => now(),
+                ]);
+            if (! $failed) {
+                $cancellationService->stopIfRequested((int) $import->id, (int) $import->business_id);
+            }
 
             throw $e;
         }
@@ -84,8 +133,15 @@ class AnalyzeJournalImportJob implements ShouldQueue
 
     public function failed(\Throwable $exception)
     {
-        DB::table('accounting_journal_imports')
+        $import = DB::table('accounting_journal_imports')->where('id', $this->importId)->first();
+        if (! empty($import)
+            && app(JournalImportCancellationService::class)->stopIfRequested((int) $import->id, (int) $import->business_id)) {
+            return;
+        }
+
+        $updated = DB::table('accounting_journal_imports')
             ->where('id', $this->importId)
+            ->whereNull('cancel_requested_at')
             ->whereIn('status', ['queued', 'analyzing'])
             ->update([
                 'status' => 'failed',
@@ -93,5 +149,8 @@ class AnalyzeJournalImportJob implements ShouldQueue
                 'error_message' => substr($exception->getMessage(), 0, 2000),
                 'updated_at' => now(),
             ]);
+        if (! $updated && ! empty($import)) {
+            app(JournalImportCancellationService::class)->stopIfRequested((int) $import->id, (int) $import->business_id);
+        }
     }
 }

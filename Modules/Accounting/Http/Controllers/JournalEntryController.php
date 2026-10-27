@@ -24,6 +24,7 @@ use Modules\Accounting\Jobs\ProcessJournalImportJob;
 use Modules\Accounting\Services\JournalImportDraftService;
 use Modules\Accounting\Services\JournalImportInvoiceService;
 use Modules\Accounting\Services\JournalImportQueueService;
+use Modules\Accounting\Services\JournalImportCancellationService;
 use Modules\Accounting\Services\JournalTaxReconciliationService;
 use Modules\Accounting\Utils\AccountingUtil;
 use PhpOffice\PhpSpreadsheet\IOFactory;
@@ -242,7 +243,7 @@ class JournalEntryController extends Controller
             ->where('id', $id)
             ->first();
 
-        if (empty($batch) || ! in_array($batch->status, ['analyzed', 'partially_imported', 'failed'], true)) {
+        if (empty($batch) || ! in_array($batch->status, ['analyzed', 'partially_imported', 'failed', 'cancelled'], true)) {
             return redirect()->action([\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'import'])
                 ->with('status', [
                     'success' => 0,
@@ -255,6 +256,56 @@ class JournalEntryController extends Controller
             ? $this->readTemporaryJournalAnalysis($batch->analysis_path)
             : $this->analysisFromJournalDraftRows((int) $batch->id, (int) $business_id, $batch->summary);
         if (empty($analysis['entries'])) {
+            if ($batch->status === 'cancelled' && ! empty($batch->file_path)) {
+                $filePath = public_path($batch->file_path);
+                if (file_exists($filePath)) {
+                    $restarted = DB::transaction(function () use ($batch, $business_id) {
+                        $lockedBatch = DB::table('accounting_journal_imports')
+                            ->where('business_id', $business_id)
+                            ->where('id', $batch->id)
+                            ->lockForUpdate()
+                            ->first();
+                        if (empty($lockedBatch) || $lockedBatch->status !== 'cancelled') {
+                            return false;
+                        }
+
+                        $hasDraftRows = DB::table('accounting_journal_import_rows')
+                            ->where('journal_import_id', $lockedBatch->id)
+                            ->where('business_id', $business_id)
+                            ->exists();
+                        if ($hasDraftRows) {
+                            return false;
+                        }
+
+                        DB::table('accounting_journal_imports')
+                            ->where('id', $lockedBatch->id)
+                            ->where('business_id', $business_id)
+                            ->update([
+                                'status' => 'queued',
+                                'cancel_requested_at' => null,
+                                'cancel_requested_by' => null,
+                                'cancelled_at' => null,
+                                'cancelled_by' => null,
+                                'last_message' => 'Analisis dilanjutkan kembali atas permintaan pengguna.',
+                                'error_message' => null,
+                                'updated_at' => now(),
+                            ]);
+
+                        return true;
+                    });
+
+                    if ($restarted) {
+                        AnalyzeJournalImportJob::dispatch((int) $batch->id);
+
+                        return redirect()->action([\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'import'])
+                            ->with('status', [
+                                'success' => 1,
+                                'msg' => 'Analisis dilanjutkan. Buka Pantau progres untuk melihat statusnya.',
+                            ]);
+                    }
+                }
+            }
+
             return redirect()->action([\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'import'])
                 ->with('status', [
                     'success' => 0,
@@ -396,7 +447,7 @@ class JournalEntryController extends Controller
         if (empty($batch)) {
             abort(404);
         }
-        if (! in_array($batch->status, ['analyzed', 'partially_imported', 'failed'], true)) {
+        if (! in_array($batch->status, ['analyzed', 'partially_imported', 'failed', 'cancelled'], true)) {
             return response()->json(['success' => 0, 'msg' => 'Draft ini sedang diproses atau sudah selesai.'], 409);
         }
 
@@ -541,7 +592,7 @@ class JournalEntryController extends Controller
         if (empty($batch)) {
             abort(404);
         }
-        if (! in_array($batch->status, ['analyzed', 'partially_imported', 'failed'], true)) {
+        if (! in_array($batch->status, ['analyzed', 'partially_imported', 'failed', 'cancelled'], true)) {
             return response()->json(['success' => 0, 'msg' => 'Tunggu antrean selesai sebelum menyetujui selisih.'], 409);
         }
 
@@ -584,7 +635,7 @@ class JournalEntryController extends Controller
         if (empty($batch)) {
             abort(404);
         }
-        if (! in_array($batch->status, ['analyzed', 'partially_imported', 'failed'], true)) {
+        if (! in_array($batch->status, ['analyzed', 'partially_imported', 'failed', 'cancelled'], true)) {
             return response()->json(['success' => 0, 'msg' => 'Tunggu antrean selesai sebelum menyetujui selisih.'], 409);
         }
 
@@ -1067,7 +1118,7 @@ class JournalEntryController extends Controller
                 ->lockForUpdate()
                 ->first();
 
-            if (empty($lockedBatch) || ! in_array($lockedBatch->status, ['analyzed', 'partially_imported', 'failed'], true)) {
+            if (empty($lockedBatch) || ! in_array($lockedBatch->status, ['analyzed', 'partially_imported', 'failed', 'cancelled'], true)) {
                 return ['error' => 'Batch sedang diproses atau tidak dapat dilanjutkan.'];
             }
 
@@ -1076,6 +1127,10 @@ class JournalEntryController extends Controller
                 ->where('business_id', $business_id)
                 ->update([
                     'status' => 'preparing_import',
+                    'cancel_requested_at' => null,
+                    'cancel_requested_by' => null,
+                    'cancelled_at' => null,
+                    'cancelled_by' => null,
                     'prepare_cursor' => 0,
                     'tax_reconciliation_cursor' => 0,
                     'import_options' => json_encode($options, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
@@ -1100,6 +1155,7 @@ class JournalEntryController extends Controller
             DB::table('accounting_journal_imports')
                 ->where('id', $batch->id)
                 ->where('business_id', $business_id)
+                ->whereNull('cancel_requested_at')
                 ->update([
                     'status' => 'failed',
                     'last_message' => 'Persiapan import belum masuk ke worker queue.',
@@ -1139,6 +1195,9 @@ class JournalEntryController extends Controller
             'success' => 1,
             'id' => $batch->id,
             'status' => $batch->status,
+            'cancel_requested' => ! empty($batch->cancel_requested_at),
+            'cancel_requested_at' => $batch->cancel_requested_at,
+            'cancelled_at' => $batch->cancelled_at,
             'processed_entries' => (int) $batch->processed_entries,
             'total_entries' => (int) $batch->total_entries,
             'imported_entries' => (int) $batch->imported_entries,
@@ -1150,6 +1209,41 @@ class JournalEntryController extends Controller
             'error_message' => $batch->error_message,
             'created_at' => $batch->created_at,
             'updated_at' => $batch->updated_at,
+        ]);
+    }
+
+    public function terminateImport(Request $request, $id, JournalImportCancellationService $cancellationService)
+    {
+        $business_id = (int) $request->session()->get('user.business_id');
+        $this->authorizeJournalImportDraftAccess($business_id);
+
+        $result = $cancellationService->requestStop(
+            (int) $id,
+            $business_id,
+            (int) $request->session()->get('user.id')
+        );
+
+        if ($result['result'] === 'not_found') {
+            abort(404);
+        }
+
+        if ($result['result'] === 'not_active') {
+            return response()->json([
+                'success' => 0,
+                'msg' => 'Batch ini tidak sedang berjalan dan tidak dapat dihentikan.',
+            ], 409);
+        }
+
+        return response()->json([
+            'success' => 1,
+            'id' => (int) $id,
+            'status' => $result['status'],
+            'cancel_requested' => $result['result'] !== 'cancelled',
+            'msg' => $result['result'] === 'already_requested'
+                ? 'Permintaan terminate sudah diterima.'
+                : ($result['result'] === 'cancelled'
+                    ? 'Import dihentikan; baris yang belum diproses dapat dilanjutkan dari web.'
+                    : 'Permintaan terminate diterima; baris yang sedang diproses akan diselesaikan terlebih dahulu.'),
         ]);
     }
 
@@ -1710,6 +1804,13 @@ class JournalEntryController extends Controller
         }
 
         foreach ($this->readJournalWorkbookRows(public_path($path), $progressCallback) as $index => $row) {
+            if ($progressCallback && $index > 0 && $index % 500 === 0) {
+                $progressCallback([
+                    'processed_rows' => $index,
+                    'message' => 'Menganalisis baris '.$index.' dari workbook Excel.',
+                ]);
+            }
+
             if ($index === 2) {
                 $source_date_range = $row[0] ?? null;
             }

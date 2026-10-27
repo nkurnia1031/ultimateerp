@@ -10,7 +10,10 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Facade;
 use Mockery;
 use Modules\Accounting\Http\Controllers\JournalEntryController;
+use Modules\Accounting\Jobs\AnalyzeJournalImportJob;
 use Modules\Accounting\Jobs\ProcessJournalImportJob;
+use Modules\Accounting\Services\JournalImportCancellationService;
+use Modules\Accounting\Services\JournalImportDraftService;
 use Modules\Accounting\Services\JournalImportExpenseService;
 use Modules\Accounting\Services\JournalImportInvoiceService;
 use Modules\Accounting\Services\JournalImportPaymentService;
@@ -120,6 +123,167 @@ class ProcessJournalImportJobDraftTest extends TestCase
 
         $this->assertSame(1, DB::table('accounting_acc_trans_mappings')->count());
         $this->assertSame('completed', DB::table('accounting_journal_import_rows')->where('id', 1)->value('processing_status'));
+    }
+
+    public function test_worker_stops_after_current_row_and_returns_unstarted_rows_to_pending(): void
+    {
+        $this->useSqliteDatabase();
+        $this->createTables();
+        $now = now();
+        DB::table('accounting_journal_imports')->insert([
+            'id' => 1,
+            'business_id' => 3,
+            'created_by' => 8,
+            'status' => 'importing',
+            'import_options' => '{}',
+            'total_entries' => 2,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+
+        foreach ([1, 2] as $id) {
+            $entry = [
+                'source_type' => 'Journal Entry',
+                'source_number' => 'JE-CANCEL-'.$id,
+                'source_key' => 'Journal Entry|JE-CANCEL-'.$id,
+                'date' => '2026-10-01',
+                'description' => 'Cancellation row '.$id,
+                'is_unbalanced' => false,
+                'is_duplicate' => false,
+                'exists_in_system' => false,
+                'debit_total' => 100,
+                'credit_total' => 100,
+                'lines' => [['debit' => 100, 'credit' => 0], ['debit' => 0, 'credit' => 100]],
+            ];
+            DB::table('accounting_journal_import_rows')->insert([
+                'id' => $id,
+                'journal_import_id' => 1,
+                'business_id' => 3,
+                'entry_index' => $id,
+                'source_type' => 'Journal Entry',
+                'source_number' => $entry['source_number'],
+                'source_key' => $entry['source_key'],
+                'source_action' => 'journal',
+                'entry_data' => json_encode($entry),
+                'draft_data' => '{}',
+                'processing_status' => 'queued',
+                'processing_attempts' => 0,
+                'is_reviewed' => false,
+                'reconciliation_status' => 'not_checked',
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+        }
+
+        $controller = Mockery::mock(JournalEntryController::class);
+        $controller->shouldReceive('processJournalImportEntriesForBatch')->once()->andReturnUsing(function ($import, array $entries) {
+            $this->assertSame('JE-CANCEL-1', $entries[0]['source_number']);
+            DB::table('accounting_acc_trans_mappings')->insert([
+                'business_id' => $import->business_id,
+                'journal_import_id' => $import->id,
+                'type' => 'journal_entry',
+                'import_source_key' => $entries[0]['source_key'],
+            ]);
+            DB::table('accounting_journal_imports')->where('id', $import->id)->update([
+                'cancel_requested_at' => now(),
+                'cancel_requested_by' => 8,
+            ]);
+
+            return ['imported' => 1, 'skipped' => 0];
+        });
+        $controller->shouldNotReceive('persistJournalTaxAccountMappingsFromDraftRows');
+        $controller->shouldNotReceive('deleteTemporaryJournalFile');
+
+        (new ProcessJournalImportJob(1))->handle(
+            $controller,
+            new JournalImportQueueService(),
+            Mockery::mock(JournalImportInvoiceService::class),
+            Mockery::mock(JournalImportExpenseService::class),
+            Mockery::mock(JournalImportPaymentService::class),
+            Mockery::mock(JournalImportBankTransactionService::class)
+        );
+
+        $this->assertSame('cancelled', DB::table('accounting_journal_imports')->where('id', 1)->value('status'));
+        $this->assertSame('completed', DB::table('accounting_journal_import_rows')->where('id', 1)->value('processing_status'));
+        $this->assertSame('pending', DB::table('accounting_journal_import_rows')->where('id', 2)->value('processing_status'));
+        $this->assertSame(1, DB::table('accounting_acc_trans_mappings')->count());
+    }
+
+    public function test_analysis_job_stops_at_a_workbook_checkpoint_without_marking_batch_failed(): void
+    {
+        $this->useSqliteDatabase();
+        $this->createTables();
+        $now = now();
+        DB::table('accounting_journal_imports')->insert([
+            'id' => 1,
+            'business_id' => 3,
+            'created_by' => 8,
+            'status' => 'queued',
+            'file_path' => 'uploads/journal-imports/test.xlsx',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+
+        $controller = Mockery::mock(JournalEntryController::class);
+        $controller->shouldReceive('analyzeJournalWorkbook')->once()->andReturnUsing(function ($path, $businessId, $progressCallback) {
+            DB::table('accounting_journal_imports')->where('id', 1)->update([
+                'cancel_requested_at' => now(),
+                'cancel_requested_by' => 8,
+            ]);
+            $progressCallback(['processed_rows' => 500, 'message' => 'Menganalisis baris 500.']);
+        });
+        $controller->shouldNotReceive('writeTemporaryJournalAnalysis');
+        $draftService = Mockery::mock(JournalImportDraftService::class);
+        $draftService->shouldNotReceive('persistEntries');
+
+        (new AnalyzeJournalImportJob(1))->handle(
+            $controller,
+            $draftService,
+            new JournalImportCancellationService()
+        );
+
+        $this->assertSame('cancelled', DB::table('accounting_journal_imports')->where('id', 1)->value('status'));
+        $this->assertSame(0, DB::table('accounting_journal_import_rows')->count());
+    }
+
+    public function test_stop_requested_during_final_tax_chunk_finishes_cancellation(): void
+    {
+        $this->useSqliteDatabase();
+        $this->createTables();
+        $now = now();
+        DB::table('accounting_journal_imports')->insert([
+            'id' => 1,
+            'business_id' => 3,
+            'created_by' => 8,
+            'status' => 'reconciling',
+            'total_entries' => 0,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+
+        $stopRequested = false;
+        $connection = DB::connection();
+        $connection->setEventDispatcher(new \Illuminate\Events\Dispatcher(Container::getInstance()));
+        $connection->listen(function ($query) use (&$stopRequested) {
+            if ($stopRequested || ! str_contains(strtolower($query->sql), 'count(*) as row_count')) {
+                return;
+            }
+
+            $stopRequested = true;
+            (new JournalImportCancellationService())->requestStop(1, 3, 8);
+        });
+
+        $controller = Mockery::mock(JournalEntryController::class);
+        $controller->shouldNotReceive('deleteTemporaryJournalFile');
+
+        $this->runTaxContinuation($controller);
+
+        $batch = DB::table('accounting_journal_imports')->where('id', 1)->first();
+        $this->assertTrue($stopRequested);
+        $this->assertSame('cancelled', $batch->status);
+        $this->assertSame(8, (int) $batch->cancel_requested_by);
+        $this->assertSame(8, (int) $batch->cancelled_by);
+        $this->assertNotNull($batch->cancelled_at);
     }
 
     public function test_payment_waits_without_creating_a_payment_when_its_invoice_is_not_ready(): void
@@ -539,6 +703,10 @@ class ProcessJournalImportJobDraftTest extends TestCase
             $table->integer('total_entries')->default(0);
             $table->unsignedBigInteger('prepare_cursor')->default(0);
             $table->unsignedBigInteger('tax_reconciliation_cursor')->default(0);
+            $table->dateTime('cancel_requested_at')->nullable();
+            $table->unsignedInteger('cancel_requested_by')->nullable();
+            $table->dateTime('cancelled_at')->nullable();
+            $table->unsignedInteger('cancelled_by')->nullable();
             $table->text('last_message')->nullable();
             $table->text('error_message')->nullable();
             $table->string('file_path')->nullable();

@@ -62,4 +62,25 @@ class JournalImportChunkCursorMigrationTest extends TestCase
         $this->assertFalse($this->database->schema()->hasColumn('accounting_journal_imports', 'prepare_cursor'));
         $this->assertFalse($this->database->schema()->hasColumn('accounting_journal_imports', 'tax_reconciliation_cursor'));
     }
+
+    public function test_cancellation_migration_adds_columns_idempotently_and_can_be_reverted(): void
+    {
+        $migrationPath = dirname(__DIR__, 2).DIRECTORY_SEPARATOR.'Modules'.DIRECTORY_SEPARATOR.'Accounting'
+            .DIRECTORY_SEPARATOR.'Database'.DIRECTORY_SEPARATOR.'Migrations'
+            .DIRECTORY_SEPARATOR.'2026_10_27_000001_add_journal_import_cancellation_fields.php';
+        $migration = require $migrationPath;
+
+        $migration->up();
+        $migration->up();
+
+        foreach (['cancel_requested_at', 'cancel_requested_by', 'cancelled_at', 'cancelled_by'] as $column) {
+            $this->assertTrue($this->database->schema()->hasColumn('accounting_journal_imports', $column));
+        }
+
+        $migration->down();
+
+        foreach (['cancel_requested_at', 'cancel_requested_by', 'cancelled_at', 'cancelled_by'] as $column) {
+            $this->assertFalse($this->database->schema()->hasColumn('accounting_journal_imports', $column));
+        }
+    }
 }

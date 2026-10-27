@@ -22,7 +22,7 @@
     <h1>Import Journal Entry</h1>
 </section>
 
-<section id="journal_import_page" class="content no-print" data-status-url-base="{{ url('accounting/journal-entry/import') }}">
+<section id="journal_import_page" class="content no-print" data-status-url-base="{{ url('accounting/journal-entry/import') }}" data-terminate-url-base="{{ url('accounting/journal-entry/import') }}" data-active-statuses="{{ implode(',', \Modules\Accounting\Entities\JournalImportBatchStatus::activeStatuses()) }}" data-waiting-statuses="{{ implode(',', \Modules\Accounting\Entities\JournalImportBatchStatus::waitingStatuses()) }}" data-queued-statuses="{{ implode(',', \Modules\Accounting\Entities\JournalImportBatchStatus::queuedStatuses()) }}">
     @component('components.widget', ['class' => 'box-primary', 'title' => 'Upload & Analisa XLSX'])
         {!! Form::open([
             'url' => action([\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'analyzeImport']),
@@ -536,6 +536,9 @@
                         <span> · Pembaruan terakhir: <span id="journal_import_progress_heartbeat">—</span></span>
                     </p>
                     <p id="journal_import_progress_text" class="help-block" aria-live="polite">Menunggu update worker.</p>
+                    <button type="button" id="journal_import_terminate" class="btn btn-warning btn-sm journal-import-terminate hide" data-csrf-token="{{ csrf_token() }}">
+                        <i class="fas fa-stop"></i> Hentikan proses dengan aman
+                    </button>
                     <p id="journal_import_progress_stale" class="text-warning hide"></p>
                     <p id="journal_import_progress_error" class="text-danger hide"></p>
                     <div class="well well-sm" style="max-height: 150px; overflow-y: auto; margin-bottom: 0;">
@@ -567,7 +570,8 @@
                 <tbody>
                     @forelse($imports as $import)
                         @php
-                            $isJournalImportActive = in_array($import->status, ['queued', 'analyzing', 'preparing_import', 'queued_import', 'importing', 'reconciling', 'processing']);
+                            $isJournalImportActive = \Modules\Accounting\Entities\JournalImportBatchStatus::isActive((string) $import->status);
+                            $isJournalImportWaiting = \Modules\Accounting\Entities\JournalImportBatchStatus::isWaiting((string) $import->status);
                             $journalImportPercent = !empty($import->total_entries)
                                 ? min(100, (int) round(($import->processed_entries / $import->total_entries) * 100))
                                 : 0;
@@ -597,13 +601,15 @@
                                     <span class="label bg-aqua" id="journal-import-status-{{ $import->id }}">partially_imported</span>
                                 @elseif($import->status == 'failed')
                                     <span class="label bg-red" id="journal-import-status-{{ $import->id }}">failed</span>
+                                @elseif($import->status == 'cancelled')
+                                    <span class="label bg-gray" id="journal-import-status-{{ $import->id }}">cancelled</span>
                                 @else
                                     <span class="label bg-gray" id="journal-import-status-{{ $import->id }}">{{ $import->status }}</span>
                                 @endif
                                 @if($isJournalImportActive)
                                     <div class="progress" style="margin-top: 5px; margin-bottom: 0;">
-                                        <div id="journal-import-progress-{{ $import->id }}" class="progress-bar progress-bar-striped active" role="progressbar" aria-valuenow="{{ $journalImportPercent }}" aria-valuemin="0" aria-valuemax="100" style="width: {{ in_array($import->status, ['queued', 'analyzing', 'preparing_import', 'queued_import']) ? '100' : $journalImportPercent }}%;">
-                                            {{ in_array($import->status, ['queued', 'analyzing', 'preparing_import', 'queued_import']) ? '' : $journalImportPercent.'%' }}
+                                        <div id="journal-import-progress-{{ $import->id }}" class="progress-bar progress-bar-striped active" role="progressbar" aria-valuenow="{{ $journalImportPercent }}" aria-valuemin="0" aria-valuemax="100" style="width: {{ $isJournalImportWaiting ? '100' : $journalImportPercent }}%;">
+                                            {{ $isJournalImportWaiting ? '' : $journalImportPercent.'%' }}
                                         </div>
                                     </div>
                                     <small id="journal-import-count-{{ $import->id }}" class="text-muted">
@@ -629,14 +635,18 @@
                             <td id="journal-import-action-{{ $import->id }}"
                                 data-review-url="{{ action([\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'reviewImport'], [$import->id]) }}"
                                 data-revert-url="{{ action([\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'revertImport'], [$import->id]) }}"
+                                data-terminate-url="{{ action([\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'terminateImport'], [$import->id]) }}"
                                 data-csrf-token="{{ csrf_token() }}">
-                                @if(in_array($import->status, ['analyzed', 'partially_imported', 'failed'], true))
+                                @if(in_array($import->status, ['analyzed', 'partially_imported', 'failed', 'cancelled'], true))
                                     <a href="{{ action([\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'reviewImport'], [$import->id]) }}" class="btn btn-primary btn-xs">
                                         <i class="fas fa-check"></i> {{ $import->status === 'analyzed' ? 'Review & Import' : 'Review & Continue' }}
                                     </a>
                                 @elseif($isJournalImportActive)
                                     <button type="button" class="btn btn-default btn-xs journal-import-watch" data-id="{{ $import->id }}">
                                         <i class="fas fa-sync"></i> Pantau progres
+                                    </button>
+                                    <button type="button" class="btn btn-warning btn-xs journal-import-terminate" data-id="{{ $import->id }}" @if(!empty($import->cancel_requested_at)) disabled @endif>
+                                        <i class="fas fa-stop"></i> {{ !empty($import->cancel_requested_at) ? 'Menunggu berhenti' : 'Terminate' }}
                                     </button>
                                 @elseif($import->status == 'imported')
                                     {!! Form::open([

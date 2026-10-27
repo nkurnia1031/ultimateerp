@@ -756,9 +756,9 @@
     "semantic_hash": "80be89b790458e2ce79c56c686822abd"
   },
   "Modules/Accounting/Http/Controllers/JournalEntryController.php": {
-    "mtime": 1793012773.5551562,
-    "seen": 1793013489.0545318,
-    "ast_hash": "a6baa9481003c1af0dfb4f1a5e9b917b",
+    "mtime": 1793084038.0727718,
+    "seen": 1793084226.3317766,
+    "ast_hash": "4b75ac85ffe56ea948995415230dd3e7",
     "semantic_hash": ""
   },
   "Modules/Accounting/Http/Controllers/MediaController.php": {
@@ -804,15 +804,15 @@
     "semantic_hash": "b12b6dbaa1dd4c18df1950ac718e060c"
   },
   "Modules/Accounting/Jobs/AnalyzeJournalImportJob.php": {
-    "mtime": 1792661458.4628577,
-    "seen": 1792671392.092181,
-    "ast_hash": "34615219ee957db211c750a7776106dd",
+    "mtime": 1793084326.2018633,
+    "seen": 1793084557.0273943,
+    "ast_hash": "6d45c139f857f9c0700321daf3674704",
     "semantic_hash": ""
   },
   "Modules/Accounting/Jobs/ProcessJournalImportJob.php": {
-    "mtime": 1793013223.3994977,
-    "seen": 1793013489.0545318,
-    "ast_hash": "ce89a919cfd000a804364a939e25da7c",
+    "mtime": 1793088818.8391342,
+    "seen": 1793089199.5690122,
+    "ast_hash": "ba1cb0cf04a91334ec8d6fbb086ca41a",
     "semantic_hash": ""
   },
   "Modules/Accounting/Listeners/MapExpenseTransactions.php": {
@@ -1122,9 +1122,9 @@
     "semantic_hash": "85fc45420789bb1efb265707d34af6e2"
   },
   "Modules/Accounting/Resources/views/journal_entry/import.blade.php": {
-    "mtime": 1793012797.1466413,
-    "seen": 1793013489.0545318,
-    "ast_hash": "4666d46249b3e16fc1bbf6a412063a1c",
+    "mtime": 1793089542.6834733,
+    "seen": 1793089735.4484522,
+    "ast_hash": "f40cd55823a60e1b1d8c87baec3dd43a",
     "semantic_hash": ""
   },
   "Modules/Accounting/Resources/views/journal_entry/index.blade.php": {
@@ -1608,9 +1608,9 @@
     "semantic_hash": "34f27bfe161100880a4ad7cde5cf3181"
   },
   "Modules/Accounting/Routes/web.php": {
-    "mtime": 1793031033.0234375,
-    "seen": 1793032079.7474387,
-    "ast_hash": "be485fea6aeaca18a2587099c950631e",
+    "mtime": 1793083383.6426034,
+    "seen": 1793084226.332865,
+    "ast_hash": "cd91ebe16819ff6be7abf7818de1ef61",
     "semantic_hash": ""
   },
   "Modules/Accounting/Services/AccountingReportService.php": {
@@ -14718,15 +14718,15 @@
     "semantic_hash": ""
   },
   "Modules/Accounting/Resources/assets/js/journal_import.js": {
-    "mtime": 1793010118.7870605,
-    "seen": 1793010340.542811,
-    "ast_hash": "40e4266c6dcf8327fb7978db0d32185a",
+    "mtime": 1793089542.6857376,
+    "seen": 1793089735.4484522,
+    "ast_hash": "c07b277f8cb42fa70a68886b6df2838c",
     "semantic_hash": ""
   },
   "public/modules/accounting/js/journal_import.js": {
-    "mtime": 1793010147.2941291,
-    "seen": 1793010340.553343,
-    "ast_hash": "40e4266c6dcf8327fb7978db0d32185a",
+    "mtime": 1793089574.9143472,
+    "seen": 1793089735.4591765,
+    "ast_hash": "c07b277f8cb42fa70a68886b6df2838c",
     "semantic_hash": ""
   },
   "Modules/Accounting/Database/Migrations/2026_10_22_000001_create_accounting_journal_import_rows_table.php": {
@@ -14889,6 +14889,30 @@
     "mtime": 1793042865.4412477,
     "seen": 1793043320.0373757,
     "ast_hash": "814729230d2bbb981d8eda5db39a6aca",
+    "semantic_hash": ""
+  },
+  "Modules/Accounting/Database/Migrations/2026_10_27_000001_add_journal_import_cancellation_fields.php": {
+    "mtime": 1793083344.8677478,
+    "seen": 1793084226.3317766,
+    "ast_hash": "3fcc8225d672f304cf822db5288593dd",
+    "semantic_hash": ""
+  },
+  "Modules/Accounting/Services/JournalImportCancellationRequestedException.php": {
+    "mtime": 1793083344.8657048,
+    "seen": 1793084226.332865,
+    "ast_hash": "fa580061bf158d4cac4f56a014e43f81",
+    "semantic_hash": ""
+  },
+  "Modules/Accounting/Services/JournalImportCancellationService.php": {
+    "mtime": 1793089542.6808236,
+    "seen": 1793089735.4484522,
+    "ast_hash": "8ffc0d589a421b0ca6001cb2cd0c710f",
+    "semantic_hash": ""
+  },
+  "Modules/Accounting/Entities/JournalImportBatchStatus.php": {
+    "mtime": 1793089542.6798,
+    "seen": 1793089735.4470856,
+    "ast_hash": "37ea483233c0b328538e5a8aaac2d647",
     "semantic_hash": ""
   }
 }
