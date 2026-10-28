@@ -185,6 +185,9 @@ class GeneralLedgerAuditTest extends TestCase
 
     private function createSchema(): void
     {
+        Schema::create('system', function (Blueprint $table) {
+            $table->string('key'); $table->text('value')->nullable();
+        });
         Schema::create('accounts', function (Blueprint $table) {
             $table->increments('id'); $table->unsignedInteger('business_id'); $table->string('name'); $table->softDeletes();
         });
@@ -306,8 +309,8 @@ class GeneralLedgerAuditTest extends TestCase
         ]);
         DB::table('accounting_accounts_transactions')->insert([
             ['id' => $mappingId * 10, 'accounting_account_id' => 1, 'acc_trans_mapping_id' => $mappingId, 'transaction_id' => 100, 'transaction_payment_id' => 50, 'amount' => 100, 'type' => 'debit', 'sub_type' => 'journal_entry', 'operation_date' => '2022-01-04 11:00:00', 'note' => 'Overlap kas'],
-            ['id' => $mappingId * 10 + 1, 'accounting_account_id' => 3, 'acc_trans_mapping_id' => $mappingId, 'amount' => 10, 'type' => 'debit', 'sub_type' => 'journal_entry', 'operation_date' => '2022-01-04 11:00:00', 'note' => 'VAT In'],
-            ['id' => $mappingId * 10 + 2, 'accounting_account_id' => 4, 'acc_trans_mapping_id' => $mappingId, 'amount' => 110, 'type' => 'credit', 'sub_type' => 'journal_entry', 'operation_date' => '2022-01-04 11:00:00', 'note' => 'Trade Payable'],
+            ['id' => $mappingId * 10 + 1, 'accounting_account_id' => 3, 'acc_trans_mapping_id' => $mappingId, 'transaction_id' => null, 'transaction_payment_id' => null, 'amount' => 10, 'type' => 'debit', 'sub_type' => 'journal_entry', 'operation_date' => '2022-01-04 11:00:00', 'note' => 'VAT In'],
+            ['id' => $mappingId * 10 + 2, 'accounting_account_id' => 4, 'acc_trans_mapping_id' => $mappingId, 'transaction_id' => null, 'transaction_payment_id' => null, 'amount' => 110, 'type' => 'credit', 'sub_type' => 'journal_entry', 'operation_date' => '2022-01-04 11:00:00', 'note' => 'Trade Payable'],
         ]);
     }
 }
