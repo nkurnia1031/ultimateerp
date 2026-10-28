@@ -37,7 +37,6 @@ test('a queued Journal Import can stop, resume, and post once', async ({ page })
         await page.goto('/accounting/journal-entry/import');
         await expect(page.getByRole('heading', { name: 'Import Journal Entry' })).toBeVisible();
 
-        page.on('dialog', (dialog) => dialog.accept());
         await page.locator('input[name="journal_file"]').setInputFiles(fixturePath);
         await page.getByRole('button', { name: 'Analisa File' }).click();
 
@@ -47,11 +46,19 @@ test('a queued Journal Import can stop, resume, and post once', async ({ page })
         const statusId = await row.locator('[id^="journal-import-status-"]').getAttribute('id');
         const importId = statusId.replace('journal-import-status-', '');
 
-        const stopResponsePromise = page.waitForResponse((response) =>
-            response.request().method() === 'POST' &&
-            response.url().endsWith(`/accounting/journal-entry/import/${importId}/terminate`),
-        );
+        const confirmationPromise = page.waitForEvent('dialog', { timeout: 5_000 });
         await row.locator('.journal-import-terminate').click();
+        const confirmation = await confirmationPromise;
+        expect(confirmation.type()).toBe('confirm');
+        expect(confirmation.message()).toContain('Hentikan import');
+
+        const stopResponsePromise = page.waitForResponse(
+            (response) =>
+                response.request().method() === 'POST' &&
+                response.url().endsWith(`/accounting/journal-entry/import/${importId}/terminate`),
+            { timeout: 10_000 },
+        );
+        await confirmation.accept();
         const stopResponse = await stopResponsePromise;
         expect(stopResponse.ok()).toBeTruthy();
         await expect.poll(async () => (await batchStatus(page, importId)).status).toBe('cancelled');
