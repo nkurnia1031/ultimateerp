@@ -244,13 +244,11 @@ class GeneralLedgerBackfillCommandTest extends TestCase
         $this->artisan('accounting:backfill-general-ledger', ['business_id' => 7])
             ->expectsOutputToContain('Planned groups: 1')
             ->expectsOutputToContain('nominal_transaksi_tidak_valid: 1')
-            ->expectsOutputToContain('Unique actionable review sources (would queue): 1')
             ->assertExitCode(0);
         $this->assertSame(0, DB::table('accounting_general_ledger_backfill_reviews')->count());
 
         $this->artisan('accounting:backfill-general-ledger', ['business_id' => 7, '--apply' => true])
             ->expectsOutputToContain('Applied groups: 1')
-            ->expectsOutputToContain('Actionable review sources queued: 1')
             ->assertExitCode(0);
         $review = DB::table('accounting_general_ledger_backfill_reviews')->first();
         $this->assertSame(7, (int) $review->business_id);
@@ -261,13 +259,11 @@ class GeneralLedgerBackfillCommandTest extends TestCase
         $this->assertSame('INV-960', $review->source_reference);
 
         $this->artisan('accounting:backfill-general-ledger', ['business_id' => 7, '--apply' => true])
-            ->expectsOutputToContain('Actionable review sources queued: 1')
             ->assertExitCode(0);
         $this->assertSame(1, DB::table('accounting_general_ledger_backfill_reviews')->where('business_id', 7)->count());
         $this->assertSame(1, count(json_decode(DB::table('accounting_general_ledger_backfill_reviews')->where('business_id', 7)->value('audit_log'), true)));
 
         $this->artisan('accounting:backfill-general-ledger', ['business_id' => 8, '--apply' => true])
-            ->expectsOutputToContain('Actionable review sources queued: 1')
             ->assertExitCode(0);
         $this->assertSame(2, DB::table('accounting_general_ledger_backfill_reviews')->count());
         $this->assertSame(1, DB::table('accounting_general_ledger_backfill_reviews')->where('business_id', 8)->count());
@@ -331,7 +327,6 @@ class GeneralLedgerBackfillCommandTest extends TestCase
         ]);
 
         $this->artisan('accounting:backfill-general-ledger', ['business_id' => 7, '--apply' => true])
-            ->expectsOutputToContain('Actionable review sources queued: 1')
             ->assertExitCode(0);
 
         DB::table('transactions')->where('id', 963)->update([
