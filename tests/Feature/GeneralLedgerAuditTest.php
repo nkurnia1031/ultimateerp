@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\AccountTransaction;
 use App\TransactionPayment;
 use App\User;
+use App\Utils\ModuleUtil;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -147,8 +148,17 @@ class GeneralLedgerAuditTest extends TestCase
         $movementCount = DB::table('account_transactions')->count();
         $postingCount = DB::table('accounting_accounts_transactions')->count();
 
-        $user = Mockery::mock(User::class)->makePartial();
-        $user->shouldReceive('can')->andReturn(true);
+        DB::table(config('permission.table_names.permissions'))->insert([
+            'id' => 1, 'name' => 'accounting.view_reports', 'guard_name' => 'web', 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        DB::table(config('permission.table_names.model_has_permissions'))->insert([
+            'permission_id' => 1, 'model_type' => User::class, 'model_id' => 1,
+        ]);
+        $user = new User();
+        $user->forceFill(['id' => 1, 'business_id' => 1, 'username' => 'audit-test']);
+        $moduleUtil = Mockery::mock(ModuleUtil::class);
+        $moduleUtil->shouldReceive('hasThePermissionInSubscription')->andReturn(true);
+        $this->app->instance(ModuleUtil::class, $moduleUtil);
         $response = $this->withoutMiddleware([
             \App\Http\Middleware\SetSessionData::class,
             \App\Http\Middleware\Language::class,
