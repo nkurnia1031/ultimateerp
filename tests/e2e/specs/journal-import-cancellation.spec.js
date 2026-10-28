@@ -47,11 +47,18 @@ test('a queued Journal Import can stop, resume, and post once', async ({ page })
         const statusId = await row.locator('[id^="journal-import-status-"]').getAttribute('id');
         const importId = statusId.replace('journal-import-status-', '');
 
+        const stopResponsePromise = page.waitForResponse((response) =>
+            response.request().method() === 'POST' &&
+            response.url().endsWith(`/accounting/journal-entry/import/${importId}/terminate`),
+        );
         await row.locator('.journal-import-terminate').click();
-        await expect(row.getByRole('link', { name: 'Review & Continue' })).toBeVisible();
+        const stopResponse = await stopResponsePromise;
+        expect(stopResponse.ok()).toBeTruthy();
         await expect.poll(async () => (await batchStatus(page, importId)).status).toBe('cancelled');
 
-        await row.getByRole('link', { name: 'Review & Continue' }).click();
+        const resumeLink = row.getByRole('link', { name: 'Lanjutkan import' });
+        await expect(resumeLink).toBeVisible();
+        await resumeLink.click();
         queueWorker = spawn(
             'php',
             ['artisan', 'queue:work', '--queue=imports,default', '--tries=1', '--timeout=1800', '--sleep=1'],

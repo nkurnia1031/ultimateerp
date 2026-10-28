@@ -11,12 +11,13 @@ test('cash and bank book combines mapped accounts, filters rows, and exports XLS
     await loginAsCiUser(page);
     await page.goto('/accounting/reports/general-ledger?start_date=2022-01-01&end_date=2022-01-31');
 
-    await expect(page.getByRole('heading', { name: 'Buku Besar' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Buku Besar', exact: true })).toBeVisible();
     await expect(page.getByText('BUKU KAS/BANK GABUNGAN', { exact: false })).toBeVisible();
     const table = page.locator('.general-ledger-table');
     const openingRow = table.locator('tbody tr.opening-balance-row');
     await expect(openingRow).toContainText('Saldo Awal');
     await expect(openingRow).toContainText('Kas/Bank Gabungan');
+    expect((await openingRow.locator('td').nth(8).innerText()).replace(/\D/g, '')).toBe('150000');
     await expect(table).toContainText('CI GL cash movement');
     await expect(table).toContainText('CI GL bank movement');
     await expect(table).not.toContainText('CI GL excluded movement');
