@@ -15,6 +15,13 @@ class JournalImportE2ESeeder extends Seeder
         DB::transaction(function () {
             $existingUser = User::where('username', 'journal-ci')->first();
             if ($existingUser) {
+                $businessId = (int) $existingUser->business_id;
+                $userId = (int) $existingUser->id;
+                $now = now();
+
+                $this->ensurePermissions($userId);
+                $this->seedGeneralLedgerFixture($businessId, $userId, $now);
+
                 return;
             }
 
@@ -82,39 +89,102 @@ class JournalImportE2ESeeder extends Seeder
                 'updated_at' => $now,
             ]);
 
-            foreach ([
-                ['name' => 'CI Test Cash', 'code' => 'CI-1000', 'type' => 'asset'],
-                ['name' => 'CI Test Equity', 'code' => 'CI-3000', 'type' => 'equity'],
-            ] as $account) {
-                $mainAccountId = DB::table('accounts')->insertGetId([
-                    'business_id' => $businessId,
-                    'name' => $account['name'],
-                    'account_number' => $account['code'],
-                    'created_by' => $userId,
-                    'created_at' => $now,
-                    'updated_at' => $now,
-                ]);
+            $this->ensurePermissions($userId);
+            $this->seedGeneralLedgerFixture($businessId, $userId, $now);
+        });
+    }
 
-                DB::table('accounting_accounts')->insert([
-                    'name' => $account['name'],
-                    'gl_code' => $account['code'],
-                    'business_id' => $businessId,
-                    'account_id' => $mainAccountId,
-                    'account_primary_type' => $account['type'],
-                    'status' => 'active',
-                    'created_by' => $userId,
-                    'created_at' => $now,
-                    'updated_at' => $now,
-                ]);
+    private function ensurePermissions(int $userId): void
+    {
+        $permissions = collect([
+            'accounting.add_journal',
+            'accounting.view_reports',
+            'accounting.manage_accounts',
+            'superadmin',
+        ])->map(fn ($name) => Permission::firstOrCreate([
+            'name' => $name,
+            'guard_name' => 'web',
+        ]));
+
+        User::findOrFail($userId)->givePermissionTo($permissions);
+    }
+
+    private function seedGeneralLedgerFixture(int $businessId, int $userId, $now): void
+    {
+        $fixtureAccounts = [
+            ['name' => 'CI Test Cash', 'code' => 'CI-1000', 'type' => 'asset', 'classification' => 'cash'],
+            ['name' => 'CI Test Bank', 'code' => 'CI-1001', 'type' => 'asset', 'classification' => 'bank'],
+            ['name' => 'CI Test Equity', 'code' => 'CI-3000', 'type' => 'equity', 'classification' => 'excluded'],
+        ];
+        $accountIds = [];
+
+        foreach ($fixtureAccounts as $account) {
+            $mainAccount = DB::table('accounts')
+                ->where('business_id', $businessId)
+                ->where('account_number', $account['code'])
+                ->first();
+            $mainAccountId = $mainAccount ? (int) $mainAccount->id : DB::table('accounts')->insertGetId([
+                'business_id' => $businessId,
+                'name' => $account['name'],
+                'account_number' => $account['code'],
+                'created_by' => $userId,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+
+            DB::table('accounting_accounts')->updateOrInsert([
+                'business_id' => $businessId,
+                'gl_code' => $account['code'],
+            ], [
+                'name' => $account['name'],
+                'account_id' => $mainAccountId,
+                'account_primary_type' => $account['type'],
+                'status' => 'active',
+                'created_by' => $userId,
+                'updated_at' => $now,
+                'created_at' => $now,
+            ]);
+
+            $accountingAccount = DB::table('accounting_accounts')
+                ->where('business_id', $businessId)
+                ->where('gl_code', $account['code'])
+                ->first();
+            $accountIds[$account['code']] = (int) $accountingAccount->id;
+
+            DB::table('accounting_general_ledger_cash_bank_mappings')->updateOrInsert([
+                'business_id' => $businessId,
+                'accounting_account_id' => $accountIds[$account['code']],
+            ], [
+                'classification' => $account['classification'],
+                'created_by' => $userId,
+                'updated_by' => $userId,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+        }
+
+        $postings = [
+            ['accounting_account_id' => $accountIds['CI-1000'], 'amount' => 1000, 'type' => 'debit', 'sub_type' => 'opening_balance', 'operation_date' => '2021-12-31 00:00:00', 'note' => 'CI GL opening cash'],
+            ['accounting_account_id' => $accountIds['CI-1001'], 'amount' => 500, 'type' => 'debit', 'sub_type' => 'opening_balance', 'operation_date' => '2021-12-31 00:00:00', 'note' => 'CI GL opening bank'],
+            ['accounting_account_id' => $accountIds['CI-1000'], 'amount' => 200, 'type' => 'debit', 'sub_type' => 'journal_entry', 'operation_date' => '2022-01-03 10:00:00', 'note' => 'CI GL cash movement'],
+            ['accounting_account_id' => $accountIds['CI-1001'], 'amount' => 50, 'type' => 'credit', 'sub_type' => 'journal_entry', 'operation_date' => '2022-01-04 10:00:00', 'note' => 'CI GL bank movement'],
+            ['accounting_account_id' => $accountIds['CI-3000'], 'amount' => 900, 'type' => 'debit', 'sub_type' => 'journal_entry', 'operation_date' => '2022-01-05 10:00:00', 'note' => 'CI GL excluded movement'],
+        ];
+
+        foreach ($postings as $posting) {
+            $exists = DB::table('accounting_accounts_transactions')
+                ->where('accounting_account_id', $posting['accounting_account_id'])
+                ->where('note', $posting['note'])
+                ->exists();
+            if ($exists) {
+                continue;
             }
 
-            $permissions = collect(['accounting.add_journal', 'superadmin'])
-                ->map(fn ($name) => Permission::firstOrCreate([
-                    'name' => $name,
-                    'guard_name' => 'web',
-                ]));
-
-            User::findOrFail($userId)->givePermissionTo($permissions);
-        });
+            DB::table('accounting_accounts_transactions')->insert($posting + [
+                'created_by' => $userId,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+        }
     }
 }
