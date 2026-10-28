@@ -234,7 +234,7 @@ class GeneralLedgerBackfillService
 
         foreach ($query->cursor() as $transaction) {
             if (! $this->isPostedTransaction($transaction)) {
-                yield $this->transactionSkipCandidate($transaction, 'transaksi_bukan_posting');
+                yield $this->transactionSkipCandidate($transaction, 'transaksi_bukan_posting', $businessId);
                 continue;
             }
 
@@ -259,14 +259,14 @@ class GeneralLedgerBackfillService
                 }
             }
             if (! empty($pair['reason'])) {
-                yield $this->transactionSkipCandidate($transaction, (string) $pair['reason']);
+                yield $this->transactionSkipCandidate($transaction, (string) $pair['reason'], $businessId);
                 continue;
             }
 
             $total = round((float) ($transaction->final_total ?? 0), 4);
             $tax = round((float) ($transaction->tax_amount ?? 0), 4);
             if (! is_finite($total) || ! is_finite($tax) || $total <= 0 || $tax < 0 || $tax > $total) {
-                yield $this->transactionSkipCandidate($transaction, 'nominal_transaksi_tidak_valid');
+                yield $this->transactionSkipCandidate($transaction, 'nominal_transaksi_tidak_valid', $businessId);
                 continue;
             }
 
@@ -280,7 +280,7 @@ class GeneralLedgerBackfillService
                 if ($tax > 0) {
                     $vat = $this->resolveVatAccount($businessId, 'output');
                     if (! empty($vat['reason'])) {
-                        yield $this->transactionSkipCandidate($transaction, (string) $vat['reason']);
+                        yield $this->transactionSkipCandidate($transaction, (string) $vat['reason'], $businessId);
                         continue;
                     }
                     $lines[] = $this->line((int) $vat['account']->id, 'credit', $tax);
@@ -292,7 +292,7 @@ class GeneralLedgerBackfillService
                 if ($tax > 0) {
                     $vat = $this->resolveVatAccount($businessId, 'input');
                     if (! empty($vat['reason'])) {
-                        yield $this->transactionSkipCandidate($transaction, (string) $vat['reason']);
+                        yield $this->transactionSkipCandidate($transaction, (string) $vat['reason'], $businessId);
                         continue;
                     }
                     $lines[] = $this->line((int) $vat['account']->id, 'debit', $tax);
@@ -305,7 +305,7 @@ class GeneralLedgerBackfillService
                 if ($tax > 0) {
                     $vat = $this->resolveVatAccount($businessId, 'input');
                     if (! empty($vat['reason'])) {
-                        yield $this->transactionSkipCandidate($transaction, (string) $vat['reason']);
+                        yield $this->transactionSkipCandidate($transaction, (string) $vat['reason'], $businessId);
                         continue;
                     }
                     $lines[] = $this->line((int) $vat['account']->id, 'debit', $tax);
@@ -398,18 +398,18 @@ class GeneralLedgerBackfillService
                 'type' => $type,
                 'status' => $payment->transaction_status,
             ])) {
-                yield $this->paymentSkipCandidate($payment, 'transaksi_bukan_posting');
+                yield $this->paymentSkipCandidate($payment, 'transaksi_bukan_posting', $businessId);
                 continue;
             }
             $mainAccountId = (int) ($payment->payment_account_id ?? 0);
             if ($mainAccountId < 1) {
-                yield $this->paymentSkipCandidate($payment, 'akun_pembayaran_operasional_kosong');
+                yield $this->paymentSkipCandidate($payment, 'akun_pembayaran_operasional_kosong', $businessId);
                 continue;
             }
 
             $sourceAccount = $this->mainAccountMapping($businessId, $mainAccountId);
             if (! empty($sourceAccount['reason'])) {
-                yield $this->paymentSkipCandidate($payment, (string) $sourceAccount['reason']);
+                yield $this->paymentSkipCandidate($payment, (string) $sourceAccount['reason'], $businessId);
                 continue;
             }
 
@@ -430,11 +430,11 @@ class GeneralLedgerBackfillService
             if (! $counterpart) {
                 yield $this->paymentSkipCandidate($payment, (string) ($autoMap['reason'] ?? ($counterpartId < 1
                     ? 'mapping_akun_lawan_tidak_lengkap'
-                    : 'akun_lawan_tidak_ada_di_business')));
+                    : 'akun_lawan_tidak_ada_di_business')), $businessId);
                 continue;
             }
             if ((int) $counterpart->id === (int) $sourceAccount['account']->id) {
-                yield $this->paymentSkipCandidate($payment, 'akun_pembayaran_sama_dengan_akun_lawan');
+                yield $this->paymentSkipCandidate($payment, 'akun_pembayaran_sama_dengan_akun_lawan', $businessId);
                 continue;
             }
 
@@ -541,7 +541,7 @@ class GeneralLedgerBackfillService
             if ((string) $transfer->source_type === (string) $transfer->counterpart_type
                 || round((float) $transfer->source_amount, 4) !== round((float) $transfer->counterpart_amount, 4)
                 || round((float) $transfer->source_amount, 4) <= 0) {
-                yield $this->transferSkipCandidate($transfer, 'transfer_tidak_seimbang');
+                yield $this->transferSkipCandidate($transfer, 'transfer_tidak_seimbang', $businessId);
                 continue;
             }
 
@@ -550,7 +550,8 @@ class GeneralLedgerBackfillService
             if (! empty($sourceAccount['reason']) || ! empty($counterpartAccount['reason'])) {
                 yield $this->transferSkipCandidate(
                     $transfer,
-                    (string) ($sourceAccount['reason'] ?? $counterpartAccount['reason'])
+                    (string) ($sourceAccount['reason'] ?? $counterpartAccount['reason']),
+                    $businessId
                 );
                 continue;
             }
@@ -749,7 +750,7 @@ class GeneralLedgerBackfillService
             ->count();
     }
 
-    private function transactionSkipCandidate(object $transaction, string $reason): array
+    private function transactionSkipCandidate(object $transaction, string $reason, int $businessId): array
     {
         $type = (string) ($transaction->type ?? 'transaction');
         $reference = trim((string) ($transaction->invoice_no ?? '')) ?: trim((string) ($transaction->ref_no ?? ''));
@@ -760,7 +761,7 @@ class GeneralLedgerBackfillService
         return [
             'skip_reason' => $reason,
             'review_source' => [
-                'business_id' => (int) $transaction->business_id,
+                'business_id' => $businessId,
                 'source_record_type' => Transaction::class,
                 'source_record_id' => (int) $transaction->id,
                 'operation_date' => (string) ($transaction->transaction_date ?? ''),
@@ -777,7 +778,7 @@ class GeneralLedgerBackfillService
         ];
     }
 
-    private function paymentSkipCandidate(object $payment, string $reason): array
+    private function paymentSkipCandidate(object $payment, string $reason, int $businessId): array
     {
         $reference = trim((string) ($payment->ref_no ?? '')) ?: trim((string) ($payment->invoice_no ?? ''));
         if ($reference === '') {
@@ -787,7 +788,7 @@ class GeneralLedgerBackfillService
         return [
             'skip_reason' => $reason,
             'review_source' => [
-                'business_id' => (int) $payment->business_id,
+                'business_id' => $businessId,
                 'source_record_type' => TransactionPayment::class,
                 'source_record_id' => (int) $payment->payment_id,
                 'operation_date' => (string) ($payment->paid_on ?? ''),
@@ -804,12 +805,12 @@ class GeneralLedgerBackfillService
         ];
     }
 
-    private function transferSkipCandidate(object $transfer, string $reason): array
+    private function transferSkipCandidate(object $transfer, string $reason, int $businessId): array
     {
         return [
             'skip_reason' => $reason,
             'review_source' => [
-                'business_id' => (int) ($transfer->business_id ?? 0),
+                'business_id' => $businessId,
                 'source_record_type' => AccountTransaction::class,
                 'source_record_id' => (int) $transfer->source_id,
                 'operation_date' => (string) ($transfer->source_operation_date ?? ''),

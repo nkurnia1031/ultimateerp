@@ -329,24 +329,29 @@ class GeneralLedgerBackfillCommandTest extends TestCase
         $this->artisan('accounting:backfill-general-ledger', ['business_id' => 7, '--apply' => true])
             ->assertExitCode(0);
 
+        DB::table('accounting_accounts')->where('id', 105)->delete();
         DB::table('transactions')->where('id', 963)->update([
-            'type' => 'expense',
-            'expense_category_id' => 999,
+            'type' => 'purchase',
             'final_total' => 100,
-            'total_before_tax' => 100,
+            'total_before_tax' => 90,
+            'tax_amount' => 10,
         ]);
         $this->artisan('accounting:backfill-general-ledger', ['business_id' => 7, '--apply' => true])
-            ->expectsOutputToContain('kategori_biaya_tidak_ditemukan: 1')
+            ->expectsOutputToContain('akun_vat_tidak_ditemukan: 1')
             ->assertExitCode(0);
 
         $review = DB::table('accounting_general_ledger_backfill_reviews')->where('source_record_id', 963)->first();
-        $this->assertSame('kategori_biaya_tidak_ditemukan', $review->skip_reason);
+        $this->assertSame('akun_vat_tidak_ditemukan', $review->skip_reason);
         $auditLog = json_decode($review->audit_log, true);
         $this->assertCount(2, $auditLog);
         $this->assertSame('updated', $auditLog[1]['event']);
         $this->assertSame('nominal_transaksi_tidak_valid', $auditLog[1]['changes']['reason']['from']);
 
-        DB::table('transactions')->where('id', 963)->update(['expense_category_id' => 5]);
+        DB::table('transactions')->where('id', 963)->update([
+            'type' => 'expense',
+            'expense_category_id' => 5,
+            'tax_amount' => 0,
+        ]);
         $this->artisan('accounting:backfill-general-ledger', ['business_id' => 7, '--apply' => true])
             ->expectsOutputToContain('Applied groups: 1')
             ->assertExitCode(0);
