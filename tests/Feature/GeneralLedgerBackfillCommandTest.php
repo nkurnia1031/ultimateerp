@@ -169,6 +169,203 @@ class GeneralLedgerBackfillCommandTest extends TestCase
         $this->assertSame(3, DB::table('accounting_acc_trans_mappings')->count());
     }
 
+    public function test_dry_run_does_not_stage_actionable_skips_and_apply_stages_them_idempotently_per_business(): void
+    {
+        DB::table('transactions')->insert([
+            [
+                'id' => 959,
+                'business_id' => 7,
+                'location_id' => 70,
+                'type' => 'sell',
+                'status' => 'final',
+                'transaction_date' => '2023-05-31 10:00:00',
+                'final_total' => 100,
+                'total_before_tax' => 100,
+                'tax_amount' => 0,
+                'created_by' => 1,
+                'invoice_no' => 'INV-959',
+                'ref_no' => 'SALE-959',
+            ],
+            [
+                'id' => 960,
+                'business_id' => 7,
+                'location_id' => 70,
+                'type' => 'sell',
+                'status' => 'final',
+                'transaction_date' => '2023-06-01 10:00:00',
+                'final_total' => 0,
+                'total_before_tax' => 0,
+                'tax_amount' => 0,
+                'created_by' => 1,
+                'invoice_no' => 'INV-960',
+                'ref_no' => 'SALE-960',
+            ],
+            [
+                'id' => 961,
+                'business_id' => 7,
+                'location_id' => 70,
+                'type' => 'sell',
+                'status' => 'draft',
+                'transaction_date' => '2023-06-02 10:00:00',
+                'final_total' => 0,
+                'total_before_tax' => 0,
+                'tax_amount' => 0,
+                'created_by' => 1,
+                'invoice_no' => 'INV-961',
+                'ref_no' => 'SALE-961',
+            ],
+        ]);
+        DB::table('business')->insert(['id' => 8, 'name' => 'Business Lain']);
+        DB::table('business_locations')->insert([
+            'id' => 80,
+            'business_id' => 8,
+            'name' => 'Lokasi Lain',
+            'accounting_default_map' => json_encode(['sale' => ['payment_account' => 802, 'deposit_to' => 801]]),
+        ]);
+        DB::table('accounting_accounts')->insert([
+            ['id' => 801, 'business_id' => 8, 'name' => 'Piutang Business Lain', 'account_primary_type' => 'asset', 'status' => 'active', 'created_by' => 1],
+            ['id' => 802, 'business_id' => 8, 'name' => 'Pendapatan Business Lain', 'account_primary_type' => 'income', 'status' => 'active', 'created_by' => 1],
+        ]);
+        DB::table('transactions')->insert([
+            'id' => 962,
+            'business_id' => 8,
+            'location_id' => 80,
+            'type' => 'sell',
+            'status' => 'final',
+            'transaction_date' => '2023-06-03 10:00:00',
+            'final_total' => 0,
+            'total_before_tax' => 0,
+            'tax_amount' => 0,
+            'created_by' => 1,
+            'invoice_no' => 'INV-962',
+            'ref_no' => 'SALE-962',
+        ]);
+
+        $this->artisan('accounting:backfill-general-ledger', ['business_id' => 7])
+            ->expectsOutputToContain('Planned groups: 1')
+            ->expectsOutputToContain('nominal_transaksi_tidak_valid: 1')
+            ->expectsOutputToContain('Unique actionable review sources (would queue): 1')
+            ->assertExitCode(0);
+        $this->assertSame(0, DB::table('accounting_general_ledger_backfill_reviews')->count());
+
+        $this->artisan('accounting:backfill-general-ledger', ['business_id' => 7, '--apply' => true])
+            ->expectsOutputToContain('Applied groups: 1')
+            ->expectsOutputToContain('Actionable review sources queued: 1')
+            ->assertExitCode(0);
+        $review = DB::table('accounting_general_ledger_backfill_reviews')->first();
+        $this->assertSame(7, (int) $review->business_id);
+        $this->assertSame(960, (int) $review->source_record_id);
+        $this->assertSame('nominal_transaksi_tidak_valid', $review->skip_reason);
+        $this->assertSame('pending', $review->status);
+        $this->assertSame(1, count(json_decode($review->audit_log, true)));
+        $this->assertSame('INV-960', $review->source_reference);
+
+        $this->artisan('accounting:backfill-general-ledger', ['business_id' => 7, '--apply' => true])
+            ->expectsOutputToContain('Actionable review sources queued: 1')
+            ->assertExitCode(0);
+        $this->assertSame(1, DB::table('accounting_general_ledger_backfill_reviews')->where('business_id', 7)->count());
+        $this->assertSame(1, count(json_decode(DB::table('accounting_general_ledger_backfill_reviews')->where('business_id', 7)->value('audit_log'), true)));
+
+        $this->artisan('accounting:backfill-general-ledger', ['business_id' => 8, '--apply' => true])
+            ->expectsOutputToContain('Actionable review sources queued: 1')
+            ->assertExitCode(0);
+        $this->assertSame(2, DB::table('accounting_general_ledger_backfill_reviews')->count());
+        $this->assertSame(1, DB::table('accounting_general_ledger_backfill_reviews')->where('business_id', 8)->count());
+    }
+
+    public function test_apply_stages_opening_balances_and_unpaired_account_movements_as_separate_sources(): void
+    {
+        DB::table('accounts')->insert(['id' => 203, 'business_id' => 7, 'name' => 'Rekening Tanpa Mapping']);
+        DB::table('account_transactions')->insert([
+            [
+                'id' => 800,
+                'account_id' => 203,
+                'type' => 'debit',
+                'sub_type' => 'opening_balance',
+                'amount' => 100,
+                'operation_date' => '2023-01-01 00:00:00',
+                'created_by' => 1,
+                'note' => 'Saldo awal rekening',
+            ],
+            [
+                'id' => 801,
+                'account_id' => 203,
+                'type' => 'credit',
+                'sub_type' => 'expense_payment',
+                'amount' => 15,
+                'operation_date' => '2023-02-01 00:00:00',
+                'created_by' => 1,
+                'note' => 'Mutasi tanpa pasangan',
+            ],
+        ]);
+
+        $this->artisan('accounting:backfill-general-ledger', ['business_id' => 7, '--apply' => true])
+            ->expectsOutputToContain('saldo_awal_rekening_tidak_disalin: 1')
+            ->expectsOutputToContain('pergerakan_rekening_tanpa_akun_lawan: 1')
+            ->expectsOutputToContain('Actionable review sources queued: 2')
+            ->assertExitCode(0);
+
+        $reviews = DB::table('accounting_general_ledger_backfill_reviews')->orderBy('source_record_id')->get();
+        $this->assertCount(2, $reviews);
+        $this->assertSame('saldo_awal_rekening_tidak_disalin', $reviews[0]->skip_reason);
+        $this->assertSame('pergerakan_rekening_tanpa_akun_lawan', $reviews[1]->skip_reason);
+        $this->assertSame(800, (int) $reviews[0]->source_record_id);
+        $this->assertSame(801, (int) $reviews[1]->source_record_id);
+    }
+
+    public function test_retry_updates_the_existing_reason_and_linked_source_closes_the_item_with_audit_history(): void
+    {
+        DB::table('transactions')->insert([
+            'id' => 963,
+            'business_id' => 7,
+            'location_id' => 70,
+            'type' => 'sell',
+            'status' => 'final',
+            'transaction_date' => '2023-06-04 10:00:00',
+            'final_total' => 0,
+            'total_before_tax' => 0,
+            'tax_amount' => 0,
+            'created_by' => 1,
+            'invoice_no' => 'INV-963',
+            'ref_no' => 'SALE-963',
+        ]);
+
+        $this->artisan('accounting:backfill-general-ledger', ['business_id' => 7, '--apply' => true])
+            ->expectsOutputToContain('Actionable review sources queued: 1')
+            ->assertExitCode(0);
+
+        DB::table('transactions')->where('id', 963)->update([
+            'type' => 'expense',
+            'expense_category_id' => 999,
+            'final_total' => 100,
+            'total_before_tax' => 100,
+        ]);
+        $this->artisan('accounting:backfill-general-ledger', ['business_id' => 7, '--apply' => true])
+            ->expectsOutputToContain('kategori_biaya_tidak_ditemukan: 1')
+            ->assertExitCode(0);
+
+        $review = DB::table('accounting_general_ledger_backfill_reviews')->where('source_record_id', 963)->first();
+        $this->assertSame('kategori_biaya_tidak_ditemukan', $review->skip_reason);
+        $auditLog = json_decode($review->audit_log, true);
+        $this->assertCount(2, $auditLog);
+        $this->assertSame('updated', $auditLog[1]['event']);
+        $this->assertSame('nominal_transaksi_tidak_valid', $auditLog[1]['changes']['reason']['from']);
+
+        DB::table('transactions')->where('id', 963)->update(['expense_category_id' => 5]);
+        $this->artisan('accounting:backfill-general-ledger', ['business_id' => 7, '--apply' => true])
+            ->expectsOutputToContain('Applied groups: 1')
+            ->assertExitCode(0);
+        $this->artisan('accounting:backfill-general-ledger', ['business_id' => 7, '--apply' => true])
+            ->expectsOutputToContain('Already linked: 1')
+            ->assertExitCode(0);
+
+        $review = DB::table('accounting_general_ledger_backfill_reviews')->where('source_record_id', 963)->first();
+        $this->assertSame('resolved', $review->status);
+        $this->assertNotNull($review->resolved_at);
+        $this->assertSame(1, DB::table('accounting_general_ledger_backfill_reviews')->where('source_record_id', 963)->count());
+        $this->assertSame('resolved', json_decode($review->audit_log, true)[2]['event']);
+    }
+
     public function test_backfills_sales_and_purchase_groups_when_location_defaults_are_missing(): void
     {
         DB::table('business_locations')->where('id', 70)->update(['accounting_default_map' => null]);
@@ -315,6 +512,7 @@ class GeneralLedgerBackfillCommandTest extends TestCase
 
         $this->assertSame(0, DB::table('accounting_accounts_transactions')->count());
         $this->assertSame(0, DB::table('accounting_acc_trans_mappings')->count());
+        $this->assertSame(0, DB::table('accounting_general_ledger_backfill_reviews')->count());
     }
 
     public function test_expense_categories_with_clear_meaning_map_to_matching_coa_accounts(): void
@@ -392,6 +590,7 @@ class GeneralLedgerBackfillCommandTest extends TestCase
 
         $this->assertSame(0, DB::table('accounting_accounts_transactions')->count());
         $this->assertSame(0, DB::table('accounting_acc_trans_mappings')->count());
+        $this->assertSame(0, DB::table('accounting_general_ledger_backfill_reviews')->count());
     }
 
     public function test_expense_category_nearest_mapping_takes_precedence_over_generic_location_default(): void
@@ -791,6 +990,24 @@ class GeneralLedgerBackfillCommandTest extends TestCase
             $table->text('source_link_note')->nullable();
             $table->string('import_source_key')->nullable();
             $table->timestamps();
+        });
+        Schema::create('accounting_general_ledger_backfill_reviews', function (Blueprint $table) {
+            $table->bigIncrements('id');
+            $table->unsignedInteger('business_id');
+            $table->string('source_record_type', 100);
+            $table->unsignedBigInteger('source_record_id');
+            $table->dateTime('operation_date')->nullable();
+            $table->string('source_reference', 191)->nullable();
+            $table->text('source_summary');
+            $table->json('source_context')->nullable();
+            $table->string('skip_reason', 100);
+            $table->string('status', 24)->default('pending');
+            $table->dateTime('first_seen_at')->nullable();
+            $table->dateTime('last_seen_at')->nullable();
+            $table->dateTime('resolved_at')->nullable();
+            $table->json('audit_log')->nullable();
+            $table->timestamps();
+            $table->unique(['business_id', 'source_record_type', 'source_record_id']);
         });
         Schema::create('accounting_accounts_transactions', function (Blueprint $table) {
             $table->increments('id');

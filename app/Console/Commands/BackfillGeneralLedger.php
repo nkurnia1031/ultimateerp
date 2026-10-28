@@ -45,6 +45,8 @@ class BackfillGeneralLedger extends Command
         $this->line('Missing VAT accounts: '.(int) $summary['missing_vat_accounts']);
         $this->line('Debit total: '.number_format((float) $summary['debit_total'], 2, '.', ','));
         $this->line('Credit total: '.number_format((float) $summary['credit_total'], 2, '.', ','));
+        $this->line(($applying ? 'Actionable review sources queued: ' : 'Unique actionable review sources (would queue): ')
+            .(int) ($summary['actionable_review_sources'] ?? 0));
 
         $accountAudit = $summary['account_mapping_audit'];
         $this->line('Main account mapping audit:');

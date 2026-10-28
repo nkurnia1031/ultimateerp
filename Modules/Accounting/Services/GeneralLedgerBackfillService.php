@@ -22,6 +22,10 @@ class GeneralLedgerBackfillService
 
     private $expensePaymentGroupsCache = [];
 
+    private $reviewQueueBuffer = [];
+
+    private const REVIEW_QUEUE_TABLE = 'accounting_general_ledger_backfill_reviews';
+
     public function __construct(JournalImportAccountComponentService $accountComponentService)
     {
         $this->accountComponentService = $accountComponentService;
@@ -29,6 +33,8 @@ class GeneralLedgerBackfillService
 
     public function run(int $businessId, bool $apply = false): array
     {
+        $this->reviewQueueBuffer = [];
+
         $business = DB::table('business')->where('id', $businessId)->first(['id', 'name']);
         if (! $business) {
             return ['error' => 'Business ID tidak ditemukan.'];
@@ -37,6 +43,10 @@ class GeneralLedgerBackfillService
         if (! Schema::hasColumn('accounting_acc_trans_mappings', 'source_record_type')
             || ! Schema::hasColumn('accounting_acc_trans_mappings', 'source_record_id')) {
             return ['error' => 'Migrasi source link Journal belum tersedia. Jalankan migration aplikasi terlebih dahulu.'];
+        }
+
+        if ($apply && ! Schema::hasTable(self::REVIEW_QUEUE_TABLE)) {
+            return ['error' => 'Migrasi antrean review backfill belum tersedia. Jalankan migration aplikasi terlebih dahulu.'];
         }
 
         $this->accountingAccountsCache[$businessId] = DB::table('accounting_accounts')
@@ -80,6 +90,7 @@ class GeneralLedgerBackfillService
             'ambiguous_vat_accounts' => 0,
             'missing_vat_accounts' => 0,
             'skipped' => [],
+            'review_source_keys' => [],
             'debit_total' => 0.0,
             'credit_total' => 0.0,
             'date_start' => null,
@@ -105,9 +116,17 @@ class GeneralLedgerBackfillService
             }
         }
 
+        $this->reviewUnpairedMainAccountMovements($businessId, $apply, $summary);
+        $this->reviewInvalidTransfers($businessId, $apply, $summary);
+        if ($apply) {
+            $this->flushReviewQueue();
+        }
+
         $summary['account_links'] = array_values($summary['account_links']);
         $summary['current_map_details'] = array_values($summary['current_map_details']);
         $summary['auto_map_details'] = array_values($summary['auto_map_details']);
+        $summary['actionable_review_sources'] = count($summary['review_source_keys']);
+        unset($summary['review_source_keys']);
         $summary['date_range'] = $summary['date_start'] === null
             ? '—'
             : $summary['date_start'].' — '.$summary['date_end'];
@@ -215,7 +234,7 @@ class GeneralLedgerBackfillService
 
         foreach ($query->cursor() as $transaction) {
             if (! $this->isPostedTransaction($transaction)) {
-                yield ['skip_reason' => 'transaksi_bukan_posting'];
+                yield $this->transactionSkipCandidate($transaction, 'transaksi_bukan_posting');
                 continue;
             }
 
@@ -240,14 +259,14 @@ class GeneralLedgerBackfillService
                 }
             }
             if (! empty($pair['reason'])) {
-                yield ['skip_reason' => $pair['reason']];
+                yield $this->transactionSkipCandidate($transaction, (string) $pair['reason']);
                 continue;
             }
 
             $total = round((float) ($transaction->final_total ?? 0), 4);
             $tax = round((float) ($transaction->tax_amount ?? 0), 4);
             if (! is_finite($total) || ! is_finite($tax) || $total <= 0 || $tax < 0 || $tax > $total) {
-                yield ['skip_reason' => 'nominal_transaksi_tidak_valid'];
+                yield $this->transactionSkipCandidate($transaction, 'nominal_transaksi_tidak_valid');
                 continue;
             }
 
@@ -261,7 +280,7 @@ class GeneralLedgerBackfillService
                 if ($tax > 0) {
                     $vat = $this->resolveVatAccount($businessId, 'output');
                     if (! empty($vat['reason'])) {
-                        yield ['skip_reason' => $vat['reason']];
+                        yield $this->transactionSkipCandidate($transaction, (string) $vat['reason']);
                         continue;
                     }
                     $lines[] = $this->line((int) $vat['account']->id, 'credit', $tax);
@@ -273,7 +292,7 @@ class GeneralLedgerBackfillService
                 if ($tax > 0) {
                     $vat = $this->resolveVatAccount($businessId, 'input');
                     if (! empty($vat['reason'])) {
-                        yield ['skip_reason' => $vat['reason']];
+                        yield $this->transactionSkipCandidate($transaction, (string) $vat['reason']);
                         continue;
                     }
                     $lines[] = $this->line((int) $vat['account']->id, 'debit', $tax);
@@ -286,7 +305,7 @@ class GeneralLedgerBackfillService
                 if ($tax > 0) {
                     $vat = $this->resolveVatAccount($businessId, 'input');
                     if (! empty($vat['reason'])) {
-                        yield ['skip_reason' => $vat['reason']];
+                        yield $this->transactionSkipCandidate($transaction, (string) $vat['reason']);
                         continue;
                     }
                     $lines[] = $this->line((int) $vat['account']->id, 'debit', $tax);
@@ -379,18 +398,18 @@ class GeneralLedgerBackfillService
                 'type' => $type,
                 'status' => $payment->transaction_status,
             ])) {
-                yield ['skip_reason' => 'transaksi_bukan_posting'];
+                yield $this->paymentSkipCandidate($payment, 'transaksi_bukan_posting');
                 continue;
             }
             $mainAccountId = (int) ($payment->payment_account_id ?? 0);
             if ($mainAccountId < 1) {
-                yield ['skip_reason' => 'akun_pembayaran_operasional_kosong'];
+                yield $this->paymentSkipCandidate($payment, 'akun_pembayaran_operasional_kosong');
                 continue;
             }
 
             $sourceAccount = $this->mainAccountMapping($businessId, $mainAccountId);
             if (! empty($sourceAccount['reason'])) {
-                yield ['skip_reason' => $sourceAccount['reason']];
+                yield $this->paymentSkipCandidate($payment, (string) $sourceAccount['reason']);
                 continue;
             }
 
@@ -409,13 +428,13 @@ class GeneralLedgerBackfillService
                 $counterpart = $autoMap['account'] ?? null;
             }
             if (! $counterpart) {
-                yield ['skip_reason' => $autoMap['reason'] ?? ($counterpartId < 1
+                yield $this->paymentSkipCandidate($payment, (string) ($autoMap['reason'] ?? ($counterpartId < 1
                     ? 'mapping_akun_lawan_tidak_lengkap'
-                    : 'akun_lawan_tidak_ada_di_business')];
+                    : 'akun_lawan_tidak_ada_di_business')));
                 continue;
             }
             if ((int) $counterpart->id === (int) $sourceAccount['account']->id) {
-                yield ['skip_reason' => 'akun_pembayaran_sama_dengan_akun_lawan'];
+                yield $this->paymentSkipCandidate($payment, 'akun_pembayaran_sama_dengan_akun_lawan');
                 continue;
             }
 
@@ -502,6 +521,7 @@ class GeneralLedgerBackfillService
             ->whereNull('counterpart.deleted_at')
             ->orderBy('source.id')
             ->select(
+                'source_account.business_id as business_id',
                 'source.id as source_id',
                 'source.account_id as source_account_id',
                 'source.type as source_type',
@@ -521,14 +541,17 @@ class GeneralLedgerBackfillService
             if ((string) $transfer->source_type === (string) $transfer->counterpart_type
                 || round((float) $transfer->source_amount, 4) !== round((float) $transfer->counterpart_amount, 4)
                 || round((float) $transfer->source_amount, 4) <= 0) {
-                yield ['skip_reason' => 'transfer_tidak_seimbang'];
+                yield $this->transferSkipCandidate($transfer, 'transfer_tidak_seimbang');
                 continue;
             }
 
             $sourceAccount = $this->mainAccountMapping($businessId, (int) $transfer->source_account_id);
             $counterpartAccount = $this->mainAccountMapping($businessId, (int) $transfer->counterpart_account_id);
             if (! empty($sourceAccount['reason']) || ! empty($counterpartAccount['reason'])) {
-                yield ['skip_reason' => $sourceAccount['reason'] ?? $counterpartAccount['reason']];
+                yield $this->transferSkipCandidate(
+                    $transfer,
+                    (string) ($sourceAccount['reason'] ?? $counterpartAccount['reason'])
+                );
                 continue;
             }
 
@@ -563,6 +586,22 @@ class GeneralLedgerBackfillService
 
     private function unpairedMainAccountMovements(int $businessId): array
     {
+        $query = $this->unpairedMainAccountMovementQuery($businessId);
+
+        $openingBalances = (clone $query)->where('source.sub_type', 'opening_balance')->count();
+        $unpaired = (clone $query)->where(function ($query) {
+            $query->whereNull('source.sub_type')->orWhereNotIn('source.sub_type', ['opening_balance']);
+        })->count();
+
+        return [
+            'saldo_awal_rekening_tidak_disalin' => $openingBalances,
+            'pergerakan_rekening_tanpa_akun_lawan' => $unpaired,
+            'pasangan_transfer_tidak_valid' => $this->invalidTransferCount($businessId),
+        ];
+    }
+
+    private function unpairedMainAccountMovementQuery(int $businessId)
+    {
         $query = DB::table('account_transactions as source')
             ->join('accounts', 'accounts.id', '=', 'source.account_id')
             ->where('accounts.business_id', $businessId)
@@ -582,22 +621,114 @@ class GeneralLedgerBackfillService
                 ->orWhereNotIn('source.transaction_id', (clone $representedTransactionIds)->select('represented.id'));
         });
 
-        $openingBalances = (clone $query)->where('source.sub_type', 'opening_balance')->count();
-        $unpaired = (clone $query)->where(function ($query) {
-            $query->whereNull('source.sub_type')->orWhereNotIn('source.sub_type', ['opening_balance']);
-        })->count();
+        return $query->select(
+            'source.id as source_id',
+            'source.account_id',
+            'source.type as movement_type',
+            'source.sub_type',
+            'source.amount',
+            'source.operation_date',
+            'source.transaction_id',
+            'source.note'
+        );
+    }
 
-        return [
-            'saldo_awal_rekening_tidak_disalin' => $openingBalances,
-            'pergerakan_rekening_tanpa_akun_lawan' => $unpaired,
-            'pasangan_transfer_tidak_valid' => $this->invalidTransferCount($businessId),
-        ];
+    private function reviewUnpairedMainAccountMovements(int $businessId, bool $apply, array &$summary): void
+    {
+        foreach ($this->unpairedMainAccountMovementQuery($businessId)->orderBy('source.id')->cursor() as $movement) {
+            $reason = (string) $movement->sub_type === 'opening_balance'
+                ? 'saldo_awal_rekening_tidak_disalin'
+                : 'pergerakan_rekening_tanpa_akun_lawan';
+            $label = $reason === 'saldo_awal_rekening_tidak_disalin' ? 'Saldo awal rekening' : 'Mutasi rekening tanpa akun lawan';
+            $summaryText = trim((string) ($movement->note ?? ''));
+            if ($summaryText === '') {
+                $summaryText = $label.' #'.$movement->source_id;
+            }
+
+            $this->registerReviewSource([
+                'business_id' => $businessId,
+                'source_record_type' => AccountTransaction::class,
+                'source_record_id' => (int) $movement->source_id,
+                'operation_date' => (string) $movement->operation_date,
+                'source_reference' => 'ACCOUNT-TRANSACTION-'.$movement->source_id,
+                'source_summary' => mb_substr($summaryText, 0, 1000),
+                'source_context' => [
+                    'account_id' => (int) $movement->account_id,
+                    'movement_type' => (string) $movement->movement_type,
+                    'sub_type' => $movement->sub_type,
+                    'amount' => (float) $movement->amount,
+                    'transaction_id' => $movement->transaction_id === null ? null : (int) $movement->transaction_id,
+                ],
+                'skip_reason' => $reason,
+            ], $apply, $summary);
+        }
+    }
+
+    private function reviewInvalidTransfers(int $businessId, bool $apply, array &$summary): void
+    {
+        $query = DB::table('account_transactions as source')
+            ->join('accounts as source_account', 'source_account.id', '=', 'source.account_id')
+            ->where('source_account.business_id', $businessId)
+            ->whereNull('source_account.deleted_at')
+            ->whereNotNull('source.transfer_transaction_id')
+            ->whereIn('source.sub_type', ['fund_transfer', 'deposit'])
+            ->whereNull('source.deleted_at')
+            ->whereNotExists(function ($query) use ($businessId) {
+                $query->select(DB::raw(1))
+                    ->from('account_transactions as counterpart')
+                    ->join('accounts as counterpart_account', 'counterpart_account.id', '=', 'counterpart.account_id')
+                    ->where('counterpart_account.business_id', $businessId)
+                    ->whereNull('counterpart_account.deleted_at')
+                    ->whereColumn('counterpart.id', 'source.transfer_transaction_id')
+                    ->whereColumn('counterpart.transfer_transaction_id', 'source.id')
+                    ->whereColumn('counterpart.sub_type', 'source.sub_type')
+                    ->whereColumn('counterpart.amount', 'source.amount')
+                    ->whereColumn('counterpart.type', '<>', 'source.type')
+                    ->whereNull('counterpart.deleted_at');
+            })
+            ->orderBy('source.id')
+            ->select(
+                'source_account.business_id as business_id',
+                'source.id as source_id',
+                'source.account_id',
+                'source.type as movement_type',
+                'source.sub_type',
+                'source.amount',
+                'source.operation_date',
+                'source.transfer_transaction_id',
+                'source.note'
+            );
+
+        foreach ($query->cursor() as $transfer) {
+            $summaryText = trim((string) ($transfer->note ?? ''));
+            if ($summaryText === '') {
+                $summaryText = 'Transfer rekening #'.$transfer->source_id.' dengan pasangan #'.$transfer->transfer_transaction_id;
+            }
+
+            $this->registerReviewSource([
+                'business_id' => $businessId,
+                'source_record_type' => AccountTransaction::class,
+                'source_record_id' => (int) $transfer->source_id,
+                'operation_date' => (string) $transfer->operation_date,
+                'source_reference' => 'ACCOUNT-TRANSFER-'.$transfer->source_id,
+                'source_summary' => mb_substr($summaryText, 0, 1000),
+                'source_context' => [
+                    'account_id' => (int) $transfer->account_id,
+                    'movement_type' => (string) $transfer->movement_type,
+                    'sub_type' => (string) $transfer->sub_type,
+                    'amount' => (float) $transfer->amount,
+                    'counterpart_id' => (int) $transfer->transfer_transaction_id,
+                ],
+                'skip_reason' => 'pasangan_transfer_tidak_valid',
+            ], $apply, $summary);
+        }
     }
 
     private function invalidTransferCount(int $businessId): int
     {
         return DB::table('account_transactions as source')
             ->join('accounts as source_account', 'source_account.id', '=', 'source.account_id')
+            ->whereNull('source_account.deleted_at')
             ->where('source_account.business_id', $businessId)
             ->whereIn('source.sub_type', ['fund_transfer', 'deposit'])
             ->whereNotNull('source.transfer_transaction_id')
@@ -606,6 +737,7 @@ class GeneralLedgerBackfillService
                 $query->select(DB::raw(1))
                     ->from('account_transactions as counterpart')
                     ->join('accounts as counterpart_account', 'counterpart_account.id', '=', 'counterpart.account_id')
+                    ->whereNull('counterpart_account.deleted_at')
                     ->where('counterpart_account.business_id', $businessId)
                     ->whereColumn('counterpart.id', 'source.transfer_transaction_id')
                     ->whereColumn('counterpart.transfer_transaction_id', 'source.id')
@@ -617,11 +749,341 @@ class GeneralLedgerBackfillService
             ->count();
     }
 
+    private function transactionSkipCandidate(object $transaction, string $reason): array
+    {
+        $type = (string) ($transaction->type ?? 'transaction');
+        $reference = trim((string) ($transaction->invoice_no ?? '')) ?: trim((string) ($transaction->ref_no ?? ''));
+        if ($reference === '') {
+            $reference = strtoupper($type).'-'.(int) $transaction->id;
+        }
+
+        return [
+            'skip_reason' => $reason,
+            'review_source' => [
+                'business_id' => (int) $transaction->business_id,
+                'source_record_type' => Transaction::class,
+                'source_record_id' => (int) $transaction->id,
+                'operation_date' => (string) ($transaction->transaction_date ?? ''),
+                'source_reference' => $reference,
+                'source_summary' => 'Transaksi '.$type.' #'.(int) $transaction->id.' ('.$reference.')',
+                'source_context' => [
+                    'transaction_type' => $type,
+                    'location_id' => empty($transaction->location_id) ? null : (int) $transaction->location_id,
+                    'expense_category_id' => empty($transaction->expense_category_id) ? null : (int) $transaction->expense_category_id,
+                    'final_total' => isset($transaction->final_total) ? (float) $transaction->final_total : null,
+                    'tax_amount' => isset($transaction->tax_amount) ? (float) $transaction->tax_amount : null,
+                ],
+            ],
+        ];
+    }
+
+    private function paymentSkipCandidate(object $payment, string $reason): array
+    {
+        $reference = trim((string) ($payment->ref_no ?? '')) ?: trim((string) ($payment->invoice_no ?? ''));
+        if ($reference === '') {
+            $reference = 'PAYMENT-'.(int) $payment->payment_id;
+        }
+
+        return [
+            'skip_reason' => $reason,
+            'review_source' => [
+                'business_id' => (int) $payment->business_id,
+                'source_record_type' => TransactionPayment::class,
+                'source_record_id' => (int) $payment->payment_id,
+                'operation_date' => (string) ($payment->paid_on ?? ''),
+                'source_reference' => $reference,
+                'source_summary' => 'Pembayaran transaksi '.(string) $payment->transaction_type.' #'.(int) $payment->transaction_id.' ('.$reference.')',
+                'source_context' => [
+                    'transaction_id' => (int) $payment->transaction_id,
+                    'transaction_type' => (string) $payment->transaction_type,
+                    'location_id' => empty($payment->location_id) ? null : (int) $payment->location_id,
+                    'payment_account_id' => empty($payment->payment_account_id) ? null : (int) $payment->payment_account_id,
+                    'amount' => isset($payment->payment_amount) ? (float) $payment->payment_amount : null,
+                ],
+            ],
+        ];
+    }
+
+    private function transferSkipCandidate(object $transfer, string $reason): array
+    {
+        return [
+            'skip_reason' => $reason,
+            'review_source' => [
+                'business_id' => (int) ($transfer->business_id ?? 0),
+                'source_record_type' => AccountTransaction::class,
+                'source_record_id' => (int) $transfer->source_id,
+                'operation_date' => (string) ($transfer->source_operation_date ?? ''),
+                'source_reference' => 'BANK-'.$transfer->source_id.'-'.$transfer->counterpart_id,
+                'source_summary' => 'Transfer rekening #'.(int) $transfer->source_id.' dan #'.(int) $transfer->counterpart_id,
+                'source_context' => [
+                    'account_id' => (int) $transfer->source_account_id,
+                    'counterpart_account_id' => (int) $transfer->counterpart_account_id,
+                    'counterpart_id' => (int) $transfer->counterpart_id,
+                    'movement_type' => (string) $transfer->source_sub_type,
+                    'source_amount' => (float) $transfer->source_amount,
+                    'counterpart_amount' => (float) $transfer->counterpart_amount,
+                ],
+            ],
+        ];
+    }
+
+    private function reviewSourceFromGroup(array $candidate, string $reason): array
+    {
+        $sourceType = (string) ($candidate['source_record_type'] ?? '');
+        $sourceId = (int) ($candidate['source_record_id'] ?? 0);
+        $reference = trim((string) ($candidate['ref_no'] ?? ''));
+        if ($reference === '') {
+            $reference = strtoupper((string) ($candidate['sub_type'] ?? 'SOURCE')).'-'.$sourceId;
+        }
+
+        return [
+            'business_id' => (int) ($candidate['business_id'] ?? 0),
+            'source_record_type' => $sourceType,
+            'source_record_id' => $sourceId,
+            'operation_date' => (string) ($candidate['operation_date'] ?? ''),
+            'source_reference' => $reference,
+            'source_summary' => 'Sumber '.class_basename($sourceType).' #'.$sourceId.' ('.$reference.')',
+            'source_context' => [
+                'sub_type' => $candidate['sub_type'] ?? null,
+                'transaction_id' => $candidate['transaction_id'] ?? null,
+                'transaction_payment_id' => $candidate['transaction_payment_id'] ?? null,
+                'source_account_transaction_id' => $candidate['source_account_transaction_id'] ?? null,
+                'mapping_note' => $candidate['mapping_note'] ?? null,
+            ],
+            'skip_reason' => $reason,
+        ];
+    }
+
+    private function registerReviewSource(?array $source, bool $apply, array &$summary): void
+    {
+        if ($source === null || ! $this->isActionableReviewReason((string) ($source['skip_reason'] ?? ''))) {
+            return;
+        }
+
+        $businessId = (int) ($source['business_id'] ?? 0);
+        $sourceType = (string) ($source['source_record_type'] ?? '');
+        $sourceId = (int) ($source['source_record_id'] ?? 0);
+        if ($businessId < 1 || $sourceType === '' || $sourceId < 1) {
+            return;
+        }
+
+        if ($this->reviewSourceAlreadyLinked($source)) {
+            if ($apply) {
+                $this->resolveExistingReviewSource($source);
+            }
+            return;
+        }
+
+        $key = implode(':', [$businessId, $sourceType, $sourceId]);
+        $summary['review_source_keys'][$key] = true;
+        if (! $apply) {
+            return;
+        }
+
+        $this->reviewQueueBuffer[$key] = $source;
+        if (count($this->reviewQueueBuffer) >= 250) {
+            $this->flushReviewQueue();
+        }
+    }
+
+    private function reviewSourceAlreadyLinked(array $source): bool
+    {
+        if (DB::table('accounting_acc_trans_mappings')
+            ->where('business_id', (int) $source['business_id'])
+            ->where('source_record_type', (string) $source['source_record_type'])
+            ->where('source_record_id', (int) $source['source_record_id'])
+            ->exists()) {
+            return true;
+        }
+
+        $context = $source['source_context'] ?? [];
+        $legacyRows = DB::table('accounting_accounts_transactions');
+        if ((string) $source['source_record_type'] === Transaction::class) {
+            return $legacyRows->where('transaction_id', (int) $source['source_record_id'])
+                ->whereNull('transaction_payment_id')
+                ->where('sub_type', (string) ($context['transaction_type'] ?? ''))
+                ->exists();
+        }
+
+        if ((string) $source['source_record_type'] === TransactionPayment::class) {
+            $paymentType = (string) ($context['transaction_type'] ?? '');
+
+            return $legacyRows->where('transaction_payment_id', (int) $source['source_record_id'])
+                ->where('sub_type', $paymentType.'_payment')
+                ->exists();
+        }
+
+        return false;
+    }
+
+    private function isActionableReviewReason(string $reason): bool
+    {
+        return $reason !== '' && ! in_array($reason, [
+            'transaksi_bukan_posting',
+            'akun_debit_kredit_sama',
+            'akun_pembayaran_sama_dengan_akun_lawan',
+        ], true);
+    }
+
+    private function flushReviewQueue(): void
+    {
+        if ($this->reviewQueueBuffer === []) {
+            return;
+        }
+
+        $items = $this->reviewQueueBuffer;
+        $this->reviewQueueBuffer = [];
+        DB::transaction(function () use ($items) {
+            foreach ($items as $source) {
+                $now = now();
+                $identity = [
+                    'business_id' => (int) $source['business_id'],
+                    'source_record_type' => (string) $source['source_record_type'],
+                    'source_record_id' => (int) $source['source_record_id'],
+                ];
+                $initialEvent = [[
+                    'event' => 'queued',
+                    'at' => $now->toIso8601String(),
+                    'reason' => (string) $source['skip_reason'],
+                    'by' => 'accounting:backfill-general-ledger --apply',
+                ]];
+                $inserted = DB::table(self::REVIEW_QUEUE_TABLE)->insertOrIgnore($identity + [
+                    'operation_date' => $this->nullableDate($source['operation_date'] ?? null),
+                    'source_reference' => mb_substr((string) ($source['source_reference'] ?? ''), 0, 191),
+                    'source_summary' => mb_substr((string) ($source['source_summary'] ?? ''), 0, 1000),
+                    'source_context' => json_encode($source['source_context'] ?? [], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                    'skip_reason' => (string) $source['skip_reason'],
+                    'status' => 'pending',
+                    'first_seen_at' => $now,
+                    'last_seen_at' => $now,
+                    'audit_log' => json_encode($initialEvent, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ]);
+                if ($inserted > 0) {
+                    continue;
+                }
+
+                $existing = DB::table(self::REVIEW_QUEUE_TABLE)
+                    ->where($identity)
+                    ->lockForUpdate()
+                    ->first();
+                if (! $existing) {
+                    continue;
+                }
+
+                $auditLog = $this->decodeAuditLog($existing->audit_log ?? null);
+                $changes = [];
+                $nextReason = (string) $source['skip_reason'];
+                if ((string) $existing->skip_reason !== $nextReason) {
+                    $changes['reason'] = ['from' => (string) $existing->skip_reason, 'to' => $nextReason];
+                }
+                $context = $source['source_context'] ?? [];
+                $oldContext = json_decode((string) ($existing->source_context ?? '[]'), true);
+                if (! is_array($oldContext)) {
+                    $oldContext = [];
+                }
+                if ($oldContext != $context) {
+                    $changes['source_details_changed'] = true;
+                }
+                $reference = mb_substr((string) ($source['source_reference'] ?? ''), 0, 191);
+                if ((string) ($existing->source_reference ?? '') !== $reference) {
+                    $changes['source_reference_changed'] = true;
+                }
+                $operationDate = $this->nullableDate($source['operation_date'] ?? null);
+                if ((string) ($existing->operation_date ?? '') !== (string) ($operationDate ?? '')) {
+                    $changes['operation_date_changed'] = true;
+                }
+                $sourceSummary = mb_substr((string) ($source['source_summary'] ?? ''), 0, 1000);
+                if ((string) $existing->source_summary !== $sourceSummary) {
+                    $changes['summary_changed'] = true;
+                }
+                $reopened = (string) $existing->status !== 'pending';
+                if ($reopened) {
+                    $changes['status'] = ['from' => (string) $existing->status, 'to' => 'pending'];
+                }
+                if ($changes !== []) {
+                    $auditLog[] = [
+                        'event' => $reopened ? 'reopened' : 'updated',
+                        'at' => $now->toIso8601String(),
+                        'changes' => $changes,
+                        'by' => 'accounting:backfill-general-ledger --apply',
+                    ];
+                }
+
+                DB::table(self::REVIEW_QUEUE_TABLE)->where($identity)->update([
+                    'operation_date' => $operationDate,
+                    'source_reference' => $reference,
+                    'source_summary' => $sourceSummary,
+                    'source_context' => json_encode($context, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                    'skip_reason' => $nextReason,
+                    'status' => 'pending',
+                    'last_seen_at' => $now,
+                    'resolved_at' => null,
+                    'audit_log' => json_encode($auditLog, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                    'updated_at' => $now,
+                ]);
+            }
+        });
+    }
+
+    private function resolveExistingReviewSource(array $candidate): void
+    {
+        if (! Schema::hasTable(self::REVIEW_QUEUE_TABLE)) {
+            return;
+        }
+
+        $identity = [
+            'business_id' => (int) $candidate['business_id'],
+            'source_record_type' => (string) $candidate['source_record_type'],
+            'source_record_id' => (int) $candidate['source_record_id'],
+        ];
+        DB::transaction(function () use ($identity) {
+            $review = DB::table(self::REVIEW_QUEUE_TABLE)
+                ->where($identity)
+                ->lockForUpdate()
+                ->first();
+            if (! $review || (string) $review->status === 'resolved') {
+                return;
+            }
+
+            $auditLog = $this->decodeAuditLog($review->audit_log ?? null);
+            $auditLog[] = [
+                'event' => 'resolved',
+                'at' => now()->toIso8601String(),
+                'reason' => 'source_already_linked',
+                'by' => 'accounting:backfill-general-ledger --apply',
+            ];
+            DB::table(self::REVIEW_QUEUE_TABLE)->where($identity)->update([
+                'status' => 'resolved',
+                'resolved_at' => now(),
+                'audit_log' => json_encode($auditLog, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                'updated_at' => now(),
+            ]);
+        });
+    }
+
+    private function decodeAuditLog($value): array
+    {
+        $decoded = json_decode((string) ($value ?? '[]'), true);
+
+        return is_array($decoded) ? $decoded : [];
+    }
+
+    private function nullableDate($value): ?string
+    {
+        $date = trim((string) ($value ?? ''));
+
+        return $date === '' ? null : $date;
+    }
+
     private function processCandidate(array $candidate, int $businessId, bool $apply, array &$summary): void
     {
         $summary['candidate_groups']++;
         if (! empty($candidate['skip_reason'])) {
-            $this->skip($summary, (string) $candidate['skip_reason']);
+            $reason = (string) $candidate['skip_reason'];
+            $this->skip($summary, $reason);
+            $this->registerReviewSource($candidate['review_source'] ?? null, $apply, $summary);
             return;
         }
 
@@ -641,6 +1103,7 @@ class GeneralLedgerBackfillService
         }
         if (array_intersect_key($debitAccounts, $creditAccounts) !== []) {
             $this->skip($summary, 'akun_debit_kredit_sama');
+            $this->registerReviewSource($this->reviewSourceFromGroup($candidate, 'akun_debit_kredit_sama'), $apply, $summary);
             return;
         }
 
@@ -648,11 +1111,15 @@ class GeneralLedgerBackfillService
         $credit = round(array_sum(array_map(fn ($line) => $line['type'] === 'credit' ? $line['amount'] : 0, $candidate['lines'])), 4);
         if ($candidate['lines'] === [] || round($debit - $credit, 4) !== 0.0) {
             $this->skip($summary, 'group_jurnal_tidak_seimbang');
+            $this->registerReviewSource($this->reviewSourceFromGroup($candidate, 'group_jurnal_tidak_seimbang'), $apply, $summary);
             return;
         }
 
         if ($this->sourceAlreadyLinked($candidate) || $this->hasLegacyLedgerRows($candidate)) {
             $summary['already_linked']++;
+            if ($apply) {
+                $this->resolveExistingReviewSource($candidate);
+            }
             return;
         }
 
