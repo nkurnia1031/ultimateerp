@@ -159,6 +159,7 @@ class GeneralLedgerAuditTest extends TestCase
         $user->setRelation('notifications', collect());
         $moduleUtil = Mockery::mock(ModuleUtil::class);
         $moduleUtil->shouldReceive('hasThePermissionInSubscription')->andReturn(true);
+        $moduleUtil->shouldReceive('isModuleInstalled')->andReturn(false);
         $this->app->instance(ModuleUtil::class, $moduleUtil);
         $response = $this->withoutMiddleware([
             \App\Http\Middleware\SetSessionData::class,
