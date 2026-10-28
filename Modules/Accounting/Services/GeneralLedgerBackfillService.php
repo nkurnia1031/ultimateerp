@@ -1084,7 +1084,11 @@ class GeneralLedgerBackfillService
         if (! empty($candidate['skip_reason'])) {
             $reason = (string) $candidate['skip_reason'];
             $this->skip($summary, $reason);
-            $this->registerReviewSource($candidate['review_source'] ?? null, $apply, $summary);
+            $reviewSource = $candidate['review_source'] ?? null;
+            if (is_array($reviewSource)) {
+                $reviewSource['skip_reason'] = $reason;
+            }
+            $this->registerReviewSource($reviewSource, $apply, $summary);
             return;
         }
 
