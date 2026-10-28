@@ -18,6 +18,8 @@ class GeneralLedgerBackfillService
 
     private $locationMapsCache = [];
 
+    private $vatAccountMappingsCache = [];
+
     private $expenseCategoriesCache = [];
 
     private $expensePaymentGroupsCache = [];
@@ -49,31 +51,7 @@ class GeneralLedgerBackfillService
             return ['error' => 'Migrasi antrean review backfill belum tersedia. Jalankan migration aplikasi terlebih dahulu.'];
         }
 
-        $this->accountingAccountsCache[$businessId] = DB::table('accounting_accounts')
-            ->where('business_id', $businessId)
-            ->where('status', 'active')
-            ->orderBy('id')
-            ->get()
-            ->all();
-
-        $this->locationMapsCache[$businessId] = DB::table('business_locations')
-            ->where('business_id', $businessId)
-            ->get(['id', 'accounting_default_map'])
-            ->mapWithKeys(function ($location) {
-                $mapping = json_decode((string) $location->accounting_default_map, true);
-
-                return [(int) $location->id => is_array($mapping) ? $mapping : []];
-            })
-            ->all();
-        $this->expenseCategoriesCache[$businessId] = Schema::hasTable('expense_categories')
-            ? DB::table('expense_categories')
-                ->where('business_id', $businessId)
-                ->when(Schema::hasColumn('expense_categories', 'deleted_at'), fn ($query) => $query->whereNull('deleted_at'))
-                ->get(['id', 'name'])
-                ->keyBy('id')
-                ->all()
-            : [];
-        $this->expensePaymentGroupsCache[$businessId] = $this->loadExpensePaymentGroups($businessId);
+        $this->loadBusinessContext($businessId);
 
         $summary = [
             'business_name' => (string) $business->name,
@@ -133,6 +111,132 @@ class GeneralLedgerBackfillService
         unset($summary['date_start'], $summary['date_end']);
 
         return $summary;
+    }
+
+    /** Retry one persisted review source without rescanning the business ledger. */
+    public function retryReviewItem(int $businessId, int $reviewId): array
+    {
+        $review = DB::table(self::REVIEW_QUEUE_TABLE)
+            ->where('business_id', $businessId)
+            ->where('id', $reviewId)
+            ->first();
+        if (! $review) {
+            return ['resolved' => false, 'reason' => 'Item antrean tidak lagi menunggu proses.'];
+        }
+        if ((string) $review->status === 'resolved') {
+            return ['resolved' => true, 'reason' => 'Sumber sudah ditautkan ke jurnal.'];
+        }
+        if (! in_array((string) $review->status, ['pending', 'retrying'], true)) {
+            return ['resolved' => false, 'reason' => 'Status item antrean tidak dapat dicoba ulang.'];
+        }
+
+        if (! DB::table('business')->where('id', $businessId)->exists()) {
+            return ['resolved' => false, 'reason' => 'Business sumber tidak ditemukan.'];
+        }
+
+        $this->reviewQueueBuffer = [];
+        $this->loadBusinessContext($businessId);
+
+        $candidates = match ((string) $review->source_record_type) {
+            Transaction::class => $this->transactionCandidates($businessId, (int) $review->source_record_id),
+            TransactionPayment::class => $this->paymentCandidates($businessId, (int) $review->source_record_id),
+            AccountTransaction::class => $this->bankTransferCandidates($businessId, (int) $review->source_record_id),
+            default => [],
+        };
+
+        $candidate = null;
+        foreach ($candidates as $item) {
+            $candidate = $item;
+            break;
+        }
+
+        $source = [
+            'business_id' => $businessId,
+            'source_record_type' => (string) $review->source_record_type,
+            'source_record_id' => (int) $review->source_record_id,
+        ];
+        if ($candidate === null) {
+            if ($this->reviewSourceAlreadyLinked($source)) {
+                $this->resolveExistingReviewSource($source);
+
+                return ['resolved' => true, 'reason' => 'Sumber sudah tertaut ke jurnal.'];
+            }
+
+            return ['resolved' => false, 'reason' => (string) $review->skip_reason];
+        }
+
+        $summary = [
+            'candidate_groups' => 0,
+            'planned_groups' => 0,
+            'applied_groups' => 0,
+            'already_linked' => 0,
+            'planned_rows' => 0,
+            'account_links' => [],
+            'current_map_details' => [],
+            'current_map_groups' => 0,
+            'auto_map_details' => [],
+            'auto_mapped_groups' => 0,
+            'ambiguous_vat_accounts' => 0,
+            'missing_vat_accounts' => 0,
+            'skipped' => [],
+            'review_source_keys' => [],
+            'debit_total' => 0.0,
+            'credit_total' => 0.0,
+            'date_start' => null,
+            'date_end' => null,
+        ];
+        $this->processCandidate($candidate, $businessId, true, $summary);
+        $this->flushReviewQueue();
+
+        if ($this->sourceAlreadyLinked($candidate) || $this->hasLegacyLedgerRows($candidate)) {
+            $this->resolveExistingReviewSource($candidate);
+        }
+
+        $updated = DB::table(self::REVIEW_QUEUE_TABLE)
+            ->where('business_id', $businessId)
+            ->where('id', $reviewId)
+            ->first(['status', 'skip_reason']);
+
+        return [
+            'resolved' => $updated && (string) $updated->status === 'resolved',
+            'reason' => (string) ($updated->skip_reason ?? $review->skip_reason),
+        ];
+    }
+
+    private function loadBusinessContext(int $businessId): void
+    {
+        $this->accountingAccountsCache[$businessId] = DB::table('accounting_accounts')
+            ->where('business_id', $businessId)
+            ->where('status', 'active')
+            ->orderBy('id')
+            ->get()
+            ->all();
+
+        $this->locationMapsCache[$businessId] = DB::table('business_locations')
+            ->where('business_id', $businessId)
+            ->get(['id', 'accounting_default_map'])
+            ->mapWithKeys(function ($location) {
+                $mapping = json_decode((string) $location->accounting_default_map, true);
+
+                return [(int) $location->id => is_array($mapping) ? $mapping : []];
+            })
+            ->all();
+        $this->expenseCategoriesCache[$businessId] = Schema::hasTable('expense_categories')
+            ? DB::table('expense_categories')
+                ->where('business_id', $businessId)
+                ->when(Schema::hasColumn('expense_categories', 'deleted_at'), fn ($query) => $query->whereNull('deleted_at'))
+                ->get(['id', 'name'])
+                ->keyBy('id')
+                ->all()
+            : [];
+        $this->expensePaymentGroupsCache[$businessId] = $this->loadExpensePaymentGroups($businessId);
+        $this->vatAccountMappingsCache[$businessId] = Schema::hasTable('accounting_general_ledger_vat_accounts')
+            ? DB::table('accounting_general_ledger_vat_accounts')
+                ->where('business_id', $businessId)
+                ->pluck('accounting_account_id', 'direction')
+                ->map(fn ($id) => (int) $id)
+                ->all()
+            : [];
     }
 
     private function auditMainAccountMappings(int $businessId): array
@@ -221,11 +325,12 @@ class GeneralLedgerBackfillService
         ];
     }
 
-    private function transactionCandidates(int $businessId): \Generator
+    private function transactionCandidates(int $businessId, ?int $sourceId = null): \Generator
     {
         $query = DB::table('transactions')
             ->where('business_id', $businessId)
             ->whereIn('type', ['sell', 'purchase', 'expense'])
+            ->when($sourceId !== null, fn ($query) => $query->where('id', $sourceId))
             ->orderBy('id');
 
         if (Schema::hasColumn('transactions', 'deleted_at')) {
@@ -354,13 +459,14 @@ class GeneralLedgerBackfillService
         }
     }
 
-    private function paymentCandidates(int $businessId): \Generator
+    private function paymentCandidates(int $businessId, ?int $sourceId = null): \Generator
     {
         $query = DB::table('transaction_payments as payment')
             ->join('transactions as transaction', 'transaction.id', '=', 'payment.transaction_id')
             ->where('transaction.business_id', $businessId)
             ->where('payment.business_id', $businessId)
             ->whereIn('transaction.type', ['sell', 'purchase'])
+            ->when($sourceId !== null, fn ($query) => $query->where('payment.id', $sourceId))
             ->orderBy('payment.id')
             ->select(
                 'payment.id as payment_id',
@@ -503,7 +609,7 @@ class GeneralLedgerBackfillService
         }
     }
 
-    private function bankTransferCandidates(int $businessId): \Generator
+    private function bankTransferCandidates(int $businessId, ?int $sourceId = null): \Generator
     {
         $query = DB::table('account_transactions as source')
             ->join('accounts as source_account', 'source_account.id', '=', 'source.account_id')
@@ -516,6 +622,7 @@ class GeneralLedgerBackfillService
             ->whereColumn('source.id', '<', 'counterpart.id')
             ->whereColumn('counterpart.transfer_transaction_id', 'source.id')
             ->whereIn('source.sub_type', ['fund_transfer', 'deposit'])
+            ->when($sourceId !== null, fn ($query) => $query->where('source.id', $sourceId))
             ->whereColumn('source.sub_type', 'counterpart.sub_type')
             ->whereNull('source.deleted_at')
             ->whereNull('counterpart.deleted_at')
@@ -837,6 +944,18 @@ class GeneralLedgerBackfillService
             $reference = strtoupper((string) ($candidate['sub_type'] ?? 'SOURCE')).'-'.$sourceId;
         }
 
+        $mapInfo = is_array($candidate['map_info'] ?? null) ? $candidate['map_info'] : [];
+        $mappingKey = (string) ($mapInfo['mapping_key'] ?? '');
+        $transactionType = $sourceType === Transaction::class
+            ? (string) ($candidate['sub_type'] ?? '')
+            : (string) ($candidate['sub_type'] ?? '');
+        if ($sourceType === TransactionPayment::class) {
+            $transactionType = str_ends_with($transactionType, '_payment')
+                ? substr($transactionType, 0, -8)
+                : $transactionType;
+        }
+        $expenseCategoryId = preg_match('/^expense_(\d+)$/', $mappingKey, $matches) ? (int) $matches[1] : null;
+
         return [
             'business_id' => (int) ($candidate['business_id'] ?? 0),
             'source_record_type' => $sourceType,
@@ -850,6 +969,11 @@ class GeneralLedgerBackfillService
                 'transaction_payment_id' => $candidate['transaction_payment_id'] ?? null,
                 'source_account_transaction_id' => $candidate['source_account_transaction_id'] ?? null,
                 'mapping_note' => $candidate['mapping_note'] ?? null,
+                'transaction_type' => $transactionType !== '' ? $transactionType : null,
+                'mapping_key' => $mappingKey !== '' ? $mappingKey : null,
+                'location_id' => empty($mapInfo['location_id']) ? null : (int) $mapInfo['location_id'],
+                'expense_category_id' => $expenseCategoryId,
+                'account_id' => $candidate['source_main_account_id'] ?? null,
             ],
             'skip_reason' => $reason,
         ];
@@ -953,6 +1077,11 @@ class GeneralLedgerBackfillService
                     'source_reference' => mb_substr((string) ($source['source_reference'] ?? ''), 0, 191),
                     'source_summary' => mb_substr((string) ($source['source_summary'] ?? ''), 0, 1000),
                     'source_context' => json_encode($source['source_context'] ?? [], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                    'location_id' => $this->reviewLocationId($source),
+                    'mapping_key' => $this->reviewMappingKey($source),
+                    'transaction_kind' => $this->reviewTransactionKind($source),
+                    'main_account_id' => $this->reviewMainAccountId($source),
+                    'counterpart_main_account_id' => $this->reviewCounterpartMainAccountId($source),
                     'skip_reason' => (string) $source['skip_reason'],
                     'status' => 'pending',
                     'first_seen_at' => $now,
@@ -1017,6 +1146,11 @@ class GeneralLedgerBackfillService
                     'source_reference' => $reference,
                     'source_summary' => $sourceSummary,
                     'source_context' => json_encode($context, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                    'location_id' => $this->reviewLocationId($source),
+                    'mapping_key' => $this->reviewMappingKey($source),
+                    'transaction_kind' => $this->reviewTransactionKind($source),
+                    'main_account_id' => $this->reviewMainAccountId($source),
+                    'counterpart_main_account_id' => $this->reviewCounterpartMainAccountId($source),
                     'skip_reason' => $nextReason,
                     'status' => 'pending',
                     'last_seen_at' => $now,
@@ -1076,6 +1210,60 @@ class GeneralLedgerBackfillService
         $date = trim((string) ($value ?? ''));
 
         return $date === '' ? null : $date;
+    }
+
+    private function reviewLocationId(array $source): ?int
+    {
+        $locationId = (int) ($source['source_context']['location_id'] ?? 0);
+
+        return $locationId > 0 ? $locationId : null;
+    }
+
+    private function reviewMappingKey(array $source): ?string
+    {
+        $context = $source['source_context'] ?? [];
+        if (! empty($context['mapping_key'])) {
+            return (string) $context['mapping_key'];
+        }
+        $type = (string) ($context['transaction_type'] ?? '');
+        if ((string) ($source['source_record_type'] ?? '') === Transaction::class) {
+            if ($type === 'sell') {
+                return 'sale';
+            }
+            if ($type === 'purchase') {
+                return 'purchases';
+            }
+            if ($type === 'expense') {
+                return empty($context['expense_category_id']) ? 'expense' : 'expense_'.(int) $context['expense_category_id'];
+            }
+        }
+        if ((string) ($source['source_record_type'] ?? '') === TransactionPayment::class) {
+            return in_array($type, ['sell', 'purchase'], true) ? $type.'_payment' : null;
+        }
+
+        return null;
+    }
+
+    private function reviewTransactionKind(array $source): ?string
+    {
+        $type = (string) ($source['source_context']['transaction_type'] ?? '');
+
+        return $type !== '' ? $type : null;
+    }
+
+    private function reviewMainAccountId(array $source): ?int
+    {
+        $context = $source['source_context'] ?? [];
+        $accountId = (int) ($context['payment_account_id'] ?? $context['account_id'] ?? 0);
+
+        return $accountId > 0 ? $accountId : null;
+    }
+
+    private function reviewCounterpartMainAccountId(array $source): ?int
+    {
+        $accountId = (int) ($source['source_context']['counterpart_account_id'] ?? 0);
+
+        return $accountId > 0 ? $accountId : null;
     }
 
     private function processCandidate(array $candidate, int $businessId, bool $apply, array &$summary): void
@@ -1837,6 +2025,13 @@ class GeneralLedgerBackfillService
 
     private function resolveVatAccount(int $businessId, string $direction): array
     {
+        $mappedAccountId = (int) ($this->vatAccountMappingsCache[$businessId][$direction] ?? 0);
+        if ($mappedAccountId > 0) {
+            $mappedAccount = collect($this->accountingAccountsCache[$businessId] ?? [])->firstWhere('id', $mappedAccountId);
+
+            return $mappedAccount ? ['account' => $mappedAccount] : ['reason' => 'akun_vat_tidak_ditemukan'];
+        }
+
         $side = $direction === 'input' ? 'debit' : 'credit';
         $candidates = [];
         foreach ($this->accountingAccountsCache[$businessId] ?? [] as $account) {

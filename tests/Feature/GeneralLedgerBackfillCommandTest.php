@@ -929,6 +929,54 @@ class GeneralLedgerBackfillCommandTest extends TestCase
         $this->assertNull(DB::table('accounting_accounts')->where('id', 104)->value('account_id'));
     }
 
+    public function test_retry_review_item_rechecks_one_source_and_is_idempotent_after_journal_link(): void
+    {
+        DB::table('transactions')->insert([
+            'id' => 990,
+            'business_id' => 7,
+            'location_id' => 70,
+            'type' => 'sell',
+            'status' => 'final',
+            'transaction_date' => '2023-08-01 10:00:00',
+            'final_total' => 125,
+            'total_before_tax' => 125,
+            'tax_amount' => 0,
+            'created_by' => 1,
+            'invoice_no' => 'INV-990',
+            'ref_no' => 'SALE-990',
+        ]);
+        DB::table('accounting_general_ledger_backfill_reviews')->insert([
+            'id' => 990,
+            'business_id' => 7,
+            'source_record_type' => \App\Transaction::class,
+            'source_record_id' => 990,
+            'operation_date' => '2023-08-01 10:00:00',
+            'source_reference' => 'INV-990',
+            'source_summary' => 'Transaksi sell #990',
+            'source_context' => json_encode(['transaction_type' => 'sell', 'location_id' => 70, 'final_total' => 125, 'tax_amount' => 0]),
+            'skip_reason' => 'mapping_lokasi_tidak_lengkap',
+            'status' => 'retrying',
+            'location_id' => 70,
+            'mapping_key' => 'sale',
+            'transaction_kind' => 'sell',
+            'counterpart_main_account_id' => null,
+            'first_seen_at' => now(),
+            'last_seen_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $service = app(\Modules\Accounting\Services\GeneralLedgerBackfillService::class);
+        $firstResult = $service->retryReviewItem(7, 990);
+        $secondResult = $service->retryReviewItem(7, 990);
+
+        $this->assertTrue($firstResult['resolved']);
+        $this->assertTrue($secondResult['resolved']);
+        $this->assertSame('resolved', DB::table('accounting_general_ledger_backfill_reviews')->where('id', 990)->value('status'));
+        $this->assertSame(1, DB::table('accounting_acc_trans_mappings')->where('business_id', 7)->where('source_record_type', \App\Transaction::class)->where('source_record_id', 990)->count());
+        $this->assertSame(2, DB::table('accounting_accounts_transactions')->where('transaction_id', 990)->count());
+    }
+
     private function createSchema(): void
     {
         Schema::create('business', function (Blueprint $table) {
@@ -1004,6 +1052,12 @@ class GeneralLedgerBackfillCommandTest extends TestCase
             $table->json('source_context')->nullable();
             $table->string('skip_reason', 100);
             $table->string('status', 24)->default('pending');
+            $table->unsignedInteger('location_id')->nullable();
+            $table->string('mapping_key', 64)->nullable();
+            $table->string('transaction_kind', 24)->nullable();
+            $table->unsignedInteger('main_account_id')->nullable();
+            $table->unsignedInteger('counterpart_main_account_id')->nullable();
+            $table->unsignedBigInteger('retry_batch_id')->nullable();
             $table->dateTime('first_seen_at')->nullable();
             $table->dateTime('last_seen_at')->nullable();
             $table->dateTime('resolved_at')->nullable();

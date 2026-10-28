@@ -23,6 +23,12 @@
                         <li @if(request()->segment(2) == 'journal-entry') class="active" @endif><a href="{{action([\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'index'])}}">@lang('accounting::lang.journal_entry')</a></li>
                     @endif
 
+                    @if(auth()->user()->can('accounting.view_journal') && (auth()->user()->can('superadmin') || app(\App\Utils\ModuleUtil::class)->hasThePermissionInSubscription(request()->session()->get('user.business_id'), 'accounting_module')))
+                        <li @if(request()->segment(2) == 'reports' && request()->segment(4) == 'backfill-review') class="active" @endif>
+                            <a href="{{ route('accounting.generalLedger.backfillReview') }}">Review Backfill Buku Besar</a>
+                        </li>
+                    @endif
+
                     @if(auth()->user()->can('accounting.add_journal'))
                         <li @if(request()->segment(2) == 'journal-entry' && request()->segment(3) == 'import') class="active" @endif><a href="{{action([\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'import'])}}">Import Journal</a></li>
                     @endif

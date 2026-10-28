@@ -54,6 +54,14 @@ Route::middleware('web', 'SetSessionData', 'auth', 'language', 'timezone', 'Admi
     Route::get('reports/general-ledger/audit', [\Modules\Accounting\Http\Controllers\ReportController::class, 'generalLedgerAudit'])->name('accounting.generalLedger.audit');
     Route::post('reports/general-ledger/account-mappings', [\Modules\Accounting\Http\Controllers\ReportController::class, 'saveGeneralLedgerAccountMappings'])->name('accounting.generalLedger.accountMappings.save');
     Route::get('reports/general-ledger', [\Modules\Accounting\Http\Controllers\ReportController::class, 'generalLedger'])->name('accounting.generalLedger');
+    Route::get('reports/general-ledger/backfill-review', [\Modules\Accounting\Http\Controllers\GeneralLedgerBackfillReviewController::class, 'index'])->name('accounting.generalLedger.backfillReview');
+    Route::get('reports/general-ledger/backfill-review/rows', [\Modules\Accounting\Http\Controllers\GeneralLedgerBackfillReviewController::class, 'rows'])->name('accounting.generalLedger.backfillReview.rows');
+    Route::get('reports/general-ledger/backfill-review/options', [\Modules\Accounting\Http\Controllers\GeneralLedgerBackfillReviewController::class, 'options'])->name('accounting.generalLedger.backfillReview.options');
+    Route::post('reports/general-ledger/backfill-review/mappings/location', [\Modules\Accounting\Http\Controllers\GeneralLedgerBackfillReviewController::class, 'saveLocationMapping'])->name('accounting.generalLedger.backfillReview.locationMapping');
+    Route::post('reports/general-ledger/backfill-review/mappings/main-account', [\Modules\Accounting\Http\Controllers\GeneralLedgerBackfillReviewController::class, 'saveMainAccountMapping'])->name('accounting.generalLedger.backfillReview.mainAccountMapping');
+    Route::post('reports/general-ledger/backfill-review/mappings/vat', [\Modules\Accounting\Http\Controllers\GeneralLedgerBackfillReviewController::class, 'saveVatMapping'])->name('accounting.generalLedger.backfillReview.vatMapping');
+    Route::post('reports/general-ledger/backfill-review/retry-batches', [\Modules\Accounting\Http\Controllers\GeneralLedgerBackfillReviewController::class, 'retry'])->name('accounting.generalLedger.backfillReview.retry');
+    Route::get('reports/general-ledger/backfill-review/retry-batches/{batchId}', [\Modules\Accounting\Http\Controllers\GeneralLedgerBackfillReviewController::class, 'batchStatus'])->whereNumber('batchId')->name('accounting.generalLedger.backfillReview.retryBatches');
     Route::get('reports/trial-balance', [\Modules\Accounting\Http\Controllers\ReportController::class, 'trialBalance'])->name('accounting.trialBalance');
     Route::get('reports/balance-sheet', [\Modules\Accounting\Http\Controllers\ReportController::class, 'balanceSheet'])->name('accounting.balanceSheet');
     Route::get('reports/account-receivable-ageing-report',
