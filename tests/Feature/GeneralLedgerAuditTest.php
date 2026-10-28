@@ -283,9 +283,9 @@ class GeneralLedgerAuditTest extends TestCase
         ]);
         DB::table('accounting_accounts_transactions')->insert([
             ['id' => 1, 'accounting_account_id' => 1, 'acc_trans_mapping_id' => 501, 'transaction_id' => 100, 'transaction_payment_id' => 50, 'amount' => 100, 'type' => 'debit', 'sub_type' => 'journal_entry', 'operation_date' => '2022-01-04 10:00:00', 'note' => 'Kas PUR-50'],
-            ['id' => 2, 'accounting_account_id' => 3, 'acc_trans_mapping_id' => 501, 'amount' => 10, 'type' => 'debit', 'sub_type' => 'journal_entry', 'operation_date' => '2022-01-04 10:00:00', 'note' => 'VAT In'],
-            ['id' => 3, 'accounting_account_id' => 4, 'acc_trans_mapping_id' => 501, 'amount' => 110, 'type' => 'credit', 'sub_type' => 'journal_entry', 'operation_date' => '2022-01-04 10:00:00', 'note' => 'Trade Payable'],
-            ['id' => 4, 'accounting_account_id' => 1, 'acc_trans_mapping_id' => null, 'amount' => 50, 'type' => 'debit', 'sub_type' => 'opening_balance', 'operation_date' => '2021-12-31 10:00:00', 'note' => 'Saldo awal'],
+            ['id' => 2, 'accounting_account_id' => 3, 'acc_trans_mapping_id' => 501, 'transaction_id' => null, 'transaction_payment_id' => null, 'amount' => 10, 'type' => 'debit', 'sub_type' => 'journal_entry', 'operation_date' => '2022-01-04 10:00:00', 'note' => 'VAT In'],
+            ['id' => 3, 'accounting_account_id' => 4, 'acc_trans_mapping_id' => 501, 'transaction_id' => null, 'transaction_payment_id' => null, 'amount' => 110, 'type' => 'credit', 'sub_type' => 'journal_entry', 'operation_date' => '2022-01-04 10:00:00', 'note' => 'Trade Payable'],
+            ['id' => 4, 'accounting_account_id' => 1, 'acc_trans_mapping_id' => null, 'transaction_id' => null, 'transaction_payment_id' => null, 'amount' => 50, 'type' => 'debit', 'sub_type' => 'opening_balance', 'operation_date' => '2021-12-31 10:00:00', 'note' => 'Saldo awal'],
         ]);
     }
 
