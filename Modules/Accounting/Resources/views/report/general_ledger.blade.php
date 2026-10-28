@@ -131,6 +131,9 @@
                             <a href="{{ route('accounting.generalLedger.export', ['start_date' => $start_date, 'end_date' => $end_date, 'account_id' => $account_id]) }}" class="btn btn-success">
                                 <i class="fa fa-download"></i> Ekspor Excel
                             </a>
+                            <a href="{{ route('accounting.generalLedger.audit', ['start_date' => $start_date, 'end_date' => $end_date]) }}" class="btn btn-default">
+                                <i class="fa fa-search"></i> Audit rekonsiliasi
+                            </a>
                         </div>
                     </div>
                 </form>

@@ -46,6 +46,19 @@
         <div class="col-md-6">
             <div class="box box-warning">
                 <div class="box-header with-border">
+                    <h3 class="box-title">Audit Buku Besar Kas/Bank</h3>
+                </div>
+                <div class="box-body">
+                    Cocokkan movement rekening operasional dengan posting Accounting, termasuk selisih, sumber ganda, VAT, dan label transaksi.
+                    <br/>
+                    <a href="{{ route('accounting.generalLedger.audit') }}" class="btn btn-primary btn-sm m-t-10">Buka audit</a>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-6">
+            <div class="box box-warning">
+                <div class="box-header with-border">
                     <h3 class="box-title">@lang( 'accounting::lang.balance_sheet')</h3>
                 </div>
 

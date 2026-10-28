@@ -13,6 +13,7 @@ use Maatwebsite\Excel\Facades\Excel;
 use Modules\Accounting\Entities\AccountingAccount;
 use Modules\Accounting\Exports\GeneralLedgerExport;
 use Modules\Accounting\Services\GeneralLedgerReportService;
+use Modules\Accounting\Services\GeneralLedgerAuditService;
 use Modules\Accounting\Utils\AccountingUtil;
 
 class ReportController extends Controller
@@ -130,6 +131,99 @@ class ReportController extends Controller
         $filename = 'buku-besar-'.$filters['start_date'].'-'.$filters['end_date'].'.xlsx';
 
         return Excel::download(new GeneralLedgerExport($view), $filename);
+    }
+
+    public function generalLedgerAudit(Request $request, GeneralLedgerAuditService $auditService)
+    {
+        $businessId = (int) $request->session()->get('user.business_id');
+        $this->authorizeReports($businessId);
+        $filters = $this->generalLedgerAuditFilters($request, $businessId, $auditService);
+        $report = $auditService->report($businessId, $filters['start_date'], $filters['end_date'], $filters, (int) ($filters['page'] ?? 1));
+        $currency = session('currency', []);
+
+        return view('accounting::report.general_ledger_audit', $report + $filters + [
+            'businessName' => session('business.name') ?: get_business_name(),
+            'currencyPrecision' => max(0, min(4, (int) session('business.currency_precision', 2))),
+            'decimalSeparator' => $currency['decimal_separator'] ?? '.',
+            'thousandSeparator' => $currency['thousand_separator'] ?? ',',
+        ]);
+    }
+
+    public function exportGeneralLedgerAudit(Request $request, GeneralLedgerAuditService $auditService)
+    {
+        $businessId = (int) $request->session()->get('user.business_id');
+        $this->authorizeReports($businessId);
+        $filters = $this->generalLedgerAuditFilters($request, $businessId, $auditService);
+        $rows = $auditService->exportRows($businessId, $filters['start_date'], $filters['end_date'], $filters);
+        $filename = 'audit-buku-besar-'.$filters['start_date'].'-'.$filters['end_date'].'.csv';
+
+        return response()->streamDownload(function () use ($rows) {
+            $output = fopen('php://output', 'w');
+            fwrite($output, "\xEF\xBB\xBF");
+            fputcsv($output, [
+                'Tanggal', 'Tipe sumber', 'Nomor / referensi', 'Keterangan', 'Kategori sumber', 'Detail jurnal',
+                'Supplier / Customer', 'Akun Kas/Bank', 'Nominal operasional', 'Nominal Accounting', 'Selisih',
+                'VAT sumber', 'VAT jurnal', 'Status', 'Alasan', 'Source type', 'Source ID',
+            ]);
+            foreach ($rows as $row) {
+                fputcsv($output, [
+                    $row['date'], $this->safeCsvText($row['source_type']), $this->safeCsvText($row['source_number']),
+                    $this->safeCsvText($row['description']), $this->safeCsvText($row['category']),
+                    $this->safeCsvText(trim($row['detail_category'].' '.$row['journal_detail'])),
+                    $this->safeCsvText($row['contact']), $this->safeCsvText($row['payment_account']),
+                    $row['operational_amount'], $row['accounting_amount'], $row['difference'], $row['source_vat'],
+                    $row['journal_vat'], $this->safeCsvText($row['status']), $this->safeCsvText($row['reason']),
+                    $this->safeCsvText($row['source_record_type']), $row['source_record_id'],
+                ]);
+            }
+            fclose($output);
+        }, $filename, ['Content-Type' => 'text/csv; charset=UTF-8']);
+    }
+
+    private function safeCsvText($value): string
+    {
+        $text = (string) $value;
+        if (preg_match('/^[\x00-\x20]*[=+@-]/u', $text) === 1) {
+            return "'".$text;
+        }
+
+        return $text;
+    }
+
+    private function generalLedgerAuditFilters(Request $request, int $businessId, GeneralLedgerAuditService $auditService): array
+    {
+        $validated = $request->validate([
+            'start_date' => 'nullable|required_with:end_date|date_format:Y-m-d',
+            'end_date' => 'nullable|required_with:start_date|date_format:Y-m-d|after_or_equal:start_date',
+            'account_id' => 'nullable|integer|min:1',
+            'source_type' => 'nullable|string|max:100',
+            'status' => 'nullable|string|max:50',
+            'reason' => 'nullable|string|max:50',
+            'search' => 'nullable|string|max:255',
+            'page' => 'nullable|integer|min:1',
+        ]);
+
+        if (empty($validated['start_date']) && empty($validated['end_date'])) {
+            $financialYear = $this->businessUtil->getCurrentFinancialYear($businessId);
+            $startDate = $financialYear['start'];
+            $endDate = $financialYear['end'];
+        } else {
+            $startDate = $validated['start_date'];
+            $endDate = $validated['end_date'];
+        }
+
+        $accountId = empty($validated['account_id']) ? null : (int) $validated['account_id'];
+        if ($accountId !== null && ! $auditService->paymentAccounts($businessId)->contains(function ($account) use ($accountId) {
+            return (int) $account->id === $accountId;
+        })) {
+            abort(404);
+        }
+
+        $validated['start_date'] = $startDate;
+        $validated['end_date'] = $endDate;
+        $validated['account_id'] = $accountId;
+
+        return $validated;
     }
 
     private function authorizeReports(int $businessId): void
