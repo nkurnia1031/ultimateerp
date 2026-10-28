@@ -36,6 +36,14 @@ return [
             'throw' => false,
         ],
 
+        // Keep finance workbooks outside the public document root. In a
+        // multi-host deployment, mount this same directory on web and CLI hosts.
+        'journal_imports' => [
+            'driver' => 'local',
+            'root' => env('JOURNAL_IMPORTS_SHARED_PATH', storage_path('app/journal-imports')),
+            'throw' => true,
+        ],
+
         'public' => [
             'driver' => 'local',
             'root' => storage_path('app/public'),

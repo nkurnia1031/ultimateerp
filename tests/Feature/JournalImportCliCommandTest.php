@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Storage;
 use Mockery;
 use Modules\Accounting\Http\Controllers\JournalEntryController;
 use Modules\Accounting\Services\JournalTaxReconciliationService;
@@ -33,7 +34,9 @@ class JournalImportCliCommandTest extends TestCase
                 'prefix' => '',
                 'foreign_key_constraints' => false,
             ],
+            'filesystems.disks.journal_imports.root' => storage_path('framework/testing/journal-imports-cli'),
         ]);
+        Storage::forgetDisk('journal_imports');
         DB::purge('sqlite');
         DB::setDefaultConnection('sqlite');
 
@@ -141,6 +144,14 @@ class JournalImportCliCommandTest extends TestCase
             '--user-id' => 7,
         ])->expectsOutputToContain('File workbook tidak ditemukan')
             ->assertExitCode(1);
+
+        $this->artisan('accounting:import-journal', [
+            'workbook' => 'missing.xlsx',
+            '--business-id' => 2,
+            '--user-id' => 7,
+            '--chunk-delay-ms' => -1,
+        ])->expectsOutputToContain('--chunk-delay-ms harus berupa bilangan bulat')
+            ->assertExitCode(1);
     }
 
     public function test_cli_cancellation_keeps_the_batch_and_unstarted_rows_available_for_web(): void
@@ -178,19 +189,30 @@ class JournalImportCliCommandTest extends TestCase
             'workbook' => $workbook,
             '--business-id' => 2,
             '--user-id' => 7,
+            '--chunk-delay-ms' => 0,
         ])->expectsOutputToContain('Batch ID:')
             ->expectsOutputToContain('Status akhir: '.$expectedStatus)
             ->expectsOutputToContain('Berhasil:')
             ->assertExitCode(0);
 
         $batch = DB::table('accounting_journal_imports')->orderByDesc('id')->first();
-        $this->temporaryPaths[] = public_path($batch->file_path);
+        $this->assertStringStartsWith('journal_imports/', $batch->file_path);
+        $this->temporaryPaths[] = $this->storedImportPath($batch->file_path);
         if (! empty($batch->analysis_path)) {
-            $this->temporaryPaths[] = public_path($batch->analysis_path);
+            $this->temporaryPaths[] = $this->storedImportPath($batch->analysis_path);
         }
         $this->temporaryPaths[] = $workbook;
 
         return $batch;
+    }
+
+    private function storedImportPath(string $path): string
+    {
+        if (strpos($path, 'journal_imports/') === 0) {
+            return Storage::disk('journal_imports')->path(substr($path, strlen('journal_imports/')));
+        }
+
+        return public_path($path);
     }
 
     private function createJournalWorkbook(

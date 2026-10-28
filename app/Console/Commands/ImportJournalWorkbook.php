@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Modules\Accounting\Jobs\AnalyzeJournalImportJob;
 use Modules\Accounting\Jobs\ProcessJournalImportJob;
@@ -14,7 +15,8 @@ class ImportJournalWorkbook extends Command
     protected $signature = 'accounting:import-journal
         {workbook : Path to an XLSX, XLS, or CSV journal workbook}
         {--business-id= : Business ID that owns the import}
-        {--user-id= : Existing user ID recorded as the import author}';
+        {--user-id= : Existing user ID recorded as the import author}
+        {--chunk-delay-ms=2000 : Delay between continuing database chunks (0-30000 ms)}';
 
     protected $description = 'Import a journal workbook directly from CLI into a persistent, web-reviewable batch.';
 
@@ -26,6 +28,15 @@ class ImportJournalWorkbook extends Command
             $this->error('Opsi --business-id dan --user-id wajib berupa bilangan bulat positif.');
 
             return self::FAILURE;
+        }
+        $chunkDelayMilliseconds = $this->nonNegativeIntegerOption('chunk-delay-ms', 0, 30000);
+        if ($chunkDelayMilliseconds === null) {
+            $this->error('Opsi --chunk-delay-ms harus berupa bilangan bulat antara 0 dan 30000.');
+
+            return self::FAILURE;
+        }
+        if (function_exists('set_time_limit')) {
+            @set_time_limit(0);
         }
 
         $business = DB::table('business')->where('id', $businessId)->first();
@@ -59,14 +70,15 @@ class ImportJournalWorkbook extends Command
         $relativePath = null;
 
         try {
-            $uploadDirectory = public_path('uploads/temp/journal_imports');
+            $uploadDisk = Storage::disk('journal_imports');
+            $uploadDirectory = $uploadDisk->path('');
             if (! is_dir($uploadDirectory) && ! mkdir($uploadDirectory, 0755, true) && ! is_dir($uploadDirectory)) {
                 throw new \RuntimeException('Folder sementara Journal Import tidak dapat dibuat.');
             }
 
             $storedName = Str::uuid().'.'.$extension;
-            $relativePath = 'uploads/temp/journal_imports/'.$storedName;
-            if (! copy($sourcePath, public_path($relativePath))) {
+            $relativePath = 'journal_imports/'.$storedName;
+            if (! copy($sourcePath, $uploadDisk->path($storedName))) {
                 throw new \RuntimeException('Workbook tidak dapat disalin ke penyimpanan batch Journal Import.');
             }
 
@@ -84,6 +96,7 @@ class ImportJournalWorkbook extends Command
             $this->info('Business: '.($business->name ?? 'Business').' (#'.$businessId.')');
             $this->line('Batch ID: '.$batchId);
             $this->line('Runner: CLI langsung; tidak menunggu worker queue imports.');
+            $this->line('Jeda antar-chunk database: '.$chunkDelayMilliseconds.' ms.');
             $this->line('Analisis workbook dimulai.');
 
             $lastAnalysisRow = 0;
@@ -105,7 +118,7 @@ class ImportJournalWorkbook extends Command
             $batch = $this->findBatch($batchId, $businessId);
             if ($batch->status === 'analyzed') {
                 $this->startPersistentProcessing($batchId, $businessId);
-                $batch = $this->runPersistentBatch($batchId, $businessId);
+                $batch = $this->runPersistentBatch($batchId, $businessId, $chunkDelayMilliseconds);
             }
 
             $this->printSummary($batchId, $businessId, $batch);
@@ -116,7 +129,8 @@ class ImportJournalWorkbook extends Command
                 $this->markInterruptedBatchRecoverable($batchId, $businessId, $exception);
                 $this->line('Batch ID: '.$batchId);
             } elseif ($relativePath !== null) {
-                @unlink(public_path($relativePath));
+                $storedName = substr($relativePath, strlen('journal_imports/'));
+                @unlink(Storage::disk('journal_imports')->path($storedName));
             }
 
             $this->error($exception->getMessage());
@@ -132,6 +146,19 @@ class ImportJournalWorkbook extends Command
     {
         $value = (string) $this->option($name);
         if ($value === '' || ! ctype_digit($value) || (int) $value < 1) {
+            return null;
+        }
+
+        return (int) $value;
+    }
+
+    private function nonNegativeIntegerOption(string $name, int $default, int $maximum): ?int
+    {
+        $value = (string) $this->option($name);
+        if ($value === '') {
+            return $default;
+        }
+        if (! ctype_digit($value) || (int) $value > $maximum) {
             return null;
         }
 
@@ -176,7 +203,7 @@ class ImportJournalWorkbook extends Command
         }
     }
 
-    private function runPersistentBatch(int $batchId, int $businessId): object
+    private function runPersistentBatch(int $batchId, int $businessId, int $chunkDelayMilliseconds): object
     {
         $iterations = 0;
         $lastReportedStatus = null;
@@ -228,6 +255,9 @@ class ImportJournalWorkbook extends Command
             ];
             if ($before === $after && in_array($batch->status, ['preparing_import', 'queued_import', 'importing', 'reconciling'], true)) {
                 throw new \RuntimeException('Proses tidak memajukan cursor atau status batch; batch disimpan untuk ditinjau.');
+            }
+            if ($before['status'] === $after['status'] && $before !== $after && $chunkDelayMilliseconds > 0) {
+                usleep($chunkDelayMilliseconds * 1000);
             }
         }
 

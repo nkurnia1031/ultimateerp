@@ -14,6 +14,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Modules\Accounting\Entities\AccountingAccountsTransaction;
@@ -202,12 +203,9 @@ class JournalEntryController extends Controller
 
         $file = $request->file('journal_file');
         $file_name = Str::uuid().'.'.$file->getClientOriginalExtension();
-        $upload_path = public_path('uploads/temp/journal_imports');
-        if (! file_exists($upload_path)) {
-            mkdir($upload_path, 0755, true);
-        }
+        $upload_path = $this->journalImportStorageDirectory();
         $file->move($upload_path, $file_name);
-        $path = 'uploads/temp/journal_imports/'.$file_name;
+        $path = 'journal_imports/'.$file_name;
         $journal_import_id = DB::table('accounting_journal_imports')->insertGetId([
             'business_id' => $business_id,
             'file_name' => $file->getClientOriginalName(),
@@ -251,14 +249,14 @@ class JournalEntryController extends Controller
                 ]);
         }
 
-        $analysisPath = ! empty($batch->analysis_path) ? public_path($batch->analysis_path) : null;
+        $analysisPath = ! empty($batch->analysis_path) ? $this->resolveJournalImportFilePath($batch->analysis_path) : null;
         $analysis = $analysisPath && file_exists($analysisPath)
             ? $this->readTemporaryJournalAnalysis($batch->analysis_path)
             : $this->analysisFromJournalDraftRows((int) $batch->id, (int) $business_id, $batch->summary);
         if (empty($analysis['entries'])) {
             if ($batch->status === 'cancelled' && ! empty($batch->file_path)) {
-                $filePath = public_path($batch->file_path);
-                if (file_exists($filePath)) {
+                $filePath = $this->resolveJournalImportFilePath($batch->file_path);
+                if (! empty($filePath) && file_exists($filePath)) {
                     $restarted = DB::transaction(function () use ($batch, $business_id) {
                         $lockedBatch = DB::table('accounting_journal_imports')
                             ->where('business_id', $business_id)
@@ -1803,7 +1801,12 @@ class JournalEntryController extends Controller
             $progressCallback(['message' => 'Membuka workbook dan menyiapkan analisis.']);
         }
 
-        foreach ($this->readJournalWorkbookRows(public_path($path), $progressCallback) as $index => $row) {
+        $workbookPath = $this->resolveJournalImportFilePath($path);
+        if (empty($workbookPath) || ! is_file($workbookPath)) {
+            throw new \RuntimeException('File workbook Journal Import tidak ditemukan pada penyimpanan bersama.');
+        }
+
+        foreach ($this->readJournalWorkbookRows($workbookPath, $progressCallback) as $index => $row) {
             if ($progressCallback && $index > 0 && $index % 500 === 0) {
                 $progressCallback([
                     'processed_rows' => $index,
@@ -2260,24 +2263,22 @@ class JournalEntryController extends Controller
 
     public function deleteTemporaryJournalFile($path)
     {
-        $full_path = realpath(public_path($path));
-        $allowed_path = realpath(public_path('uploads/temp/journal_imports'));
+        $full_path = $this->resolveJournalImportFilePath($path);
 
-        if (! empty($full_path) && ! empty($allowed_path) && Str::startsWith($full_path, $allowed_path) && file_exists($full_path)) {
+        if (! empty($full_path) && is_file($full_path)) {
             @unlink($full_path);
         }
     }
 
     public function writeTemporaryJournalAnalysis($analysis)
     {
-        $upload_path = public_path('uploads/temp/journal_imports');
-        if (! file_exists($upload_path)) {
-            mkdir($upload_path, 0755, true);
-        }
-
+        $this->journalImportStorageDirectory();
         $file_name = Str::uuid().'.json';
-        $path = 'uploads/temp/journal_imports/'.$file_name;
-        file_put_contents(public_path($path), json_encode($analysis));
+        $path = 'journal_imports/'.$file_name;
+        $full_path = $this->resolveJournalImportFilePath($path);
+        if (empty($full_path) || file_put_contents($full_path, json_encode($analysis), LOCK_EX) === false) {
+            throw new \RuntimeException('File analisa Journal Import tidak dapat disimpan pada penyimpanan bersama.');
+        }
 
         return $path;
     }
@@ -2291,10 +2292,8 @@ class JournalEntryController extends Controller
 
     public function readTemporaryJournalAnalysis($path)
     {
-        $full_path = realpath(public_path($path));
-        $allowed_path = realpath(public_path('uploads/temp/journal_imports'));
-
-        if (empty($full_path) || empty($allowed_path) || ! Str::startsWith($full_path, $allowed_path) || ! file_exists($full_path)) {
+        $full_path = $this->resolveJournalImportFilePath($path);
+        if (empty($full_path) || ! is_file($full_path)) {
             throw new \Exception('File analisa import tidak ditemukan.');
         }
 
@@ -2304,6 +2303,63 @@ class JournalEntryController extends Controller
         }
 
         return $analysis;
+    }
+
+    private function journalImportStorageDirectory(): string
+    {
+        $directory = Storage::disk('journal_imports')->path('');
+        if (! is_dir($directory) && ! mkdir($directory, 0755, true) && ! is_dir($directory)) {
+            throw new \RuntimeException('Folder penyimpanan Journal Import tidak dapat dibuat.');
+        }
+
+        return $directory;
+    }
+
+    private function resolveJournalImportFilePath($path): ?string
+    {
+        $path = str_replace('\\', '/', trim((string) $path));
+        if ($path === '' || strpos($path, "\0") !== false || preg_match('#(^|/)\.\.?(/|$)#', $path)) {
+            return null;
+        }
+
+        if (Str::startsWith($path, 'journal_imports/')) {
+            $filename = substr($path, strlen('journal_imports/'));
+            if ($filename === '' || basename($filename) !== $filename) {
+                return null;
+            }
+            $root = Storage::disk('journal_imports')->path('');
+        } elseif (Str::startsWith($path, 'uploads/temp/journal_imports/')) {
+            // Backward compatibility for batches created before private shared storage.
+            $filename = substr($path, strlen('uploads/temp/journal_imports/'));
+            if ($filename === '' || basename($filename) !== $filename) {
+                return null;
+            }
+            $root = public_path('uploads/temp/journal_imports');
+        } else {
+            return null;
+        }
+
+        $root = realpath($root);
+        if ($root === false) {
+            return null;
+        }
+        $fullPath = $root.DIRECTORY_SEPARATOR.$filename;
+        $parent = realpath(dirname($fullPath));
+        if ($parent === false || $parent !== $root || is_link($fullPath)) {
+            return null;
+        }
+
+        $resolvedFile = realpath($fullPath);
+        if ($resolvedFile !== false) {
+            $resolvedParent = realpath(dirname($resolvedFile));
+            if ($resolvedParent !== $root) {
+                return null;
+            }
+
+            return $resolvedFile;
+        }
+
+        return $fullPath;
     }
 
     private function newJournalImportEntry($header, $row)
