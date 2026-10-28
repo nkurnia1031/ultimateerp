@@ -156,6 +156,7 @@ class GeneralLedgerAuditTest extends TestCase
         ]);
         $user = new User();
         $user->forceFill(['id' => 1, 'business_id' => 1, 'username' => 'audit-test']);
+        $user->setRelation('notifications', collect());
         $moduleUtil = Mockery::mock(ModuleUtil::class);
         $moduleUtil->shouldReceive('hasThePermissionInSubscription')->andReturn(true);
         $this->app->instance(ModuleUtil::class, $moduleUtil);
