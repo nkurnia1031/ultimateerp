@@ -332,8 +332,12 @@ class GeneralLedgerBackfillService
             'source_reference' => (string) ($review->source_reference ?? ''),
             'operation_date' => $review->operation_date,
             'source_summary' => (string) $review->source_summary,
-            'source_amount' => isset($context['final_total']) ? (float) $context['final_total'] : (isset($context['amount']) ? (float) $context['amount'] : null),
-            'source_tax_amount' => isset($context['tax_amount']) ? (float) $context['tax_amount'] : null,
+            'source_amount' => isset($candidate['source_amount'])
+                ? (float) $candidate['source_amount']
+                : (isset($context['final_total']) ? (float) $context['final_total'] : (isset($context['amount']) ? (float) $context['amount'] : null)),
+            'source_tax_amount' => isset($candidate['source_tax_amount'])
+                ? (float) $candidate['source_tax_amount']
+                : (isset($context['tax_amount']) ? (float) $context['tax_amount'] : null),
             'skip_reason' => (string) $review->skip_reason,
             'posting_label' => $classification['label'],
             'posting_detail' => $classification['detail'],
@@ -693,6 +697,8 @@ class GeneralLedgerBackfillService
                 )
             );
             $candidate['uses_auto_map'] = $autoMap !== null;
+            $candidate['source_amount'] = $total;
+            $candidate['source_tax_amount'] = $tax;
             yield $candidate;
         }
     }
@@ -843,6 +849,8 @@ class GeneralLedgerBackfillService
                 )
             );
             $candidate['uses_auto_map'] = $usesAutoMap;
+            $candidate['source_amount'] = (float) $payment->payment_amount;
+            $candidate['source_tax_amount'] = 0.0;
             yield $candidate;
         }
     }
@@ -907,7 +915,7 @@ class GeneralLedgerBackfillService
                 $sourceAccount['crosswalk'],
                 $counterpartAccount['crosswalk'],
             ]));
-            yield $this->group(
+            $candidate = $this->group(
                 $businessId,
                 AccountTransaction::class,
                 (int) $transfer->source_id,
@@ -927,6 +935,9 @@ class GeneralLedgerBackfillService
                 false,
                 (int) $transfer->source_id
             );
+            $candidate['source_amount'] = (float) $transfer->source_amount;
+            $candidate['source_tax_amount'] = 0.0;
+            yield $candidate;
         }
     }
 
@@ -1212,6 +1223,8 @@ class GeneralLedgerBackfillService
                 'location_id' => empty($mapInfo['location_id']) ? null : (int) $mapInfo['location_id'],
                 'expense_category_id' => $expenseCategoryId,
                 'account_id' => $candidate['source_main_account_id'] ?? null,
+                'final_total' => $candidate['source_amount'] ?? null,
+                'tax_amount' => $candidate['source_tax_amount'] ?? null,
             ],
             'skip_reason' => $reason,
         ];
