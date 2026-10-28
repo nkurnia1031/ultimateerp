@@ -105,7 +105,7 @@ class GeneralLedgerBackfillReviewController extends Controller
                 'location_id' => (int) $data['location_id'],
                 'mapping_key' => (string) $data['mapping_key'],
             ],
-            'message' => $count.' item menunggu retry untuk mapping lokasi ini.',
+            'message' => 'Mapping disimpan. '.$count.' item cocok; pilih sumber yang akan ditinjau pada tabel sebelum proses ulang.',
         ]);
     }
 
@@ -128,7 +128,7 @@ class GeneralLedgerBackfillReviewController extends Controller
             'success' => true,
             'matched_count' => $count,
             'scope' => ['type' => 'vat', 'direction' => $data['direction']],
-            'message' => $count.' item dengan selisih mapping VAT cocok untuk dicoba ulang.',
+            'message' => 'Mapping VAT disimpan. '.$count.' item cocok; pilih sumber yang akan ditinjau pada tabel sebelum proses ulang.',
         ]);
     }
 
@@ -151,7 +151,7 @@ class GeneralLedgerBackfillReviewController extends Controller
             'success' => true,
             'matched_count' => $count,
             'scope' => ['type' => 'main_account', 'main_account_id' => (int) $data['main_account_id']],
-            'message' => $count.' item memakai akun sumber ini dan cocok untuk dicoba ulang.',
+            'message' => 'Crosswalk disimpan. '.$count.' item cocok; pilih sumber yang akan ditinjau pada tabel sebelum proses ulang.',
         ]);
     }
 
@@ -160,15 +160,16 @@ class GeneralLedgerBackfillReviewController extends Controller
         $businessId = $this->businessId($request);
         $this->authorizeBackfill($businessId, 'accounting.add_journal');
         $data = $request->validate([
-            'type' => 'required|in:location,main_account,vat',
-            'location_id' => 'required_if:type,location|nullable|integer|min:1',
-            'mapping_key' => 'required_if:type,location|nullable|string|max:64',
-            'main_account_id' => 'required_if:type,main_account|nullable|integer|min:1',
-            'direction' => 'required_if:type,vat|nullable|in:input,output',
+            'ids' => 'required|array|min:1|max:100',
+            'ids.*' => 'required|integer|min:1|distinct',
         ]);
-        $batch = $this->reviewService->enqueueRetry($businessId, (int) request()->session()->get('user.id'), $data);
+        $preview = $this->reviewService->createRetryPreview(
+            $businessId,
+            (int) auth()->id(),
+            $data['ids']
+        );
 
-        return response()->json(['success' => true] + $batch, $batch['total_items'] > 0 ? 202 : 200);
+        return response()->json(['success' => true] + $preview, 201);
     }
 
     public function batchStatus(Request $request, int $batchId): JsonResponse
@@ -181,6 +182,26 @@ class GeneralLedgerBackfillReviewController extends Controller
         }
 
         return response()->json($batch);
+    }
+
+    public function confirmRetry(Request $request, int $batchId): JsonResponse
+    {
+        $businessId = $this->businessId($request);
+        $this->authorizeBackfill($businessId, 'accounting.add_journal');
+        $data = $request->validate([
+            'plan_hash' => 'required|string|size:64',
+        ]);
+        $result = $this->reviewService->confirmRetryPreview(
+            $businessId,
+            (int) auth()->id(),
+            $batchId,
+            $data['plan_hash']
+        );
+        if (empty($result['found'])) {
+            abort(404);
+        }
+
+        return response()->json(['success' => true] + $result, $result['status'] === 'queued' ? 202 : 200);
     }
 
     public function manualJournal(Request $request, int $reviewId): JsonResponse

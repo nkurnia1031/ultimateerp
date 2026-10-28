@@ -955,7 +955,7 @@ class GeneralLedgerBackfillCommandTest extends TestCase
             'source_summary' => 'Transaksi sell #990',
             'source_context' => json_encode(['transaction_type' => 'sell', 'location_id' => 70, 'final_total' => 125, 'tax_amount' => 0]),
             'skip_reason' => 'mapping_lokasi_tidak_lengkap',
-            'status' => 'retrying',
+            'status' => 'pending',
             'location_id' => 70,
             'mapping_key' => 'sale',
             'transaction_kind' => 'sell',
@@ -967,13 +967,19 @@ class GeneralLedgerBackfillCommandTest extends TestCase
         ]);
 
         $service = app(\Modules\Accounting\Services\GeneralLedgerBackfillService::class);
-        $firstResult = $service->retryReviewItem(7, 990);
-        $secondResult = $service->retryReviewItem(7, 990);
+        $preview = $service->previewReviewItems(7, [990])[0];
+        $this->assertTrue($preview['eligible']);
+        DB::table('accounting_general_ledger_backfill_reviews')->where('id', 990)->update(['status' => 'retrying']);
+        $firstResult = $service->retryReviewItem(7, 990, $preview['plan_hash'], 55);
+        $secondResult = $service->retryReviewItem(7, 990, $preview['plan_hash'], 55);
 
         $this->assertTrue($firstResult['resolved']);
         $this->assertTrue($secondResult['resolved']);
         $this->assertSame('resolved', DB::table('accounting_general_ledger_backfill_reviews')->where('id', 990)->value('status'));
+        $reviewAudit = json_decode(DB::table('accounting_general_ledger_backfill_reviews')->where('id', 990)->value('audit_log'), true);
+        $this->assertSame(55, $reviewAudit[count($reviewAudit) - 1]['by']);
         $this->assertSame(1, DB::table('accounting_acc_trans_mappings')->where('business_id', 7)->where('source_record_type', \App\Transaction::class)->where('source_record_id', 990)->count());
+        $this->assertSame(55, (int) DB::table('accounting_acc_trans_mappings')->where('source_record_id', 990)->value('created_by'));
         $this->assertSame(2, DB::table('accounting_accounts_transactions')->where('transaction_id', 990)->count());
     }
 

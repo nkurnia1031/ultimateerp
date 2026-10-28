@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 use Modules\Accounting\Jobs\ProcessGeneralLedgerBackfillRetryJob;
+use Modules\Accounting\Services\GeneralLedgerBackfillService;
 use Modules\Accounting\Services\GeneralLedgerBackfillManualJournalService;
 use Modules\Accounting\Services\GeneralLedgerBackfillReviewService;
 use Mockery;
@@ -120,7 +121,7 @@ class GeneralLedgerBackfillReviewTest extends TestCase
         $service->saveVatMapping(7, 55, 'output', 801);
     }
 
-    public function test_main_account_crosswalk_and_confirmed_retry_batch_are_idempotent_and_tenant_scoped(): void
+    public function test_selected_retry_preview_is_balanced_and_requires_explicit_confirmation(): void
     {
         Queue::fake();
         $this->insertReview(1, 7, 'App\\TransactionPayment', 9001, 'akun_utama_belum_dimapping', 'sell_payment', 70, 'sell', 'PAY-9001', 'Pembayaran', 201);
@@ -133,19 +134,166 @@ class GeneralLedgerBackfillReviewTest extends TestCase
         $this->assertSame(3, $service->saveMainAccountMapping(7, 55, 201, 101));
         $this->assertSame(201, (int) DB::table('accounting_accounts')->where('id', 101)->value('account_id'));
 
-        $first = $service->enqueueRetry(7, 55, ['type' => 'main_account', 'main_account_id' => 201]);
-        $second = $service->enqueueRetry(7, 55, ['type' => 'main_account', 'main_account_id' => 201]);
+        $previewer = Mockery::mock(GeneralLedgerBackfillService::class);
+        $previewer->shouldReceive('previewReviewItems')->twice()->with(7, [1, 2, 3])->andReturn([
+            $this->eligiblePreview(1, 100, [
+                ['accounting_account_id' => 101, 'account_code' => '1100', 'account_name' => 'Piutang Usaha', 'type' => 'debit', 'amount' => 100],
+                ['accounting_account_id' => 102, 'account_code' => '4000', 'account_name' => 'Pendapatan Penjualan', 'type' => 'credit', 'amount' => 100],
+            ]),
+            $this->eligiblePreview(2, 50, [
+                ['accounting_account_id' => 103, 'account_code' => '1400', 'account_name' => 'VAT Masukan', 'type' => 'debit', 'amount' => 50],
+                ['accounting_account_id' => 102, 'account_code' => '4000', 'account_name' => 'Pendapatan Penjualan', 'type' => 'credit', 'amount' => 50],
+            ]),
+            array_merge($this->eligiblePreview(3, 0, []), ['eligible' => false, 'plan_hash' => null, 'reason' => 'akun_vat_tidak_ditemukan']),
+        ]);
+        $this->app->instance(GeneralLedgerBackfillService::class, $previewer);
+        $this->app->forgetInstance(GeneralLedgerBackfillReviewService::class);
+        $service = app(GeneralLedgerBackfillReviewService::class);
 
-        $this->assertSame(3, $first['total_items']);
-        $this->assertSame(0, $second['total_items']);
+        $preview = $service->createRetryPreview(7, 55, [1, 2, 3]);
+
+        $this->assertSame('awaiting_confirmation', $preview['status']);
+        $this->assertSame(3, $preview['selected_items']);
+        $this->assertSame(2, $preview['total_items']);
+        $this->assertSame(150.0, $preview['planned_debit']);
+        $this->assertSame(150.0, $preview['planned_credit']);
+        $this->assertSame('pending', DB::table('accounting_general_ledger_backfill_reviews')->where('id', 1)->value('status'));
+        $this->assertSame('pending', DB::table('accounting_general_ledger_backfill_reviews')->where('id', 3)->value('status'));
+        $this->assertSame(0, DB::table('accounting_general_ledger_backfill_retry_items')->where('status', 'queued')->count());
+        Queue::assertNothingPushed();
+
+        $confirmed = $service->confirmRetryPreview(7, 55, $preview['batch_id'], $preview['plan_hash']);
+
+        $this->assertSame('queued', $confirmed['status']);
+        $this->assertSame(2, $confirmed['total_items']);
+        $this->assertSame(55, (int) DB::table('accounting_general_ledger_backfill_retry_batches')->where('id', $preview['batch_id'])->value('confirmed_by'));
         $this->assertSame('retrying', DB::table('accounting_general_ledger_backfill_reviews')->where('id', 1)->value('status'));
-        $this->assertSame('retrying', DB::table('accounting_general_ledger_backfill_reviews')->where('id', 3)->value('status'));
+        $this->assertSame('retrying', DB::table('accounting_general_ledger_backfill_reviews')->where('id', 2)->value('status'));
+        $this->assertSame('pending', DB::table('accounting_general_ledger_backfill_reviews')->where('id', 3)->value('status'));
         $this->assertSame('pending', DB::table('accounting_general_ledger_backfill_reviews')->where('id', 4)->value('status'));
-        $this->assertSame(1, DB::table('accounting_general_ledger_backfill_retry_batches')->where('business_id', 7)->where('total_items', 3)->count());
+        $this->assertSame(1, DB::table('accounting_general_ledger_backfill_retry_batches')->where('business_id', 7)->where('total_items', 2)->count());
+        $this->assertSame(2, DB::table('accounting_general_ledger_backfill_retry_items')->where('batch_id', $preview['batch_id'])->where('status', 'queued')->count());
         Queue::assertPushed(ProcessGeneralLedgerBackfillRetryJob::class);
         $this->assertCount(1, Queue::pushed(ProcessGeneralLedgerBackfillRetryJob::class));
-        $this->assertSame(3, $service->retryBatchStatus(7, $first['batch_id'])['total_items']);
-        $this->assertNull($service->retryBatchStatus(8, $first['batch_id']));
+
+        $again = $service->confirmRetryPreview(7, 55, $preview['batch_id'], $preview['plan_hash']);
+        $this->assertSame('queued', $again['status']);
+        $this->assertCount(1, Queue::pushed(ProcessGeneralLedgerBackfillRetryJob::class));
+        $this->assertSame(2, $service->retryBatchStatus(7, $preview['batch_id'])['total_items']);
+        $this->assertNull($service->retryBatchStatus(8, $preview['batch_id']));
+    }
+
+    public function test_retry_preview_keeps_vat_separate_and_worker_rejects_a_changed_plan(): void
+    {
+        DB::table('business')->insert(['id' => 7, 'name' => 'CV Demo']);
+        DB::table('business_locations')->where('id', 70)->update([
+            'accounting_default_map' => json_encode(['sale' => ['payment_account' => 102, 'deposit_to' => 101]]),
+        ]);
+        DB::table('accounting_general_ledger_vat_accounts')->insert([
+            'business_id' => 7,
+            'direction' => 'output',
+            'accounting_account_id' => 104,
+            'created_by' => 55,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('transactions')->insert([
+            'id' => 9050,
+            'business_id' => 7,
+            'location_id' => 70,
+            'type' => 'sell',
+            'status' => 'final',
+            'transaction_date' => '2023-02-01 10:00:00',
+            'total_before_tax' => 100,
+            'tax_amount' => 10,
+            'final_total' => 110,
+            'created_by' => 55,
+            'invoice_no' => 'INV-9050',
+        ]);
+        $this->insertReview(50, 7, 'App\\Transaction', 9050, 'akun_vat_tidak_ditemukan', 'sale', 70, 'sell', 'INV-9050', 'Penjualan kena pajak');
+
+        $service = app(GeneralLedgerBackfillService::class);
+        $preview = $service->previewReviewItems(7, [50])[0];
+
+        $this->assertTrue($preview['eligible']);
+        $this->assertSame(110.0, $preview['debit_total']);
+        $this->assertSame(110.0, $preview['credit_total']);
+        $this->assertSame(10.0, $preview['source_tax_amount']);
+        $this->assertSame('Pendapatan Usaha', $preview['posting_label']);
+        $this->assertSame([
+            ['accounting_account_id' => 101, 'account_code' => '1100', 'account_name' => 'Piutang Usaha', 'type' => 'debit', 'amount' => 110.0],
+            ['accounting_account_id' => 102, 'account_code' => '4000', 'account_name' => 'Pendapatan Penjualan', 'type' => 'credit', 'amount' => 100.0],
+            ['accounting_account_id' => 104, 'account_code' => '2100', 'account_name' => 'VAT Keluaran', 'type' => 'credit', 'amount' => 10.0],
+        ], $preview['lines']);
+        $this->assertSame('pending', DB::table('accounting_general_ledger_backfill_reviews')->where('id', 50)->value('status'));
+        $this->assertSame(0, DB::table('accounting_acc_trans_mappings')->count());
+        $this->assertSame(0, DB::table('accounting_accounts_transactions')->count());
+
+        DB::table('accounting_general_ledger_backfill_reviews')->where('id', 50)->update(['status' => 'retrying']);
+        DB::table('transactions')->where('id', 9050)->update(['final_total' => 120, 'total_before_tax' => 110]);
+        $result = $service->retryReviewItem(7, 50, $preview['plan_hash'], 55);
+
+        $this->assertFalse($result['resolved']);
+        $this->assertStringContainsString('berubah sejak pratinjau', $result['reason']);
+        $this->assertSame(0, DB::table('accounting_acc_trans_mappings')->count());
+        $this->assertSame(0, DB::table('accounting_accounts_transactions')->count());
+    }
+
+    public function test_retry_confirmation_rejects_a_plan_that_changed_after_preview(): void
+    {
+        Queue::fake();
+        $this->insertReview(10, 7, 'App\\Transaction', 9010, 'mapping_lokasi_tidak_lengkap', 'sale', 70, 'sell', 'INV-9010', 'Penjualan');
+        $line = ['accounting_account_id' => 101, 'account_code' => '1100', 'account_name' => 'Piutang Usaha', 'type' => 'debit', 'amount' => 100];
+        $initial = $this->eligiblePreview(10, 100, [$line, [
+            'accounting_account_id' => 102, 'account_code' => '4000', 'account_name' => 'Pendapatan Penjualan', 'type' => 'credit', 'amount' => 100,
+        ]]);
+        $changed = $this->eligiblePreview(10, 120, [
+            ['accounting_account_id' => 101, 'account_code' => '1100', 'account_name' => 'Piutang Usaha', 'type' => 'debit', 'amount' => 120],
+            ['accounting_account_id' => 102, 'account_code' => '4000', 'account_name' => 'Pendapatan Penjualan', 'type' => 'credit', 'amount' => 120],
+        ]);
+        $changed['plan_hash'] = hash('sha256', 'changed-plan');
+        $previewer = Mockery::mock(GeneralLedgerBackfillService::class);
+        $previewer->shouldReceive('previewReviewItems')->twice()->with(7, [10])->andReturn([$initial], [$changed]);
+        $this->app->instance(GeneralLedgerBackfillService::class, $previewer);
+        $this->app->forgetInstance(GeneralLedgerBackfillReviewService::class);
+        $service = app(GeneralLedgerBackfillReviewService::class);
+
+        $preview = $service->createRetryPreview(7, 55, [10]);
+
+        try {
+            $service->confirmRetryPreview(7, 55, $preview['batch_id'], $preview['plan_hash']);
+            $this->fail('Pratinjau yang berubah sebelum konfirmasi harus ditolak.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('plan_hash', $exception->errors());
+        }
+
+        $this->assertSame('pending', DB::table('accounting_general_ledger_backfill_reviews')->where('id', 10)->value('status'));
+        $this->assertSame('awaiting_confirmation', DB::table('accounting_general_ledger_backfill_retry_batches')->where('id', $preview['batch_id'])->value('status'));
+        $this->assertSame(0, DB::table('accounting_general_ledger_backfill_retry_items')->where('batch_id', $preview['batch_id'])->where('status', 'queued')->count());
+        Queue::assertNothingPushed();
+    }
+
+    private function eligiblePreview(int $reviewId, float $total, array $lines): array
+    {
+        return [
+            'review_id' => $reviewId,
+            'eligible' => true,
+            'source_type' => 'Transaction',
+            'source_record_type' => 'App\\Transaction',
+            'source_record_id' => 9000 + $reviewId,
+            'source_reference' => 'REF-'.$reviewId,
+            'operation_date' => '2023-01-01',
+            'source_summary' => 'Sumber uji #'.$reviewId,
+            'source_amount' => $total,
+            'skip_reason' => 'akun_utama_belum_dimapping',
+            'posting_label' => 'sell',
+            'mapping_note' => 'Mapping lokasi aktif.',
+            'plan_hash' => hash('sha256', 'plan-'.$reviewId),
+            'debit_total' => $total,
+            'credit_total' => $total,
+            'lines' => $lines,
+            'reason' => null,
+        ];
     }
 
     public function test_manual_journal_is_balanced_linked_audited_and_idempotent_without_mutating_source(): void
@@ -373,6 +521,10 @@ class GeneralLedgerBackfillReviewTest extends TestCase
 
     private function createSchema(): void
     {
+        Schema::create('business', function (Blueprint $table) {
+            $table->increments('id');
+            $table->string('name');
+        });
         Schema::create('business_locations', function (Blueprint $table) {
             $table->increments('id');
             $table->unsignedInteger('business_id');
@@ -433,8 +585,16 @@ class GeneralLedgerBackfillReviewTest extends TestCase
             $table->bigIncrements('id');
             $table->unsignedInteger('business_id');
             $table->unsignedInteger('created_by');
+            $table->unsignedInteger('selected_items')->default(0);
             $table->string('status', 24)->default('queued');
             $table->unsignedInteger('total_items')->default(0);
+            $table->decimal('planned_debit', 22, 4)->default(0);
+            $table->decimal('planned_credit', 22, 4)->default(0);
+            $table->string('plan_hash', 64)->nullable();
+            $table->longText('preview_data')->nullable();
+            $table->dateTime('previewed_at')->nullable();
+            $table->unsignedInteger('confirmed_by')->nullable();
+            $table->dateTime('confirmed_at')->nullable();
             $table->unsignedInteger('processed_items')->default(0);
             $table->unsignedInteger('resolved_items')->default(0);
             $table->unsignedInteger('failed_items')->default(0);
@@ -448,6 +608,11 @@ class GeneralLedgerBackfillReviewTest extends TestCase
             $table->unsignedBigInteger('batch_id');
             $table->unsignedBigInteger('review_id');
             $table->string('status', 24)->default('queued');
+            $table->string('plan_hash', 64)->nullable();
+            $table->decimal('planned_debit', 22, 4)->default(0);
+            $table->decimal('planned_credit', 22, 4)->default(0);
+            $table->text('preview_message')->nullable();
+            $table->longText('preview_data')->nullable();
             $table->text('message')->nullable();
             $table->timestamps();
             $table->unique(['batch_id', 'review_id']);
@@ -486,6 +651,21 @@ class GeneralLedgerBackfillReviewTest extends TestCase
             $table->dateTime('operation_date');
             $table->text('note')->nullable();
             $table->timestamps();
+        });
+        Schema::create('transactions', function (Blueprint $table) {
+            $table->increments('id');
+            $table->unsignedInteger('business_id');
+            $table->unsignedInteger('location_id')->nullable();
+            $table->string('type');
+            $table->string('status')->nullable();
+            $table->dateTime('transaction_date');
+            $table->decimal('total_before_tax', 22, 4)->default(0);
+            $table->decimal('tax_amount', 22, 4)->default(0);
+            $table->decimal('final_total', 22, 4)->default(0);
+            $table->unsignedInteger('created_by')->nullable();
+            $table->string('invoice_no')->nullable();
+            $table->string('ref_no')->nullable();
+            $table->softDeletes();
         });
     }
 }

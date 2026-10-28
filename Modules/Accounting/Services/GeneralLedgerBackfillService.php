@@ -113,15 +113,64 @@ class GeneralLedgerBackfillService
         return $summary;
     }
 
-    /** Retry one persisted review source without rescanning the business ledger. */
-    public function retryReviewItem(int $businessId, int $reviewId): array
+    /** Build a read-only posting preview for persisted review sources. */
+    public function previewReviewItems(int $businessId, array $reviewIds): array
+    {
+        $reviewIds = array_values(array_unique(array_map('intval', $reviewIds)));
+        if ($reviewIds === []) {
+            return [];
+        }
+        if (! DB::table('business')->where('id', $businessId)->exists()) {
+            return array_map(fn ($id) => $this->unavailablePreview($id, 'Business sumber tidak ditemukan.'), $reviewIds);
+        }
+
+        $this->loadBusinessContext($businessId);
+        $this->reviewQueueBuffer = [];
+        $reviews = DB::table(self::REVIEW_QUEUE_TABLE)
+            ->where('business_id', $businessId)
+            ->whereIn('id', $reviewIds)
+            ->get()
+            ->keyBy('id');
+
+        $previews = [];
+        foreach ($reviewIds as $reviewId) {
+            $review = $reviews->get($reviewId);
+            if (! $review) {
+                $previews[] = $this->unavailablePreview($reviewId, 'Sumber tidak ditemukan atau bukan milik business aktif.');
+                continue;
+            }
+            if ((string) $review->status !== 'pending') {
+                $previews[] = $this->unavailablePreview($reviewId, 'Sumber tidak lagi berstatus menunggu.');
+                continue;
+            }
+
+            $candidate = $this->candidateForReview($businessId, $review);
+            if ($candidate === null) {
+                $previews[] = $this->unavailablePreview(
+                    $reviewId,
+                    $this->reviewSourceAlreadyLinked($this->reviewSourceReference($businessId, $review))
+                        ? 'Sumber sudah tertaut ke jurnal.'
+                        : 'Sumber operasional tidak lagi tersedia untuk diposting.',
+                    $review
+                );
+                continue;
+            }
+
+            $previews[] = $this->previewCandidate($businessId, $review, $candidate);
+        }
+
+        return $previews;
+    }
+
+    /** Retry one source only when its current posting plan matches the confirmed preview. */
+    public function retryReviewItem(int $businessId, int $reviewId, string $expectedPlanHash, int $appliedByUserId): array
     {
         $review = DB::table(self::REVIEW_QUEUE_TABLE)
             ->where('business_id', $businessId)
             ->where('id', $reviewId)
             ->first();
         if (! $review) {
-            return ['resolved' => false, 'reason' => 'Item antrean tidak lagi menunggu proses.'];
+            return ['resolved' => false, 'reason' => 'Item antrean tidak lagi menunggu.'];
         }
         if ((string) $review->status === 'resolved') {
             return ['resolved' => true, 'reason' => 'Sumber sudah ditautkan ke jurnal.'];
@@ -136,7 +185,52 @@ class GeneralLedgerBackfillService
 
         $this->reviewQueueBuffer = [];
         $this->loadBusinessContext($businessId);
+        $candidate = $this->candidateForReview($businessId, $review);
+        $source = $this->reviewSourceReference($businessId, $review);
+        if ($candidate === null) {
+            if ($this->reviewSourceAlreadyLinked($source)) {
+                $this->resolveExistingReviewSource($source, $appliedByUserId);
 
+                return ['resolved' => true, 'reason' => 'Sumber sudah tertaut ke jurnal.'];
+            }
+
+            return ['resolved' => false, 'reason' => 'Sumber operasional tidak lagi tersedia untuk diposting.'];
+        }
+
+        $preview = $this->previewCandidate($businessId, $review, $candidate);
+        if (! $preview['eligible']) {
+            return ['resolved' => false, 'reason' => (string) $preview['reason']];
+        }
+        if (! hash_equals((string) $expectedPlanHash, (string) $preview['plan_hash'])) {
+            return ['resolved' => false, 'reason' => 'Mapping atau transaksi berubah sejak pratinjau. Buat pratinjau baru sebelum memproses.'];
+        }
+
+        if ($appliedByUserId < 1) {
+            return ['resolved' => false, 'reason' => 'Identitas pengguna yang mengonfirmasi proses tidak tersedia.'];
+        }
+        $candidate['created_by'] = $appliedByUserId;
+        $candidate['applied_by'] = $appliedByUserId;
+        $summary = $this->emptyCandidateSummary();
+        $this->processCandidate($candidate, $businessId, true, $summary);
+        $this->flushReviewQueue();
+
+        if ($this->sourceAlreadyLinked($candidate) || $this->hasLegacyLedgerRows($candidate)) {
+            $this->resolveExistingReviewSource($candidate, $appliedByUserId);
+        }
+
+        $updated = DB::table(self::REVIEW_QUEUE_TABLE)
+            ->where('business_id', $businessId)
+            ->where('id', $reviewId)
+            ->first(['status', 'skip_reason']);
+
+        return [
+            'resolved' => $updated && (string) $updated->status === 'resolved',
+            'reason' => (string) ($updated->skip_reason ?? $review->skip_reason),
+        ];
+    }
+
+    private function candidateForReview(int $businessId, object $review): ?array
+    {
         $candidates = match ((string) $review->source_record_type) {
             Transaction::class => $this->transactionCandidates($businessId, (int) $review->source_record_id),
             TransactionPayment::class => $this->paymentCandidates($businessId, (int) $review->source_record_id),
@@ -144,28 +238,188 @@ class GeneralLedgerBackfillService
             default => [],
         };
 
-        $candidate = null;
-        foreach ($candidates as $item) {
-            $candidate = $item;
-            break;
+        foreach ($candidates as $candidate) {
+            return $candidate;
         }
 
-        $source = [
+        return null;
+    }
+
+    private function previewCandidate(int $businessId, object $review, array $candidate): array
+    {
+        if (! empty($candidate['uses_auto_map']) || ! empty($candidate['account_links'])) {
+            $preview = $this->unavailablePreview(
+                (int) $review->id,
+                'Pemetaan CoA otomatis perlu dikonfirmasi dengan mapping eksplisit sebelum retry.',
+                $review
+            );
+            $mapInfo = $candidate['map_info'] ?? [];
+            foreach (['payment_account', 'deposit_to'] as $role) {
+                $idKey = $role.'_id';
+                $nameKey = $role.'_name';
+                if (! empty($mapInfo[$idKey]) && ! empty($mapInfo[$nameKey])) {
+                    $preview['suggested_accounts'][] = [
+                        'role' => $role === 'payment_account' ? 'Akun pasangan' : 'Akun transaksi',
+                        'accounting_account_id' => (int) $mapInfo[$idKey],
+                        'account_name' => (string) $mapInfo[$nameKey],
+                        'method' => (string) ($mapInfo[$role.'_method'] ?? $mapInfo['mapping_source'] ?? ''),
+                    ];
+                }
+            }
+
+            return $preview;
+        }
+
+        $summary = $this->emptyCandidateSummary();
+        $this->processCandidate($candidate, $businessId, false, $summary);
+        if ((int) $summary['planned_groups'] !== 1) {
+            $reason = array_key_first($summary['skipped'])
+                ?? ((int) $summary['already_linked'] > 0 ? 'Sumber sudah tertaut ke jurnal.' : 'Sumber belum dapat diposting dengan mapping saat ini.');
+
+            return $this->unavailablePreview((int) $review->id, (string) $reason, $review);
+        }
+
+        $accountById = [];
+        foreach ($this->accountingAccountsCache[$businessId] ?? [] as $account) {
+            $accountById[(int) $account->id] = $account;
+        }
+        $lines = [];
+        $hashLines = [];
+        foreach ($candidate['lines'] as $line) {
+            $accountId = (int) $line['accounting_account_id'];
+            $account = $accountById[$accountId] ?? null;
+            if (! $account) {
+                return $this->unavailablePreview((int) $review->id, 'Akun CoA tidak lagi aktif di business.', $review);
+            }
+            $amount = round((float) $line['amount'], 4);
+            $type = (string) $line['type'];
+            $lines[] = [
+                'accounting_account_id' => $accountId,
+                'account_code' => (string) ($account->gl_code ?? ''),
+                'account_name' => (string) $account->name,
+                'type' => $type,
+                'amount' => $amount,
+            ];
+            $hashLines[] = [
+                'accounting_account_id' => $accountId,
+                'type' => $type,
+                'amount' => number_format($amount, 4, '.', ''),
+            ];
+        }
+        $classification = $this->reviewClassification($businessId, $candidate);
+        $planHash = hash('sha256', json_encode([
+            'business_id' => $businessId,
+            'source_record_type' => (string) $candidate['source_record_type'],
+            'source_record_id' => (int) $candidate['source_record_id'],
+            'operation_date' => (string) $candidate['operation_date'],
+            'sub_type' => (string) $candidate['sub_type'],
+            'mapping_key' => (string) ($candidate['map_info']['mapping_key'] ?? ''),
+            'posting_label' => $classification['label'],
+            'posting_detail' => $classification['detail'],
+            'ref_no' => (string) $candidate['ref_no'],
+            'mapping_note' => (string) $candidate['mapping_note'],
+            'lines' => $hashLines,
+        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+        $context = json_decode((string) ($review->source_context ?? '[]'), true);
+        $context = is_array($context) ? $context : [];
+
+        return [
+            'review_id' => (int) $review->id,
+            'eligible' => true,
+            'source_type' => class_basename((string) $review->source_record_type),
+            'source_record_type' => (string) $review->source_record_type,
+            'source_record_id' => (int) $review->source_record_id,
+            'source_reference' => (string) ($review->source_reference ?? ''),
+            'operation_date' => $review->operation_date,
+            'source_summary' => (string) $review->source_summary,
+            'source_amount' => isset($context['final_total']) ? (float) $context['final_total'] : (isset($context['amount']) ? (float) $context['amount'] : null),
+            'source_tax_amount' => isset($context['tax_amount']) ? (float) $context['tax_amount'] : null,
+            'skip_reason' => (string) $review->skip_reason,
+            'posting_label' => $classification['label'],
+            'posting_detail' => $classification['detail'],
+            'mapping_note' => (string) $candidate['mapping_note'],
+            'plan_hash' => $planHash,
+            'debit_total' => (float) $summary['debit_total'],
+            'credit_total' => (float) $summary['credit_total'],
+            'lines' => $lines,
+            'suggested_accounts' => [],
+            'reason' => null,
+        ];
+    }
+
+    private function unavailablePreview(int $reviewId, string $reason, ?object $review = null): array
+    {
+        $context = $review ? json_decode((string) ($review->source_context ?? '[]'), true) : [];
+        $context = is_array($context) ? $context : [];
+
+        return [
+            'review_id' => $reviewId,
+            'eligible' => false,
+            'source_type' => $review ? class_basename((string) $review->source_record_type) : '',
+            'source_record_type' => $review ? (string) $review->source_record_type : '',
+            'source_record_id' => $review ? (int) $review->source_record_id : null,
+            'source_reference' => $review ? (string) ($review->source_reference ?? '') : '',
+            'operation_date' => $review ? $review->operation_date : null,
+            'source_summary' => $review ? (string) $review->source_summary : '',
+            'source_amount' => isset($context['final_total']) ? (float) $context['final_total'] : (isset($context['amount']) ? (float) $context['amount'] : null),
+            'source_tax_amount' => isset($context['tax_amount']) ? (float) $context['tax_amount'] : null,
+            'skip_reason' => $review ? (string) $review->skip_reason : '',
+            'posting_label' => '',
+            'posting_detail' => '',
+            'mapping_note' => '',
+            'plan_hash' => null,
+            'debit_total' => 0.0,
+            'credit_total' => 0.0,
+            'lines' => [],
+            'suggested_accounts' => [],
+            'reason' => $reason,
+        ];
+    }
+
+    private function reviewClassification(int $businessId, array $candidate): array
+    {
+        $mappingKey = (string) ($candidate['map_info']['mapping_key'] ?? '');
+        $subType = strtolower((string) ($candidate['sub_type'] ?? ''));
+        $kind = strtolower((string) ($candidate['map_info']['mapping_key'] ?? $subType));
+
+        if (str_starts_with($kind, 'expense_')) {
+            $label = 'Operasional';
+            $categoryId = (int) substr($kind, strlen('expense_'));
+            $category = $this->expenseCategoriesCache[$businessId][$categoryId] ?? null;
+
+            return ['label' => $label, 'detail' => $category ? (string) $category->name : ''];
+        }
+        if (in_array($kind, ['sale', 'sell_payment', 'sell'], true)) {
+            return ['label' => 'Pendapatan Usaha', 'detail' => ''];
+        }
+        if (in_array($kind, ['purchases', 'purchase_payment', 'purchase'], true)) {
+            return ['label' => 'Pembelian', 'detail' => ''];
+        }
+        if ($subType === 'fund_transfer' || $subType === 'transfer') {
+            return ['label' => 'Transfer Antar Rekening', 'detail' => ''];
+        }
+        if ($subType === 'opening_balance') {
+            return ['label' => 'Saldo Awal', 'detail' => ''];
+        }
+
+        return ['label' => $mappingKey !== '' ? $mappingKey : ($subType !== '' ? ucfirst($subType) : 'Jurnal'), 'detail' => ''];
+    }
+
+    private function reviewSourceReference(int $businessId, object $review): array
+    {
+        $context = json_decode((string) ($review->source_context ?? '[]'), true);
+
+        return [
             'business_id' => $businessId,
             'source_record_type' => (string) $review->source_record_type,
             'source_record_id' => (int) $review->source_record_id,
+            'source_context' => is_array($context) ? $context : [],
         ];
-        if ($candidate === null) {
-            if ($this->reviewSourceAlreadyLinked($source)) {
-                $this->resolveExistingReviewSource($source);
+    }
 
-                return ['resolved' => true, 'reason' => 'Sumber sudah tertaut ke jurnal.'];
-            }
-
-            return ['resolved' => false, 'reason' => (string) $review->skip_reason];
-        }
-
-        $summary = [
+    private function emptyCandidateSummary(): array
+    {
+        return [
             'candidate_groups' => 0,
             'planned_groups' => 0,
             'applied_groups' => 0,
@@ -184,22 +438,6 @@ class GeneralLedgerBackfillService
             'credit_total' => 0.0,
             'date_start' => null,
             'date_end' => null,
-        ];
-        $this->processCandidate($candidate, $businessId, true, $summary);
-        $this->flushReviewQueue();
-
-        if ($this->sourceAlreadyLinked($candidate) || $this->hasLegacyLedgerRows($candidate)) {
-            $this->resolveExistingReviewSource($candidate);
-        }
-
-        $updated = DB::table(self::REVIEW_QUEUE_TABLE)
-            ->where('business_id', $businessId)
-            ->where('id', $reviewId)
-            ->first(['status', 'skip_reason']);
-
-        return [
-            'resolved' => $updated && (string) $updated->status === 'resolved',
-            'reason' => (string) ($updated->skip_reason ?? $review->skip_reason),
         ];
     }
 
@@ -1162,7 +1400,7 @@ class GeneralLedgerBackfillService
         });
     }
 
-    private function resolveExistingReviewSource(array $candidate): void
+    private function resolveExistingReviewSource(array $candidate, ?int $actorId = null): void
     {
         if (! Schema::hasTable(self::REVIEW_QUEUE_TABLE)) {
             return;
@@ -1173,7 +1411,7 @@ class GeneralLedgerBackfillService
             'source_record_type' => (string) $candidate['source_record_type'],
             'source_record_id' => (int) $candidate['source_record_id'],
         ];
-        DB::transaction(function () use ($identity) {
+        DB::transaction(function () use ($identity, $actorId) {
             $review = DB::table(self::REVIEW_QUEUE_TABLE)
                 ->where($identity)
                 ->lockForUpdate()
@@ -1187,7 +1425,7 @@ class GeneralLedgerBackfillService
                 'event' => 'resolved',
                 'at' => now()->toIso8601String(),
                 'reason' => 'source_already_linked',
-                'by' => 'accounting:backfill-general-ledger --apply',
+                'by' => $actorId ?? 'accounting:backfill-general-ledger --apply',
             ];
             DB::table(self::REVIEW_QUEUE_TABLE)->where($identity)->update([
                 'status' => 'resolved',
@@ -1311,7 +1549,7 @@ class GeneralLedgerBackfillService
         if ($this->sourceAlreadyLinked($candidate) || $this->hasLegacyLedgerRows($candidate)) {
             $summary['already_linked']++;
             if ($apply) {
-                $this->resolveExistingReviewSource($candidate);
+                $this->resolveExistingReviewSource($candidate, isset($candidate['applied_by']) ? (int) $candidate['applied_by'] : null);
             }
             return;
         }

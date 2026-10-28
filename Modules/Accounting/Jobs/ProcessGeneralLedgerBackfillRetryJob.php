@@ -87,7 +87,12 @@ class ProcessGeneralLedgerBackfillRetryJob implements ShouldQueue
             }
 
             try {
-                $result = $backfillService->retryReviewItem((int) $batch->business_id, (int) $item->review_id);
+                $result = $backfillService->retryReviewItem(
+                    (int) $batch->business_id,
+                    (int) $item->review_id,
+                    (string) ($item->plan_hash ?? ''),
+                    (int) ($batch->confirmed_by ?? 0)
+                );
                 $resolved = (bool) ($result['resolved'] ?? false);
                 $message = trim((string) ($result['reason'] ?? ''));
                 if (! $resolved) {
