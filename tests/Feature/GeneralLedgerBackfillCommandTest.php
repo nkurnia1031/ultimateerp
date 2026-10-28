@@ -251,7 +251,7 @@ class GeneralLedgerBackfillCommandTest extends TestCase
             ->expectsOutputToContain('Applied groups: 1')
             ->assertExitCode(0);
         $review = DB::table('accounting_general_ledger_backfill_reviews')->first();
-        $this->assertSame(7, (int) $review->business_id, 'Unexpected review row: '.json_encode((array) $review));
+        $this->assertSame(7, (int) $review->business_id);
         $this->assertSame(960, (int) $review->source_record_id);
         $this->assertSame('nominal_transaksi_tidak_valid', $review->skip_reason);
         $this->assertSame('pending', $review->status);
@@ -350,6 +350,7 @@ class GeneralLedgerBackfillCommandTest extends TestCase
 
         DB::table('transactions')->where('id', 963)->update([
             'type' => 'expense',
+            'status' => 'final',
             'expense_category_id' => 5,
             'tax_amount' => 0,
         ]);
