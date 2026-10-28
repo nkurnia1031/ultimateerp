@@ -46,21 +46,23 @@ test('a queued Journal Import can stop, resume, and post once', async ({ page })
         const statusId = await row.locator('[id^="journal-import-status-"]').getAttribute('id');
         const importId = statusId.replace('journal-import-status-', '');
 
-        const confirmationPromise = page.waitForEvent('dialog', { timeout: 5_000 });
-        await row.locator('.journal-import-terminate').click();
-        const confirmation = await confirmationPromise;
-        expect(confirmation.type()).toBe('confirm');
-        expect(confirmation.message()).toContain('Hentikan import');
-
+        await page.evaluate(() => {
+            window.__journalImportConfirmMessage = null;
+            window.confirm = (message) => {
+                window.__journalImportConfirmMessage = String(message);
+                return true;
+            };
+        });
         const stopResponsePromise = page.waitForResponse(
             (response) =>
                 response.request().method() === 'POST' &&
                 response.url().endsWith(`/accounting/journal-entry/import/${importId}/terminate`),
             { timeout: 10_000 },
         );
-        await confirmation.accept();
+        await row.locator('.journal-import-terminate').click();
         const stopResponse = await stopResponsePromise;
         expect(stopResponse.ok()).toBeTruthy();
+        expect(await page.evaluate(() => window.__journalImportConfirmMessage)).toContain('Hentikan import');
         await expect.poll(async () => (await batchStatus(page, importId)).status).toBe('cancelled');
 
         const resumeLink = row.getByRole('link', { name: 'Lanjutkan import' });
