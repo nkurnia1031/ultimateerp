@@ -62,6 +62,7 @@ Route::middleware('web', 'SetSessionData', 'auth', 'language', 'timezone', 'Admi
     Route::post('reports/general-ledger/backfill-review/mappings/vat', [\Modules\Accounting\Http\Controllers\GeneralLedgerBackfillReviewController::class, 'saveVatMapping'])->name('accounting.generalLedger.backfillReview.vatMapping');
     Route::post('reports/general-ledger/backfill-review/retry-batches', [\Modules\Accounting\Http\Controllers\GeneralLedgerBackfillReviewController::class, 'retry'])->name('accounting.generalLedger.backfillReview.retry');
     Route::get('reports/general-ledger/backfill-review/retry-batches/{batchId}', [\Modules\Accounting\Http\Controllers\GeneralLedgerBackfillReviewController::class, 'batchStatus'])->whereNumber('batchId')->name('accounting.generalLedger.backfillReview.retryBatches');
+    Route::post('reports/general-ledger/backfill-review/{reviewId}/manual-journal', [\Modules\Accounting\Http\Controllers\GeneralLedgerBackfillReviewController::class, 'manualJournal'])->whereNumber('reviewId')->name('accounting.generalLedger.backfillReview.manualJournal');
     Route::get('reports/trial-balance', [\Modules\Accounting\Http\Controllers\ReportController::class, 'trialBalance'])->name('accounting.trialBalance');
     Route::get('reports/balance-sheet', [\Modules\Accounting\Http\Controllers\ReportController::class, 'balanceSheet'])->name('accounting.balanceSheet');
     Route::get('reports/account-receivable-ageing-report',

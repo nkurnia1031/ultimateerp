@@ -8,6 +8,7 @@ use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Validation\ValidationException;
 use Modules\Accounting\Services\GeneralLedgerBackfillReviewService;
+use Modules\Accounting\Services\GeneralLedgerBackfillManualJournalService;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 
 class GeneralLedgerBackfillReviewController extends Controller
@@ -16,10 +17,17 @@ class GeneralLedgerBackfillReviewController extends Controller
 
     private $reviewService;
 
-    public function __construct(ModuleUtil $moduleUtil, GeneralLedgerBackfillReviewService $reviewService)
+    private $manualJournalService;
+
+    public function __construct(
+        ModuleUtil $moduleUtil,
+        GeneralLedgerBackfillReviewService $reviewService,
+        GeneralLedgerBackfillManualJournalService $manualJournalService
+    )
     {
         $this->moduleUtil = $moduleUtil;
         $this->reviewService = $reviewService;
+        $this->manualJournalService = $manualJournalService;
     }
 
     public function index(Request $request)
@@ -34,9 +42,11 @@ class GeneralLedgerBackfillReviewController extends Controller
             'mainAccountMappingUrl' => route('accounting.generalLedger.backfillReview.mainAccountMapping'),
             'vatMappingUrl' => route('accounting.generalLedger.backfillReview.vatMapping'),
             'retryUrl' => route('accounting.generalLedger.backfillReview.retry'),
+            'manualJournalUrlBase' => url('accounting/reports/general-ledger/backfill-review'),
             'batchUrlBase' => url('accounting/reports/general-ledger/backfill-review/retry-batches'),
             'canEdit' => auth()->user()->can('accounting.edit_journal'),
             'canRetry' => auth()->user()->can('accounting.add_journal'),
+            'canManualJournal' => auth()->user()->can('accounting.add_journal'),
         ]);
     }
 
@@ -171,6 +181,33 @@ class GeneralLedgerBackfillReviewController extends Controller
         }
 
         return response()->json($batch);
+    }
+
+    public function manualJournal(Request $request, int $reviewId): JsonResponse
+    {
+        $businessId = $this->businessId($request);
+        $this->authorizeBackfill($businessId, 'accounting.add_journal');
+        $data = $request->validate([
+            'reason' => 'required|string|min:5|max:1000',
+            'lines' => 'required|array|min:2|max:100',
+            'lines.*.accounting_account_id' => 'required|integer|min:1',
+            'lines.*.debit' => 'nullable|numeric|min:0',
+            'lines.*.credit' => 'nullable|numeric|min:0',
+        ]);
+        $result = $this->manualJournalService->create(
+            $businessId,
+            $reviewId,
+            (int) auth()->id(),
+            (string) $data['reason'],
+            $data['lines']
+        );
+
+        return response()->json([
+            'success' => true,
+            'message' => $result['created']
+                ? 'Jurnal manual berhasil disimpan dan sumber ditandai selesai.'
+                : 'Sumber sudah tertaut; antrean diselaraskan tanpa membuat jurnal baru.',
+        ] + $result, $result['created'] ? 201 : 200);
     }
 
     private function businessId(Request $request): int

@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 use Modules\Accounting\Jobs\ProcessGeneralLedgerBackfillRetryJob;
+use Modules\Accounting\Services\GeneralLedgerBackfillManualJournalService;
 use Modules\Accounting\Services\GeneralLedgerBackfillReviewService;
 use Mockery;
 use Tests\TestCase;
@@ -147,6 +148,145 @@ class GeneralLedgerBackfillReviewTest extends TestCase
         $this->assertNull($service->retryBatchStatus(8, $first['batch_id']));
     }
 
+    public function test_manual_journal_is_balanced_linked_audited_and_idempotent_without_mutating_source(): void
+    {
+        $this->insertReview(20, 7, 'App\\AccountTransaction', 9020, 'pergerakan_rekening_tanpa_akun_lawan', '', 70, 'expense', 'BANK-9020', 'Mutasi bank manual');
+        DB::table('account_transactions')->insert([
+            'id' => 9020,
+            'account_id' => 201,
+            'operation_date' => '2023-04-05 12:30:00',
+            'description' => 'Mutasi operasional',
+        ]);
+        $sourceBefore = (array) DB::table('account_transactions')->where('id', 9020)->first();
+        $lines = [
+            ['accounting_account_id' => 101, 'debit' => '1250.50', 'credit' => '0'],
+            ['accounting_account_id' => 102, 'debit' => '0', 'credit' => '1250.50'],
+        ];
+        $service = app(GeneralLedgerBackfillManualJournalService::class);
+
+        $created = $service->create(7, 20, 55, 'Koreksi mutasi berdasarkan bukti kas', $lines);
+        $duplicate = $service->create(7, 20, 55, 'Koreksi mutasi berdasarkan bukti kas', $lines);
+
+        $this->assertTrue($created['created']);
+        $this->assertFalse($duplicate['created']);
+        $this->assertSame($created['journal_id'], $duplicate['journal_id']);
+        $this->assertSame('GLR-7-20', $created['ref_no']);
+        $this->assertSame(1, DB::table('accounting_acc_trans_mappings')->where('business_id', 7)->count());
+        $this->assertSame(2, DB::table('accounting_accounts_transactions')->count());
+        $this->assertSame(1250.5, (float) DB::table('accounting_accounts_transactions')->where('type', 'debit')->sum('amount'));
+        $this->assertSame(1250.5, (float) DB::table('accounting_accounts_transactions')->where('type', 'credit')->sum('amount'));
+        $mapping = DB::table('accounting_acc_trans_mappings')->first();
+        $this->assertSame('App\\AccountTransaction', $mapping->source_record_type);
+        $this->assertSame(9020, (int) $mapping->source_record_id);
+        $this->assertSame('matched', $mapping->source_link_status);
+        $this->assertSame('Koreksi mutasi berdasarkan bukti kas', $mapping->source_link_note);
+        $this->assertSame('resolved', DB::table('accounting_general_ledger_backfill_reviews')->where('id', 20)->value('status'));
+        $audit = json_decode(DB::table('accounting_general_ledger_backfill_reviews')->where('id', 20)->value('audit_log'), true);
+        $this->assertSame('manual_journal_created', $audit[0]['event']);
+        $this->assertSame(55, $audit[0]['by']);
+        $this->assertSame('Koreksi mutasi berdasarkan bukti kas', $audit[0]['reason']);
+        $this->assertSame($sourceBefore, (array) DB::table('account_transactions')->where('id', 9020)->first());
+    }
+
+    public function test_manual_journal_rejects_unbalanced_lines_and_foreign_business_accounts_without_writes(): void
+    {
+        $this->insertManualJournalSource();
+        $service = app(GeneralLedgerBackfillManualJournalService::class);
+
+        try {
+            $service->create(7, 20, 55, 'Alasan jurnal yang cukup', [
+                ['accounting_account_id' => 101, 'debit' => '100.00', 'credit' => '0'],
+                ['accounting_account_id' => 102, 'debit' => '0', 'credit' => '99.99'],
+            ]);
+            $this->fail('Jurnal tidak seimbang harus ditolak.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('lines', $exception->errors());
+        }
+
+        try {
+            $service->create(7, 20, 55, 'Alasan jurnal yang cukup', [
+                ['accounting_account_id' => 101, 'debit' => '100.00', 'credit' => '0'],
+                ['accounting_account_id' => 801, 'debit' => '0', 'credit' => '100.00'],
+            ]);
+            $this->fail('CoA business lain harus ditolak.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('lines', $exception->errors());
+        }
+
+        $this->assertSame(0, DB::table('accounting_acc_trans_mappings')->count());
+        $this->assertSame(0, DB::table('accounting_accounts_transactions')->count());
+        $this->assertSame('pending', DB::table('accounting_general_ledger_backfill_reviews')->where('id', 20)->value('status'));
+    }
+
+    public function test_manual_journal_rolls_back_mapping_and_queue_when_any_line_insert_fails(): void
+    {
+        $this->insertManualJournalSource();
+        DB::unprepared("CREATE TRIGGER reject_second_manual_line BEFORE INSERT ON accounting_accounts_transactions WHEN NEW.accounting_account_id = 102 BEGIN SELECT RAISE(ABORT, 'simulated journal line failure'); END");
+
+        try {
+            app(GeneralLedgerBackfillManualJournalService::class)->create(7, 20, 55, 'Koreksi berdasarkan dokumen', [
+                ['accounting_account_id' => 101, 'debit' => '100.00', 'credit' => '0'],
+                ['accounting_account_id' => 102, 'debit' => '0', 'credit' => '100.00'],
+            ]);
+            $this->fail('Kesalahan insert baris harus menggagalkan seluruh jurnal.');
+        } catch (\Throwable $exception) {
+            $this->assertStringContainsString('simulated journal line failure', $exception->getMessage());
+        }
+
+        $this->assertSame(0, DB::table('accounting_acc_trans_mappings')->count());
+        $this->assertSame(0, DB::table('accounting_accounts_transactions')->count());
+        $this->assertSame('pending', DB::table('accounting_general_ledger_backfill_reviews')->where('id', 20)->value('status'));
+    }
+
+    public function test_manual_journal_endpoint_enforces_permission_and_returns_created_reference(): void
+    {
+        $this->insertManualJournalSource();
+        $moduleUtil = Mockery::mock(ModuleUtil::class);
+        $moduleUtil->shouldReceive('hasThePermissionInSubscription')->once()->with(7, 'accounting_module')->andReturn(true);
+        $this->app->instance(ModuleUtil::class, $moduleUtil);
+
+        $user = Mockery::mock(User::class)->makePartial();
+        $user->id = 55;
+        $user->shouldReceive('can')->with('superadmin')->andReturn(false);
+        $user->shouldReceive('can')->with('accounting.add_journal')->andReturn(true);
+        $request = $this->withoutMiddleware([
+            \App\Http\Middleware\SetSessionData::class,
+            \App\Http\Middleware\Language::class,
+            \App\Http\Middleware\Timezone::class,
+            \App\Http\Middleware\AdminSidebarMenu::class,
+        ])->actingAs($user)->withSession(['user' => ['business_id' => 7]])
+            ->postJson(route('accounting.generalLedger.backfillReview.manualJournal', ['reviewId' => 20]), [
+                'reason' => 'Jurnal sesuai bukti transaksi',
+                'lines' => [
+                    ['accounting_account_id' => 101, 'debit' => '100.00', 'credit' => '0'],
+                    ['accounting_account_id' => 102, 'debit' => '0', 'credit' => '100.00'],
+                ],
+            ]);
+
+        $request->assertCreated()->assertJsonPath('ref_no', 'GLR-7-20');
+
+        $unauthorized = Mockery::mock(User::class)->makePartial();
+        $unauthorized->id = 56;
+        $unauthorized->shouldReceive('can')->with('superadmin')->andReturn(true);
+        $unauthorized->shouldReceive('can')->with('accounting.add_journal')->andReturn(false);
+        $this->withoutMiddleware([
+            \App\Http\Middleware\SetSessionData::class,
+            \App\Http\Middleware\Language::class,
+            \App\Http\Middleware\Timezone::class,
+            \App\Http\Middleware\AdminSidebarMenu::class,
+        ])->actingAs($unauthorized)->withSession(['user' => ['business_id' => 7]])
+            ->postJson(route('accounting.generalLedger.backfillReview.manualJournal', ['reviewId' => 20]), [
+                'reason' => 'Alasan uji akses ditolak',
+                'lines' => [
+                    ['accounting_account_id' => 101, 'debit' => '100.00', 'credit' => '0'],
+                    ['accounting_account_id' => 102, 'debit' => '0', 'credit' => '100.00'],
+                ],
+            ])->assertForbidden();
+
+        $this->assertSame(1, DB::table('accounting_acc_trans_mappings')->count());
+        $this->assertSame(2, DB::table('accounting_accounts_transactions')->count());
+    }
+
     public function test_review_page_enforces_journal_view_permission(): void
     {
         $user = Mockery::mock(User::class)->makePartial();
@@ -217,6 +357,17 @@ class GeneralLedgerBackfillReviewTest extends TestCase
             'main_account_id' => $mainAccountId,
             'created_at' => now(),
             'updated_at' => now(),
+        ]);
+    }
+
+    private function insertManualJournalSource(): void
+    {
+        $this->insertReview(20, 7, 'App\\AccountTransaction', 9020, 'pergerakan_rekening_tanpa_akun_lawan', '', 70, 'expense', 'BANK-9020', 'Mutasi bank manual');
+        DB::table('account_transactions')->insert([
+            'id' => 9020,
+            'account_id' => 201,
+            'operation_date' => '2023-04-05 12:30:00',
+            'description' => 'Mutasi operasional',
         ]);
     }
 
@@ -300,6 +451,41 @@ class GeneralLedgerBackfillReviewTest extends TestCase
             $table->text('message')->nullable();
             $table->timestamps();
             $table->unique(['batch_id', 'review_id']);
+        });
+        Schema::create('account_transactions', function (Blueprint $table) {
+            $table->bigIncrements('id');
+            $table->unsignedInteger('account_id');
+            $table->dateTime('operation_date');
+            $table->string('description')->nullable();
+        });
+        Schema::create('accounting_acc_trans_mappings', function (Blueprint $table) {
+            $table->bigIncrements('id');
+            $table->unsignedInteger('business_id');
+            $table->string('ref_no', 100);
+            $table->string('type', 100);
+            $table->unsignedInteger('created_by');
+            $table->dateTime('operation_date');
+            $table->text('note')->nullable();
+            $table->string('source_record_type', 64)->nullable();
+            $table->unsignedBigInteger('source_record_id')->nullable();
+            $table->string('source_link_status', 20)->nullable();
+            $table->text('source_link_note')->nullable();
+            $table->timestamps();
+        });
+        Schema::create('accounting_accounts_transactions', function (Blueprint $table) {
+            $table->bigIncrements('id');
+            $table->unsignedBigInteger('accounting_account_id');
+            $table->unsignedBigInteger('acc_trans_mapping_id')->nullable();
+            $table->unsignedBigInteger('transaction_id')->nullable();
+            $table->unsignedBigInteger('transaction_payment_id')->nullable();
+            $table->decimal('amount', 22, 4);
+            $table->string('type', 100);
+            $table->string('sub_type', 100);
+            $table->string('map_type', 100)->nullable();
+            $table->unsignedInteger('created_by');
+            $table->dateTime('operation_date');
+            $table->text('note')->nullable();
+            $table->timestamps();
         });
     }
 }

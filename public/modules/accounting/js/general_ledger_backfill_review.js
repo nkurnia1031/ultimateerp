@@ -7,7 +7,7 @@
             return;
         }
 
-        var state = { page: 1, perPage: 25, lastPage: 1, groups: [], accounts: [], pollTimer: null };
+        var state = { page: 1, perPage: 25, lastPage: 1, groups: [], accounts: [], rows: [], pollTimer: null, manualReview: null };
         var urls = {
             rows: $page.data('rows-url'),
             options: $page.data('options-url'),
@@ -15,8 +15,12 @@
             mainMapping: $page.data('main-account-mapping-url'),
             vatMapping: $page.data('vat-mapping-url'),
             retry: $page.data('retry-url'),
+            manualJournalBase: $page.data('manual-journal-url-base'),
             batchBase: $page.data('batch-url-base')
         };
+        var canManualJournal = $page.data('can-manual-journal') == 1;
+
+        function tableColumnCount() { return canManualJournal ? 6 : 5; }
 
         function escapeHtml(value) {
             return String(value == null ? '' : value).replace(/[&<>"']/g, function (character) {
@@ -64,6 +68,7 @@
         function renderRows(payload) {
             var $body = $('#gl_backfill_review_table tbody');
             var rows = payload.data || [];
+            state.rows = rows;
             var meta = payload.meta || { page: 1, last_page: 1, total: 0 };
             state.page = meta.page || 1;
             state.lastPage = meta.last_page || 1;
@@ -74,7 +79,7 @@
             $('#gl_backfill_next').prop('disabled', state.page >= state.lastPage);
 
             if (!rows.length) {
-                $body.html('<tr><td colspan="5" class="text-center text-muted">Tidak ada sumber untuk filter ini.</td></tr>');
+                $body.html('<tr><td colspan="' + tableColumnCount() + '" class="text-center text-muted">Tidak ada sumber untuk filter ini.</td></tr>');
                 return;
             }
 
@@ -96,18 +101,22 @@
                     transfer_tidak_seimbang: 'Nilai transfer tidak seimbang'
                 };
                 var reasonLabel = reasonLabels[row.skip_reason] || String(row.skip_reason || '').replace(/_/g, ' ');
+                var action = canManualJournal && row.status === 'pending'
+                    ? '<button class="btn btn-default btn-xs gl-backfill-manual-journal" type="button" data-review-id="' + escapeHtml(row.id) + '">Jurnal manual</button>'
+                    : '—';
                 return '<tr>' +
                     '<td><strong>' + escapeHtml(row.source_type) + ' #' + escapeHtml(row.source_record_id) + '</strong><div>' + escapeHtml(row.source_reference) + '</div></td>' +
                     '<td>' + escapeHtml(row.operation_date || '—') + '</td>' +
                     '<td>' + escapeHtml(row.source_summary) + amount + '</td>' +
                     '<td>' + escapeHtml(reasonLabel) + '<div class="text-muted"><small>' + escapeHtml(row.skip_reason) + '</small></div></td>' +
                     '<td><span class="label ' + statusClass + '">' + statusLabel + '</span></td>' +
+                    (canManualJournal ? '<td>' + action + '</td>' : '') +
                     '</tr>';
             }).join(''));
         }
 
         function loadRows() {
-            $('#gl_backfill_review_table tbody').html('<tr><td colspan="5" class="text-center">Memuat…</td></tr>');
+            $('#gl_backfill_review_table tbody').html('<tr><td colspan="' + tableColumnCount() + '" class="text-center">Memuat…</td></tr>');
             request(urls.rows, 'GET', filters()).done(renderRows).fail(showError);
         }
 
@@ -172,6 +181,56 @@
             $('#gl_backfill_deposit_account').prop('disabled', isSellPayment);
             $('#gl_backfill_location_mapping_result').text('');
             $('#gl_backfill_location_retry').hide();
+        }
+
+        function appendManualJournalLine() {
+            var index = $('#gl_backfill_manual_journal_lines tbody tr').length;
+            var options = '<option value="">Pilih CoA</option>' + state.accounts.map(function (account) {
+                var code = account.code ? account.code + ' — ' : '';
+                return '<option value="' + escapeHtml(account.id) + '">' + escapeHtml(code + account.name) + '</option>';
+            }).join('');
+            var remove = index >= 2 ? '<button type="button" class="btn btn-link text-danger gl-backfill-manual-remove" aria-label="Hapus baris">Hapus</button>' : '';
+            var row = '<tr>' +
+                '<td><select class="form-control gl-backfill-manual-account">' + options + '</select></td>' +
+                '<td><input type="number" class="form-control gl-backfill-manual-debit" min="0" step="0.0001" inputmode="decimal" aria-label="Debit"></td>' +
+                '<td><input type="number" class="form-control gl-backfill-manual-credit" min="0" step="0.0001" inputmode="decimal" aria-label="Kredit"></td>' +
+                '<td>' + remove + '</td></tr>';
+            $('#gl_backfill_manual_journal_lines tbody').append(row);
+        }
+
+        function updateManualJournalTotals() {
+            var debitMinor = 0;
+            var creditMinor = 0;
+            $('#gl_backfill_manual_journal_lines tbody tr').each(function () {
+                var debit = Number($(this).find('.gl-backfill-manual-debit').val() || 0);
+                var credit = Number($(this).find('.gl-backfill-manual-credit').val() || 0);
+                if (Number.isFinite(debit) && debit > 0) { debitMinor += Math.round(debit * 10000); }
+                if (Number.isFinite(credit) && credit > 0) { creditMinor += Math.round(credit * 10000); }
+            });
+            $('#gl_backfill_manual_debit_total').text((debitMinor / 10000).toLocaleString('id-ID', { minimumFractionDigits: 4, maximumFractionDigits: 4 }));
+            $('#gl_backfill_manual_credit_total').text((creditMinor / 10000).toLocaleString('id-ID', { minimumFractionDigits: 4, maximumFractionDigits: 4 }));
+        }
+
+        function showManualJournal(review) {
+            if (!review) { return; }
+            state.manualReview = review;
+            $('#gl_backfill_manual_journal_source').text(review.source_type + ' #' + review.source_record_id + ' · ' + (review.source_reference || '—') + ' · ' + (review.operation_date || 'tanggal tidak tersedia') + '\n' + review.source_summary + '\nAlasan skip: ' + review.skip_reason);
+            $('#gl_backfill_manual_journal_reason').val('');
+            $('#gl_backfill_manual_journal_error').hide().text('');
+            $('#gl_backfill_manual_journal_lines tbody').empty();
+            appendManualJournalLine();
+            appendManualJournalLine();
+            updateManualJournalTotals();
+            $('#gl_backfill_manual_journal_modal').modal('show');
+        }
+
+        function manualJournalError(xhr) {
+            var message = xhr.responseJSON && xhr.responseJSON.message ? xhr.responseJSON.message : 'Jurnal manual gagal disimpan.';
+            if (xhr.responseJSON && xhr.responseJSON.errors) {
+                var keys = Object.keys(xhr.responseJSON.errors);
+                if (keys.length) { message = xhr.responseJSON.errors[keys[0]][0]; }
+            }
+            $('#gl_backfill_manual_journal_error').text(message).show();
         }
 
         function showRetryButton(selector, response) {
@@ -267,6 +326,48 @@
         });
         $('#gl_backfill_vat_input_retry').on('click', function () { startRetry($(this).data('retry-scope'), Number($(this).data('matched-count'))); });
         $('#gl_backfill_vat_output_retry').on('click', function () { startRetry($(this).data('retry-scope'), Number($(this).data('matched-count'))); });
+
+        $(document).on('click', '.gl-backfill-manual-journal', function () {
+            var reviewId = Number($(this).data('review-id'));
+            showManualJournal(state.rows.find(function (row) { return Number(row.id) === reviewId; }));
+        });
+        $('#gl_backfill_manual_add_line').on('click', appendManualJournalLine);
+        $(document).on('click', '.gl-backfill-manual-remove', function () {
+            $(this).closest('tr').remove();
+            updateManualJournalTotals();
+        });
+        $(document).on('input', '.gl-backfill-manual-debit', function () {
+            if (Number($(this).val()) > 0) { $(this).closest('tr').find('.gl-backfill-manual-credit').val(''); }
+            updateManualJournalTotals();
+        });
+        $(document).on('input', '.gl-backfill-manual-credit', function () {
+            if (Number($(this).val()) > 0) { $(this).closest('tr').find('.gl-backfill-manual-debit').val(''); }
+            updateManualJournalTotals();
+        });
+        $('#gl_backfill_manual_journal_form').on('submit', function (event) {
+            event.preventDefault();
+            if (!state.manualReview) { return; }
+            var lines = [];
+            $('#gl_backfill_manual_journal_lines tbody tr').each(function () {
+                lines.push({
+                    accounting_account_id: $(this).find('.gl-backfill-manual-account').val(),
+                    debit: $(this).find('.gl-backfill-manual-debit').val() || 0,
+                    credit: $(this).find('.gl-backfill-manual-credit').val() || 0
+                });
+            });
+            var $submit = $('#gl_backfill_manual_journal_submit');
+            $submit.prop('disabled', true);
+            request(urls.manualJournalBase + '/' + state.manualReview.id + '/manual-journal', 'POST', {
+                reason: $('#gl_backfill_manual_journal_reason').val(),
+                lines: lines
+            }).done(function (response) {
+                $('#gl_backfill_manual_journal_modal').modal('hide');
+                $('#gl_backfill_retry_progress').removeClass('alert-info alert-warning').addClass('alert-success')
+                    .text(response.message + ' Referensi jurnal: ' + response.ref_no + '.').show();
+                loadRows();
+                loadOptions();
+            }).fail(manualJournalError).always(function () { $submit.prop('disabled', false); });
+        });
 
         loadOptions();
         loadRows();

@@ -17,9 +17,11 @@
     data-main-account-mapping-url="{{ $mainAccountMappingUrl }}"
     data-vat-mapping-url="{{ $vatMappingUrl }}"
     data-retry-url="{{ $retryUrl }}"
+    data-manual-journal-url-base="{{ $manualJournalUrlBase }}"
     data-batch-url-base="{{ $batchUrlBase }}"
     data-can-edit="{{ $canEdit ? '1' : '0' }}"
-    data-can-retry="{{ $canRetry ? '1' : '0' }}">
+    data-can-retry="{{ $canRetry ? '1' : '0' }}"
+    data-can-manual-journal="{{ $canManualJournal ? '1' : '0' }}">
     <div class="row">
         <div class="col-md-12">
             <div class="box box-solid">
@@ -79,14 +81,49 @@
     <div class="box box-solid">
         <div class="box-body table-responsive">
             <table class="table table-bordered table-striped" id="gl_backfill_review_table">
-                <thead><tr><th>Sumber</th><th>Tanggal</th><th>Ringkasan / nominal</th><th>Alasan</th><th>Status</th></tr></thead>
-                <tbody><tr><td colspan="5" class="text-center">Memuat antrean…</td></tr></tbody>
+                <thead><tr><th>Sumber</th><th>Tanggal</th><th>Ringkasan / nominal</th><th>Alasan</th><th>Status</th>@if($canManualJournal)<th>Aksi</th>@endif</tr></thead>
+                <tbody><tr><td colspan="{{ $canManualJournal ? 6 : 5 }}" class="text-center">Memuat antrean…</td></tr></tbody>
             </table>
             <div class="row"><div class="col-sm-6"><span id="gl_backfill_page_summary" class="text-muted"></span></div><div class="col-sm-6 text-right"><button id="gl_backfill_prev" class="btn btn-default btn-sm" type="button">Sebelumnya</button> <span id="gl_backfill_page_number"></span> <button id="gl_backfill_next" class="btn btn-default btn-sm" type="button">Berikutnya</button></div></div>
         </div>
     </div>
     <p class="text-muted">Sumber yang tidak bisa diselesaikan dengan mapping tetap di antrean untuk jalur jurnal manual.</p>
 </section>
+@if($canManualJournal)
+<div class="modal fade" id="gl_backfill_manual_journal_modal" tabindex="-1" role="dialog" aria-labelledby="gl_backfill_manual_journal_title">
+    <div class="modal-dialog modal-lg" role="document">
+        <div class="modal-content">
+            <form id="gl_backfill_manual_journal_form">
+                <div class="modal-header">
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Tutup"><span aria-hidden="true">&times;</span></button>
+                    <h4 class="modal-title" id="gl_backfill_manual_journal_title">Jurnal manual untuk sumber antrean</h4>
+                </div>
+                <div class="modal-body">
+                    <p id="gl_backfill_manual_journal_source" class="well well-sm"></p>
+                    <div class="form-group">
+                        <label for="gl_backfill_manual_journal_reason">Alasan dan catatan koreksi *</label>
+                        <textarea id="gl_backfill_manual_journal_reason" class="form-control" rows="3" maxlength="1000" minlength="5" required></textarea>
+                        <p class="help-block">Wajib diisi sebagai jejak audit. Jurnal manual tidak mengubah transaksi sumber.</p>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-bordered" id="gl_backfill_manual_journal_lines">
+                            <thead><tr><th>CoA</th><th>Debit</th><th>Kredit</th><th></th></tr></thead>
+                            <tbody></tbody>
+                            <tfoot><tr><th class="text-right">Total</th><th id="gl_backfill_manual_debit_total">0.0000</th><th id="gl_backfill_manual_credit_total">0.0000</th><th></th></tr></tfoot>
+                        </table>
+                    </div>
+                    <button type="button" id="gl_backfill_manual_add_line" class="btn btn-default btn-sm">Tambah baris</button>
+                    <p id="gl_backfill_manual_journal_error" class="text-danger" role="alert" style="display:none"></p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-default" data-dismiss="modal">Batal</button>
+                    <button type="submit" class="btn btn-primary" id="gl_backfill_manual_journal_submit">Simpan jurnal dan selesaikan sumber</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+@endif
 @stop
 
 @section('javascript')
