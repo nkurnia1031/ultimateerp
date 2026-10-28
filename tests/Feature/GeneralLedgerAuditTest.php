@@ -157,7 +157,7 @@ class GeneralLedgerAuditTest extends TestCase
         ])->actingAs($user)->withSession([
             'user' => ['business_id' => 1],
             'business' => ['name' => 'CV Demo', 'currency_precision' => 2],
-            'currency' => ['decimal_separator' => '.', 'thousand_separator' => ','],
+            'currency' => ['code' => 'IDR', 'symbol' => 'Rp', 'symbol_placement' => 'before', 'decimal_separator' => '.', 'thousand_separator' => ','],
         ])->get(route('accounting.generalLedger.audit', [
             'start_date' => '2022-01-01', 'end_date' => '2022-01-31', 'source_type' => 'purchase', 'search' => 'PUR-50',
         ]));
@@ -185,6 +185,26 @@ class GeneralLedgerAuditTest extends TestCase
 
     private function createSchema(): void
     {
+        $permissionTables = config('permission.table_names');
+        Schema::create($permissionTables['permissions'], function (Blueprint $table) {
+            $table->increments('id'); $table->string('name'); $table->string('guard_name'); $table->timestamps();
+        });
+        Schema::create($permissionTables['roles'], function (Blueprint $table) {
+            $table->increments('id'); $table->string('name'); $table->string('guard_name');
+            $table->unsignedInteger('business_id'); $table->boolean('is_default')->default(false); $table->timestamps();
+        });
+        Schema::create($permissionTables['model_has_permissions'], function (Blueprint $table) {
+            $table->unsignedInteger('permission_id'); $table->morphs('model');
+            $table->primary(['permission_id', 'model_id', 'model_type']);
+        });
+        Schema::create($permissionTables['model_has_roles'], function (Blueprint $table) {
+            $table->unsignedInteger('role_id'); $table->morphs('model');
+            $table->primary(['role_id', 'model_id', 'model_type']);
+        });
+        Schema::create($permissionTables['role_has_permissions'], function (Blueprint $table) {
+            $table->unsignedInteger('permission_id'); $table->unsignedInteger('role_id');
+            $table->primary(['permission_id', 'role_id']);
+        });
         Schema::create('system', function (Blueprint $table) {
             $table->string('key'); $table->text('value')->nullable();
         });
