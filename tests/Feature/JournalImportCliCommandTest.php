@@ -2,7 +2,6 @@
 
 namespace Tests\Feature;
 
-use Illuminate\Foundation\Testing\TestCase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Mockery;
@@ -10,6 +9,7 @@ use Modules\Accounting\Http\Controllers\JournalEntryController;
 use Modules\Accounting\Services\JournalTaxReconciliationService;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
+use Tests\TestCase;
 
 class JournalImportCliCommandTest extends TestCase
 {
