@@ -47,15 +47,44 @@ class JournalImportQueueService
             $sourceKey = (string) ($entry['source_key'] ?? $row->source_key ?? '');
 
             if (($entry['source_type'] ?? $row->source_type) === 'Journal Entry' && $sourceKey !== '') {
+                if (! empty($entry['source_identity_conflict'])) {
+                    DB::table('accounting_journal_import_rows')->where('id', $row->id)->update([
+                        'processing_status' => 'pending',
+                        'processing_message' => (string) ($entry['source_identity_conflict_message']
+                            ?? 'Kunci sumber berulang dengan isi berbeda; tinjau konflik sebelum memproses.'),
+                        'processing_error' => null,
+                        'updated_at' => now(),
+                    ]);
+                    continue;
+                }
+
                 $existingMapping = DB::table('accounting_acc_trans_mappings')
                     ->where('business_id', $businessId)
                     ->where('type', 'journal_entry')
                     ->where('import_source_key', $sourceKey)
                     ->first();
                 if (! empty($existingMapping)) {
+                    $identityMatch = app(JournalImportIdentityService::class)->compareExistingMapping(
+                        $existingMapping,
+                        $entry,
+                        $businessId
+                    );
+
+                    if ($identityMatch === 'conflict') {
+                        DB::table('accounting_journal_import_rows')->where('id', $row->id)->update([
+                            'processing_status' => 'pending',
+                            'processing_message' => 'Nomor dan tanggal Journal Entry sudah memiliki posting dengan isi berbeda; tinjau konflik sebelum memproses.',
+                            'processing_error' => null,
+                            'updated_at' => now(),
+                        ]);
+                        continue;
+                    }
+
                     DB::table('accounting_journal_import_rows')->where('id', $row->id)->update([
                         'processing_status' => 'completed',
-                        'processing_message' => 'Posting Journal dengan kunci ini sudah tersedia; tidak dibuat ulang.',
+                        'processing_message' => $identityMatch === 'identical'
+                            ? 'Posting Journal dengan isi yang sama sudah tersedia; tidak dibuat ulang.'
+                            : 'Posting Journal dengan kunci ini sudah tersedia; tidak dibuat ulang.',
                         'processing_error' => null,
                         'journal_mapping_id' => $existingMapping->id,
                         'processed_at' => now(),
@@ -165,6 +194,11 @@ class JournalImportQueueService
         ?int $businessId = null
     ): ?string
     {
+        if (! empty($entry['source_identity_conflict'])) {
+            return (string) ($entry['source_identity_conflict_message']
+                ?? 'Kunci sumber berulang dengan isi berbeda; tinjau konflik sebelum memproses.');
+        }
+
         $sourceType = (string) ($entry['source_type'] ?? '');
         $isInvoice = in_array($sourceType, ['Sales Invoice', 'Purchase Invoice'], true);
         $isExpense = $sourceType === 'Expense';

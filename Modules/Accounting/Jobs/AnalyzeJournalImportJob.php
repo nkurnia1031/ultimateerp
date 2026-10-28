@@ -24,10 +24,19 @@ class AnalyzeJournalImportJob implements ShouldQueue
 
     protected $importId;
 
+    protected $progressListener;
+
     public function __construct($importId)
     {
         $this->importId = $importId;
         $this->onQueue('imports');
+    }
+
+    public function onProgress(callable $listener): self
+    {
+        $this->progressListener = $listener;
+
+        return $this;
     }
 
     public function handle(
@@ -53,7 +62,7 @@ class AnalyzeJournalImportJob implements ShouldQueue
                 ->whereNull('cancel_requested_at')
                 ->update([
                 'status' => 'analyzing',
-                'last_message' => 'Worker mulai membuka workbook.',
+                'last_message' => 'Proses mulai membuka workbook.',
                 'updated_at' => now(),
             ]);
             if (! $claimed) {
@@ -73,6 +82,10 @@ class AnalyzeJournalImportJob implements ShouldQueue
                         'last_message' => $progress['message'] ?? 'Analisis workbook berjalan.',
                         'updated_at' => now(),
                     ]);
+
+                    if ($this->progressListener !== null) {
+                        call_user_func($this->progressListener, $progress);
+                    }
                 }
             );
 

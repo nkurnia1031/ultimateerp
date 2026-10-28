@@ -1902,6 +1902,9 @@ class JournalEntryController extends Controller
             $entries[$key]['line_count'] = count($entry['lines']);
         }
 
+        app(\Modules\Accounting\Services\JournalImportIdentityService::class)
+            ->markRepeatedSourceIdentities($entries);
+
         if ($progressCallback) {
             $progressCallback(['message' => 'Mencocokkan referensi transaksi sumber dengan data bisnis.']);
         }
@@ -1927,6 +1930,9 @@ class JournalEntryController extends Controller
         $source_link_matched_count = (int) ($source_link_counts['matched'] ?? 0);
         $source_link_unmatched_count = (int) ($source_link_counts['unmatched'] ?? 0);
         $source_link_ambiguous_count = (int) ($source_link_counts['ambiguous'] ?? 0);
+        $duplicate_entry_count = count(array_filter($entries, function ($entry) {
+            return ! empty($entry['is_duplicate']) || ! empty($entry['source_identity_conflict']);
+        }));
 
         return [
             'source_date_range' => $source_date_range,
@@ -1935,7 +1941,7 @@ class JournalEntryController extends Controller
             'journal_entry_count' => count(array_filter($entries, fn ($entry) => $entry['source_type'] === 'Journal Entry')),
             'non_journal_count' => count(array_filter($entries, fn ($entry) => $entry['source_type'] !== 'Journal Entry')),
             'unbalanced_count' => count(array_filter($entries, fn ($entry) => $entry['is_unbalanced'])),
-            'duplicate_count' => count($duplicate_keys),
+            'duplicate_count' => $duplicate_entry_count,
             'existing_count' => count(array_filter($entries, fn ($entry) => $entry['exists_in_system'])),
             'source_link_matched_count' => $source_link_matched_count,
             'source_link_unmatched_count' => $source_link_unmatched_count,

@@ -11,6 +11,7 @@ use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\DB;
 use Modules\Accounting\Http\Controllers\JournalEntryController;
 use Modules\Accounting\Services\JournalImportExpenseService;
+use Modules\Accounting\Services\JournalImportIdentityService;
 use Modules\Accounting\Services\JournalImportInvoiceService;
 use Modules\Accounting\Services\JournalImportPaymentService;
 use Modules\Accounting\Services\JournalImportBankTransactionService;
@@ -40,12 +41,25 @@ class ProcessJournalImportJob implements ShouldQueue
 
     protected $afterRowId;
 
-    public function __construct($importId, string $phase = 'entries', int $afterMappingId = 0, int $afterRowId = 0)
+    protected $dispatchContinuations;
+
+    protected $runner;
+
+    public function __construct(
+        $importId,
+        string $phase = 'entries',
+        int $afterMappingId = 0,
+        int $afterRowId = 0,
+        bool $dispatchContinuations = true,
+        string $runner = 'worker'
+    )
     {
         $this->importId = $importId;
         $this->phase = $phase;
         $this->afterMappingId = $afterMappingId;
         $this->afterRowId = $afterRowId;
+        $this->dispatchContinuations = $dispatchContinuations;
+        $this->runner = $runner;
         $this->onQueue('imports');
     }
 
@@ -96,7 +110,7 @@ class ProcessJournalImportJob implements ShouldQueue
                     ->where('status', 'queued_import')
                     ->update([
                         'status' => 'importing',
-                        'last_message' => 'Worker mengambil alih batch Journal Import.',
+                        'last_message' => ucfirst($this->runner).' mengambil alih batch Journal Import.',
                         'updated_at' => now(),
                     ]);
 
@@ -140,7 +154,7 @@ class ProcessJournalImportJob implements ShouldQueue
 
         if ($this->phase === 'entries') {
             DB::table('accounting_journal_imports')->where('id', $this->importId)->update([
-                'last_message' => 'Worker memproses maksimal '.self::CHUNK_SIZE.' baris dari draft tersimpan.',
+                'last_message' => ucfirst($this->runner).' memproses maksimal '.self::CHUNK_SIZE.' baris dari draft tersimpan.',
                 'updated_at' => now(),
             ]);
         }
@@ -166,7 +180,7 @@ class ProcessJournalImportJob implements ShouldQueue
                     ->update([
                         'processing_status' => 'running',
                         'processing_attempts' => DB::raw('processing_attempts + 1'),
-                        'processing_message' => 'Worker sedang memproses baris Journal Import.',
+                        'processing_message' => ucfirst($this->runner).' sedang memproses baris Journal Import.',
                         'processing_error' => null,
                         'processing_started_at' => now(),
                         'updated_at' => now(),
@@ -218,9 +232,31 @@ class ProcessJournalImportJob implements ShouldQueue
                         ->first();
 
                     if (! empty($existingMapping)) {
+                        $identityMatch = $row->source_type === 'Journal Entry'
+                            ? app(JournalImportIdentityService::class)->compareExistingMapping(
+                                $existingMapping,
+                                $entry,
+                                (int) $import->business_id
+                            )
+                            : 'identical';
+
+                        if ($identityMatch === 'conflict') {
+                            DB::table('accounting_journal_import_rows')->where('id', $row->id)->update([
+                                'processing_status' => 'pending',
+                                'processing_message' => 'Nomor dan tanggal Journal Entry sudah memiliki posting dengan isi berbeda; tinjau konflik sebelum memproses.',
+                                'processing_error' => null,
+                                'processing_started_at' => null,
+                                'updated_at' => now(),
+                            ]);
+
+                            return;
+                        }
+
                         DB::table('accounting_journal_import_rows')->where('id', $row->id)->update([
                             'processing_status' => 'completed',
-                            'processing_message' => 'Posting Journal dengan kunci ini sudah tersedia; tidak dibuat ulang.',
+                            'processing_message' => $identityMatch === 'identical'
+                                ? 'Posting Journal dengan isi yang sama sudah tersedia; tidak dibuat ulang.'
+                                : 'Posting Journal dengan kunci ini sudah tersedia; tidak dibuat ulang.',
                             'processing_error' => null,
                             'journal_mapping_id' => $existingMapping->id,
                             'processed_at' => now(),
@@ -308,6 +344,16 @@ class ProcessJournalImportJob implements ShouldQueue
                         'processed_at' => now(),
                         'updated_at' => now(),
                     ]);
+
+                    if ($row->source_type === 'Journal Entry') {
+                        app(JournalImportIdentityService::class)->completeIdenticalPendingRows(
+                            (int) $import->id,
+                            (int) $import->business_id,
+                            $sourceKey,
+                            $entry,
+                            (int) $mapping->id
+                        );
+                    }
                 });
             } catch (\Throwable $exception) {
                 DB::table('accounting_journal_import_rows')
@@ -340,7 +386,7 @@ class ProcessJournalImportJob implements ShouldQueue
                 'processed_entries' => $queueProcessed,
                 'imported_entries' => $counts['completed'],
                 'skipped_entries' => $counts['failed'],
-                'last_message' => 'Progres queue Journal Entry: '.$queueProcessed.' / '.$queueTotal
+                'last_message' => 'Progres '.($this->runner === 'cli' ? 'CLI' : 'queue').' Journal Entry: '.$queueProcessed.' / '.$queueTotal
                     .' baris; '.$counts['completed'].' selesai, '.$counts['failed'].' gagal.',
                 'updated_at' => now(),
             ]);
@@ -351,8 +397,12 @@ class ProcessJournalImportJob implements ShouldQueue
                 ->where('processing_status', 'queued')
                 ->exists();
 
-            if ($hasQueuedRows) {
+            if ($hasQueuedRows && $this->dispatchContinuations) {
                 self::dispatch($this->importId, 'entries')->delay(now()->addSeconds(self::CHUNK_DELAY_SECONDS));
+                return;
+            }
+
+            if ($hasQueuedRows) {
                 return;
             }
 
@@ -361,14 +411,16 @@ class ProcessJournalImportJob implements ShouldQueue
                 ->whereNull('cancel_requested_at')
                 ->update([
                 'status' => 'reconciling',
-                'last_message' => 'Queue Journal Import selesai; menghitung pajak dari akun Journal dan memeriksa sumber dalam beberapa bagian.',
+                'last_message' => 'Pemrosesan Journal Import selesai; menghitung pajak dari akun Journal dan memeriksa sumber dalam beberapa bagian.',
                 'updated_at' => now(),
             ]);
             if (! $transitioned) {
                 $cancellationService->stopIfRequested((int) $import->id, (int) $import->business_id);
                 return;
             }
-            self::dispatch($this->importId, 'tax')->delay(now()->addSeconds(self::CHUNK_DELAY_SECONDS));
+            if ($this->dispatchContinuations) {
+                self::dispatch($this->importId, 'tax')->delay(now()->addSeconds(self::CHUNK_DELAY_SECONDS));
+            }
 
             return;
         }
@@ -395,7 +447,7 @@ class ProcessJournalImportJob implements ShouldQueue
             ->whereIn('status', ['preparing_import', 'queued_import', 'importing', 'reconciling', 'processing'])
             ->update([
                 'status' => 'failed',
-                'last_message' => 'Worker menghentikan import sebelum selesai.',
+                'last_message' => ucfirst($this->runner).' menghentikan import sebelum selesai.',
                 'error_message' => substr($exception->getMessage(), 0, 2000),
                 'updated_at' => now(),
             ]);
@@ -413,7 +465,7 @@ class ProcessJournalImportJob implements ShouldQueue
             ->whereIn('processing_status', ['queued', 'running'])
             ->update([
                 'processing_status' => 'failed',
-                'processing_message' => 'Worker menghentikan proses sebelum baris selesai.',
+                'processing_message' => ucfirst($this->runner).' menghentikan proses sebelum baris selesai.',
                 'processing_error' => mb_substr($exception->getMessage(), 0, 2000),
                 'updated_at' => now(),
             ]);
@@ -479,8 +531,10 @@ class ProcessJournalImportJob implements ShouldQueue
                 'last_message' => 'Rekonsiliasi pajak: entri sampai ID '.$chunk['last_id'].'; lanjut setelah jeda.',
                 'updated_at' => now(),
             ]);
-            self::dispatch($this->importId, 'tax', (int) $chunk['last_id'])
-                ->delay(now()->addSeconds(self::CHUNK_DELAY_SECONDS));
+            if ($this->dispatchContinuations) {
+                self::dispatch($this->importId, 'tax', (int) $chunk['last_id'])
+                    ->delay(now()->addSeconds(self::CHUNK_DELAY_SECONDS));
+            }
 
             return;
         }
@@ -524,11 +578,13 @@ class ProcessJournalImportJob implements ShouldQueue
         if ($chunk['has_more']) {
             DB::table('accounting_journal_imports')->where('id', $import->id)->update([
                 'prepare_cursor' => (int) $chunk['last_id'],
-                'last_message' => 'Menyiapkan antrean import sampai baris '.$chunk['last_id'].'; lanjut setelah jeda.',
+                'last_message' => ucfirst($this->runner).' menyiapkan antrean import sampai baris '.$chunk['last_id'].'.',
                 'updated_at' => now(),
             ]);
-            self::dispatch($this->importId, 'prepare', 0, (int) $chunk['last_id'])
-                ->delay(now()->addSeconds(self::CHUNK_DELAY_SECONDS));
+            if ($this->dispatchContinuations) {
+                self::dispatch($this->importId, 'prepare', 0, (int) $chunk['last_id'])
+                    ->delay(now()->addSeconds(self::CHUNK_DELAY_SECONDS));
+            }
 
             return;
         }
@@ -537,7 +593,9 @@ class ProcessJournalImportJob implements ShouldQueue
         $shouldReconcile = $counts['queued'] === 0 && $counts['running'] === 0;
         $status = $counts['queued'] > 0 ? 'queued_import' : ($shouldReconcile ? 'reconciling' : 'partially_imported');
         $message = $counts['queued'] > 0
-            ? 'Menunggu worker queue imports untuk memproses '.$counts['queued'].' baris valid.'
+            ? ($this->runner === 'cli'
+                ? 'CLI melanjutkan pemrosesan '.$counts['queued'].' baris valid.'
+                : 'Menunggu worker queue imports untuk memproses '.$counts['queued'].' baris valid.')
             : 'Entry siap sudah diproses; rekonsiliasi pajak dimulai dalam beberapa bagian. Baris yang belum siap tetap tersimpan di draft.';
 
         $updated = DB::table('accounting_journal_imports')
@@ -558,9 +616,9 @@ class ProcessJournalImportJob implements ShouldQueue
             return;
         }
 
-        if ($counts['queued'] > 0) {
+        if ($counts['queued'] > 0 && $this->dispatchContinuations) {
             self::dispatch($this->importId, 'entries')->delay(now()->addSeconds(self::CHUNK_DELAY_SECONDS));
-        } elseif ($shouldReconcile) {
+        } elseif ($shouldReconcile && $this->dispatchContinuations) {
             self::dispatch($this->importId, 'tax')->delay(now()->addSeconds(self::CHUNK_DELAY_SECONDS));
         }
     }
