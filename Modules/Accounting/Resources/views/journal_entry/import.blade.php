@@ -100,7 +100,7 @@
                         </tr>
                         <tr>
                             <th>Relasi perlu ditinjau</th>
-                            <td>{{ $analysis['source_link_review_count'] ?? 0 }} ({{ $analysis['source_link_unmatched_count'] ?? 0 }} tidak ditemukan, {{ $analysis['source_link_ambiguous_count'] ?? 0 }} ambigu)</td>
+                            <td>{{ $analysis['source_link_review_count'] ?? 0 }} ({{ $analysis['source_link_suggested_count'] ?? 0 }} saran, {{ $analysis['source_link_unmatched_count'] ?? 0 }} tidak ditemukan, {{ $analysis['source_link_ambiguous_count'] ?? 0 }} ambigu)</td>
                         </tr>
                     </table>
                 </div>
@@ -126,12 +126,12 @@
 
             @php
                 $source_link_review_entries = collect($analysis['entries'])->filter(function ($entry) {
-                    return in_array($entry['source_link_status'] ?? '', ['unmatched', 'ambiguous'], true);
+                    return in_array($entry['source_link_status'] ?? '', ['unmatched', 'suggested', 'ambiguous'], true);
                 })->take(50);
             @endphp
             @if($source_link_review_entries->isNotEmpty())
                 <h4>Relasi Sumber Perlu Ditinjau</h4>
-                <p class="help-block">Status relasi hanya untuk penautan. Entry yang lolos validasi tetap diproses ke GL; sistem hanya menghubungkan sumber yang cocok secara unik dan tidak membuat transaksi keuangan sumber baru. Tinjau nomor yang tidak ditemukan atau memiliki lebih dari satu kandidat.</p>
+                <p class="help-block">Kandidat terdekat ditampilkan sebagai saran dan tidak dipilih otomatis. Pilih sumber atau Buat baru secara eksplisit dari modal kandidat.</p>
                 <div class="table-responsive" style="max-height: 320px; overflow: auto;">
                     <table class="table table-bordered table-condensed">
                         <thead>
@@ -146,11 +146,11 @@
                         </thead>
                         <tbody>
                             @foreach($source_link_review_entries as $entry)
-                                <tr class="{{ ($entry['source_link_status'] ?? '') === 'ambiguous' ? 'warning' : 'danger' }}">
+                                <tr class="{{ in_array(($entry['source_link_status'] ?? ''), ['ambiguous', 'suggested'], true) ? 'warning' : 'danger' }}">
                                     <td>{{ $entry['source_type'] }}</td>
                                     <td>{{ $entry['source_number'] }}</td>
                                     <td>{{ $entry['date'] }}</td>
-                                    <td>{{ ($entry['source_link_status'] ?? '') === 'ambiguous' ? 'Ambigu' : 'Tidak ditemukan' }}</td>
+                                    <td>{{ ($entry['source_link_status'] ?? '') === 'ambiguous' ? 'Ambigu' : ((($entry['source_link_status'] ?? '') === 'suggested') ? 'Saran terdekat' : 'Tidak ditemukan') }}</td>
                                     <td>{{ implode(', ', $entry['source_link_candidates'] ?? []) ?: '—' }}</td>
                                     <td>{{ $entry['source_link_note'] ?? '' }}</td>
                                 </tr>
@@ -354,6 +354,27 @@
                                 <button type="submit" class="btn btn-primary">Simpan detail</button>
                             </div>
                         </form>
+                    </div>
+                </div>
+            </div>
+
+            <div class="modal fade" id="journal_import_candidates_modal" tabindex="-1" role="dialog" aria-labelledby="journal_import_candidates_title" aria-modal="true">
+                <div class="modal-dialog modal-lg" role="document">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <button type="button" class="close" data-dismiss="modal" aria-label="Tutup"><span aria-hidden="true">&times;</span></button>
+                            <h4 class="modal-title" id="journal_import_candidates_title">Kandidat transaksi sumber</h4>
+                        </div>
+                        <div class="modal-body">
+                            <p id="journal_import_candidates_summary" class="text-muted"></p>
+                            <div id="journal_import_candidates_journal" class="well well-sm"></div>
+                            <div id="journal_import_candidates_list" aria-live="polite"></div>
+                            <div id="journal_import_candidates_empty" class="alert alert-info hide">Tidak ada kandidat sumber pada business aktif. Transaksi baru dapat dibuat dari detail Journal setelah lokasi default dan rincian wajib tersedia.</div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-warning journal-draft-candidate-create">Buat transaksi baru</button>
+                            <button type="button" class="btn btn-default" data-dismiss="modal">Tutup</button>
+                        </div>
                     </div>
                 </div>
             </div>

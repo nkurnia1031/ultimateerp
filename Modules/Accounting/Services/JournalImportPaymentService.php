@@ -348,10 +348,8 @@ class JournalImportPaymentService
             throw new \RuntimeException('Akun pembayaran sumber berbeda dari pilihan draft; tinjau sumber sebelum melanjutkan.');
         }
 
-        if ($invoice !== null && empty($invoice->contact_id)) {
-            throw new \RuntimeException('Invoice belum memiliki kontak; lengkapi sumber invoice sebelum membuat pembayaran.');
-        }
-        if ($payment && ! empty($payment->payment_for) && (int) $payment->payment_for !== (int) $invoice->contact_id) {
+        if ($payment && ! empty($payment->payment_for)
+            && (empty($invoice->contact_id) || (int) $payment->payment_for !== (int) $invoice->contact_id)) {
             throw new \RuntimeException('Kontak pembayaran berbeda dari kontak invoice; tinjau sumber sebelum melanjutkan.');
         }
         if (! empty($draftData['contact_id']) && $invoice !== null && (int) $draftData['contact_id'] !== (int) $invoice->contact_id) {
@@ -406,7 +404,7 @@ class JournalImportPaymentService
             'created_by' => (int) $import->created_by,
             'paid_through_link' => 0,
             'is_advance' => 0,
-            'payment_for' => (int) $prepared['invoice']->contact_id,
+            'payment_for' => $prepared['invoice']->contact_id === null ? null : (int) $prepared['invoice']->contact_id,
             'note' => trim((string) ($entry['description'] ?? '')) ?: null,
             'payment_ref_no' => $reference,
             'account_id' => (int) $prepared['effectiveAccountId'],
@@ -428,7 +426,7 @@ class JournalImportPaymentService
         $values = [
             'transaction_id' => $prepared['invoice']->id,
             'business_id' => (int) $import->business_id,
-            'payment_for' => (int) $prepared['invoice']->contact_id,
+            'payment_for' => $prepared['invoice']->contact_id === null ? null : (int) $prepared['invoice']->contact_id,
             'amount' => $prepared['amount'],
             'method' => $prepared['effectiveMethod'],
             'account_id' => $prepared['effectiveAccountId'],
@@ -585,8 +583,8 @@ class JournalImportPaymentService
         if ($invoice->status !== 'final') {
             return 'Pembayaran tertunda: invoice belum berstatus final. Finalisasi invoice lalu antrekan ulang pembayaran.';
         }
-        if (! is_numeric($invoice->final_total) || (float) $invoice->final_total <= 0 || empty($invoice->contact_id)) {
-            return 'Pembayaran tertunda: invoice belum memiliki total atau kontak yang valid.';
+        if (! is_numeric($invoice->final_total) || (float) $invoice->final_total <= 0) {
+            return 'Pembayaran tertunda: invoice belum memiliki total yang valid.';
         }
 
         return null;

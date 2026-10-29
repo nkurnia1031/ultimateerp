@@ -59,28 +59,56 @@ class JournalImportSourceMatcher
             }
         }
 
-        if (count($matches) > 1) {
-            $dateMatches = array_values(array_filter(
-                $matches,
-                fn ($candidate) => ($candidate['date'] ?? null) === $sourceDate
-            ));
+        return $this->rankCandidates($matches, $sourceDate, $sourceAmount);
+    }
 
-            if (count($dateMatches) === 1) {
-                return $dateMatches;
+    public function rankCandidates(iterable $candidates, string $sourceDate, float $sourceAmount): array
+    {
+        $ranked = [];
+        foreach ($candidates as $candidate) {
+            if (! is_array($candidate) || empty($candidate['id'])) {
+                continue;
             }
 
-            $amountCandidates = $dateMatches !== [] ? $dateMatches : $matches;
-            $amountMatches = array_values(array_filter(
-                $amountCandidates,
-                fn ($candidate) => abs((float) ($candidate['amount'] ?? 0) - $sourceAmount) <= 0.01
-            ));
-
-            if (count($amountMatches) === 1) {
-                return $amountMatches;
-            }
+            $candidate['date_match'] = (string) ($candidate['date'] ?? '') === $sourceDate;
+            $candidate['amount_difference'] = is_numeric($candidate['amount'] ?? null)
+                ? round(abs((float) $candidate['amount'] - $sourceAmount), 4)
+                : null;
+            $candidate['amount_match'] = $candidate['amount_difference'] !== null && $candidate['amount_difference'] <= 0.01;
+            $ranked[] = $candidate;
         }
 
-        return $matches;
+        usort($ranked, function (array $left, array $right): int {
+            if ($left['date_match'] !== $right['date_match']) {
+                return $left['date_match'] ? -1 : 1;
+            }
+
+            if ($left['amount_difference'] !== $right['amount_difference']) {
+                if ($left['amount_difference'] === null) {
+                    return 1;
+                }
+                if ($right['amount_difference'] === null) {
+                    return -1;
+                }
+
+                return $left['amount_difference'] <=> $right['amount_difference'];
+            }
+
+            return (int) $left['id'] <=> (int) $right['id'];
+        });
+
+        return $ranked;
+    }
+
+    public function uniqueExactCandidate(array $candidates, string $sourceDate, float $sourceAmount): ?array
+    {
+        $exact = array_values(array_filter($candidates, function (array $candidate) use ($sourceDate, $sourceAmount): bool {
+            return is_numeric($candidate['amount'] ?? null)
+                && (string) ($candidate['date'] ?? '') === $sourceDate
+                && abs((float) ($candidate['amount'] ?? 0) - $sourceAmount) <= 0.01;
+        }));
+
+        return count($exact) === 1 ? $exact[0] : null;
     }
 
     private function hasReference(array $candidate, string $reference): bool

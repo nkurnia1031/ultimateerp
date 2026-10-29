@@ -428,8 +428,10 @@ class JournalEntryController extends Controller
                 'tax' => $source->tax_amount === null ? null : (float) $source->tax_amount,
                 'total' => $source->final_total === null ? null : (float) $source->final_total,
             ])->all();
-        $rows->getCollection()->transform(function ($row) use ($importOptions, $sourceComponentsById) {
-            return $this->journalImportDraftRowResponse($row, $importOptions, $sourceComponentsById);
+        $candidateDetailsByKey = $this->journalSourceCandidateDetailsByKey($rows->getCollection(), $business_id);
+        $defaultLocationId = $this->journalImportDraftService->defaultActiveLocationId($business_id);
+        $rows->getCollection()->transform(function ($row) use ($importOptions, $sourceComponentsById, $candidateDetailsByKey, $defaultLocationId) {
+            return $this->journalImportDraftRowResponse($row, $importOptions, $sourceComponentsById, $candidateDetailsByKey, $defaultLocationId);
         });
 
         return response()->json([
@@ -582,7 +584,13 @@ class JournalEntryController extends Controller
 
         return response()->json([
             'success' => 1,
-            'row' => $this->journalImportDraftRowResponse($updatedRow, $importOptions),
+            'row' => $this->journalImportDraftRowResponse(
+                $updatedRow,
+                $importOptions,
+                null,
+                null,
+                $this->journalImportDraftService->defaultActiveLocationId($business_id)
+            ),
             'msg' => 'Draft tersimpan.',
         ]);
     }
@@ -836,7 +844,10 @@ class JournalEntryController extends Controller
                     ];
                 });
         } elseif ($kind === 'location') {
-            $query = DB::table('business_locations')->where('business_id', $business_id)->whereNull('deleted_at');
+            $query = DB::table('business_locations')->where('business_id', $business_id)->where('is_active', 1)->whereNull('deleted_at');
+            if (($selectedId === null || $selectedId === '') && $search === '') {
+                $selectedId = $this->journalImportDraftService->defaultActiveLocationId($business_id);
+            }
             if ($selectedId) {
                 $query->where('id', $selectedId);
             } elseif ($search !== '') {
@@ -989,7 +1000,13 @@ class JournalEntryController extends Controller
         }
     }
 
-    private function journalImportDraftRowResponse($row, array $importOptions = [], ?array $sourceComponentsById = null): array
+    private function journalImportDraftRowResponse(
+        $row,
+        array $importOptions = [],
+        ?array $sourceComponentsById = null,
+        ?array $candidateDetailsByKey = null,
+        ?int $defaultLocationId = null
+    ): array
     {
         $response = $this->journalImportDraftService->rowResponse($row);
         $entry = json_decode((string) $row->entry_data, true) ?: [];
@@ -999,6 +1016,25 @@ class JournalEntryController extends Controller
         $componentSide = $row->source_type === 'Sales Invoice' ? 'credit' : 'debit';
         $response['journal_base_total'] = round((float) collect($components)->reject(fn ($component) => $component['is_tax'])->sum($componentSide), 4);
         $response['journal_tax_total'] = round((float) collect($components)->filter(fn ($component) => $component['is_tax'])->sum($componentSide), 4);
+        $response['default_location_id'] = $defaultLocationId;
+
+        $candidateDetails = collect($response['source_link_candidate_details'] ?? [])->map(function ($candidate) use ($candidateDetailsByKey) {
+            $key = ($candidate['record_type'] ?? '').'|'.(int) ($candidate['id'] ?? 0);
+            return isset($candidateDetailsByKey[$key])
+                ? array_merge($candidate, $candidateDetailsByKey[$key])
+                : $candidate;
+        })->all();
+        $response['source_link_candidate_details'] = app(\Modules\Accounting\Services\JournalImportSourceMatcher::class)
+            ->rankCandidates($candidateDetails, (string) ($entry['date'] ?? ''), (float) ($entry['debit_total'] ?? 0));
+
+        foreach ($response['source_link_candidate_details'] as $candidate) {
+            if (($candidate['record_type'] ?? null) === ($row->source_record_type ?? null)
+                && (int) ($candidate['id'] ?? 0) === (int) ($row->source_record_id ?? 0)) {
+                $response['source_link_label'] = $candidate['label'] ?? $response['source_link_label'];
+                break;
+            }
+        }
+
         $response['source_components'] = null;
 
         if (($row->source_record_type ?? null) === \App\Transaction::class && ! empty($row->source_record_id)) {
@@ -1020,6 +1056,195 @@ class JournalEntryController extends Controller
         }
 
         return $response;
+    }
+
+    private function journalSourceCandidateDetailsByKey($rows, int $businessId): array
+    {
+        $idsByType = [
+            Transaction::class => [],
+            TransactionPayment::class => [],
+            AccountTransaction::class => [],
+        ];
+
+        foreach ($rows as $row) {
+            $entry = json_decode((string) ($row->entry_data ?? ''), true) ?: [];
+            $candidates = $entry['source_link_candidate_details'] ?? [];
+            if (($row->source_record_type ?? null) && ! empty($row->source_record_id)) {
+                $candidates[] = ['record_type' => $row->source_record_type, 'id' => $row->source_record_id];
+            }
+            foreach ($candidates as $candidate) {
+                $recordType = $candidate['record_type'] ?? null;
+                $id = (int) ($candidate['id'] ?? 0);
+                if ($id > 0 && isset($idsByType[$recordType])) {
+                    $idsByType[$recordType][$id] = $id;
+                }
+            }
+        }
+
+        $details = [];
+        $transactions = array_values($idsByType[Transaction::class]);
+        if ($transactions !== []) {
+            $sources = DB::table('transactions')
+                ->leftJoin('contacts as candidate_contact', function ($join) use ($businessId) {
+                    $join->on('candidate_contact.id', '=', 'transactions.contact_id')
+                        ->where('candidate_contact.business_id', '=', $businessId);
+                })
+                ->leftJoin('business_locations as candidate_location', function ($join) use ($businessId) {
+                    $join->on('candidate_location.id', '=', 'transactions.location_id')
+                        ->where('candidate_location.business_id', '=', $businessId);
+                })
+                ->leftJoin('expense_categories as candidate_category', function ($join) use ($businessId) {
+                    $join->on('candidate_category.id', '=', 'transactions.expense_category_id')
+                        ->where('candidate_category.business_id', '=', $businessId);
+                })
+                ->where('transactions.business_id', $businessId)
+                ->whereIn('transactions.id', $transactions)
+                ->get([
+                    'transactions.id',
+                    'transactions.type',
+                    'transactions.invoice_no',
+                    'transactions.ref_no',
+                    'transactions.transaction_date',
+                    'transactions.total_before_tax',
+                    'transactions.tax_amount',
+                    'transactions.final_total',
+                    'transactions.additional_notes',
+                    'candidate_contact.name as contact_name',
+                    'candidate_contact.supplier_business_name as supplier_name',
+                    'candidate_location.name as location_name',
+                    'candidate_category.name as category_name',
+                ]);
+
+            $transactionLabels = [
+                'sell' => 'Penjualan',
+                'purchase' => 'Pembelian',
+                'expense' => 'Expense',
+                'stock_adjustment' => 'Penyesuaian stok',
+                'opening_balance' => 'Saldo awal',
+                'opening_stock' => 'Saldo awal stok',
+                'sell_transfer' => 'Transfer stok keluar',
+                'purchase_transfer' => 'Transfer stok masuk',
+            ];
+            foreach ($sources as $source) {
+                $references = array_values(array_filter(array_map('trim', [
+                    (string) ($source->invoice_no ?? ''),
+                    (string) ($source->ref_no ?? ''),
+                ])));
+                $label = ($transactionLabels[(string) $source->type] ?? ucfirst((string) $source->type)).' #'.(int) $source->id;
+                if ($references !== []) {
+                    $label .= ' ('.$references[0].')';
+                }
+                $details[Transaction::class.'|'.(int) $source->id] = [
+                    'id' => (int) $source->id,
+                    'record_type' => Transaction::class,
+                    'date' => substr((string) $source->transaction_date, 0, 10),
+                    'amount' => $source->final_total === null ? null : (float) $source->final_total,
+                    'base_amount' => $source->total_before_tax === null ? null : (float) $source->total_before_tax,
+                    'tax_amount' => $source->tax_amount === null ? null : (float) $source->tax_amount,
+                    'references' => $references,
+                    'transaction_type' => (string) ($source->type ?? ''),
+                    'contact_name' => trim((string) ($source->supplier_name ?: $source->contact_name)),
+                    'location_name' => (string) ($source->location_name ?? ''),
+                    'category_name' => (string) ($source->category_name ?? ''),
+                    'note' => (string) ($source->additional_notes ?? ''),
+                    'label' => $label,
+                ];
+            }
+        }
+
+        $payments = array_values($idsByType[TransactionPayment::class]);
+        if ($payments !== []) {
+            $sources = DB::table('transaction_payments')
+                ->join('transactions as candidate_transaction', 'candidate_transaction.id', '=', 'transaction_payments.transaction_id')
+                ->leftJoin('accounts as candidate_account', function ($join) use ($businessId) {
+                    $join->on('candidate_account.id', '=', 'transaction_payments.account_id')
+                        ->where('candidate_account.business_id', '=', $businessId);
+                })
+                ->leftJoin('contacts as candidate_contact', function ($join) use ($businessId) {
+                    $join->on('candidate_contact.id', '=', 'candidate_transaction.contact_id')
+                        ->where('candidate_contact.business_id', '=', $businessId);
+                })
+                ->where('candidate_transaction.business_id', $businessId)
+                ->whereIn('transaction_payments.id', $payments)
+                ->get([
+                    'transaction_payments.id',
+                    'transaction_payments.payment_ref_no',
+                    'transaction_payments.paid_on',
+                    'transaction_payments.amount',
+                    'transaction_payments.method',
+                    'transaction_payments.note',
+                    'candidate_account.name as account_name',
+                    'candidate_transaction.invoice_no',
+                    'candidate_transaction.ref_no',
+                    'candidate_transaction.type as transaction_type',
+                    'candidate_contact.name as contact_name',
+                    'candidate_contact.supplier_business_name as supplier_name',
+                ]);
+
+            foreach ($sources as $source) {
+                $references = array_values(array_filter(array_map('trim', [
+                    (string) ($source->payment_ref_no ?? ''),
+                ])));
+                $invoiceReference = trim((string) ($source->invoice_no ?: $source->ref_no));
+                $details[TransactionPayment::class.'|'.(int) $source->id] = [
+                    'id' => (int) $source->id,
+                    'record_type' => TransactionPayment::class,
+                    'date' => substr((string) $source->paid_on, 0, 10),
+                    'amount' => $source->amount === null ? null : (float) $source->amount,
+                    'base_amount' => null,
+                    'tax_amount' => null,
+                    'references' => $references,
+                    'contact_name' => trim((string) ($source->supplier_name ?: $source->contact_name)),
+                    'account_name' => (string) ($source->account_name ?? ''),
+                    'payment_method' => (string) ($source->method ?? ''),
+                    'transaction_type' => (string) ($source->transaction_type ?? ''),
+                    'invoice_reference' => $invoiceReference,
+                    'note' => (string) ($source->note ?? ''),
+                    'label' => 'Pembayaran #'.(int) $source->id.($references !== [] ? ' ('.$references[0].')' : ''),
+                ];
+            }
+        }
+
+        $accountTransactions = array_values($idsByType[AccountTransaction::class]);
+        if ($accountTransactions !== []) {
+            $sources = DB::table('account_transactions')
+                ->join('accounts as candidate_account', 'candidate_account.id', '=', 'account_transactions.account_id')
+                ->where('candidate_account.business_id', $businessId)
+                ->whereNull('candidate_account.deleted_at')
+                ->whereIn('account_transactions.id', $accountTransactions)
+                ->whereNull('account_transactions.deleted_at')
+                ->get([
+                    'account_transactions.id',
+                    'account_transactions.reff_no',
+                    'account_transactions.operation_date',
+                    'account_transactions.amount',
+                    'account_transactions.type',
+                    'account_transactions.sub_type',
+                    'account_transactions.note',
+                    'candidate_account.name as account_name',
+                    'candidate_account.account_number',
+                ]);
+
+            foreach ($sources as $source) {
+                $references = array_values(array_filter([trim((string) ($source->reff_no ?? ''))]));
+                $details[AccountTransaction::class.'|'.(int) $source->id] = [
+                    'id' => (int) $source->id,
+                    'record_type' => AccountTransaction::class,
+                    'date' => substr((string) $source->operation_date, 0, 10),
+                    'amount' => $source->amount === null ? null : (float) $source->amount,
+                    'base_amount' => null,
+                    'tax_amount' => null,
+                    'references' => $references,
+                    'account_name' => (string) ($source->account_name ?? ''),
+                    'account_number' => (string) ($source->account_number ?? ''),
+                    'transaction_type' => trim((string) ($source->sub_type ?? '').' '.(string) ($source->type ?? '')),
+                    'note' => (string) ($source->note ?? ''),
+                    'label' => 'Mutasi rekening #'.(int) $source->id.($references !== [] ? ' ('.$references[0].')' : ''),
+                ];
+            }
+        }
+
+        return $details;
     }
 
     private function validateJournalImportDraftData(array $draft_data, int $business_id, string $source_type, ?int $import_id = null): array
@@ -1049,6 +1274,7 @@ class JournalEntryController extends Controller
         $analysis['source_link_review_count'] = $analysis['source_link_review_count'] ?? 0;
         $analysis['source_link_unmatched_count'] = $analysis['source_link_unmatched_count'] ?? 0;
         $analysis['source_link_ambiguous_count'] = $analysis['source_link_ambiguous_count'] ?? 0;
+        $analysis['source_link_suggested_count'] = $analysis['source_link_suggested_count'] ?? 0;
 
         return $analysis;
     }
@@ -1968,6 +2194,7 @@ class JournalEntryController extends Controller
         $source_link_matched_count = (int) ($source_link_counts['matched'] ?? 0);
         $source_link_unmatched_count = (int) ($source_link_counts['unmatched'] ?? 0);
         $source_link_ambiguous_count = (int) ($source_link_counts['ambiguous'] ?? 0);
+        $source_link_suggested_count = (int) ($source_link_counts['suggested'] ?? 0);
         $duplicate_entry_count = count(array_filter($entries, function ($entry) {
             return ! empty($entry['is_duplicate']) || ! empty($entry['source_identity_conflict']);
         }));
@@ -1984,7 +2211,8 @@ class JournalEntryController extends Controller
             'source_link_matched_count' => $source_link_matched_count,
             'source_link_unmatched_count' => $source_link_unmatched_count,
             'source_link_ambiguous_count' => $source_link_ambiguous_count,
-            'source_link_review_count' => $source_link_unmatched_count + $source_link_ambiguous_count,
+            'source_link_suggested_count' => $source_link_suggested_count,
+            'source_link_review_count' => $source_link_unmatched_count + $source_link_ambiguous_count + $source_link_suggested_count,
             'missing_accounts' => array_values($missing_accounts),
             'entries' => $entries,
         ];
@@ -2077,29 +2305,57 @@ class JournalEntryController extends Controller
             if ($sourceNumbers !== [] || $numericIds !== []) {
                 if ($definition['model'] === 'transaction') {
                     $query = DB::table('transactions')
-                        ->where('business_id', $business_id)
-                        ->whereIn('type', $definition['types'])
+                        ->leftJoin('contacts as source_contact', function ($join) use ($business_id) {
+                            $join->on('source_contact.id', '=', 'transactions.contact_id')
+                                ->where('source_contact.business_id', '=', $business_id);
+                        })
+                        ->leftJoin('business_locations as source_location', function ($join) use ($business_id) {
+                            $join->on('source_location.id', '=', 'transactions.location_id')
+                                ->where('source_location.business_id', '=', $business_id);
+                        })
+                        ->leftJoin('expense_categories as source_expense_category', function ($join) use ($business_id) {
+                            $join->on('source_expense_category.id', '=', 'transactions.expense_category_id')
+                                ->where('source_expense_category.business_id', '=', $business_id);
+                        })
+                        ->where('transactions.business_id', $business_id)
+                        ->whereIn('transactions.type', $definition['types'])
                         ->where(function ($query) use ($sourceNumbers, $numericIds) {
                             if ($sourceNumbers !== []) {
-                                $query->whereIn('invoice_no', $sourceNumbers)
-                                    ->orWhereIn('ref_no', $sourceNumbers);
+                                $query->whereIn('transactions.invoice_no', $sourceNumbers)
+                                    ->orWhereIn('transactions.ref_no', $sourceNumbers);
                             }
                             if ($numericIds !== []) {
                                 $method = $sourceNumbers === [] ? 'whereIn' : 'orWhereIn';
-                                $query->{$method}('id', $numericIds);
+                                $query->{$method}('transactions.id', $numericIds);
                             }
                         })
                         ->select(
-                            'id',
-                            'invoice_no as reference_one',
-                            'ref_no as reference_two',
-                            'transaction_date as source_date',
-                            'final_total as source_amount'
+                            'transactions.id',
+                            'transactions.type as source_transaction_type',
+                            'transactions.invoice_no as reference_one',
+                            'transactions.ref_no as reference_two',
+                            'transactions.transaction_date as source_date',
+                            'transactions.final_total as source_amount',
+                            'transactions.total_before_tax as source_base_amount',
+                            'transactions.tax_amount as source_tax_amount',
+                            'transactions.contact_id as source_contact_id',
+                            'source_contact.name as source_contact_name',
+                            'source_contact.supplier_business_name as source_supplier_name',
+                            'source_location.name as source_location_name',
+                            'source_expense_category.name as source_category_name'
                         );
-                    $candidates = $query->get()->map(fn ($row) => $this->journalSourceCandidate($row, $definition['record_type'], ['reference_one', 'reference_two']));
+                    $candidates = $query->get()->map(fn ($row) => $this->journalSourceCandidate($row, $definition['record_type'], ['reference_one', 'reference_two'], $sourceType));
                 } elseif ($definition['model'] === 'payment') {
                     $query = DB::table('transaction_payments')
                         ->join('transactions as source_transactions', 'source_transactions.id', '=', 'transaction_payments.transaction_id')
+                        ->leftJoin('accounts as source_payment_account', function ($join) use ($business_id) {
+                            $join->on('source_payment_account.id', '=', 'transaction_payments.account_id')
+                                ->where('source_payment_account.business_id', '=', $business_id);
+                        })
+                        ->leftJoin('contacts as source_contact', function ($join) use ($business_id) {
+                            $join->on('source_contact.id', '=', 'source_transactions.contact_id')
+                                ->where('source_contact.business_id', '=', $business_id);
+                        })
                         ->where('source_transactions.business_id', $business_id)
                         ->whereIn('source_transactions.type', $definition['types'])
                         ->where(function ($query) use ($sourceNumbers, $numericIds) {
@@ -2116,13 +2372,26 @@ class JournalEntryController extends Controller
                             'transaction_payments.payment_ref_no as reference_one',
                             DB::raw('NULL as reference_two'),
                             'transaction_payments.paid_on as source_date',
-                            'transaction_payments.amount as source_amount'
+                            'transaction_payments.amount as source_amount',
+                            'transaction_payments.method as source_payment_method',
+                            'transaction_payments.account_id as source_account_id',
+                            'source_payment_account.name as source_account_name',
+                            'source_transactions.type as source_transaction_type',
+                            'source_transactions.invoice_no as source_invoice_no',
+                            'source_transactions.ref_no as source_invoice_reference',
+                            'source_contact.name as source_contact_name',
+                            'source_contact.supplier_business_name as source_supplier_name',
+                            DB::raw('NULL as source_base_amount'),
+                            DB::raw('NULL as source_tax_amount'),
+                            DB::raw('NULL as source_location_name'),
+                            DB::raw('NULL as source_category_name')
                         );
-                    $candidates = $query->get()->map(fn ($row) => $this->journalSourceCandidate($row, $definition['record_type'], ['reference_one']));
+                    $candidates = $query->get()->map(fn ($row) => $this->journalSourceCandidate($row, $definition['record_type'], ['reference_one'], $sourceType));
                 } else {
                     $query = DB::table('account_transactions')
                         ->join('accounts as source_accounts', 'source_accounts.id', '=', 'account_transactions.account_id')
                         ->where('source_accounts.business_id', $business_id)
+                        ->whereNull('source_accounts.deleted_at')
                         ->where('account_transactions.sub_type', $definition['sub_type'])
                         ->whereNull('account_transactions.deleted_at')
                         ->where(function ($query) use ($sourceNumbers, $numericIds) {
@@ -2139,9 +2408,22 @@ class JournalEntryController extends Controller
                             'account_transactions.reff_no as reference_one',
                             DB::raw('NULL as reference_two'),
                             'account_transactions.operation_date as source_date',
-                            'account_transactions.amount as source_amount'
+                            'account_transactions.amount as source_amount',
+                            'source_accounts.name as source_account_name',
+                            'source_accounts.account_number as source_account_number',
+                            'account_transactions.note as source_note',
+                            'account_transactions.transfer_transaction_id as source_transfer_transaction_id',
+                            DB::raw('NULL as source_base_amount'),
+                            DB::raw('NULL as source_tax_amount'),
+                            DB::raw('NULL as source_contact_name'),
+                            DB::raw('NULL as source_supplier_name'),
+                            DB::raw('NULL as source_location_name'),
+                            DB::raw('NULL as source_category_name'),
+                            DB::raw('NULL as source_payment_method'),
+                            DB::raw('NULL as source_invoice_no'),
+                            DB::raw('NULL as source_invoice_reference')
                         );
-                    $candidates = $query->get()->map(fn ($row) => $this->journalSourceCandidate($row, $definition['record_type'], ['reference_one']));
+                    $candidates = $query->get()->map(fn ($row) => $this->journalSourceCandidate($row, $definition['record_type'], ['reference_one'], $sourceType));
                 }
             }
 
@@ -2158,45 +2440,48 @@ class JournalEntryController extends Controller
 
             foreach ($typedEntries as [$key, $entry]) {
                 $sourceNumber = trim((string) ($entry['source_number'] ?? ''));
-                $matches = collect($sourceMatcher->match(
+                $matches = $sourceMatcher->match(
                     $sourceNumber,
                     (string) ($entry['date'] ?? ''),
                     (float) ($entry['debit_total'] ?? 0),
                     $candidateIndex
-                ));
+                );
+                $matchDecision = app(\Modules\Accounting\Services\JournalImportSourceMatchPolicy::class)
+                    ->resolve($matches, $sourceType, $entry, $business_id);
+                $matches = $matchDecision['candidates'];
+                $selectedCandidate = $matchDecision['selected_candidate'];
+                $candidateLabels = collect($matches)->take(5)->pluck('label')->values()->all();
 
-                if ($matches->count() === 1) {
-                    $candidate = $matches->first();
-                    $validationNotes = [];
-                    if ($candidate['date'] !== $entry['date']) {
-                        $validationNotes[] = 'tanggal sumber berbeda dari tanggal Journal';
-                    }
-                    if (abs((float) $candidate['amount'] - (float) $entry['debit_total']) > 0.01) {
-                        $validationNotes[] = 'total sumber berbeda dari total debit Journal';
-                    }
-                    $linkNote = 'Sumber unik ditemukan berdasarkan jenis dan nomor dokumen.';
-                    if ($validationNotes !== []) {
-                        $linkNote .= ' Perlu ditinjau: '.implode('; ', $validationNotes).'.';
-                    }
+                if ($matchDecision['status'] === 'matched') {
                     $links[$key] = [
                         'source_link_status' => 'matched',
-                        'source_record_type' => $candidate['record_type'],
-                        'source_record_id' => $candidate['id'],
-                        'source_link_note' => $linkNote,
-                        'source_link_label' => $candidate['label'],
-                        'source_link_candidates' => [$candidate['label']],
-                        'source_link_candidate_details' => [$candidate],
+                        'source_link_default_action' => $matchDecision['default_action'],
+                        'source_record_type' => $selectedCandidate['record_type'],
+                        'source_record_id' => $selectedCandidate['id'],
+                        'source_link_note' => $matchDecision['note'],
+                        'source_link_label' => $selectedCandidate['label'],
+                        'source_link_candidates' => $candidateLabels,
+                        'source_link_candidate_details' => $matches,
                     ];
-                } elseif ($matches->count() > 1) {
-                    $labels = $matches->take(5)->pluck('label')->values()->all();
+                } elseif ($matchDecision['status'] === 'ambiguous') {
                     $links[$key] = [
                         'source_link_status' => 'ambiguous',
                         'source_record_type' => null,
                         'source_record_id' => null,
-                        'source_link_note' => 'Ditemukan '.$matches->count().' sumber yang cocok; relasi perlu ditinjau.',
+                        'source_link_note' => $matchDecision['note'],
                         'source_link_label' => null,
-                        'source_link_candidates' => $labels,
-                        'source_link_candidate_details' => $matches->values()->all(),
+                        'source_link_candidates' => $candidateLabels,
+                        'source_link_candidate_details' => $matches,
+                    ];
+                } elseif ($matchDecision['status'] === 'suggested') {
+                    $links[$key] = [
+                        'source_link_status' => 'suggested',
+                        'source_record_type' => null,
+                        'source_record_id' => null,
+                        'source_link_note' => $matchDecision['note'],
+                        'source_link_label' => null,
+                        'source_link_candidates' => $candidateLabels,
+                        'source_link_candidate_details' => $matches,
                     ];
                 } else {
                     $links[$key] = $this->unmatchedJournalSourceLink(
@@ -2210,7 +2495,7 @@ class JournalEntryController extends Controller
         return $links;
     }
 
-    private function journalSourceCandidate($row, string $recordType, array $referenceFields): array
+    private function journalSourceCandidate($row, string $recordType, array $referenceFields, ?string $sourceType = null): array
     {
         $references = [];
         foreach ($referenceFields as $field) {
@@ -2222,14 +2507,49 @@ class JournalEntryController extends Controller
         $id = (int) $row->id;
         $referenceLabel = $references[0] ?? null;
 
+        $amount = $row->source_amount ?? null;
+        $baseAmount = $row->source_base_amount ?? null;
+        $taxAmount = $row->source_tax_amount ?? null;
+        $contactName = trim((string) (($row->source_supplier_name ?? '') ?: ($row->source_contact_name ?? '')));
+        $recordLabel = $this->journalSourceLabel($sourceType) ?: class_basename($recordType);
+
         return [
             'id' => $id,
             'record_type' => $recordType,
             'date' => substr((string) $row->source_date, 0, 10),
-            'amount' => (float) $row->source_amount,
+            'amount' => $amount === null ? null : (float) $amount,
+            'base_amount' => $baseAmount === null ? null : (float) $baseAmount,
+            'tax_amount' => $taxAmount === null ? null : (float) $taxAmount,
             'references' => $references,
-            'label' => class_basename($recordType).' #'.$id.($referenceLabel !== null && $referenceLabel !== (string) $id ? ' ('.$referenceLabel.')' : ''),
+            'contact_name' => $contactName,
+            'location_name' => (string) ($row->source_location_name ?? ''),
+            'category_name' => (string) ($row->source_category_name ?? ''),
+            'account_name' => (string) ($row->source_account_name ?? ''),
+            'account_number' => (string) ($row->source_account_number ?? ''),
+            'payment_method' => (string) ($row->source_payment_method ?? ''),
+            'invoice_reference' => (string) ($row->source_invoice_no ?? $row->source_invoice_reference ?? ''),
+            'transaction_type' => (string) ($row->source_transaction_type ?? ''),
+            'note' => (string) ($row->source_note ?? ''),
+            'label' => $recordLabel.' #'.$id.($referenceLabel !== null && $referenceLabel !== (string) $id ? ' ('.$referenceLabel.')' : ''),
         ];
+    }
+
+    private function journalSourceLabel(?string $sourceType): ?string
+    {
+        return [
+            'Sales Invoice' => 'Penjualan',
+            'Purchase Invoice' => 'Pembelian',
+            'Expense' => 'Expense',
+            'Receive Payment' => 'Penerimaan pembayaran',
+            'Purchase Payment' => 'Pembayaran pembelian',
+            'Bank Deposit' => 'Deposit bank',
+            'Bank Transfer' => 'Transfer bank',
+            'Bank Withdrawal' => 'Penarikan bank',
+            'Stock Adjustment' => 'Penyesuaian stok',
+            'Stock In/Out' => 'Pergerakan stok',
+            'Opening Balance' => 'Saldo awal',
+            'Reversal' => 'Pembalikan',
+        ][$sourceType ?? ''] ?? null;
     }
 
     private function applyJournalSourceLinkToMapping(AccountingAccTransMapping $mapping, array $entry): void

@@ -49,8 +49,10 @@ class JournalImportDraftServiceTest extends TestCase
 
         $this->assertSame('journal', $service->defaultActionFor(['source_type' => 'Journal Entry']));
         $this->assertSame('link', $service->defaultActionFor(['source_type' => 'Sales Invoice', 'source_link_status' => 'matched']));
+        $this->assertSame('update', $service->defaultActionFor(['source_type' => 'Expense', 'source_link_status' => 'matched', 'source_link_default_action' => 'update']));
         $this->assertSame('create', $service->defaultActionFor(['source_type' => 'Expense', 'source_link_status' => 'unmatched']));
         $this->assertSame('review', $service->defaultActionFor(['source_type' => 'Receive Payment', 'source_link_status' => 'ambiguous']));
+        $this->assertSame('review', $service->defaultActionFor(['source_type' => 'Expense', 'source_link_status' => 'suggested']));
     }
 
     public function test_ambiguous_source_requires_a_known_candidate_or_explicit_create(): void
@@ -69,6 +71,42 @@ class JournalImportDraftServiceTest extends TestCase
         $this->assertTrue($service->isValidSourceDecision($entry, 'create', null, null));
         $this->assertFalse($service->isValidSourceDecision($entry, 'update', 'App\\Transaction', 99));
         $this->assertFalse($service->isValidSourceDecision($entry, 'create', 'App\\Transaction', 32));
+    }
+
+    public function test_suggested_candidate_allows_explicit_source_choice_or_create(): void
+    {
+        $service = new JournalImportDraftService();
+        $entry = [
+            'source_type' => 'Expense',
+            'source_link_status' => 'suggested',
+            'source_link_candidate_details' => [
+                ['record_type' => 'App\\Transaction', 'id' => 63],
+            ],
+        ];
+
+        $this->assertSame('review', $service->defaultActionFor($entry));
+        $this->assertTrue($service->isValidSourceDecision($entry, 'update', 'App\\Transaction', 63));
+        $this->assertTrue($service->isValidSourceDecision($entry, 'link', 'App\\Transaction', 63));
+        $this->assertTrue($service->isValidSourceDecision($entry, 'create', null, null));
+    }
+
+    public function test_default_location_is_the_first_active_location_in_the_same_business(): void
+    {
+        $this->useSqliteDatabase();
+        $this->database->schema()->create('business_locations', function ($table) {
+            $table->increments('id');
+            $table->unsignedInteger('business_id');
+            $table->boolean('is_active')->default(true);
+            $table->dateTime('deleted_at')->nullable();
+        });
+        DB::table('business_locations')->insert([
+            ['id' => 8, 'business_id' => 3, 'is_active' => 1, 'deleted_at' => null],
+            ['id' => 4, 'business_id' => 3, 'is_active' => 0, 'deleted_at' => null],
+            ['id' => 2, 'business_id' => 4, 'is_active' => 1, 'deleted_at' => null],
+        ]);
+
+        $this->assertSame(8, (new JournalImportDraftService())->defaultActiveLocationId(3));
+        $this->assertNull((new JournalImportDraftService())->defaultActiveLocationId(5));
     }
 
     public function test_persisting_entries_twice_keeps_one_resumable_row(): void

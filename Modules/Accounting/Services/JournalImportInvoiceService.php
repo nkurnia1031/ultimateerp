@@ -175,9 +175,9 @@ class JournalImportInvoiceService
         }
 
         if ($action === 'link') {
-            if (empty($transaction->contact_id) || empty($transaction->location_id)
+            if (empty($transaction->location_id)
                 || empty($transaction->transaction_date) || $transaction->final_total === null) {
-                throw new \RuntimeException('Invoice pilihan belum memiliki customer/supplier, lokasi, tanggal, atau total lengkap; pilih Lengkapi sumber.');
+                throw new \RuntimeException('Invoice pilihan belum memiliki lokasi, tanggal, atau total lengkap; pilih Lengkapi sumber.');
             }
             if ($this->existingLines($transaction) === []) {
                 throw new \RuntimeException('Invoice pilihan belum memiliki detail produk; pilih Lengkapi sumber.');
@@ -197,12 +197,14 @@ class JournalImportInvoiceService
 
         $details = $this->normalizedDetails($draftData['details'] ?? [], $businessId);
         $existingLines = $transaction ? $this->existingLines($transaction) : [];
+        $effectiveLocationId = ! empty($transaction->location_id)
+            ? (int) $transaction->location_id
+            : (! empty($draftData['location_id'])
+                ? (int) $draftData['location_id']
+                : $this->draftService->defaultActiveLocationId($businessId));
 
         if ($action === 'create') {
-            if (empty($draftData['contact_id'])) {
-                throw new \RuntimeException('Pilih customer atau supplier sebelum membuat invoice.');
-            }
-            if (empty($draftData['location_id'])) {
+            if ($effectiveLocationId === null) {
                 throw new \RuntimeException('Pilih lokasi sebelum membuat invoice.');
             }
             if ($details === []) {
@@ -216,10 +218,7 @@ class JournalImportInvoiceService
             if ($existingLines !== [] && $details !== [] && ! $this->sameLines($existingLines, $details, $transactionType)) {
                 throw new \RuntimeException('Detail produk berbeda dari invoice yang sudah terisi; tinjau invoice sebelum melanjutkan.');
             }
-            if (empty($transaction->contact_id) && empty($draftData['contact_id'])) {
-                throw new \RuntimeException('Pilih customer atau supplier untuk melengkapi invoice.');
-            }
-            if (empty($transaction->location_id) && empty($draftData['location_id'])) {
+            if (empty($transaction->location_id) && $effectiveLocationId === null) {
                 throw new \RuntimeException('Pilih lokasi untuk melengkapi invoice.');
             }
             if (empty($transaction->transaction_date) && $this->normalizedDateOrNull($entry['date'] ?? null) === null) {
@@ -241,11 +240,12 @@ class JournalImportInvoiceService
             $this->assertTaxDoesNotConflict($transaction, $existingLines, $tax, $totals);
         }
         if ($forPreview && $details === [] && $existingLines === []) {
-            return compact('action', 'transaction', 'transactionType', 'totals') + ['lines' => []];
+            return compact('action', 'transaction', 'transactionType', 'totals', 'effectiveLocationId') + ['lines' => []];
         }
 
         return compact('action', 'transaction', 'transactionType', 'totals') + [
             'draft_data' => $draftData,
+            'location_id' => $effectiveLocationId,
             'details' => $details,
             'existing_lines' => $existingLines,
             'tax' => $tax,
@@ -261,16 +261,16 @@ class JournalImportInvoiceService
         $date = $this->normalizedDate($entry['date'] ?? null);
         $sourceNumber = trim((string) ($entry['source_number'] ?? $row->source_number ?? ''));
         $invoiceNo = $transactionType === 'sell'
-            ? $this->transactionUtil->getInvoiceNumber((int) $import->business_id, 'draft', (int) $draftData['location_id'], null, 'sell')
+            ? $this->transactionUtil->getInvoiceNumber((int) $import->business_id, 'draft', (int) $prepared['location_id'], null, 'sell')
             : null;
         $refNo = $sourceNumber !== '' ? $sourceNumber : null;
 
         $transaction = Transaction::create([
             'business_id' => (int) $import->business_id,
-            'location_id' => (int) $draftData['location_id'],
+            'location_id' => (int) $prepared['location_id'],
             'type' => $transactionType,
             'status' => 'draft',
-            'contact_id' => (int) $draftData['contact_id'],
+            'contact_id' => $draftData['contact_id'] ?? null,
             'invoice_no' => $invoiceNo,
             'ref_no' => $refNo,
             'transaction_date' => $date,
@@ -317,7 +317,7 @@ class JournalImportInvoiceService
         }
         $fields = [
             'contact_id' => $draftData['contact_id'] ?? null,
-            'location_id' => $draftData['location_id'] ?? null,
+            'location_id' => $prepared['location_id'] ?? null,
             'transaction_date' => $this->normalizedDateOrNull($entry['date'] ?? null),
             'invoice_no' => $invoiceNo,
             'ref_no' => $entry['source_number'] ?? null,

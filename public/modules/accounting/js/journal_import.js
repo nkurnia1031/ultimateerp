@@ -395,7 +395,7 @@
             actions = ['journal'];
         } else if (row.source_link_status === 'matched') {
             actions = ['update', 'link', 'review'];
-        } else if (row.source_link_status === 'ambiguous') {
+        } else if (row.source_link_status === 'ambiguous' || row.source_link_status === 'suggested') {
             actions = ['update', 'link', 'create', 'review'];
         } else {
             actions = ['create', 'review'];
@@ -420,6 +420,109 @@
         }
 
         return candidates;
+    }
+
+    function candidateAmount(value) {
+        return value === null || value === undefined || value === '' ? '—' : formatDraftNumber(value);
+    }
+
+    function appendCandidateField(container, label, value) {
+        if (value === null || value === undefined || String(value).trim() === '') return;
+        container.append($('<p class="small">').append($('<strong>').text(label + ': ')).append(document.createTextNode(String(value))));
+    }
+
+    function openSourceCandidates(row) {
+        var candidates = candidatesForRow(row);
+        var rowElement = $('#journal_import_draft_table tbody tr').filter(function () {
+            return String($(this).data('row-id')) === String(row.id);
+        });
+        var blocked = ['queued', 'running', 'completed'].indexOf(row.processing_status) !== -1;
+        var journalBox = $('#journal_import_candidates_journal').empty();
+        var list = $('#journal_import_candidates_list').empty();
+        $('#journal_import_candidates_summary').text(
+            row.source_type + ' #' + (row.source_number || '—') + ' · ' + (row.date || 'Tanggal kosong')
+                + ' · Total Journal ' + formatDraftNumber(row.debit_total)
+        );
+
+        var journalTable = $('<table class="table table-condensed table-bordered" style="margin-bottom:0">');
+        journalTable.append($('<thead>').append($('<tr>')
+            .append($('<th>').text('Komponen Journal'))
+            .append($('<th class="text-right">').text('Debit'))
+            .append($('<th class="text-right">').text('Kredit'))));
+        var journalBody = $('<tbody>');
+        (Array.isArray(row.journal_components) ? row.journal_components : []).forEach(function (component) {
+            var account = [component.account_no, component.account_name].filter(Boolean).join(' · ') || 'Akun tanpa nama';
+            journalBody.append($('<tr>')
+                .append($('<td>').text((component.is_tax ? 'Pajak · ' : 'Basis · ') + account))
+                .append($('<td class="text-right">').text(formatDraftNumber(component.debit)))
+                .append($('<td class="text-right">').text(formatDraftNumber(component.credit))));
+        });
+        journalTable.append(journalBody);
+        journalBox.append(journalTable);
+
+        $('#journal_import_candidates_empty').toggleClass('hide', candidates.length > 0);
+        $('.journal-draft-candidate-create').toggle(row.source_link_status !== 'matched').prop('disabled', blocked);
+        if (!candidates.length) {
+            list.append($('<p class="text-muted">').text('Tidak ada kandidat dengan referensi ini. Pastikan detail produk, kategori, akun, dan lokasi sebelum membuat transaksi baru.'));
+        }
+
+        candidates.forEach(function (candidate, index) {
+            var panel = $('<div class="panel panel-default">');
+            var heading = $('<div class="panel-heading">');
+            heading.append($('<strong>').text((index + 1) + '. ' + (candidate.label || ('Sumber #' + candidate.id))));
+            if (row.source_record_type === candidate.record_type && Number(row.source_record_id) === Number(candidate.id)) {
+                heading.append(' ').append($('<span class="label label-success">').text('Dipilih'));
+            }
+            heading.append($('<span class="pull-right text-muted">').text(candidate.date_match ? 'Tanggal cocok' : 'Tanggal berbeda'));
+            panel.append(heading);
+
+            var body = $('<div class="panel-body">');
+            var amountDifference = candidate.amount_difference;
+            var sourceSummary = $('<div class="row">');
+            [
+                ['Tanggal', candidate.date || '—'],
+                ['Referensi', (candidate.references || []).join(', ') || '—'],
+                ['Basis', candidateAmount(candidate.base_amount)],
+                ['Pajak', candidateAmount(candidate.tax_amount)],
+                ['Total', candidateAmount(candidate.amount)],
+                ['Selisih total vs Journal', amountDifference === null ? '—' : formatDraftNumber(Number(candidate.amount) - Number(row.debit_total || 0))]
+            ].forEach(function (field) {
+                sourceSummary.append($('<div class="col-sm-4 col-md-4">')
+                    .append($('<p class="small">').append($('<strong>').text(field[0] + ': ')).append(document.createTextNode(field[1]))));
+            });
+            body.append(sourceSummary);
+
+            var metadata = $('<div class="row">');
+            appendCandidateField(metadata, 'Kategori', candidate.category_name);
+            appendCandidateField(metadata, 'Kontak', candidate.contact_name);
+            appendCandidateField(metadata, 'Lokasi', candidate.location_name);
+            appendCandidateField(metadata, 'Akun', [candidate.account_number, candidate.account_name].filter(Boolean).join(' · '));
+            appendCandidateField(metadata, 'Metode pembayaran', candidate.payment_method);
+            appendCandidateField(metadata, 'Invoice terkait', candidate.invoice_reference);
+            appendCandidateField(metadata, 'Jenis transaksi', candidate.transaction_type);
+            appendCandidateField(metadata, 'Catatan', candidate.note);
+            body.append(metadata);
+
+            var actions = $('<div class="text-right">');
+            var linkButton = $('<button type="button" class="btn btn-default btn-sm journal-draft-candidate-select">')
+                .attr('data-action', 'link')
+                .attr('data-source-type', candidate.record_type)
+                .attr('data-source-id', candidate.id)
+                .text('Tautkan saja')
+                .prop('disabled', blocked);
+            var updateButton = $('<button type="button" class="btn btn-primary btn-sm journal-draft-candidate-select" style="margin-left:6px">')
+                .attr('data-action', 'update')
+                .attr('data-source-type', candidate.record_type)
+                .attr('data-source-id', candidate.id)
+                .text('Update dari Journal')
+                .prop('disabled', blocked);
+            actions.append(linkButton).append(updateButton);
+            body.append(actions);
+            panel.append(body);
+            list.append(panel);
+        });
+
+        $('#journal_import_candidates_modal').data('draft-row', row).data('row-element', rowElement).modal('show');
     }
 
     function renderDraftRow(row) {
@@ -502,22 +605,17 @@
         } else {
             var candidates = candidatesForRow(row);
             if (candidates.length) {
-                var candidateSelect = $('<select class="form-control input-sm journal-draft-source" aria-label="Pilih sumber transaksi">');
-                candidateSelect.append($('<option>').val('').text('Pilih sumber...'));
-                candidates.forEach(function (candidate) {
-                    var value = String(candidate.record_type || '') + '|' + String(candidate.id || '');
-                    candidateSelect.append($('<option>').val(value).text(candidate.label || ('Sumber #' + candidate.id)));
-                });
-                if (row.source_link_status === 'ambiguous') {
-                    candidateSelect.append($('<option>').val('create').text('Buat baru secara eksplisit'));
+                var selectedCandidate = candidates.filter(function (candidate) {
+                    return row.source_record_type === candidate.record_type
+                        && Number(row.source_record_id) === Number(candidate.id);
+                })[0];
+                if (selectedCandidate) {
+                    sourceCell.append($('<strong class="small" style="display:block">').text('Dipilih: ' + (selectedCandidate.label || ('Sumber #' + selectedCandidate.id))));
                 }
-                if (row.source_record_type && row.source_record_id) {
-                    candidateSelect.val(String(row.source_record_type) + '|' + String(row.source_record_id));
-                } else if (row.source_action === 'create') {
-                    candidateSelect.val('create');
-                }
-                candidateSelect.prop('disabled', ['queued', 'running', 'completed'].indexOf(row.processing_status) !== -1);
-                sourceCell.append(candidateSelect);
+                var candidateButton = $('<button type="button" class="btn btn-default btn-xs journal-draft-show-candidates">')
+                    .text((selectedCandidate ? 'Lihat' : 'Pilih') + ' kandidat (' + candidates.length + ')')
+                    .prop('disabled', ['queued', 'running', 'completed'].indexOf(row.processing_status) !== -1);
+                sourceCell.append(candidateButton);
             } else {
                 sourceCell.append($('<span>').text(row.source_link_status === 'unmatched'
                     ? 'Tidak ditemukan; baris akan dibuat sebagai transaksi baru.'
@@ -663,7 +761,7 @@
         });
     }
 
-    function saveDraftRow(rowId, payload, rowElement) {
+    function saveDraftRow(rowId, payload, rowElement, afterSave) {
         var draft = $('#journal_import_draft');
         var status = $('#journal_import_draft_status');
         status.removeClass('text-danger').text('Menyimpan perubahan...');
@@ -680,10 +778,12 @@
             if (response.success && response.row) {
                 draftRowsById[String(rowId)] = response.row;
                 if (rowElement) {
-                    rowElement.removeClass('journal-draft-saving').addClass('success');
-                    window.setTimeout(function () { rowElement.removeClass('success'); }, 900);
+                    var updatedElement = renderDraftRow(response.row).addClass('success');
+                    rowElement.replaceWith(updatedElement);
+                    window.setTimeout(function () { updatedElement.removeClass('success'); }, 900);
                 }
                 status.text(response.msg || 'Draft tersimpan.');
+                if (typeof afterSave === 'function') afterSave(response.row);
                 window.setTimeout(function () {
                     if (status.text() === (response.msg || 'Draft tersimpan.')) {
                         status.text('Draft tersimpan otomatis.');
@@ -694,14 +794,7 @@
             if (rowElement) {
                 rowElement.removeClass('journal-draft-saving');
                 var savedRow = rowElement.data('draft-row') || {};
-                rowElement.find('.journal-draft-action').val(savedRow.source_action || 'review');
-                rowElement.find('.journal-draft-reviewed').prop('checked', Boolean(savedRow.is_reviewed));
-                var savedSource = savedRow.source_action === 'create'
-                    ? 'create'
-                    : (savedRow.source_record_type && savedRow.source_record_id
-                        ? savedRow.source_record_type + '|' + savedRow.source_record_id
-                        : '');
-                rowElement.find('.journal-draft-source').val(savedSource);
+                rowElement.replaceWith(renderDraftRow(savedRow));
             }
             var message = xhr.responseJSON && xhr.responseJSON.msg ? xhr.responseJSON.msg : 'Perubahan belum tersimpan. Coba lagi.';
             status.addClass('text-danger').text(message);
@@ -709,12 +802,11 @@
     }
 
     function selectedSource(rowElement) {
-        var value = rowElement.find('.journal-draft-source').val();
-        if (!value || value === 'create') {
-            return { type: null, id: null };
-        }
-        var parts = String(value).split('|');
-        return { type: parts[0] || null, id: Number(parts[1]) || null };
+        var row = rowElement.data('draft-row') || {};
+        return {
+            type: row.source_record_type || null,
+            id: Number(row.source_record_id) || null
+        };
     }
 
     function actionPayload(rowElement, action) {
@@ -954,7 +1046,7 @@
         $('#journal_import_detail_error').addClass('hide').empty();
         $('#journal_draft_details_table tbody').empty();
         showDraftFields(row.source_type, data.contact_id || null);
-        configureDraftSelect('#journal_draft_location', 'location', row.source_type, data.location_id || null);
+        configureDraftSelect('#journal_draft_location', 'location', row.source_type, data.location_id || row.default_location_id || null);
         configureDraftSelect('#journal_draft_payment_account', 'payment_account', row.source_type, data.payment_account_id || null);
         configureDraftSelect('#journal_draft_transfer_account', 'transfer_account', row.source_type, data.transfer_account_id || null);
         configureDraftSelect('#journal_draft_reversal_target', 'reversal_target', row.source_type, data.reversal_target_id || null);
@@ -1021,12 +1113,40 @@
         saveDraftRow(rowElement.data('row-id'), actionPayload(rowElement, $(this).val()), rowElement);
     });
 
-    $(document).on('change', '.journal-draft-source', function () {
-        var rowElement = $(this).closest('tr');
-        var value = $(this).val();
-        var action = value === 'create' ? 'create' : (value ? 'update' : 'review');
-        rowElement.find('.journal-draft-action').val(action);
-        saveDraftRow(rowElement.data('row-id'), actionPayload(rowElement, action), rowElement);
+    $(document).on('click', '.journal-draft-show-candidates', function () {
+        var row = $(this).closest('tr').data('draft-row');
+        if (row) openSourceCandidates(row);
+    });
+
+    $(document).on('click', '.journal-draft-candidate-select', function () {
+        var modal = $('#journal_import_candidates_modal');
+        var row = modal.data('draft-row');
+        var rowElement = modal.data('row-element');
+        if (!row) return;
+        var action = String($(this).data('action') || 'link');
+        var payload = {
+            source_action: action,
+            source_record_type: String($(this).data('source-type') || ''),
+            source_record_id: Number($(this).data('source-id')) || null
+        };
+        saveDraftRow(row.id, payload, rowElement, function () {
+            modal.modal('hide');
+        });
+    });
+
+    $(document).on('click', '.journal-draft-candidate-create', function () {
+        var modal = $('#journal_import_candidates_modal');
+        var row = modal.data('draft-row');
+        var rowElement = modal.data('row-element');
+        if (!row) return;
+        saveDraftRow(row.id, {
+            source_action: 'create',
+            source_record_type: null,
+            source_record_id: null
+        }, rowElement, function (updatedRow) {
+            modal.modal('hide');
+            openDraftDetails(updatedRow);
+        });
     });
 
     $(document).on('change', '.journal-draft-reviewed', function () {

@@ -222,8 +222,10 @@ class JournalImportStockService
             throw new \RuntimeException('Pilih arah pergerakan stok Masuk atau Keluar.');
         }
 
-        $locationId = ! empty($draft['location_id']) ? (int) $draft['location_id'] : (int) ($transaction->location_id ?? 0);
-        if ($locationId < 1 || ! DB::table('business_locations')->where('id', $locationId)->where('business_id', $businessId)->whereNull('deleted_at')->exists()) {
+        $locationId = ! empty($draft['location_id'])
+            ? (int) $draft['location_id']
+            : ((int) ($transaction->location_id ?? 0) ?: (int) ($this->draftService->defaultActiveLocationId($businessId) ?? 0));
+        if ($locationId < 1 || ! DB::table('business_locations')->where('id', $locationId)->where('business_id', $businessId)->where('is_active', 1)->whereNull('deleted_at')->exists()) {
             throw new \RuntimeException('Pilih lokasi/gudang aktif dari business ini.');
         }
         if ($transaction && ! empty($transaction->location_id) && ! empty($draft['location_id'])
@@ -512,9 +514,8 @@ class JournalImportStockService
             throw new \RuntimeException('Record stok pilihan belum memiliki tanggal; pilih Lengkapi sumber.');
         }
         if ($transaction->type === 'opening_balance') {
-            if (empty($transaction->contact_id) || $transaction->final_total === null
-                || ! DB::table('contacts')->where('id', $transaction->contact_id)->where('business_id', $businessId)->whereNull('deleted_at')->exists()) {
-                throw new \RuntimeException('Opening balance pilihan belum memiliki contact atau total; lengkapi sumber sebelum ditautkan.');
+            if ($transaction->final_total === null) {
+                throw new \RuntimeException('Opening balance pilihan belum memiliki total; lengkapi sumber sebelum ditautkan.');
             }
 
             return;

@@ -20,7 +20,7 @@ class JournalImportSourceMatcherTest extends TestCase
         $this->assertSame([11], array_column($matcher->match('11/INV-2026-001', '2026-10-01', 125.50, $index), 'id'));
     }
 
-    public function test_date_and_amount_disambiguation_preserves_ambiguous_matches(): void
+    public function test_candidates_are_ranked_by_date_then_closest_amount_without_hiding_alternatives(): void
     {
         $matcher = new JournalImportSourceMatcher();
         $index = $matcher->indexCandidates([
@@ -33,9 +33,51 @@ class JournalImportSourceMatcherTest extends TestCase
         $amountMatch = $matcher->match('INV-SHARED', '2026-10-03', 250.00, $index);
         $ambiguous = $matcher->match('INV-SHARED', '2026-10-03', 300.00, $index);
 
-        $this->assertSame([21], array_column($dateMatch, 'id'));
-        $this->assertSame([23], array_column($amountMatch, 'id'));
-        $this->assertSame([21, 22, 23], array_column($ambiguous, 'id'));
+        $this->assertSame([21, 22, 23], array_column($dateMatch, 'id'));
+        $this->assertSame([23, 22, 21], array_column($amountMatch, 'id'));
+        $this->assertSame([23, 22, 21], array_column($ambiguous, 'id'));
+        $this->assertTrue($dateMatch[0]['date_match']);
+        $this->assertSame(0.0, $dateMatch[0]['amount_difference']);
+        $this->assertSame(21, $matcher->uniqueExactCandidate($dateMatch, '2026-10-01', 100.00)['id']);
+    }
+
+    public function test_exact_match_is_auto_selectable_only_when_date_and_amount_match_uniquely(): void
+    {
+        $matcher = new JournalImportSourceMatcher();
+        $candidates = [
+            $this->candidate(31, ['INV-EXACT'], '2026-10-01', 100.00),
+            $this->candidate(32, ['INV-EXACT'], '2026-10-02', 100.00),
+        ];
+
+        $ranked = $matcher->rankCandidates($candidates, '2026-10-01', 100.00);
+
+        $this->assertSame(31, $matcher->uniqueExactCandidate($ranked, '2026-10-01', 100.00)['id']);
+        $this->assertNull($matcher->uniqueExactCandidate($ranked, '2026-10-03', 100.00));
+    }
+
+    public function test_equal_ranked_candidates_use_source_id_as_a_stable_tiebreaker(): void
+    {
+        $matcher = new JournalImportSourceMatcher();
+        $ranked = $matcher->rankCandidates([
+            $this->candidate(42, ['INV-TIE'], '2026-10-01', 120.00),
+            $this->candidate(41, ['INV-TIE'], '2026-10-01', 120.00),
+        ], '2026-10-01', 100.00);
+
+        $this->assertSame([41, 42], array_column($ranked, 'id'));
+        $this->assertNull($matcher->uniqueExactCandidate($ranked, '2026-10-01', 100.00));
+    }
+
+    public function test_missing_candidate_amount_is_ranked_last_and_never_counts_as_an_exact_match(): void
+    {
+        $matcher = new JournalImportSourceMatcher();
+        $ranked = $matcher->rankCandidates([
+            ['id' => 52, 'date' => '2026-10-01', 'amount' => null, 'references' => ['INV-MISSING']],
+            $this->candidate(51, ['INV-MISSING'], '2026-10-01', 110.00),
+        ], '2026-10-01', 100.00);
+
+        $this->assertSame([51, 52], array_column($ranked, 'id'));
+        $this->assertNull($ranked[1]['amount_difference']);
+        $this->assertNull($matcher->uniqueExactCandidate($ranked, '2026-10-01', 100.00));
     }
 
     public function test_large_candidate_set_is_indexed_for_direct_reference_lookup(): void

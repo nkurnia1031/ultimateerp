@@ -222,7 +222,7 @@ class JournalImportExpenseService
             : $draftCategoryId;
         $effectiveLocationId = $transaction && ! empty($transaction->location_id)
             ? (int) $transaction->location_id
-            : $draftLocationId;
+            : ($draftLocationId ?: $this->draftService->defaultActiveLocationId($businessId));
         $entryDate = $this->normalizedDateOrNull($entry['date'] ?? null);
         $sourceNumber = trim((string) ($entry['source_number'] ?? $row->source_number ?? ''));
         $journalTotal = $this->journalTotal($entry);

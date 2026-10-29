@@ -37,12 +37,26 @@ class JournalImportDraftService
 
         switch ($entry['source_link_status'] ?? null) {
             case 'matched':
-                return 'link';
+                return in_array(($entry['source_link_default_action'] ?? null), ['link', 'update'], true)
+                    ? $entry['source_link_default_action']
+                    : 'link';
             case 'unmatched':
                 return 'create';
             default:
                 return 'review';
         }
+    }
+
+    public function defaultActiveLocationId(int $businessId): ?int
+    {
+        $locationId = DB::table('business_locations')
+            ->where('business_id', $businessId)
+            ->where('is_active', 1)
+            ->whereNull('deleted_at')
+            ->orderBy('id')
+            ->value('id');
+
+        return $locationId === null ? null : (int) $locationId;
     }
 
     public function isValidSourceDecision(array $entry, string $action, ?string $recordType, ?int $recordId): bool
@@ -59,7 +73,7 @@ class JournalImportDraftService
         }
 
         if ($action === 'create') {
-            return in_array($sourceStatus, ['unmatched', 'ambiguous'], true)
+            return in_array($sourceStatus, ['unmatched', 'suggested', 'ambiguous'], true)
                 && $recordType === null
                 && $recordId === null;
         }
