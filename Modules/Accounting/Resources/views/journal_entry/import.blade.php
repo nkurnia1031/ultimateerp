@@ -582,12 +582,26 @@
                         @php
                             $isJournalImportActive = \Modules\Accounting\Entities\JournalImportBatchStatus::isActive((string) $import->status);
                             $isJournalImportWaiting = \Modules\Accounting\Entities\JournalImportBatchStatus::isWaiting((string) $import->status);
-                            $journalImportPercent = !empty($import->total_entries)
-                                ? min(100, (int) round(($import->processed_entries / $import->total_entries) * 100))
-                                : 0;
-                            if ($import->status === 'reconciling') {
-                                $journalImportPercent = min(95, $journalImportPercent);
-                            }
+                            $journalImportProgressData = json_decode((string) ($import->progress_data ?? ''), true) ?: [];
+                            $journalImportPhase = $journalImportProgressData['phase'] ?? null;
+                            $journalImportPhaseProgress = is_string($journalImportPhase)
+                                ? ($journalImportProgressData['phases'][$journalImportPhase] ?? null)
+                                : null;
+                            $journalImportProgressTotal = is_array($journalImportPhaseProgress)
+                                ? (int) ($journalImportPhaseProgress['total'] ?? 0)
+                                : null;
+                            $journalImportProgressIndeterminate = is_array($journalImportPhaseProgress)
+                                && $journalImportProgressTotal <= 0;
+                            $journalImportPercent = is_array($journalImportPhaseProgress)
+                                ? ($journalImportProgressTotal > 0
+                                    ? min(100, (int) round(((int) ($journalImportPhaseProgress['processed'] ?? 0) / $journalImportProgressTotal) * 100))
+                                    : 0)
+                                : (!empty($import->total_entries)
+                                    ? min(100, (int) round(((int) $import->processed_entries / (int) $import->total_entries) * 100))
+                                    : 0);
+                            $journalImportProgressCount = is_array($journalImportPhaseProgress)
+                                ? ((int) ($journalImportPhaseProgress['processed'] ?? 0).' / '.(int) ($journalImportPhaseProgress['total'] ?? 0).' '.($journalImportPhaseProgress['unit'] ?? 'baris'))
+                                : ((int) $import->processed_entries.' / '.(int) $import->total_entries.' entry');
                         @endphp
                         <tr>
                             @php
@@ -618,13 +632,15 @@
                                 @endif
                                 @if($isJournalImportActive)
                                     <div class="progress" style="margin-top: 5px; margin-bottom: 0;">
-                                        <div id="journal-import-progress-{{ $import->id }}" class="progress-bar progress-bar-striped active" role="progressbar" aria-valuenow="{{ $journalImportPercent }}" aria-valuemin="0" aria-valuemax="100" style="width: {{ $isJournalImportWaiting ? '100' : $journalImportPercent }}%;">
-                                            {{ $isJournalImportWaiting ? '' : $journalImportPercent.'%' }}
+                                        <div id="journal-import-progress-{{ $import->id }}" class="progress-bar progress-bar-striped active" role="progressbar" aria-valuenow="{{ $journalImportPercent }}" aria-valuemin="0" aria-valuemax="100" style="width: {{ ($isJournalImportWaiting && !is_array($journalImportPhaseProgress)) || $journalImportProgressIndeterminate ? '100' : $journalImportPercent }}%;">
+                                            {{ (($isJournalImportWaiting && !is_array($journalImportPhaseProgress)) || $journalImportProgressIndeterminate) ? '' : $journalImportPercent.'%' }}
                                         </div>
                                     </div>
                                     <small id="journal-import-count-{{ $import->id }}" class="text-muted">
-                                        @if(in_array($import->status, ['preparing_import', 'importing', 'reconciling', 'processing']))
-                                            {{ (int) $import->processed_entries }} / {{ (int) $import->total_entries }} entry
+                                        @if(is_array($journalImportPhaseProgress))
+                                            {{ $journalImportProgressIndeterminate ? 'Menyiapkan total '.($journalImportPhaseProgress['unit'] ?? 'baris') : $journalImportProgressCount }}
+                                        @elseif(in_array($import->status, ['preparing_import', 'importing', 'reconciling', 'processing']))
+                                            {{ $journalImportProgressCount }}
                                         @else
                                             Menunggu update worker
                                         @endif

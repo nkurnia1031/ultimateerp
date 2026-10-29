@@ -9,6 +9,8 @@ use Illuminate\Support\Str;
 use Modules\Accounting\Jobs\AnalyzeJournalImportJob;
 use Modules\Accounting\Jobs\ProcessJournalImportJob;
 use Modules\Accounting\Services\JournalImportCancellationService;
+use Modules\Accounting\Services\JournalImportProgressService;
+use Symfony\Component\Console\Helper\ProgressBar;
 
 class ImportJournalWorkbook extends Command
 {
@@ -105,16 +107,21 @@ class ImportJournalWorkbook extends Command
             $this->line('Analisis workbook dimulai.');
 
             $lastAnalysisRow = 0;
-            $analysisJob = (new AnalyzeJournalImportJob($batchId))->onProgress(function (array $progress) use (&$lastAnalysisRow) {
+            $lastAnalysisPhase = null;
+            $analysisJob = (new AnalyzeJournalImportJob($batchId))->onProgress(function (array $progress) use (&$lastAnalysisRow, &$lastAnalysisPhase) {
                 if ($this->getOutput()->isQuiet()) {
                     return;
                 }
 
-                $processedRows = (int) ($progress['processed_rows'] ?? 0);
                 $message = (string) ($progress['message'] ?? 'Analisis workbook berjalan.');
-                if (($lastAnalysisRow === 0 && $processedRows === 0)
-                    || $processedRows >= $lastAnalysisRow + 5000) {
+                $phase = (string) ($progress['phase'] ?? 'workbook_analysis');
+                $processedRows = (int) ($progress['processed'] ?? $progress['processed_rows'] ?? 0);
+                $totalRows = (int) ($progress['total'] ?? $progress['total_rows'] ?? 0);
+                if ($phase !== $lastAnalysisPhase
+                    || $processedRows >= $lastAnalysisRow + 5000
+                    || ($totalRows > 0 && $processedRows >= $totalRows)) {
                     $this->line($message);
+                    $lastAnalysisPhase = $phase;
                     $lastAnalysisRow = $processedRows;
                 }
             });
@@ -183,10 +190,21 @@ class ImportJournalWorkbook extends Command
                 return false;
             }
 
-            DB::table('accounting_journal_imports')
-                ->where('id', $batchId)
+            $prepareTotal = (int) DB::table('accounting_journal_import_rows')
+                ->where('journal_import_id', $batchId)
                 ->where('business_id', $businessId)
-                ->update([
+                ->whereIn('processing_status', ['pending', 'failed'])
+                ->count();
+            $progress = app(JournalImportProgressService::class)->record(
+                $batchId,
+                $businessId,
+                'preparing_import',
+                0,
+                $prepareTotal,
+                'draft baris',
+                ['unprocessed' => $prepareTotal],
+                'Persiapan antrean: 0 / '.$prepareTotal.' draft baris diperiksa.',
+                [
                     'status' => 'preparing_import',
                     'cancel_requested_at' => null,
                     'cancel_requested_by' => null,
@@ -198,12 +216,13 @@ class ImportJournalWorkbook extends Command
                         'execution_mode' => 'cli',
                         'create_missing_main_accounts' => $createMissingMainAccounts,
                     ]),
-                    'last_message' => 'CLI menyiapkan antrean dari draft tersimpan dalam beberapa bagian.',
+                    'last_message' => 'Persiapan antrean: 0 / '.$prepareTotal.' draft baris diperiksa.',
                     'error_message' => null,
-                    'updated_at' => now(),
-                ]);
+                ],
+                true
+            );
 
-            return true;
+            return $progress !== [];
         });
 
         if (! $started) {
@@ -215,7 +234,10 @@ class ImportJournalWorkbook extends Command
     {
         $iterations = 0;
         $lastReportedStatus = null;
-        $nextReportedRows = 500;
+        $reportedProgress = [];
+        $lastProgressOutputAt = [];
+        $progressBar = null;
+        $progressBarPhase = null;
 
         while (++$iterations <= 100000) {
             $batch = $this->findBatch($batchId, $businessId);
@@ -223,6 +245,14 @@ class ImportJournalWorkbook extends Command
                 app(JournalImportCancellationService::class)->stopIfRequested($batchId, $businessId);
                 $batch = $this->findBatch($batchId, $businessId);
             }
+
+            $this->reportProgress(
+                $batch,
+                $reportedProgress,
+                $lastProgressOutputAt,
+                $progressBar,
+                $progressBarPhase
+            );
 
             if (! in_array($batch->status, ['preparing_import', 'queued_import', 'importing', 'reconciling'], true)) {
                 return $batch;
@@ -248,18 +278,19 @@ class ImportJournalWorkbook extends Command
                 $this->line('Status: '.$batch->status.' — '.($batch->last_message ?: 'proses berlanjut.'));
                 $lastReportedStatus = $batch->status;
             }
-
-            $processed = (int) ($batch->processed_entries ?? 0);
-            if ($processed >= $nextReportedRows) {
-                $this->line('Progres: '.$processed.' / '.(int) $batch->total_entries.' baris ditangani.');
-                $nextReportedRows = (int) (floor($processed / 500) + 1) * 500;
-            }
+            $this->reportProgress(
+                $batch,
+                $reportedProgress,
+                $lastProgressOutputAt,
+                $progressBar,
+                $progressBarPhase
+            );
 
             $after = [
                 'status' => $batch->status,
                 'prepare_cursor' => (int) ($batch->prepare_cursor ?? 0),
                 'tax_cursor' => (int) ($batch->tax_reconciliation_cursor ?? 0),
-                'processed_entries' => $processed,
+                'processed_entries' => (int) ($batch->processed_entries ?? 0),
             ];
             if ($before === $after && in_array($batch->status, ['preparing_import', 'queued_import', 'importing', 'reconciling'], true)) {
                 throw new \RuntimeException('Proses tidak memajukan cursor atau status batch; batch disimpan untuk ditinjau.');
@@ -270,6 +301,152 @@ class ImportJournalWorkbook extends Command
         }
 
         throw new \RuntimeException('Batas iterasi CLI tercapai; batch disimpan untuk dilanjutkan melalui web.');
+    }
+
+    private function reportProgress(
+        object $batch,
+        array &$reportedProgress,
+        array &$lastProgressOutputAt,
+        ?ProgressBar &$progressBar,
+        ?string &$progressBarPhase
+    ): void {
+        if ($this->getOutput()->isQuiet()) {
+            return;
+        }
+
+        $progress = app(JournalImportProgressService::class)->decode($batch->progress_data ?? null);
+        $phase = $progress['phase'] ?? null;
+        $phases = $progress['phases'] ?? [];
+        if (! is_string($phase) || ! isset($phases[$phase]) || ! is_array($phases[$phase])) {
+            return;
+        }
+
+        $isInteractive = $this->getOutput()->isDecorated();
+        if ($isInteractive) {
+            if ($progressBar !== null && $progressBarPhase !== $phase) {
+                $previous = $phases[$progressBarPhase] ?? null;
+                if (is_array($previous) && (int) ($previous['total'] ?? 0) > 0) {
+                    $previousTotal = (int) $previous['total'];
+                    $previousProcessed = min((int) ($previous['processed'] ?? 0), $previousTotal);
+                    $progressBar->setMaxSteps($previousTotal);
+                    $progressBar->setProgress($previousProcessed);
+                    $reportedProgress[$progressBarPhase] = $previousProcessed.'/'.$previousTotal;
+                }
+                $progressBar->finish();
+                $progressBar = null;
+                $progressBarPhase = null;
+            }
+
+            $current = $phases[$phase];
+            $total = max(0, (int) ($current['total'] ?? 0));
+            $processed = max(0, (int) ($current['processed'] ?? 0));
+            $signature = $processed.'/'.$total;
+            if ($total === 0) {
+                if (($reportedProgress[$phase] ?? null) !== $signature) {
+                    $this->line($this->progressLine($phase, $current));
+                    $reportedProgress[$phase] = $signature;
+                }
+
+                return;
+            }
+            if ($progressBar === null && ($reportedProgress[$phase] ?? null) === $signature) {
+                return;
+            }
+
+            if ($progressBar === null) {
+                $progressBar = new ProgressBar($this->getOutput(), $total);
+                $progressBar->setFormat('%message% %current%/%max%');
+                $progressBar->start();
+                $progressBarPhase = $phase;
+            }
+
+            $progressBar->setMessage(
+                $this->phaseLabel($phase).' ('.($current['unit'] ?? 'baris').')'
+                .$this->progressCountsSuffix(is_array($current['counts'] ?? null) ? $current['counts'] : [])
+            );
+            $progressBar->setMaxSteps($total);
+            $progressBar->setProgress(min($processed, $total));
+            if ($processed >= $total) {
+                $progressBar->finish();
+                $progressBar = null;
+                $progressBarPhase = null;
+                $reportedProgress[$phase] = $signature;
+            }
+
+            return;
+        }
+
+        $now = microtime(true);
+        foreach ($phases as $stage => $stageProgress) {
+            if (! is_array($stageProgress)) {
+                continue;
+            }
+            $processed = max(0, (int) ($stageProgress['processed'] ?? 0));
+            $total = max(0, (int) ($stageProgress['total'] ?? 0));
+            $signature = $processed.'/'.$total;
+            $isCurrent = $stage === $phase;
+            $isComplete = $total === 0 || $processed >= $total;
+            $isNew = ! array_key_exists($stage, $reportedProgress);
+            $heartbeatDue = $isCurrent && ($now - (float) ($lastProgressOutputAt[$stage] ?? 0)) >= 5;
+            if (($reportedProgress[$stage] ?? null) === $signature && ! $heartbeatDue) {
+                continue;
+            }
+            if (! $isNew && ! $isComplete && ! $heartbeatDue) {
+                continue;
+            }
+
+            $this->line($this->progressLine((string) $stage, $stageProgress));
+            $reportedProgress[$stage] = $signature;
+            $lastProgressOutputAt[$stage] = $now;
+        }
+    }
+
+    private function progressLine(string $phase, array $progress): string
+    {
+        $processed = (int) ($progress['processed'] ?? 0);
+        $total = (int) ($progress['total'] ?? 0);
+        $unit = (string) ($progress['unit'] ?? 'baris');
+        $line = $total > 0
+            ? 'Progres '.$this->phaseLabel($phase).': '.$processed.' / '.$total.' '.$unit
+            : 'Progres '.$this->phaseLabel($phase).': menyiapkan total '.$unit;
+
+        return $line.$this->progressCountsSuffix(is_array($progress['counts'] ?? null) ? $progress['counts'] : []).'.';
+    }
+
+    private function progressCountsSuffix(array $counts): string
+    {
+        $parts = [];
+        foreach ([
+            'unprocessed' => 'belum diperiksa',
+            'queued' => 'siap',
+            'pending' => 'perlu ditinjau',
+            'completed' => 'selesai',
+            'failed' => 'gagal',
+            'running' => 'sedang diproses',
+            'reconciled' => 'sesuai',
+            'review' => 'perlu ditinjau pajak',
+            'not_applicable' => 'tidak berlaku',
+        ] as $key => $label) {
+            if (isset($counts[$key])) {
+                $parts[] = (int) $counts[$key].' '.$label;
+            }
+        }
+        if ($parts !== []) {
+            return ' ('.implode(', ', $parts).')';
+        }
+
+        return '';
+    }
+
+    private function phaseLabel(string $phase): string
+    {
+        return [
+            'workbook_analysis' => 'Analisis workbook',
+            'source_matching' => 'Pencocokan transaksi sumber',
+            'preparing_import' => 'Persiapan antrean',
+            'importing' => 'Import',
+            'tax_reconciliation' => 'Rekonsiliasi pajak',
+        ][$phase] ?? $phase;
     }
 
     private function callProcessorChunk(int $batchId, string $phase, int $afterMappingId = 0, int $afterRowId = 0): void

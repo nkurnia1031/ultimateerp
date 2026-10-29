@@ -1129,10 +1129,22 @@ class JournalEntryController extends Controller
                 return ['error' => 'Batch sedang diproses atau tidak dapat dilanjutkan.'];
             }
 
-            DB::table('accounting_journal_imports')
-                ->where('id', $lockedBatch->id)
+            $prepareTotal = (int) DB::table('accounting_journal_import_rows')
+                ->where('journal_import_id', $lockedBatch->id)
                 ->where('business_id', $business_id)
-                ->update([
+                ->whereIn('processing_status', ['pending', 'failed'])
+                ->count();
+            $progressMessage = 'Persiapan antrean: 0 / '.$prepareTotal.' draft baris diperiksa.';
+            $progress = app(\Modules\Accounting\Services\JournalImportProgressService::class)->record(
+                (int) $lockedBatch->id,
+                (int) $business_id,
+                'preparing_import',
+                0,
+                $prepareTotal,
+                'draft baris',
+                ['unprocessed' => $prepareTotal],
+                $progressMessage,
+                [
                     'status' => 'preparing_import',
                     'cancel_requested_at' => null,
                     'cancel_requested_by' => null,
@@ -1141,14 +1153,17 @@ class JournalEntryController extends Controller
                     'prepare_cursor' => 0,
                     'tax_reconciliation_cursor' => 0,
                     'import_options' => json_encode($options, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
-                    'last_message' => 'Memvalidasi dan menyiapkan antrean import dalam beberapa bagian.',
                     'error_message' => null,
-                    'updated_at' => now(),
-                ]);
+                ],
+                true
+            );
+            if ($progress === []) {
+                return ['error' => 'Status batch berubah sebelum persiapan import dimulai.'];
+            }
 
             return [
                 'status' => 'preparing_import',
-                'last_message' => 'Memvalidasi dan menyiapkan antrean import dalam beberapa bagian.',
+                'last_message' => $progressMessage,
             ];
         });
 
@@ -1197,6 +1212,15 @@ class JournalEntryController extends Controller
         }
 
         $queueCounts = $this->journalDraftProcessingCounts((int) $batch->id, $business_id);
+        $progressData = app(\Modules\Accounting\Services\JournalImportProgressService::class)
+            ->decode($batch->progress_data ?? null);
+        $progressPhase = $progressData['phase'] ?? null;
+        $phaseProgress = is_string($progressPhase)
+            ? ($progressData['phases'][$progressPhase] ?? null)
+            : null;
+        if (is_array($phaseProgress)) {
+            $phaseProgress = array_merge(['phase' => $progressPhase], $phaseProgress);
+        }
 
         return response()->json([
             'success' => 1,
@@ -1212,6 +1236,9 @@ class JournalEntryController extends Controller
             'queue_counts' => $queueCounts,
             'queue_total' => $queueCounts['queued'] + $queueCounts['running'] + $queueCounts['completed'] + $queueCounts['failed'],
             'queue_processed' => $queueCounts['completed'] + $queueCounts['failed'],
+            'progress_phase' => $progressPhase,
+            'phase_progress' => $phaseProgress,
+            'phase_history' => $progressData['phases'] ?? [],
             'last_message' => $batch->last_message,
             'error_message' => $batch->error_message,
             'created_at' => $batch->created_at,
@@ -1816,13 +1843,6 @@ class JournalEntryController extends Controller
         }
 
         foreach ($this->readJournalWorkbookRows($workbookPath, $progressCallback) as $index => $row) {
-            if ($progressCallback && $index > 0 && $index % 500 === 0) {
-                $progressCallback([
-                    'processed_rows' => $index,
-                    'message' => 'Menganalisis baris '.$index.' dari workbook Excel.',
-                ]);
-            }
-
             if ($index === 2) {
                 $source_date_range = $row[0] ?? null;
             }
@@ -1918,10 +1938,16 @@ class JournalEntryController extends Controller
             ->markRepeatedSourceIdentities($entries);
 
         if ($progressCallback) {
-            $progressCallback(['message' => 'Mencocokkan referensi transaksi sumber dengan data bisnis.']);
+            $progressCallback([
+                'phase' => 'source_matching',
+                'processed' => 0,
+                'total' => count($entries),
+                'unit' => 'entry',
+                'message' => 'Mencocokkan referensi transaksi sumber: 0 / '.count($entries).' entry.',
+            ]);
         }
 
-        $source_links = $this->resolveJournalSourceLinks($entries, $business_id);
+        $source_links = $this->resolveJournalSourceLinks($entries, $business_id, $progressCallback);
         foreach ($entries as $key => $entry) {
             $entries[$key] = array_merge($entry, $source_links[$key] ?? [
                 'source_link_status' => 'unmatched',
@@ -1964,7 +1990,7 @@ class JournalEntryController extends Controller
         ];
     }
 
-    private function resolveJournalSourceLinks(array $entries, int $business_id): array
+    private function resolveJournalSourceLinks(array $entries, int $business_id, ?callable $progressCallback = null): array
     {
         $sourceMatcher = app(\Modules\Accounting\Services\JournalImportSourceMatcher::class);
         $definitions = [
@@ -1989,12 +2015,29 @@ class JournalEntryController extends Controller
         }
 
         $links = [];
+        $matchingTotal = count($entries);
+        $matchingProcessed = 0;
+        $nextMatchingProgress = 500;
+        $reportMatchingProgress = function (int $count = 1) use (&$matchingProcessed, &$nextMatchingProgress, $matchingTotal, $progressCallback): void {
+            $matchingProcessed += $count;
+            if ($progressCallback !== null && ($matchingProcessed >= $nextMatchingProgress || $matchingProcessed >= $matchingTotal)) {
+                $progressCallback([
+                    'phase' => 'source_matching',
+                    'processed' => $matchingProcessed,
+                    'total' => $matchingTotal,
+                    'unit' => 'entry',
+                    'message' => 'Mencocokkan referensi transaksi sumber: '.$matchingProcessed.' / '.$matchingTotal.' entry.',
+                ]);
+                $nextMatchingProgress = (int) (floor($matchingProcessed / 500) + 1) * 500;
+            }
+        };
         foreach ($entriesByType as $sourceType => $typedEntries) {
             $definition = $definitions[$sourceType] ?? null;
             if ($definition === null) {
                 foreach ($typedEntries as [$key]) {
                     $links[$key] = $this->unmatchedJournalSourceLink('Jenis sumber belum memiliki aturan pencocokan yang aman.');
                 }
+                $reportMatchingProgress(count($typedEntries));
                 continue;
             }
 
@@ -2010,6 +2053,7 @@ class JournalEntryController extends Controller
                         'source_link_candidate_details' => [],
                     ];
                 }
+                $reportMatchingProgress(count($typedEntries));
                 continue;
             }
 
@@ -2101,6 +2145,15 @@ class JournalEntryController extends Controller
                 }
             }
 
+            if ($progressCallback !== null) {
+                $progressCallback([
+                    'phase' => 'source_matching',
+                    'processed' => $matchingProcessed,
+                    'total' => $matchingTotal,
+                    'unit' => 'entry',
+                    'message' => 'Memuat kandidat sumber '.$sourceType.'; cocok '.$matchingProcessed.' / '.$matchingTotal.' entry.',
+                ]);
+            }
             $candidateIndex = $sourceMatcher->indexCandidates($candidates->all());
 
             foreach ($typedEntries as [$key, $entry]) {
@@ -2150,6 +2203,7 @@ class JournalEntryController extends Controller
                         "Tidak ditemukan sumber dengan nomor '{$sourceNumber}' untuk jenis transaksi ini dalam business aktif."
                     );
                 }
+                $reportMatchingProgress();
             }
         }
 
@@ -2211,8 +2265,10 @@ class JournalEntryController extends Controller
 
         if ($progressCallback) {
             $progressCallback([
+                'phase' => 'workbook_analysis',
                 'processed_rows' => 0,
                 'total_rows' => $highest_row,
+                'unit' => 'baris workbook',
                 'message' => 'Membaca baris 0 / '.$highest_row.' dari workbook Excel.',
             ]);
         }
@@ -2222,8 +2278,10 @@ class JournalEntryController extends Controller
 
             if ($progressCallback) {
                 $progressCallback([
+                    'phase' => 'workbook_analysis',
                     'processed_rows' => $processed_rows,
                     'total_rows' => $highest_row,
+                    'unit' => 'baris workbook',
                     'message' => 'Menyiapkan baris '.$start_row.'-'.$end_row.' / '.$highest_row.' dari workbook Excel.',
                 ]);
             }
@@ -2256,10 +2314,12 @@ class JournalEntryController extends Controller
                 $processed_rows = $start_row + $offset;
                 yield ($start_row + $offset - 1) => $row;
 
-                if ($progressCallback && ($processed_rows === $end_row || $processed_rows === $highest_row)) {
+                if ($progressCallback && ($processed_rows % 500 === 0 || $processed_rows === $highest_row)) {
                     $progressCallback([
+                        'phase' => 'workbook_analysis',
                         'processed_rows' => $processed_rows,
                         'total_rows' => $highest_row,
+                        'unit' => 'baris workbook',
                         'message' => 'Menganalisis baris '.$processed_rows.' / '.$highest_row.' dari workbook Excel.',
                     ]);
                 }

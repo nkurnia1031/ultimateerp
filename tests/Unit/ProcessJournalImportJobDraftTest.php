@@ -14,6 +14,7 @@ use Modules\Accounting\Jobs\AnalyzeJournalImportJob;
 use Modules\Accounting\Jobs\ProcessJournalImportJob;
 use Modules\Accounting\Services\JournalImportCancellationService;
 use Modules\Accounting\Services\JournalImportDraftService;
+use Modules\Accounting\Services\JournalImportProgressService;
 use Modules\Accounting\Services\JournalImportExpenseService;
 use Modules\Accounting\Services\JournalImportInvoiceService;
 use Modules\Accounting\Services\JournalImportPaymentService;
@@ -240,7 +241,8 @@ class ProcessJournalImportJobDraftTest extends TestCase
         (new AnalyzeJournalImportJob(1))->handle(
             $controller,
             $draftService,
-            new JournalImportCancellationService()
+            new JournalImportCancellationService(),
+            new JournalImportProgressService()
         );
 
         $this->assertSame('cancelled', DB::table('accounting_journal_imports')->where('id', 1)->value('status'));
@@ -271,7 +273,8 @@ class ProcessJournalImportJobDraftTest extends TestCase
         (new AnalyzeJournalImportJob(1))->handle(
             $controller,
             $draftService,
-            new JournalImportCancellationService()
+            new JournalImportCancellationService(),
+            new JournalImportProgressService()
         );
 
         $this->assertSame('analyzed', DB::table('accounting_journal_imports')->where('id', 1)->value('status'));
@@ -509,7 +512,7 @@ class ProcessJournalImportJobDraftTest extends TestCase
         $queueService->shouldReceive('queueRowsForBatch')
             ->once()
             ->with(1, 3, [], 0, 25)
-            ->andReturn(['queued' => 25, 'last_id' => 25, 'has_more' => true]);
+            ->andReturn(['queued' => 25, 'processed_rows' => 25, 'last_id' => 25, 'has_more' => true]);
 
         (new ProcessJournalImportJob(1, 'prepare'))->handle(
             $controller,
@@ -726,6 +729,7 @@ class ProcessJournalImportJobDraftTest extends TestCase
             $table->integer('imported_entries')->default(0);
             $table->integer('skipped_entries')->default(0);
             $table->integer('total_entries')->default(0);
+            $table->longText('progress_data')->nullable();
             $table->unsignedBigInteger('prepare_cursor')->default(0);
             $table->unsignedBigInteger('tax_reconciliation_cursor')->default(0);
             $table->dateTime('cancel_requested_at')->nullable();
@@ -775,6 +779,8 @@ class ProcessJournalImportJobDraftTest extends TestCase
             $table->unsignedInteger('journal_import_id')->nullable();
             $table->string('type');
             $table->string('import_source_key')->nullable();
+            $table->string('source_link_status')->nullable();
+            $table->unsignedInteger('source_record_id')->nullable();
         });
     }
 

@@ -157,6 +157,30 @@ class JournalImportCliCommandTest extends TestCase
             ->assertExitCode(1);
     }
 
+    public function test_cli_progress_reports_preparation_and_import_as_separate_real_stages(): void
+    {
+        $workbook = $this->createJournalWorkbook('JE-PROGRESS-1', 100, false, 'JE-PROGRESS-2', 200);
+
+        $this->artisan('accounting:import-journal', [
+            'workbook' => $workbook,
+            '--business-id' => 2,
+            '--user-id' => 7,
+            '--chunk-delay-ms' => 0,
+        ])->expectsOutputToContain('Progres Persiapan antrean: 2 / 2 draft baris')
+            ->expectsOutputToContain('2 siap, 0 perlu ditinjau')
+            ->expectsOutputToContain('Progres Import: 2 / 2 baris import')
+            ->expectsOutputToContain('2 selesai, 0 gagal')
+            ->assertExitCode(0);
+
+        $batch = DB::table('accounting_journal_imports')->orderByDesc('id')->first();
+        $this->assertSame(2, (int) $batch->processed_entries); // Import outcome count remains separate from preparation.
+        $progress = json_decode($batch->progress_data, true);
+        $this->assertSame(2, $progress['phases']['preparing_import']['processed'] ?? null);
+        $this->assertSame(2, $progress['phases']['preparing_import']['total'] ?? null);
+        $this->assertSame(2, $progress['phases']['importing']['processed'] ?? null);
+        $this->assertSame(2, $progress['phases']['importing']['total'] ?? null);
+    }
+
     public function test_cli_creates_missing_main_accounts_by_default_and_can_opt_out(): void
     {
         $defaultBatch = $this->runImport($this->createJournalWorkbook('JE-CLI-ACCOUNTS-1', 100), 'imported');
@@ -317,6 +341,7 @@ class JournalImportCliCommandTest extends TestCase
             $table->integer('missing_accounts')->default(0);
             $table->integer('unsupported_entries')->default(0);
             $table->integer('processed_entries')->default(0);
+            $table->longText('progress_data')->nullable();
             $table->text('last_message')->nullable();
             $table->text('error_message')->nullable();
             $table->string('file_path')->nullable();
@@ -369,6 +394,8 @@ class JournalImportCliCommandTest extends TestCase
             $table->unsignedBigInteger('journal_import_id')->nullable();
             $table->string('type');
             $table->string('import_source_key')->nullable();
+            $table->string('source_link_status')->nullable();
+            $table->unsignedBigInteger('source_record_id')->nullable();
         });
     }
 }

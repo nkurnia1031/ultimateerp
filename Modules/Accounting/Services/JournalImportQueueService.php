@@ -155,6 +155,7 @@ class JournalImportQueueService
         if ($limit !== null) {
             return [
                 'queued' => $queued,
+                'processed_rows' => $rows->count(),
                 'last_id' => $lastRowId,
                 'has_more' => $hasMore,
             ];

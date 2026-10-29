@@ -84,6 +84,23 @@ class JournalImportChunkCursorMigrationTest extends TestCase
         }
     }
 
+    public function test_phase_progress_migration_adds_column_idempotently_and_can_be_reverted(): void
+    {
+        $migrationPath = dirname(__DIR__, 2).DIRECTORY_SEPARATOR.'Modules'.DIRECTORY_SEPARATOR.'Accounting'
+            .DIRECTORY_SEPARATOR.'Database'.DIRECTORY_SEPARATOR.'Migrations'
+            .DIRECTORY_SEPARATOR.'2026_10_29_000001_add_phase_progress_to_accounting_journal_imports.php';
+        $migration = require $migrationPath;
+
+        $migration->up();
+        $migration->up();
+
+        $this->assertTrue($this->database->schema()->hasColumn('accounting_journal_imports', 'progress_data'));
+
+        $migration->down();
+
+        $this->assertFalse($this->database->schema()->hasColumn('accounting_journal_imports', 'progress_data'));
+    }
+
     public function test_legacy_solar_update_skips_ledgers_absent_from_a_fresh_database(): void
     {
         $migrationPath = dirname(__DIR__, 2).DIRECTORY_SEPARATOR.'database'.DIRECTORY_SEPARATOR.'migrations'

@@ -76,6 +76,7 @@ class JournalTaxReconciliationService
 
         return [
             'result' => $result,
+            'processed_rows' => $mappings->count(),
             'last_id' => $lastId,
             'has_more' => $hasMore,
         ];

@@ -382,14 +382,23 @@ class ProcessJournalImportJob implements ShouldQueue
             $counts = $this->processingCounts((int) $import->id, (int) $import->business_id);
             $queueProcessed = $counts['completed'] + $counts['failed'];
             $queueTotal = $counts['completed'] + $counts['failed'] + $counts['queued'] + $counts['running'];
-            DB::table('accounting_journal_imports')->where('id', $import->id)->update([
-                'processed_entries' => $queueProcessed,
-                'imported_entries' => $counts['completed'],
-                'skipped_entries' => $counts['failed'],
-                'last_message' => 'Progres '.($this->runner === 'cli' ? 'CLI' : 'queue').' Journal Entry: '.$queueProcessed.' / '.$queueTotal
-                    .' baris; '.$counts['completed'].' selesai, '.$counts['failed'].' gagal.',
-                'updated_at' => now(),
-            ]);
+            app(\Modules\Accounting\Services\JournalImportProgressService::class)->record(
+                (int) $import->id,
+                (int) $import->business_id,
+                'importing',
+                $queueProcessed,
+                $queueTotal,
+                'baris import',
+                $counts,
+                'Progres import: '.$queueProcessed.' / '.$queueTotal.' baris; '
+                    .$counts['completed'].' selesai, '.$counts['failed'].' gagal, '
+                    .$counts['queued'].' menunggu, '.$counts['pending'].' perlu ditinjau.',
+                [
+                    'processed_entries' => $queueProcessed,
+                    'imported_entries' => $counts['completed'],
+                    'skipped_entries' => $counts['failed'],
+                ]
+            );
 
             $hasQueuedRows = DB::table('accounting_journal_import_rows')
                 ->where('journal_import_id', $import->id)
@@ -406,15 +415,19 @@ class ProcessJournalImportJob implements ShouldQueue
                 return;
             }
 
-            $transitioned = DB::table('accounting_journal_imports')
-                ->where('id', $import->id)
-                ->whereNull('cancel_requested_at')
-                ->update([
-                'status' => 'reconciling',
-                'last_message' => 'Pemrosesan Journal Import selesai; menghitung pajak dari akun Journal dan memeriksa sumber dalam beberapa bagian.',
-                'updated_at' => now(),
-            ]);
-            if (! $transitioned) {
+            $reconciliationTotal = $this->taxReconciliationTotal((int) $import->id, (int) $import->business_id);
+            $transitioned = app(\Modules\Accounting\Services\JournalImportProgressService::class)->record(
+                (int) $import->id,
+                (int) $import->business_id,
+                'tax_reconciliation',
+                0,
+                $reconciliationTotal,
+                'mapping pajak',
+                [],
+                'Pemrosesan Journal Import selesai; rekonsiliasi pajak 0 / '.$reconciliationTotal.' mapping.',
+                ['status' => 'reconciling']
+            );
+            if ($transitioned === []) {
                 $cancellationService->stopIfRequested((int) $import->id, (int) $import->business_id);
                 return;
             }
@@ -489,6 +502,16 @@ class ProcessJournalImportJob implements ShouldQueue
         return $counts;
     }
 
+    private function taxReconciliationTotal(int $importId, int $businessId): int
+    {
+        return (int) DB::table('accounting_acc_trans_mappings')
+            ->where('journal_import_id', $importId)
+            ->where('business_id', $businessId)
+            ->where('source_link_status', 'matched')
+            ->whereNotNull('source_record_id')
+            ->count();
+    }
+
     private function processTaxReconciliationChunk(
         object $import,
         JournalEntryController $controller,
@@ -526,11 +549,7 @@ class ProcessJournalImportJob implements ShouldQueue
         }
 
         if ($chunk['has_more']) {
-            DB::table('accounting_journal_imports')->where('id', $import->id)->update([
-                'tax_reconciliation_cursor' => (int) $chunk['last_id'],
-                'last_message' => 'Rekonsiliasi pajak: entri sampai ID '.$chunk['last_id'].'; lanjut setelah jeda.',
-                'updated_at' => now(),
-            ]);
+            $this->recordTaxProgress($import, $chunk, (int) $chunk['last_id']);
             if ($this->dispatchContinuations) {
                 self::dispatch($this->importId, 'tax', (int) $chunk['last_id'])
                     ->delay(now()->addSeconds(self::CHUNK_DELAY_SECONDS));
@@ -539,7 +558,41 @@ class ProcessJournalImportJob implements ShouldQueue
             return;
         }
 
+        $this->recordTaxProgress($import, $chunk);
+
         $this->finishImport($import, $controller, $cancellationService);
+    }
+
+    private function recordTaxProgress(object $import, array $chunk, ?int $cursor = null): void
+    {
+        $progressService = app(\Modules\Accounting\Services\JournalImportProgressService::class);
+        $progress = $progressService->decode($import->progress_data ?? null);
+        $taxProgress = $progress['phases']['tax_reconciliation'] ?? [];
+        $processed = (int) ($taxProgress['processed'] ?? 0) + (int) ($chunk['processed_rows'] ?? 0);
+        $total = max(0, (int) ($taxProgress['total'] ?? 0));
+        $priorCounts = is_array($taxProgress['counts'] ?? null) ? $taxProgress['counts'] : [];
+        $chunkCounts = is_array($chunk['result'] ?? null) ? $chunk['result'] : [];
+        $cumulativeCounts = [];
+        foreach (['reconciled', 'review', 'not_applicable'] as $key) {
+            $cumulativeCounts[$key] = (int) ($priorCounts[$key] ?? 0) + (int) ($chunkCounts[$key] ?? 0);
+        }
+        $message = 'Rekonsiliasi pajak: '.$processed.' / '.$total.' mapping; '
+            .$cumulativeCounts['reconciled'].' sesuai, '
+            .$cumulativeCounts['review'].' perlu ditinjau, '
+            .$cumulativeCounts['not_applicable'].' tidak memerlukan pajak.';
+        $extra = $cursor === null ? [] : ['tax_reconciliation_cursor' => $cursor];
+
+        $progressService->record(
+            (int) $import->id,
+            (int) $import->business_id,
+            'tax_reconciliation',
+            $processed,
+            $total,
+            'mapping pajak',
+            $cumulativeCounts,
+            $message,
+            $extra
+        );
     }
 
     private function prepareImportChunk(
@@ -575,12 +628,29 @@ class ProcessJournalImportJob implements ShouldQueue
             return;
         }
 
+        $progressService = app(\Modules\Accounting\Services\JournalImportProgressService::class);
+        $progressData = $progressService->decode($import->progress_data ?? null);
+        $prepareProgress = $progressData['phases']['preparing_import'] ?? [];
+        $prepareTotal = max(0, (int) ($prepareProgress['total'] ?? $import->total_entries ?? 0));
+        $prepareProcessed = (int) ($prepareProgress['processed'] ?? 0) + (int) ($chunk['processed_rows'] ?? 0);
+        $prepareProcessed = min($prepareTotal, $prepareProcessed);
+        $counts = $this->processingCounts((int) $import->id, (int) $import->business_id);
+        $prepareMessage = 'Persiapan antrean: '.$prepareProcessed.' / '.$prepareTotal.' draft baris; '
+            .$counts['queued'].' siap, '.$counts['pending'].' perlu ditinjau, '
+            .$counts['completed'].' sudah selesai, '.$counts['failed'].' gagal.';
+
         if ($chunk['has_more']) {
-            DB::table('accounting_journal_imports')->where('id', $import->id)->update([
-                'prepare_cursor' => (int) $chunk['last_id'],
-                'last_message' => ucfirst($this->runner).' menyiapkan antrean import sampai baris '.$chunk['last_id'].'.',
-                'updated_at' => now(),
-            ]);
+            $progressService->record(
+                (int) $import->id,
+                (int) $import->business_id,
+                'preparing_import',
+                $prepareProcessed,
+                $prepareTotal,
+                'draft baris',
+                $counts,
+                $prepareMessage,
+                ['prepare_cursor' => (int) $chunk['last_id']]
+            );
             if ($this->dispatchContinuations) {
                 self::dispatch($this->importId, 'prepare', 0, (int) $chunk['last_id'])
                     ->delay(now()->addSeconds(self::CHUNK_DELAY_SECONDS));
@@ -589,29 +659,52 @@ class ProcessJournalImportJob implements ShouldQueue
             return;
         }
 
-        $counts = $this->processingCounts((int) $import->id, (int) $import->business_id);
         $shouldReconcile = $counts['queued'] === 0 && $counts['running'] === 0;
         $status = $counts['queued'] > 0 ? 'queued_import' : ($shouldReconcile ? 'reconciling' : 'partially_imported');
+        $queueTotal = $counts['completed'] + $counts['failed'] + $counts['queued'] + $counts['running'];
+        $queueProcessed = $counts['completed'] + $counts['failed'];
         $message = $counts['queued'] > 0
             ? ($this->runner === 'cli'
-                ? 'CLI melanjutkan pemrosesan '.$counts['queued'].' baris valid.'
-                : 'Menunggu worker queue imports untuk memproses '.$counts['queued'].' baris valid.')
-            : 'Entry siap sudah diproses; rekonsiliasi pajak dimulai dalam beberapa bagian. Baris yang belum siap tetap tersimpan di draft.';
+                ? $prepareMessage.' CLI melanjutkan '.$counts['queued'].' baris valid.'
+                : $prepareMessage.' Menunggu worker untuk memproses '.$counts['queued'].' baris valid.')
+            : $prepareMessage.' Baris yang belum siap tetap tersimpan untuk ditinjau.';
 
-        $updated = DB::table('accounting_journal_imports')
-            ->where('id', $import->id)
-            ->whereNull('cancel_requested_at')
-            ->update([
-            'status' => $status,
-            'processed_entries' => $counts['completed'] + $counts['failed'],
-            'imported_entries' => $counts['completed'],
-            'skipped_entries' => $counts['failed'],
-            'last_message' => $message,
-            'error_message' => null,
-            'updated_at' => now(),
-        ]);
+        $progressPhase = $counts['queued'] > 0 || ! $shouldReconcile ? 'importing' : 'tax_reconciliation';
+        $progressProcessed = $progressPhase === 'importing' ? $queueProcessed : 0;
+        $progressTotal = $progressPhase === 'importing' ? $queueTotal : $this->taxReconciliationTotal((int) $import->id, (int) $import->business_id);
+        $progressService->record(
+            (int) $import->id,
+            (int) $import->business_id,
+            'preparing_import',
+            $prepareProcessed,
+            $prepareTotal,
+            'draft baris',
+            $counts,
+            $prepareMessage
+        );
+        if ($progressPhase === 'tax_reconciliation') {
+            $message .= ' Rekonsiliasi pajak: 0 / '.$progressTotal.' mapping.';
+        }
 
-        if (! $updated) {
+        $updated = $progressService->record(
+            (int) $import->id,
+            (int) $import->business_id,
+            $progressPhase,
+            $progressProcessed,
+            $progressTotal,
+            $progressPhase === 'importing' ? 'baris import' : 'mapping pajak',
+            $counts,
+            $message,
+            [
+                'status' => $status,
+                'processed_entries' => $queueProcessed,
+                'imported_entries' => $counts['completed'],
+                'skipped_entries' => $counts['failed'],
+                'error_message' => null,
+            ]
+        );
+
+        if ($updated === []) {
             $cancellationService->stopIfRequested((int) $import->id, (int) $import->business_id);
             return;
         }

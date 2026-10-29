@@ -38,6 +38,8 @@ class JournalImportDraftRowsTest extends TestCase
             'business_id' => 7,
             'status' => 'partially_imported',
             'import_options' => '{}',
+            'total_entries' => 3,
+            'processed_entries' => 0,
         ]);
         $this->insertDraftRow(1, 1, 'pending');
         $this->insertDraftRow(2, 2, 'failed');
@@ -80,6 +82,37 @@ class JournalImportDraftRowsTest extends TestCase
         $this->assertSame([1, 2], array_column($all->json('rows'), 'id'));
     }
 
+    public function test_status_endpoint_returns_phase_counts_without_marking_analysis_as_imported(): void
+    {
+        DB::table('accounting_journal_imports')->where('id', 5)->update([
+            'status' => 'preparing_import',
+            'total_entries' => 21924,
+            'processed_entries' => 0,
+            'progress_data' => json_encode([
+                'phase' => 'preparing_import',
+                'phases' => [
+                    'workbook_analysis' => ['processed' => 98445, 'total' => 98445, 'unit' => 'baris workbook'],
+                    'preparing_import' => [
+                        'processed' => 500,
+                        'total' => 21924,
+                        'unit' => 'draft baris',
+                        'counts' => ['queued' => 300, 'pending' => 21424],
+                    ],
+                ],
+            ]),
+        ]);
+
+        $response = $this->requestImportStatus();
+
+        $response->assertOk()
+            ->assertJsonPath('processed_entries', 0)
+            ->assertJsonPath('progress_phase', 'preparing_import')
+            ->assertJsonPath('phase_progress.processed', 500)
+            ->assertJsonPath('phase_progress.total', 21924)
+            ->assertJsonPath('phase_progress.counts.queued', 300)
+            ->assertJsonPath('phase_history.workbook_analysis.processed', 98445);
+    }
+
     private function requestDraftRows(array $query)
     {
         $user = Mockery::mock(User::class)->makePartial();
@@ -94,6 +127,22 @@ class JournalImportDraftRowsTest extends TestCase
             \App\Http\Middleware\AdminSidebarMenu::class,
         ])->actingAs($user)->withSession(['user' => ['business_id' => 7]])
             ->getJson('/accounting/journal-entry/import/5/draft-rows?'.http_build_query($query));
+    }
+
+    private function requestImportStatus()
+    {
+        $user = Mockery::mock(User::class)->makePartial();
+        $user->id = 55;
+        $user->shouldReceive('can')->with('superadmin')->andReturn(false);
+        $user->shouldReceive('can')->with('accounting.add_journal')->andReturn(true);
+
+        return $this->withoutMiddleware([
+            \App\Http\Middleware\SetSessionData::class,
+            \App\Http\Middleware\Language::class,
+            \App\Http\Middleware\Timezone::class,
+            \App\Http\Middleware\AdminSidebarMenu::class,
+        ])->actingAs($user)->withSession(['user' => ['business_id' => 7]])
+            ->getJson('/accounting/journal-entry/import/5/status');
     }
 
     private function insertDraftRow(int $id, int $entryIndex, string $status): void
@@ -128,6 +177,17 @@ class JournalImportDraftRowsTest extends TestCase
             $table->unsignedInteger('business_id');
             $table->string('status');
             $table->longText('import_options')->nullable();
+            $table->unsignedInteger('total_entries')->default(0);
+            $table->unsignedInteger('processed_entries')->default(0);
+            $table->unsignedInteger('imported_entries')->default(0);
+            $table->unsignedInteger('skipped_entries')->default(0);
+            $table->longText('progress_data')->nullable();
+            $table->dateTime('cancel_requested_at')->nullable();
+            $table->dateTime('cancelled_at')->nullable();
+            $table->longText('last_message')->nullable();
+            $table->longText('error_message')->nullable();
+            $table->dateTime('created_at')->nullable();
+            $table->dateTime('updated_at')->nullable();
         });
 
         Schema::create('accounting_journal_import_rows', function (Blueprint $table) {

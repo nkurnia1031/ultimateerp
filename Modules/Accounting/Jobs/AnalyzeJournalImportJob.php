@@ -12,6 +12,7 @@ use Modules\Accounting\Http\Controllers\JournalEntryController;
 use Modules\Accounting\Services\JournalImportCancellationRequestedException;
 use Modules\Accounting\Services\JournalImportCancellationService;
 use Modules\Accounting\Services\JournalImportDraftService;
+use Modules\Accounting\Services\JournalImportProgressService;
 
 class AnalyzeJournalImportJob implements ShouldQueue
 {
@@ -42,7 +43,8 @@ class AnalyzeJournalImportJob implements ShouldQueue
     public function handle(
         JournalEntryController $controller,
         JournalImportDraftService $draftService,
-        JournalImportCancellationService $cancellationService
+        JournalImportCancellationService $cancellationService,
+        JournalImportProgressService $progressService
     )
     {
         $import = DB::table('accounting_journal_imports')->where('id', $this->importId)->first();
@@ -70,18 +72,36 @@ class AnalyzeJournalImportJob implements ShouldQueue
                 return;
             }
 
+            $progressService->record(
+                (int) $import->id,
+                (int) $import->business_id,
+                'workbook_analysis',
+                0,
+                0,
+                'baris workbook',
+                [],
+                'Membuka workbook dan menyiapkan analisis.'
+            );
+
             $analysis = $controller->analyzeJournalWorkbook(
                 $import->file_path,
                 $import->business_id,
-                function (array $progress) use ($cancellationService, $import) {
+                function (array $progress) use ($cancellationService, $progressService, $import) {
                     if ($cancellationService->stopIfRequested((int) $import->id, (int) $import->business_id)) {
                         throw new JournalImportCancellationRequestedException('Analisis dihentikan atas permintaan pengguna.');
                     }
 
-                    DB::table('accounting_journal_imports')->where('id', $this->importId)->update([
-                        'last_message' => $progress['message'] ?? 'Analisis workbook berjalan.',
-                        'updated_at' => now(),
-                    ]);
+                    $phase = (string) ($progress['phase'] ?? 'workbook_analysis');
+                    $progressService->record(
+                        (int) $import->id,
+                        (int) $import->business_id,
+                        $phase,
+                        (int) ($progress['processed'] ?? $progress['processed_rows'] ?? 0),
+                        (int) ($progress['total'] ?? $progress['total_rows'] ?? 0),
+                        (string) ($progress['unit'] ?? ($phase === 'workbook_analysis' ? 'baris workbook' : 'entry')),
+                        [],
+                        (string) ($progress['message'] ?? 'Analisis workbook berjalan.')
+                    );
 
                     if ($this->progressListener !== null) {
                         call_user_func($this->progressListener, $progress);
@@ -107,7 +127,7 @@ class AnalyzeJournalImportJob implements ShouldQueue
                 'analysis_path' => $analysisPath,
                 'source_date_range' => $analysis['source_date_range'],
                 'total_entries' => $analysis['total_entries'],
-                'processed_entries' => $analysis['total_entries'],
+                'processed_entries' => 0,
                 'unbalanced_entries' => $analysis['unbalanced_count'],
                 'duplicate_entries' => $analysis['duplicate_count'],
                 'missing_accounts' => count($analysis['missing_accounts']),

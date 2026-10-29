@@ -24,10 +24,13 @@
         var labels = {
             queued: 'Menunggu worker',
             analyzing: 'Menganalisis workbook',
+            workbook_analysis: 'Menganalisis workbook',
+            source_matching: 'Mencocokkan transaksi sumber',
             analyzed: 'Siap ditinjau',
             preparing_import: 'Menyiapkan antrean import',
             queued_import: 'Menunggu worker import',
             importing: 'Menyimpan entry',
+            tax_reconciliation: 'Merekonsiliasi pajak',
             reconciling: 'Merekonsiliasi pajak',
             processing: 'Memproses',
             imported: 'Selesai',
@@ -48,7 +51,53 @@
         return isNaN(date.getTime()) ? value : date.toLocaleString();
     }
 
+    function phaseProgressText(response) {
+        var progress = response.phase_progress || null;
+        if (!progress || typeof progress !== 'object') {
+            return '';
+        }
+
+        var total = Number(progress.total || 0);
+        var unit = progress.unit || 'baris';
+        var text = total > 0
+            ? Number(progress.processed || 0) + ' / ' + total + ' ' + unit
+            : 'Menyiapkan total ' + unit;
+        var counts = progress.counts || {};
+        var labels = [
+            ['unprocessed', 'belum diperiksa'],
+            ['queued', 'siap'],
+            ['pending', 'perlu ditinjau'],
+            ['completed', 'selesai'],
+            ['failed', 'gagal'],
+            ['running', 'sedang diproses'],
+            ['reconciled', 'sesuai'],
+            ['review', 'perlu ditinjau pajak'],
+            ['not_applicable', 'tidak berlaku']
+        ];
+        var parts = [];
+        labels.forEach(function (mapping) {
+            if (counts[mapping[0]] !== undefined) {
+                parts.push(Number(counts[mapping[0]]) + ' ' + mapping[1]);
+            }
+        });
+        if (parts.length) {
+            text += ' (' + parts.join(', ') + ')';
+        }
+
+        return text;
+    }
+
     function progressPercent(response) {
+        var phaseProgress = response.phase_progress || null;
+        if (phaseProgress && typeof phaseProgress === 'object') {
+            var phaseTotal = Number(phaseProgress.total || 0);
+            var phaseProcessed = Number(phaseProgress.processed || 0);
+            if (phaseTotal <= 0) {
+                return 0;
+            }
+            return Math.max(0, Math.min(100, Math.round((phaseProcessed / phaseTotal) * 100)));
+        }
+
         var queueTotal = Number(response.queue_total || 0);
         var percent = queueTotal > 0
             ? Math.round((Number(response.queue_processed || 0) / queueTotal) * 100)
@@ -67,6 +116,9 @@
     }
 
     function indeterminate(response) {
+        if (response.phase_progress && typeof response.phase_progress === 'object') {
+            return Number(response.phase_progress.total || 0) <= 0;
+        }
         return (waitingStatuses.indexOf(response.status) !== -1 && Number(response.queue_total || 0) <= 0) ||
             (response.status === 'importing' && Number(response.queue_total || response.total_entries || 0) <= 0);
     }
@@ -124,17 +176,17 @@
             progressElement.css('width', percent + '%').text(percent + '%').attr('aria-valuenow', percent);
         }
 
-        var countText;
-        if (Number(response.queue_total || 0) > 0 || ['preparing_import', 'importing', 'reconciling', 'processing', 'imported', 'partially_imported', 'failed', 'cancelled'].indexOf(status) !== -1) {
+        var countText = phaseProgressText(response);
+        if (!countText && (Number(response.queue_total || 0) > 0 || ['preparing_import', 'importing', 'reconciling', 'processing', 'imported', 'partially_imported', 'failed', 'cancelled'].indexOf(status) !== -1)) {
             var queueCounts = response.queue_counts || {};
             countText = (response.queue_processed || 0) + ' / ' + (response.queue_total || 0) + ' baris queue ('
                 + (queueCounts.completed || 0) + ' selesai, ' + (queueCounts.failed || 0) + ' gagal, '
                 + (queueCounts.pending || 0) + ' pending)';
-        } else if (status === 'analyzed') {
+        } else if (!countText && status === 'analyzed') {
             countText = response.total_entries + ' entry siap ditinjau';
-        } else if (response.total_entries > 0) {
+        } else if (!countText && response.total_entries > 0) {
             countText = '0 / ' + response.total_entries + ' entry';
-        } else {
+        } else if (!countText) {
             countText = 'Menunggu checkpoint worker';
         }
 
@@ -189,11 +241,14 @@
             .text(indeterminate(response) ? '' : percent + '%');
 
         var queueCounts = response.queue_counts || {};
-        var progressCount = Number(response.queue_total || 0) > 0
+        var activeProgressText = phaseProgressText(response);
+        var progressCount = activeProgressText
+            ? ' · ' + activeProgressText
+            : Number(response.queue_total || 0) > 0
             ? ' · ' + response.queue_processed + ' / ' + response.queue_total + ' baris queue ('
                 + (queueCounts.completed || 0) + ' selesai, ' + (queueCounts.failed || 0) + ' gagal)'
             : (response.total_entries > 0 ? ' · ' + response.processed_entries + ' / ' + response.total_entries + ' entry' : '');
-        $('#journal_import_progress_stage').text(statusLabel(response.status));
+        $('#journal_import_progress_stage').text(statusLabel(response.progress_phase || response.status));
         $('#journal_import_progress_count').text(progressCount);
         $('#journal_import_progress_heartbeat').text(updatedAtText(response.updated_at));
 
