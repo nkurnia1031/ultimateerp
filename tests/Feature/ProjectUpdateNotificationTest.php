@@ -9,7 +9,6 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
-use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Schema;
 use Mockery;
 use Modules\Project\Http\Controllers\ProjectController;
@@ -37,19 +36,6 @@ class ProjectUpdateNotificationTest extends TestCase
         ]);
         DB::purge('sqlite');
         DB::setDefaultConnection('sqlite');
-
-        Schema::create('users', function (Blueprint $table) {
-            $table->increments('id');
-            $table->integer('business_id')->nullable();
-            $table->string('surname')->nullable();
-            $table->string('first_name')->nullable();
-            $table->string('last_name')->nullable();
-            $table->string('username')->nullable();
-            $table->string('password')->nullable();
-            $table->rememberToken();
-            $table->softDeletes();
-            $table->timestamps();
-        });
 
         Schema::create('pjt_projects', function (Blueprint $table) {
             $table->increments('id');
@@ -81,11 +67,6 @@ class ProjectUpdateNotificationTest extends TestCase
 
     public function test_project_update_succeeds_when_a_new_member_receives_a_project_link(): void
     {
-        DB::table('users')->insert([
-            ['id' => 1, 'business_id' => 7, 'surname' => 'Admin', 'first_name' => 'Project', 'last_name' => '', 'username' => 'project-admin'],
-            ['id' => 2, 'business_id' => 7, 'surname' => 'Member', 'first_name' => 'New', 'last_name' => '', 'username' => 'project-member'],
-        ]);
-
         DB::table('pjt_projects')->insert([
             'id' => 100,
             'business_id' => 7,
@@ -102,10 +83,19 @@ class ProjectUpdateNotificationTest extends TestCase
             'updated_at' => now(),
         ]);
 
-        $actor = User::findOrFail(1);
-        Gate::before(function ($user, $ability) {
-            return $ability === 'superadmin' ? true : null;
-        });
+        $actor = new class extends User
+        {
+            public function can($ability, $arguments = [])
+            {
+                return $ability === 'superadmin';
+            }
+        };
+        $actor->forceFill([
+            'id' => 1,
+            'surname' => 'Admin',
+            'first_name' => 'Project',
+            'last_name' => '',
+        ]);
         auth()->setUser($actor);
 
         $request = Request::create('/project/project/100', 'PUT', [
