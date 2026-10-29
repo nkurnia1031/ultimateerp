@@ -425,30 +425,6 @@
     function renderDraftRow(row) {
         draftRowsById[String(row.id)] = row;
         var tr = $('<tr>').attr('data-row-id', row.id).data('draft-row', row);
-        var selectionCell = $('<td>');
-        var hasDifference = ['mismatch', 'auto_approved', 'approved'].indexOf(row.reconciliation_status) !== -1;
-        var canBulkApprove = hasDifference
-            && !row.is_reviewed
-            && ['pending', 'failed'].indexOf(row.processing_status) !== -1;
-        if (canBulkApprove) {
-            selectionCell.append($('<input type="checkbox" class="journal-draft-select-difference">')
-                .attr('aria-label', 'Pilih selisih ' + (row.source_number || row.id)));
-        } else if (['mismatch', 'auto_approved', 'approved'].indexOf(row.reconciliation_status) !== -1) {
-            selectionCell.append($('<span class="text-muted" title="Sudah ditinjau atau sedang diproses">').text('—'));
-        }
-        if (!canBulkApprove && !hasDifference) {
-            var unavailableReason = row.is_reviewed
-                ? 'Baris ini sudah ditinjau.'
-                : (['queued', 'running', 'completed'].indexOf(row.processing_status) !== -1
-                    ? 'Baris ini sudah masuk antrean atau selesai diproses.'
-                    : (row.reconciliation_status === 'not_checked'
-                        ? 'Selisih belum direkonsiliasi; sistem akan memeriksanya sebelum antrean.'
-                        : 'Tidak ada selisih yang perlu disetujui pada baris ini.'));
-            selectionCell.append($('<input type="checkbox" class="journal-draft-select-disabled" disabled>')
-                .attr('aria-label', unavailableReason)
-                .attr('title', unavailableReason));
-        }
-        tr.append(selectionCell);
         var dateNumber = $('<strong>').text(row.source_type + ' #' + (row.source_number || '—'));
         var date = $('<small class="text-muted" style="display:block">').text(row.date || 'Tanggal kosong');
         tr.append($('<td>').append(dateNumber).append(date));
@@ -469,20 +445,17 @@
             processCell.append($('<small class="text-danger" style="display:block">').text(row.processing_error));
         }
         if (row.reconciliation_status === 'mismatch') {
+            processCell.append($('<span class="label label-warning" style="display:inline-block;margin-top:4px">').text('Selisih diproses · Journal menjadi acuan'));
             processCell.append($('<small class="text-warning" style="display:block">').text(
                 'Selisih total: ' + formatDraftNumber(row.difference_amount)
             ));
-            if (['queued', 'running', 'completed'].indexOf(row.processing_status) === -1) {
-                processCell.append($('<button type="button" class="btn btn-warning btn-xs journal-draft-approve-difference" style="margin-top:4px">')
-                    .text('Setujui selisih'));
-            }
         } else if (row.reconciliation_status === 'auto_approved') {
-            processCell.append($('<span class="label label-warning" style="display:inline-block;margin-top:4px">').text('Selisih disetujui otomatis · perlu ditinjau'));
+            processCell.append($('<span class="label label-warning" style="display:inline-block;margin-top:4px">').text('Selisih diproses otomatis · Journal menjadi acuan'));
             processCell.append($('<small class="text-muted" style="display:block">').text(
                 'Selisih total: ' + formatDraftNumber(row.difference_amount)
             ));
         } else if (row.reconciliation_status === 'approved') {
-            processCell.append($('<span class="label label-success" style="display:inline-block;margin-top:4px">').text('Selisih disetujui manual'));
+            processCell.append($('<span class="label label-success" style="display:inline-block;margin-top:4px">').text('Selisih diproses · persetujuan lama tercatat'));
             processCell.append($('<small class="text-muted" style="display:block">').text(row.difference_approval_reason || 'Alasan tercatat'));
         }
         if (Array.isArray(row.journal_components) && row.journal_components.length) {
@@ -576,28 +549,6 @@
         return tr;
     }
 
-    function selectedDifferenceIds() {
-        return $('#journal_import_draft_table tbody .journal-draft-select-difference:checked').map(function () {
-            return Number($(this).closest('tr').data('row-id'));
-        }).get().filter(function (id) { return id > 0; });
-    }
-
-    function syncDifferenceSelection() {
-        var count = selectedDifferenceIds().length;
-        var available = $('#journal_import_draft_table tbody .journal-draft-select-difference').length;
-        var rowsOnPage = $('#journal_import_draft_table tbody tr[data-row-id]').length;
-        $('#journal_import_bulk_approve').prop('disabled', count === 0);
-        $('#journal_import_selection_count').text(count
-            ? (count + ' selisih dipilih.')
-            : (rowsOnPage > 0 && available === 0
-                ? 'Belum ada selisih yang siap dipilih di halaman ini.'
-                : 'Belum ada selisih dipilih.'));
-        $('#journal_import_select_all_differences')
-            .prop('disabled', available === 0)
-            .prop('checked', available > 0 && count === available)
-            .prop('indeterminate', count > 0 && count < available);
-    }
-
     function rowMatchesVisibleFilters(row) {
         var processingFilter = $('#journal_import_processing_filter').val() || 'remaining';
         var reviewFilter = $('#journal_import_review_filter').val() || 'all';
@@ -650,11 +601,10 @@
         if (removed) draftTotal = Math.max(0, draftTotal - removed);
         if (!$('#journal_import_draft_table tbody tr').length) {
             $('#journal_import_draft_table tbody').append(
-                $('<tr>').append($('<td colspan="10" class="text-center text-muted">').text(noDraftRowsMessage()))
+                $('<tr>').append($('<td colspan="9" class="text-center text-muted">').text(noDraftRowsMessage()))
             );
         }
         updateDraftPaginationDisplay();
-        syncDifferenceSelection();
     }
 
     function loadDraftRows(pageNumber) {
@@ -666,9 +616,8 @@
         var requestNumber = ++draftRequestNumber;
         $('#journal_import_draft_status').text('Memuat baris...');
         $('#journal_import_draft_table tbody').empty().append(
-            $('<tr>').append($('<td colspan="10" class="text-center text-muted">').text('Memuat draft...'))
+            $('<tr>').append($('<td colspan="9" class="text-center text-muted">').text('Memuat draft...'))
         );
-        syncDifferenceSelection();
 
         $.ajax({
             method: 'GET',
@@ -687,7 +636,7 @@
             if (requestNumber !== draftRequestNumber) return;
             var tbody = $('#journal_import_draft_table tbody').empty();
             if (!response.success || !response.rows.length) {
-                tbody.append($('<tr>').append($('<td colspan="10" class="text-center text-muted">').text(noDraftRowsMessage())));
+                tbody.append($('<tr>').append($('<td colspan="9" class="text-center text-muted">').text(noDraftRowsMessage())));
             } else {
                 response.rows.forEach(function (row) {
                     tbody.append(renderDraftRow(row));
@@ -698,7 +647,6 @@
             draftTotal = Number(response.total || 0);
             draftPerPage = Number(response.per_page || 50);
             draftLastPage = Number(response.last_page || 1);
-            syncDifferenceSelection();
             var first = response.total ? ((response.page - 1) * response.per_page) + 1 : 0;
             var last = Math.min(response.page * response.per_page, response.total);
             $('#journal_import_draft_pagination_info').text(first + '–' + last + ' dari ' + response.total + ' baris');
@@ -710,7 +658,7 @@
             var message = xhr.responseJSON && xhr.responseJSON.msg ? xhr.responseJSON.msg : 'Gagal memuat baris draft.';
             $('#journal_import_draft_status').text(message).addClass('text-danger');
             $('#journal_import_draft_table tbody').empty().append(
-                $('<tr>').append($('<td colspan="10" class="text-center text-danger">').text(message))
+                $('<tr>').append($('<td colspan="9" class="text-center text-danger">').text(message))
             );
         });
     }
@@ -1054,26 +1002,6 @@
     $(document).on('change', '#journal_import_status_filter', function () {
         loadDraftRows(1);
     });
-    $(document).on('change', '#journal_import_select_all_differences', function () {
-        $('#journal_import_draft_table tbody .journal-draft-select-difference').prop('checked', $(this).is(':checked'));
-        syncDifferenceSelection();
-    });
-    $(document).on('change', '.journal-draft-select-difference', syncDifferenceSelection);
-    $(document).on('click', '#journal_import_bulk_approve', function () {
-        var ids = selectedDifferenceIds();
-        if (!ids.length) return;
-        var totalDifference = ids.reduce(function (total, id) {
-            var row = draftRowsById[String(id)] || {};
-            return total + Number(row.difference_amount || 0);
-        }, 0);
-        $('#journal_import_difference_bulk').val('1');
-        $('#journal_import_difference_row_id').val('');
-        $('#journal_import_difference_reason').val('');
-        $('#journal_import_difference_summary').text(
-            ids.length + ' selisih dipilih · total net selisih ' + formatDraftNumber(totalDifference)
-        );
-        $('#journal_import_difference_modal').modal('show');
-    });
     $(document).on('input', '#journal_import_draft_search', function () {
         if (draftSearchTimer) window.clearTimeout(draftSearchTimer);
         draftSearchTimer = window.setTimeout(function () {
@@ -1145,65 +1073,6 @@
             draftType = String(draft.data('default-type') || 'Journal Entry');
             loadDraftRows(1);
         }
-    });
-
-    $(document).on('click', '.journal-draft-approve-difference', function () {
-        var row = $(this).closest('tr').data('draft-row') || {};
-        $('#journal_import_difference_bulk').val('0');
-        $('#journal_import_difference_row_id').val(row.id || '');
-        $('#journal_import_difference_reason').val('');
-        $('#journal_import_difference_summary').text(
-            'Total Journal: ' + formatDraftNumber(row.journal_total)
-            + ' · Total transaksi: ' + formatDraftNumber(row.business_total)
-            + ' · Selisih: ' + formatDraftNumber(row.difference_amount)
-        );
-        $('#journal_import_difference_modal').modal('show');
-    });
-
-    $(document).on('submit', '#journal_import_difference_form', function (event) {
-        event.preventDefault();
-        var draft = $('#journal_import_draft');
-        var rowId = $('#journal_import_difference_row_id').val();
-        var isBulk = $('#journal_import_difference_bulk').val() === '1';
-        var rowIds = isBulk ? selectedDifferenceIds() : [Number(rowId)];
-        var reason = String($('#journal_import_difference_reason').val() || '').trim();
-        if ((!isBulk && !rowId) || !rowIds.length || reason.length < 5) {
-            toastr.error('Masukkan alasan persetujuan minimal 5 karakter.');
-            return;
-        }
-
-        var submitButton = $(this).find('button[type="submit"]').prop('disabled', true);
-        $('#journal_import_draft_status').removeClass('text-danger').text(isBulk
-            ? 'Menyetujui ' + rowIds.length + ' selisih...'
-            : 'Menyimpan persetujuan selisih...');
-        $.ajax({
-            method: 'PATCH',
-            url: isBulk
-                ? draft.data('approve-bulk-url')
-                : draft.data('approve-url-base') + '/' + encodeURIComponent(rowId) + '/approve-difference',
-            contentType: 'application/json',
-            dataType: 'json',
-            headers: { 'X-CSRF-TOKEN': draft.data('csrf-token') },
-            data: JSON.stringify(isBulk ? { row_ids: rowIds, reason: reason } : { reason: reason })
-        }).done(function (response) {
-            if (response.success && (response.row || Array.isArray(response.rows))) {
-                updateDraftRowsInline(isBulk ? response.rows : [response.row]);
-                $('#journal_import_difference_modal').modal('hide');
-                $('#journal_import_draft_status').removeClass('text-danger').text(response.msg || 'Persetujuan selisih tersimpan.');
-                toastr.success(response.msg || 'Persetujuan selisih tersimpan.');
-            }
-        }).fail(function (xhr) {
-            var response = xhr.responseJSON || {};
-            var message = response.msg || response.message || 'Persetujuan selisih gagal disimpan.';
-            if (response.errors) {
-                var firstErrorKey = Object.keys(response.errors)[0];
-                message = (response.errors[firstErrorKey] || [message])[0] || message;
-            }
-            $('#journal_import_draft_status').addClass('text-danger').text(message);
-            toastr.error(message);
-        }).always(function () {
-            submitButton.prop('disabled', false);
-        });
     });
 
     $(document).on('submit', '#journal_import_form', function (event) {

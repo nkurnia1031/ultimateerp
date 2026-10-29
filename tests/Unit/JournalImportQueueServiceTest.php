@@ -43,9 +43,9 @@ class JournalImportQueueServiceTest extends TestCase
         $this->assertFalse($service->queueDecision(array_merge($entry, ['is_unbalanced' => true]), 'journal', 'pending')['eligible']);
         $this->assertFalse($service->queueDecision(array_merge($entry, ['is_duplicate' => true]), 'journal', 'pending')['eligible']);
         $this->assertFalse($service->queueDecision(array_merge($entry, ['lines' => []]), 'journal', 'pending')['eligible']);
-        $this->assertFalse($service->queueDecision($entry, 'journal', 'pending', 'mismatch')['eligible']);
+        $this->assertTrue($service->queueDecision($entry, 'journal', 'pending', 'mismatch')['eligible']);
         $this->assertTrue($service->queueDecision($entry, 'journal', 'pending', 'approved')['eligible']);
-        $this->assertFalse($service->queueDecision($entry, 'journal', 'pending', 'auto_approved', (object) ['is_reviewed' => false])['eligible']);
+        $this->assertTrue($service->queueDecision($entry, 'journal', 'pending', 'auto_approved', (object) ['is_reviewed' => false])['eligible']);
         $this->assertTrue($service->queueDecision($entry, 'journal', 'pending', 'auto_approved', (object) ['is_reviewed' => true])['eligible']);
         $this->assertFalse($service->queueDecision($entry, 'journal', 'queued')['eligible']);
     }
@@ -188,7 +188,7 @@ class JournalImportQueueServiceTest extends TestCase
         $service->approveDiscrepancy(1, 3, 8, '   ');
     }
 
-    public function test_reconciliation_blocks_out_of_tolerance_totals_and_invalidates_stale_approval(): void
+    public function test_reconciliation_auto_approves_mismatch_and_invalidates_stale_approval(): void
     {
         $this->useSqliteDatabase();
         $this->createDraftRowsTable();
@@ -209,14 +209,18 @@ class JournalImportQueueServiceTest extends TestCase
 
         $service = new JournalImportQueueService();
         $mismatch = $service->recordReconciliation(1, 3, 100, 99, 0.01);
-        $this->assertSame('mismatch', $mismatch->reconciliation_status);
+        $this->assertSame('auto_approved', $mismatch->reconciliation_status);
         $this->assertSame(1.0, (float) $mismatch->difference_amount);
         $this->assertNull($mismatch->difference_approved_by);
         $this->assertNull($mismatch->difference_approved_at);
         $this->assertNull($mismatch->difference_approval_reason);
 
-        $approved = $service->approveDiscrepancy(1, 3, 8, 'Approved by review');
-        $this->assertSame('approved', $approved->reconciliation_status);
+        DB::table('accounting_journal_import_rows')->where('id', 1)->update([
+            'reconciliation_status' => 'approved',
+            'difference_approved_by' => 8,
+            'difference_approved_at' => now(),
+            'difference_approval_reason' => 'Approved by review',
+        ]);
 
         $sameTotals = $service->recordReconciliation(1, 3, 100, 99, 0.01);
         $this->assertSame('approved', $sameTotals->reconciliation_status);
@@ -225,13 +229,13 @@ class JournalImportQueueServiceTest extends TestCase
         $this->assertSame('Approved by review', $sameTotals->difference_approval_reason);
 
         $changedTotals = $service->recordReconciliation(1, 3, 100, 98, 0.01);
-        $this->assertSame('mismatch', $changedTotals->reconciliation_status);
+        $this->assertSame('auto_approved', $changedTotals->reconciliation_status);
         $this->assertNull($changedTotals->difference_approved_by);
         $this->assertNull($changedTotals->difference_approved_at);
         $this->assertNull($changedTotals->difference_approval_reason);
     }
 
-    public function test_component_explained_difference_is_auto_approved_but_still_requires_review(): void
+    public function test_unexplained_difference_is_auto_approved_and_queueable_without_review(): void
     {
         $this->useSqliteDatabase();
         $this->createDraftRowsTable();
@@ -250,13 +254,14 @@ class JournalImportQueueServiceTest extends TestCase
             'updated_at' => now(),
         ]);
 
-        $row = (new JournalImportQueueService())->recordReconciliation(1, 3, 27272727, 29999999.7, 0.01, true);
+        $service = new JournalImportQueueService();
+        $row = $service->recordReconciliation(1, 3, 27272727, 29999999.7);
 
         $this->assertSame('auto_approved', $row->reconciliation_status);
         $this->assertNull($row->difference_approved_by);
         $this->assertNull($row->difference_approved_at);
         $this->assertNull($row->difference_approval_reason);
-        $this->assertSame('Selisih disetujui otomatis, tandai baris sebagai Ditinjau sebelum diproses.', (new JournalImportQueueService())->entryIssue(
+        $this->assertTrue($service->queueDecision(
             [
                 'source_type' => 'Expense',
                 'source_key' => 'Expense|11873',
@@ -266,9 +271,10 @@ class JournalImportQueueServiceTest extends TestCase
                 'lines' => [['debit' => 1, 'credit' => 0]],
             ],
             'update',
+            'pending',
             'auto_approved',
             (object) ['is_reviewed' => false]
-        ));
+        )['eligible']);
     }
 
     public function test_bulk_discrepancy_approval_marks_selected_rows_reviewed_with_one_audit_reason(): void

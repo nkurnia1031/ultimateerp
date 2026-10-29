@@ -388,17 +388,6 @@ class JournalImportExpenseService
             && abs((float) $transaction->tax_amount - (float) $totals['tax']) > 0.01) {
             throw new \RuntimeException('Pajak Expense berbeda dari nominal komponen Journal; tinjau sumber sebelum melanjutkan.');
         }
-        $taxOnlyCorrection = (new JournalImportTaxCorrectionPolicy())->shouldCorrectFinalTotal(
-            $transaction->tax_amount,
-            $transaction->total_before_tax,
-            $transaction->final_total,
-            $totals
-        );
-        if ($transaction->final_total !== null
-            && abs((float) $transaction->final_total - (float) $totals['final_total']) > 0.01
-            && ! $taxOnlyCorrection) {
-            throw new \RuntimeException('Total Expense berbeda dari hasil hitung pajak Journal; tinjau sumber sebelum melanjutkan.');
-        }
     }
 
     private function totalsForSource(?Transaction $transaction, ?float $journalTotal, ?array $tax, array $expenseComponents = [], array $taxComponents = []): array

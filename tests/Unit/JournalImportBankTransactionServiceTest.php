@@ -88,6 +88,25 @@ class JournalImportBankTransactionServiceTest extends TestCase
         $this->assertSame(8, (int) $withdrawal->account_id);
     }
 
+    public function test_linked_bank_source_with_amount_difference_processes_without_manual_approval(): void
+    {
+        $this->useSqliteDatabase();
+        $this->createTables();
+        $source = $this->insertSource(103, 7, 'credit', 'deposit', 20, 'DEP-DIFF');
+        $row = $this->makeRow(10, 'Bank Deposit', 'link', ['payment_account_id' => 7], (int) $source->id, 84);
+        DB::table('accounting_journal_import_rows')->where('id', 10)->update([
+            'reconciliation_status' => 'auto_approved',
+        ]);
+        $import = (object) ['id' => 84, 'business_id' => 2, 'created_by' => 5];
+
+        $linked = $this->service()->process($row, $this->entry('Bank Deposit', 'DEP-DIFF', 25), $import);
+
+        $this->assertSame((int) $source->id, (int) $linked->id);
+        $this->assertSame(20.0, (float) $linked->amount);
+        $snapshot = json_decode((string) DB::table('accounting_journal_import_rows')->where('id', 10)->value('source_mutation_snapshot'), true);
+        $this->assertSame('linked', $snapshot['action']);
+    }
+
     public function test_reversal_requires_a_business_scoped_target_and_creates_one_inverse_row(): void
     {
         $this->useSqliteDatabase();

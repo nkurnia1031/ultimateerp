@@ -6,18 +6,6 @@
 
 @include('accounting::layouts.nav')
 
-<style>
-    #journal_import_draft_table .journal-draft-select-disabled {
-        opacity: 0.45;
-        cursor: not-allowed;
-    }
-
-    #journal_import_draft_table td:first-child {
-        text-align: center;
-        vertical-align: middle;
-    }
-</style>
-
 <section class="content-header">
     <h1>Import Journal Entry</h1>
 </section>
@@ -182,13 +170,11 @@
                 data-import-id="{{ $batch->id }}"
                 data-rows-url="{{ url('accounting/journal-entry/import/'.$batch->id.'/draft-rows') }}"
                 data-row-url-base="{{ url('accounting/journal-entry/import/'.$batch->id.'/draft-rows') }}"
-                data-approve-url-base="{{ url('accounting/journal-entry/import/'.$batch->id.'/draft-rows') }}"
-                data-approve-bulk-url="{{ url('accounting/journal-entry/import/'.$batch->id.'/draft-rows/approve-differences') }}"
                 data-options-url="{{ url('accounting/journal-entry/import/'.$batch->id.'/draft-options') }}"
                 data-csrf-token="{{ csrf_token() }}"
                 data-default-type="{{ $activeDraftType }}">
                 <h4>Draft transaksi per jenis</h4>
-                <p class="help-block">Daftar awal hanya menampilkan baris yang belum selesai. Baris selesai tetap tersimpan dan dapat dilihat dari filter status proses. Selisih disetujui awal tetapi perlu ditinjau; pilih beberapa selisih untuk menandai Ditinjau sekaligus.</p>
+                <p class="help-block">Daftar awal hanya menampilkan baris yang belum selesai. Baris selesai tetap tersimpan dan dapat dilihat dari filter status proses. Selisih nominal dicatat untuk audit dan tidak menahan proses; nilai Journal menjadi acuan.</p>
                 <div class="journal-import-tab-scroll" role="region" aria-label="Jenis transaksi Journal" tabindex="0" style="overflow-x:auto; overflow-y:hidden;">
                     <ul class="nav nav-tabs journal-import-type-tabs" role="tablist" style="display:flex; flex-wrap:nowrap; min-width:max-content; margin-bottom:0;">
                         @foreach($draftTypeCounts ?? [] as $sourceType => $typeCount)
@@ -235,23 +221,10 @@
                         <span id="journal_import_draft_status" class="text-muted" aria-live="polite"></span>
                     </div>
                 </div>
-                <div class="row" style="margin-top: 8px;">
-                    <div class="col-sm-8">
-                        <label class="checkbox-inline">
-                            <input type="checkbox" id="journal_import_select_all_differences">
-                            Pilih semua selisih yang tampil di halaman ini
-                        </label>
-                        <button type="button" class="btn btn-warning btn-sm" id="journal_import_bulk_approve" disabled>Setujui terpilih</button>
-                    </div>
-                    <div class="col-sm-4 text-right">
-                        <small id="journal_import_selection_count" class="text-muted" aria-live="polite">Belum ada selisih dipilih.</small>
-                    </div>
-                </div>
                 <div class="table-responsive" role="region" aria-label="Baris transaksi Journal import" tabindex="0" style="margin-top: 10px;">
                     <table class="table table-bordered table-striped" id="journal_import_draft_table">
                         <thead>
                             <tr>
-                                <th>Pilih</th>
                                 <th>Nomor / tanggal</th>
                                 <th>Deskripsi</th>
                                 <th>Status proses / selisih</th>
@@ -264,7 +237,7 @@
                             </tr>
                         </thead>
                         <tbody>
-                            <tr><td colspan="10" class="text-center text-muted">Memuat draft...</td></tr>
+                            <tr><td colspan="9" class="text-center text-muted">Memuat draft...</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -379,31 +352,6 @@
                             <div class="modal-footer">
                                 <button type="button" class="btn btn-default" data-dismiss="modal">Batal</button>
                                 <button type="submit" class="btn btn-primary">Simpan detail</button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            </div>
-
-            <div class="modal fade" id="journal_import_difference_modal" tabindex="-1" role="dialog" aria-labelledby="journal_import_difference_title">
-                <div class="modal-dialog" role="document">
-                    <div class="modal-content">
-                        <form id="journal_import_difference_form">
-                            <div class="modal-header">
-                                <button type="button" class="close" data-dismiss="modal" aria-label="Tutup"><span aria-hidden="true">&times;</span></button>
-                                <h4 class="modal-title" id="journal_import_difference_title">Setujui selisih total</h4>
-                            </div>
-                            <div class="modal-body">
-                                <input type="hidden" id="journal_import_difference_row_id">
-                                <input type="hidden" id="journal_import_difference_bulk" value="0">
-                                <p id="journal_import_difference_summary" class="help-block"></p>
-                                <label for="journal_import_difference_reason">Alasan persetujuan</label>
-                                <textarea id="journal_import_difference_reason" class="form-control" rows="4" maxlength="1000" required></textarea>
-                                <p class="help-block">Alasan dicatat bersama pengguna dan waktu. Persetujuan massal juga menandai semua baris terpilih sebagai Ditinjau.</p>
-                            </div>
-                            <div class="modal-footer">
-                                <button type="button" class="btn btn-default" data-dismiss="modal">Batal</button>
-                                <button type="submit" class="btn btn-warning">Setujui selisih</button>
                             </div>
                         </form>
                     </div>

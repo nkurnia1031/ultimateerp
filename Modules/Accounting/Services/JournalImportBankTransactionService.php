@@ -48,11 +48,6 @@ class JournalImportBankTransactionService
         $action = (string) $row->source_action;
         $main = $prepared['source'];
 
-        if ($action !== 'create' && $this->amountDiffersFromJournal($prepared['amount'], $prepared['journalTotal'])
-            && ($row->reconciliation_status ?? null) !== 'approved') {
-            throw new \RuntimeException('Selisih nominal sumber dan Journal harus disetujui dengan alasan sebelum diproses.');
-        }
-
         if ($action === 'link') {
             $this->saveMutationSnapshot($row, ['action' => 'linked', 'record_ids' => [$main->id]]);
 
@@ -595,11 +590,6 @@ class JournalImportBankTransactionService
     {
         $description = trim((string) ($entry['description'] ?? ''));
         return $sourceType === 'Reversal' && $description === '' ? 'Reversal transaksi bank' : $description;
-    }
-
-    private function amountDiffersFromJournal(float $amount, float $journalTotal): bool
-    {
-        return abs($amount - $journalTotal) > 0.01;
     }
 
     private function recordValues(AccountTransaction $record): array

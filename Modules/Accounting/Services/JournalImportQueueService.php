@@ -111,12 +111,7 @@ class JournalImportQueueService
                     : null;
                 $journalTotal = $this->journalTotal($entry);
                 if ($businessTotal !== null && $journalTotal !== null) {
-                    $differenceExplained = false;
-                    if ($row->source_type === 'Expense' && abs($businessTotal - $journalTotal) > 0.01) {
-                        $differenceExplained = app(JournalImportExpenseService::class)
-                            ->explainsTaxDifference($row, $entry, $businessId, $journalTotal, $options);
-                    }
-                    $this->recordReconciliation((int) $row->id, $businessId, $businessTotal, $journalTotal, 0.01, $differenceExplained);
+                    $this->recordReconciliation((int) $row->id, $businessId, $businessTotal, $journalTotal);
                 } else {
                     $this->clearReconciliation((int) $row->id, $businessId);
                 }
@@ -267,14 +262,6 @@ class JournalImportQueueService
             return 'Kunci atau baris akun GL belum lengkap.';
         }
 
-        if ($reconciliationStatus === 'auto_approved' && $row !== null && empty($row->is_reviewed)) {
-            return 'Selisih disetujui otomatis, tandai baris sebagai Ditinjau sebelum diproses.';
-        }
-
-        if ($reconciliationStatus === 'mismatch') {
-            return 'Selisih belum disetujui; tinjau dan setujui secara manual sebelum diproses.';
-        }
-
         if ($isInvoice && $row !== null && empty($row->draft_data) && $action !== 'link') {
             return 'Lengkapi customer/supplier, lokasi, dan item invoice sebelum diproses.';
         }
@@ -282,7 +269,7 @@ class JournalImportQueueService
         return null;
     }
 
-    public function recordReconciliation(int $rowId, int $businessId, float $businessTotal, float $journalTotal, float $tolerance = 0.01, bool $differenceExplained = false): object
+    public function recordReconciliation(int $rowId, int $businessId, float $businessTotal, float $journalTotal, float $tolerance = 0.01): object
     {
         if (! is_finite($businessTotal) || ! is_finite($journalTotal) || ! is_finite($tolerance) || $tolerance < 0) {
             throw ValidationException::withMessages([
@@ -290,7 +277,7 @@ class JournalImportQueueService
             ]);
         }
 
-        return DB::transaction(function () use ($rowId, $businessId, $businessTotal, $journalTotal, $tolerance, $differenceExplained) {
+        return DB::transaction(function () use ($rowId, $businessId, $businessTotal, $journalTotal, $tolerance) {
             $row = DB::table('accounting_journal_import_rows')
                 ->where('id', $rowId)
                 ->where('business_id', $businessId)
@@ -323,7 +310,7 @@ class JournalImportQueueService
                     'business_total' => $businessTotal,
                     'difference_amount' => $difference,
                     'reconciliation_status' => $isMismatch
-                        ? ($preserveManualApproval ? 'approved' : ($differenceExplained ? 'auto_approved' : 'mismatch'))
+                        ? ($preserveManualApproval ? 'approved' : 'auto_approved')
                         : 'matched',
                     'difference_approved_by' => $preserveManualApproval ? $row->difference_approved_by : null,
                     'difference_approved_at' => $preserveManualApproval ? $row->difference_approved_at : null,

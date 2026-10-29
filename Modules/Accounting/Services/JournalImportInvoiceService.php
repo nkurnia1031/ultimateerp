@@ -512,18 +512,6 @@ class JournalImportInvoiceService
             && abs((float) $transaction->tax_amount - (float) $totals['tax']) > 0.01) {
             throw new \RuntimeException('Nilai pajak header invoice berbeda dari nominal komponen Journal; tinjau invoice sebelum melanjutkan.');
         }
-        $taxOnlyCorrection = (new JournalImportTaxCorrectionPolicy())->shouldCorrectFinalTotal(
-            $transaction->tax_amount,
-            $transaction->total_before_tax,
-            $transaction->final_total,
-            $totals
-        );
-        if ($transaction->final_total !== null
-            && abs((float) $transaction->final_total - (float) $totals['final_total']) > 0.01
-            && ! $taxOnlyCorrection) {
-            throw new \RuntimeException('Total invoice berbeda dari detail dan hasil hitung pajak Journal; tinjau invoice sebelum melanjutkan.');
-        }
-
         $table = $transaction->type === 'sell' ? 'transaction_sell_lines' : 'purchase_lines';
         $priceColumn = $transaction->type === 'sell' ? 'unit_price' : 'purchase_price';
         $incColumn = $transaction->type === 'sell' ? 'unit_price_inc_tax' : 'purchase_price_inc_tax';
