@@ -23,14 +23,19 @@ class JournalImportInvoiceServiceTest extends TestCase
         parent::tearDown();
     }
 
-    public function test_create_invoice_stays_in_draft_until_required_contact_and_items_are_selected(): void
+    public function test_create_invoice_allows_empty_contact_but_stays_in_draft_until_items_are_selected(): void
     {
         $container = new Container();
         $container->instance('validator', new ValidatorFactory(new Translator(new ArrayLoader(), 'en'), $container));
         Facade::setFacadeApplication($container);
 
+        $draftService = Mockery::mock(JournalImportDraftService::class);
+        $draftService->shouldReceive('isValidSourceDecision')->once()->andReturnTrue();
+        $draftService->shouldReceive('validateDraftData')->once()->andReturn([]);
+        $draftService->shouldReceive('defaultActiveLocationId')->once()->with(3)->andReturn(10);
+
         $service = new JournalImportInvoiceService(
-            new JournalImportDraftService(),
+            $draftService,
             Mockery::mock(ProductUtil::class),
             Mockery::mock(TransactionUtil::class)
         );
@@ -49,7 +54,7 @@ class JournalImportInvoiceServiceTest extends TestCase
 
         $issue = $service->readinessIssue($row, $entry, 3);
 
-        $this->assertSame('Pilih customer atau supplier sebelum membuat invoice.', $issue);
+        $this->assertSame('Tambahkan minimal satu detail produk dengan jumlah dan harga.', $issue);
     }
 
     public function test_ambiguous_invoice_requires_a_selected_candidate_or_explicit_create_action(): void

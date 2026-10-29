@@ -46,7 +46,28 @@ class JournalSourceResolutionTest extends TestCase
             $table->string('invoice_no')->nullable();
             $table->string('ref_no')->nullable();
             $table->dateTime('transaction_date');
+            $table->decimal('total_before_tax', 22, 4)->nullable();
+            $table->decimal('tax_amount', 22, 4)->nullable();
             $table->decimal('final_total', 22, 4)->default(0);
+            $table->unsignedInteger('contact_id')->nullable();
+            $table->unsignedInteger('location_id')->nullable();
+            $table->unsignedInteger('expense_category_id')->nullable();
+        });
+        $this->database->schema()->create('contacts', function ($table) {
+            $table->increments('id');
+            $table->unsignedInteger('business_id');
+            $table->string('name')->nullable();
+            $table->string('supplier_business_name')->nullable();
+        });
+        $this->database->schema()->create('business_locations', function ($table) {
+            $table->increments('id');
+            $table->unsignedInteger('business_id');
+            $table->string('name')->nullable();
+        });
+        $this->database->schema()->create('expense_categories', function ($table) {
+            $table->increments('id');
+            $table->unsignedInteger('business_id');
+            $table->string('name')->nullable();
         });
         $this->database->schema()->create('transaction_payments', function ($table) {
             $table->increments('id');

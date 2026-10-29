@@ -49,10 +49,18 @@ class JournalImportExpenseServiceTest extends TestCase
         $this->assertStringContainsString('Pilih sumber Expense', $issue);
     }
 
-    public function test_new_expense_requires_a_selected_location_before_it_can_be_queued(): void
+    public function test_new_expense_requires_a_location_when_business_has_no_active_default(): void
     {
         $this->setValidatorContainer();
-        $service = $this->makeService();
+        $draftService = Mockery::mock(JournalImportDraftService::class);
+        $draftService->shouldReceive('isValidSourceDecision')->once()->andReturnTrue();
+        $draftService->shouldReceive('validateDraftData')->once()->andReturn([]);
+        $draftService->shouldReceive('defaultActiveLocationId')->once()->with(3)->andReturnNull();
+        $service = new JournalImportExpenseService(
+            $draftService,
+            new JournalImportTaxResolver(),
+            Mockery::mock(TransactionUtil::class)
+        );
         $row = (object) [
             'source_type' => 'Expense',
             'source_action' => 'create',

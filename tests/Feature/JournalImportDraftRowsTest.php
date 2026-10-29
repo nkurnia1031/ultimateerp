@@ -220,5 +220,20 @@ class JournalImportDraftRowsTest extends TestCase
             $table->text('difference_approval_reason')->nullable();
             $table->timestamps();
         });
+
+        Schema::create('business_locations', function (Blueprint $table) {
+            $table->bigIncrements('id');
+            $table->unsignedInteger('business_id');
+            $table->string('name')->nullable();
+            $table->boolean('is_active')->default(true);
+            $table->dateTime('deleted_at')->nullable();
+        });
+
+        DB::table('business_locations')->insert([
+            'id' => 70,
+            'business_id' => 7,
+            'name' => 'Lokasi aktif test',
+            'is_active' => 1,
+        ]);
     }
 }

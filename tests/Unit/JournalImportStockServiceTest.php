@@ -229,6 +229,8 @@ class JournalImportStockServiceTest extends TestCase
         $schema->create('business_locations', function ($table) {
             $table->increments('id');
             $table->unsignedInteger('business_id');
+            $table->string('name')->nullable();
+            $table->boolean('is_active')->default(true);
             $table->softDeletes();
         });
         $schema->create('products', function ($table) {
@@ -318,7 +320,7 @@ class JournalImportStockServiceTest extends TestCase
         });
 
         DB::table('business')->insert(['id' => 2, 'accounting_method' => 'fifo']);
-        DB::table('business_locations')->insert(['id' => 10, 'business_id' => 2]);
+        DB::table('business_locations')->insert(['id' => 10, 'business_id' => 2, 'name' => 'Gudang utama', 'is_active' => 1]);
     }
 
     private function seedMasters(): void
@@ -343,6 +345,7 @@ class JournalImportStockServiceTest extends TestCase
             $this->markTestSkipped('PDO SQLite tidak tersedia pada PHP runtime ini.');
         }
 
+        Facade::clearResolvedInstances();
         $this->previousContainer = Container::getInstance();
         $container = new Container();
         Container::setInstance($container);
