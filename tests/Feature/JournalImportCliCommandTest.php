@@ -18,6 +18,8 @@ class JournalImportCliCommandTest extends TestCase
 
     private bool $requestCancellationAfterJournalPost = false;
 
+    private array $lastProcessingOptions = [];
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -51,7 +53,8 @@ class JournalImportCliCommandTest extends TestCase
         $controller = Mockery::mock(JournalEntryController::class)->makePartial();
         $controller->shouldReceive('processJournalImportEntriesForBatch')
             ->zeroOrMoreTimes()
-            ->andReturnUsing(function ($import, array $entries) {
+            ->andReturnUsing(function ($import, array $entries, array $options) {
+                $this->lastProcessingOptions = $options;
                 $entry = $entries[0];
                 DB::table('accounting_acc_trans_mappings')->insert([
                     'business_id' => $import->business_id,
@@ -154,6 +157,27 @@ class JournalImportCliCommandTest extends TestCase
             ->assertExitCode(1);
     }
 
+    public function test_cli_creates_missing_main_accounts_by_default_and_can_opt_out(): void
+    {
+        $defaultBatch = $this->runImport($this->createJournalWorkbook('JE-CLI-ACCOUNTS-1', 100), 'imported');
+        $defaultOptions = json_decode($defaultBatch->import_options, true);
+
+        $this->assertTrue($defaultOptions['create_missing_main_accounts'] ?? false);
+        $this->assertFalse($defaultOptions['create_missing_accounts'] ?? false);
+        $this->assertTrue($this->lastProcessingOptions['create_missing_main_accounts'] ?? false);
+
+        $optOutBatch = $this->runImport(
+            $this->createJournalWorkbook('JE-CLI-ACCOUNTS-2', 100),
+            'imported',
+            ['--no-create-missing-main-accounts' => true]
+        );
+        $optOutOptions = json_decode($optOutBatch->import_options, true);
+
+        $this->assertFalse($optOutOptions['create_missing_main_accounts'] ?? false);
+        $this->assertFalse($optOutOptions['create_missing_accounts'] ?? false);
+        $this->assertFalse($this->lastProcessingOptions['create_missing_main_accounts'] ?? false);
+    }
+
     public function test_cli_cancellation_keeps_the_batch_and_unstarted_rows_available_for_web(): void
     {
         $this->requestCancellationAfterJournalPost = true;
@@ -183,14 +207,14 @@ class JournalImportCliCommandTest extends TestCase
         $this->assertSame(0, DB::table('accounting_acc_trans_mappings')->count());
     }
 
-    private function runImport(string $workbook, string $expectedStatus): object
+    private function runImport(string $workbook, string $expectedStatus, array $commandOptions = []): object
     {
-        $this->artisan('accounting:import-journal', [
+        $this->artisan('accounting:import-journal', array_merge([
             'workbook' => $workbook,
             '--business-id' => 2,
             '--user-id' => 7,
             '--chunk-delay-ms' => 0,
-        ])->expectsOutputToContain('Batch ID:')
+        ], $commandOptions))->expectsOutputToContain('Batch ID:')
             ->expectsOutputToContain('Status akhir: '.$expectedStatus)
             ->expectsOutputToContain('Berhasil:')
             ->assertExitCode(0);

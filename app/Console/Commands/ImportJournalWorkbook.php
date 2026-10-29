@@ -16,6 +16,7 @@ class ImportJournalWorkbook extends Command
         {workbook : Path to an XLSX, XLS, or CSV journal workbook}
         {--business-id= : Business ID that owns the import}
         {--user-id= : Existing user ID recorded as the import author}
+        {--no-create-missing-main-accounts : Keep missing operational accounts in review instead of creating them from exact workbook values}
         {--chunk-delay-ms=2000 : Delay between continuing database chunks (0-30000 ms)}';
 
     protected $description = 'Import a journal workbook directly from CLI into a persistent, web-reviewable batch.';
@@ -97,6 +98,10 @@ class ImportJournalWorkbook extends Command
             $this->line('Batch ID: '.$batchId);
             $this->line('Runner: CLI langsung; tidak menunggu worker queue imports.');
             $this->line('Jeda antar-chunk database: '.$chunkDelayMilliseconds.' ms.');
+            $createMissingMainAccounts = ! (bool) $this->option('no-create-missing-main-accounts');
+            $this->line('Account Utama yang tidak ditemukan: '.($createMissingMainAccounts
+                ? 'dibuat dari nomor dan nama akun workbook yang persis.'
+                : 'dibiarkan untuk mapping dan review manual.'));
             $this->line('Analisis workbook dimulai.');
 
             $lastAnalysisRow = 0;
@@ -117,7 +122,7 @@ class ImportJournalWorkbook extends Command
 
             $batch = $this->findBatch($batchId, $businessId);
             if ($batch->status === 'analyzed') {
-                $this->startPersistentProcessing($batchId, $businessId);
+                $this->startPersistentProcessing($batchId, $businessId, $createMissingMainAccounts);
                 $batch = $this->runPersistentBatch($batchId, $businessId, $chunkDelayMilliseconds);
             }
 
@@ -165,9 +170,9 @@ class ImportJournalWorkbook extends Command
         return (int) $value;
     }
 
-    private function startPersistentProcessing(int $batchId, int $businessId): void
+    private function startPersistentProcessing(int $batchId, int $businessId, bool $createMissingMainAccounts): void
     {
-        $started = DB::transaction(function () use ($batchId, $businessId) {
+        $started = DB::transaction(function () use ($batchId, $businessId, $createMissingMainAccounts) {
             $batch = DB::table('accounting_journal_imports')
                 ->where('id', $batchId)
                 ->where('business_id', $businessId)
@@ -189,7 +194,10 @@ class ImportJournalWorkbook extends Command
                     'cancelled_by' => null,
                     'prepare_cursor' => 0,
                     'tax_reconciliation_cursor' => 0,
-                    'import_options' => json_encode(['execution_mode' => 'cli']),
+                    'import_options' => json_encode([
+                        'execution_mode' => 'cli',
+                        'create_missing_main_accounts' => $createMissingMainAccounts,
+                    ]),
                     'last_message' => 'CLI menyiapkan antrean dari draft tersimpan dalam beberapa bagian.',
                     'error_message' => null,
                     'updated_at' => now(),
