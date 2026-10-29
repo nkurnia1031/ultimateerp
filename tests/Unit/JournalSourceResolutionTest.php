@@ -75,10 +75,13 @@ class JournalSourceResolutionTest extends TestCase
             $table->string('payment_ref_no')->nullable();
             $table->dateTime('paid_on')->nullable();
             $table->decimal('amount', 22, 4)->default(0);
+            $table->string('method')->nullable();
+            $table->unsignedInteger('account_id')->nullable();
         });
         $this->database->schema()->create('accounts', function ($table) {
             $table->increments('id');
             $table->unsignedInteger('business_id');
+            $table->string('name')->nullable();
         });
         $this->database->schema()->create('account_transactions', function ($table) {
             $table->increments('id');
@@ -103,7 +106,7 @@ class JournalSourceResolutionTest extends TestCase
         parent::tearDown();
     }
 
-    public function test_unique_explicit_reference_links_even_when_source_date_differs(): void
+    public function test_unique_explicit_reference_with_different_date_is_suggested_for_review(): void
     {
         DB::table('transactions')->insert([
             'id' => 10,
@@ -117,8 +120,9 @@ class JournalSourceResolutionTest extends TestCase
 
         $links = $this->resolve([self::entry('INV-100', '2025-02-03', 100)], 1);
 
-        $this->assertSame('matched', $links[0]['source_link_status']);
-        $this->assertSame(10, $links[0]['source_record_id']);
+        $this->assertSame('suggested', $links[0]['source_link_status']);
+        $this->assertNull($links[0]['source_record_id']);
+        $this->assertSame(10, $links[0]['source_link_candidate_details'][0]['id']);
         $this->assertStringContainsString('tanggal sumber berbeda', $links[0]['source_link_note']);
     }
 
