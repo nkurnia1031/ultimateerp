@@ -583,7 +583,7 @@ class ProjectController extends Controller
                         'project' => $project->name,
                     ]
                 );
-                $project['link'] = action([\Modules\Project\Http\Controllers\ProjectController::class, 'show'], ['id' => $project->id]);
+                $project['link'] = action([\Modules\Project\Http\Controllers\ProjectController::class, 'show'], ['project' => $project->id]);
 
                 $this->projectUtil->notifyUsersAboutAssignedProject($project_members['attached'], $project);
             }

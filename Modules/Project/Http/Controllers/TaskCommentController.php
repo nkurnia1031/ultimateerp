@@ -78,7 +78,7 @@ class TaskCommentController extends Controller
                         'task_id' => $project_task->task_id,
                     ]
                 ));
-                $project_comment['link'] = action([\Modules\Project\Http\Controllers\ProjectController::class, 'show'], ['id' => $project_task->project_id]);
+                $project_comment['link'] = action([\Modules\Project\Http\Controllers\ProjectController::class, 'show'], ['project' => $project_task->project_id]);
 
                 if (! empty($members)) {
                     $notifiable_users = User::find($members);
