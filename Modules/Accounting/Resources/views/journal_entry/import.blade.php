@@ -188,7 +188,7 @@
                 data-csrf-token="{{ csrf_token() }}"
                 data-default-type="{{ $activeDraftType }}">
                 <h4>Draft transaksi per jenis</h4>
-                <p class="help-block">Draft tersimpan otomatis. Selisih disetujui awal tetapi harus ditinjau sebelum diproses. Pilih beberapa selisih pada halaman ini untuk menyetujui dan menandainya Ditinjau sekaligus.</p>
+                <p class="help-block">Daftar awal hanya menampilkan baris yang belum selesai. Baris selesai tetap tersimpan dan dapat dilihat dari filter status proses. Selisih disetujui awal tetapi perlu ditinjau; pilih beberapa selisih untuk menandai Ditinjau sekaligus.</p>
                 <div class="journal-import-tab-scroll" role="region" aria-label="Jenis transaksi Journal" tabindex="0" style="overflow-x:auto; overflow-y:hidden;">
                     <ul class="nav nav-tabs journal-import-type-tabs" role="tablist" style="display:flex; flex-wrap:nowrap; min-width:max-content; margin-bottom:0;">
                         @foreach($draftTypeCounts ?? [] as $sourceType => $typeCount)
@@ -206,7 +206,15 @@
                         <input id="journal_import_draft_search" type="search" class="form-control" maxlength="100" placeholder="Nomor, tanggal, deskripsi, atau akun">
                     </div>
                     <div class="col-sm-3 col-md-3">
-                        <label for="journal_import_status_filter">Status review</label>
+                        <label for="journal_import_processing_filter">Status proses</label>
+                        <select id="journal_import_processing_filter" class="form-control">
+                            <option value="remaining" selected>Belum selesai</option>
+                            <option value="completed">Selesai (arsip)</option>
+                            <option value="all">Semua baris</option>
+                        </select>
+                    </div>
+                    <div class="col-sm-2 col-md-2">
+                        <label for="journal_import_status_filter">Filter masalah</label>
                         <select id="journal_import_status_filter" class="form-control">
                             <option value="all">Semua status</option>
                             <option value="errors">Ada error</option>
@@ -214,14 +222,16 @@
                         </select>
                     </div>
                     <div class="col-sm-3 col-md-3">
-                        <label for="journal_import_review_filter">Filter penanda</label>
+                        <label for="journal_import_review_filter">Penanda review</label>
                         <select id="journal_import_review_filter" class="form-control">
                             <option value="all">Semua baris</option>
                             <option value="unreviewed">Belum ditinjau</option>
                             <option value="reviewed">Sudah ditinjau</option>
                         </select>
                     </div>
-                    <div class="col-sm-2 col-md-2 text-right" style="padding-top: 24px;">
+                </div>
+                <div class="row">
+                    <div class="col-sm-12 text-right">
                         <span id="journal_import_draft_status" class="text-muted" aria-live="polite"></span>
                     </div>
                 </div>

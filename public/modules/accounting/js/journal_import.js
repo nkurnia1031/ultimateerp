@@ -544,13 +544,27 @@
     }
 
     function rowMatchesVisibleFilters(row) {
+        var processingFilter = $('#journal_import_processing_filter').val() || 'remaining';
         var reviewFilter = $('#journal_import_review_filter').val() || 'all';
         var statusFilter = $('#journal_import_status_filter').val() || 'all';
+        if (processingFilter === 'remaining' && ['pending', 'failed'].indexOf(row.processing_status) === -1) return false;
+        if (processingFilter === 'completed' && row.processing_status !== 'completed') return false;
         if (reviewFilter === 'unreviewed' && row.is_reviewed) return false;
         if (reviewFilter === 'reviewed' && !row.is_reviewed) return false;
         if (statusFilter === 'errors' && row.processing_status !== 'failed' && !row.processing_error) return false;
         if (statusFilter === 'differences' && ['mismatch', 'auto_approved', 'approved'].indexOf(row.reconciliation_status) === -1) return false;
         return true;
+    }
+
+    function noDraftRowsMessage() {
+        var processingFilter = $('#journal_import_processing_filter').val() || 'remaining';
+        if (processingFilter === 'remaining') {
+            return 'Tidak ada baris yang perlu ditindaklanjuti pada filter ini. Baris selesai tetap tersimpan; pilih Selesai (arsip) atau Semua baris untuk melihatnya.';
+        }
+        if (processingFilter === 'completed') {
+            return 'Tidak ada baris selesai yang cocok dengan filter ini.';
+        }
+        return 'Tidak ada baris untuk filter ini.';
     }
 
     function updateDraftPaginationDisplay() {
@@ -581,7 +595,7 @@
         if (removed) draftTotal = Math.max(0, draftTotal - removed);
         if (!$('#journal_import_draft_table tbody tr').length) {
             $('#journal_import_draft_table tbody').append(
-                $('<tr>').append($('<td colspan="10" class="text-center text-muted">').text('Tidak ada baris untuk filter ini.'))
+                $('<tr>').append($('<td colspan="10" class="text-center text-muted">').text(noDraftRowsMessage()))
             );
         }
         updateDraftPaginationDisplay();
@@ -607,6 +621,7 @@
             dataType: 'json',
             data: {
                 type: draftType,
+                processing_filter: $('#journal_import_processing_filter').val() || 'remaining',
                 review_filter: $('#journal_import_review_filter').val() || 'all',
                 status_filter: $('#journal_import_status_filter').val() || 'all',
                 search: $('#journal_import_draft_search').val() || '',
@@ -617,7 +632,7 @@
             if (requestNumber !== draftRequestNumber) return;
             var tbody = $('#journal_import_draft_table tbody').empty();
             if (!response.success || !response.rows.length) {
-                tbody.append($('<tr>').append($('<td colspan="10" class="text-center text-muted">').text('Tidak ada baris untuk filter ini.')));
+                tbody.append($('<tr>').append($('<td colspan="10" class="text-center text-muted">').text(noDraftRowsMessage())));
             } else {
                 response.rows.forEach(function (row) {
                     tbody.append(renderDraftRow(row));
@@ -976,6 +991,9 @@
     });
 
     $(document).on('change', '#journal_import_review_filter', function () {
+        loadDraftRows(1);
+    });
+    $(document).on('change', '#journal_import_processing_filter', function () {
         loadDraftRows(1);
     });
     $(document).on('change', '#journal_import_status_filter', function () {

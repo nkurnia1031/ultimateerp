@@ -334,6 +334,7 @@ class JournalEntryController extends Controller
         DB::table('accounting_journal_import_rows')
             ->where('journal_import_id', $batch->id)
             ->where('business_id', $business_id)
+            ->whereIn('processing_status', ['pending', 'failed'])
             ->select('source_type', DB::raw('COUNT(*) as row_count'))
             ->groupBy('source_type')
             ->get()
@@ -362,6 +363,7 @@ class JournalEntryController extends Controller
 
         $request->validate([
             'type' => 'required|string',
+            'processing_filter' => 'nullable|in:remaining,completed,all',
             'review_filter' => 'nullable|in:all,reviewed,unreviewed',
             'status_filter' => 'nullable|in:all,errors,differences',
             'search' => 'nullable|string|max:100',
@@ -377,6 +379,12 @@ class JournalEntryController extends Controller
             ->where('journal_import_id', $batch->id)
             ->where('business_id', $business_id)
             ->where('source_type', $type);
+        $processingFilter = $request->input('processing_filter', 'remaining');
+        if ($processingFilter === 'remaining') {
+            $query->whereIn('processing_status', ['pending', 'failed']);
+        } elseif ($processingFilter === 'completed') {
+            $query->where('processing_status', 'completed');
+        }
         $search = trim((string) $request->input('search', ''));
         if ($search !== '') {
             $like = '%'.$search.'%';
