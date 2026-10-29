@@ -15,13 +15,14 @@ use Symfony\Component\Console\Helper\ProgressBar;
 class ImportJournalWorkbook extends Command
 {
     protected $signature = 'accounting:import-journal
-        {workbook : Path to an XLSX, XLS, or CSV journal workbook}
+        {workbook? : Path to an XLSX, XLS, or CSV journal workbook}
         {--business-id= : Business ID that owns the import}
         {--user-id= : Existing user ID recorded as the import author}
+        {--resume-batch= : Resume pending and failed rows from an existing batch without re-reading its workbook}
         {--no-create-missing-main-accounts : Keep missing operational accounts in review instead of creating them from exact workbook values}
         {--chunk-delay-ms=2000 : Delay between continuing database chunks (0-30000 ms)}';
 
-    protected $description = 'Import a journal workbook directly from CLI into a persistent, web-reviewable batch.';
+    protected $description = 'Import or resume a Journal Import batch directly from CLI.';
 
     public function handle(): int
     {
@@ -55,7 +56,31 @@ class ImportJournalWorkbook extends Command
             return self::FAILURE;
         }
 
-        $sourcePath = realpath((string) $this->argument('workbook'));
+        $resumeBatchOption = (string) $this->option('resume-batch');
+        $resumeBatchId = $this->positiveIntegerOption('resume-batch');
+        if ($resumeBatchOption !== '' && $resumeBatchId === null) {
+            $this->error('Opsi --resume-batch harus berupa bilangan bulat positif.');
+
+            return self::FAILURE;
+        }
+        $createMissingMainAccounts = ! (bool) $this->option('no-create-missing-main-accounts');
+        if ($resumeBatchId !== null) {
+            return $this->resumePersistentBatch(
+                $resumeBatchId,
+                $businessId,
+                $userId,
+                $chunkDelayMilliseconds,
+                $createMissingMainAccounts
+            );
+        }
+
+        $workbook = (string) ($this->argument('workbook') ?? '');
+        if ($workbook === '') {
+            $this->error('Sediakan path workbook atau gunakan --resume-batch untuk melanjutkan batch tersimpan.');
+
+            return self::FAILURE;
+        }
+        $sourcePath = realpath($workbook);
         if (empty($sourcePath) || ! is_file($sourcePath) || ! is_readable($sourcePath)) {
             $this->error('File workbook tidak ditemukan atau tidak dapat dibaca.');
 
@@ -100,7 +125,6 @@ class ImportJournalWorkbook extends Command
             $this->line('Batch ID: '.$batchId);
             $this->line('Runner: CLI langsung; tidak menunggu worker queue imports.');
             $this->line('Jeda antar-chunk database: '.$chunkDelayMilliseconds.' ms.');
-            $createMissingMainAccounts = ! (bool) $this->option('no-create-missing-main-accounts');
             $this->line('Account Utama yang tidak ditemukan: '.($createMissingMainAccounts
                 ? 'dibuat dari nomor dan nama akun workbook yang persis.'
                 : 'dibiarkan untuk mapping dan review manual.'));
@@ -154,6 +178,78 @@ class ImportJournalWorkbook extends Command
         }
     }
 
+    private function resumePersistentBatch(
+        int $batchId,
+        int $businessId,
+        int $userId,
+        int $chunkDelayMilliseconds,
+        bool $createMissingMainAccounts
+    ): int {
+        $processingStarted = false;
+
+        try {
+            $batch = $this->findBatch($batchId, $businessId);
+            if (in_array($batch->status, ['preparing_import', 'queued_import', 'importing', 'reconciling'], true)) {
+                $this->error('Batch sedang aktif dan tidak dapat dilanjutkan dari CLI.');
+
+                return self::FAILURE;
+            }
+            if (! in_array($batch->status, ['analyzed', 'partially_imported', 'failed', 'cancelled'], true)) {
+                $this->error('Status batch ini tidak mendukung resume CLI.');
+
+                return self::FAILURE;
+            }
+
+            $retryCount = (int) DB::table('accounting_journal_import_rows')
+                ->where('journal_import_id', $batchId)
+                ->where('business_id', $businessId)
+                ->whereIn('processing_status', ['pending', 'failed'])
+                ->count();
+
+            $this->info('Business: '.($this->findBusinessName($businessId) ?? 'Business').' (#'.$businessId.')');
+            $this->line('Mode: RESUME');
+            $this->line('Batch ID: '.$batchId);
+            $this->line('Pelaksana CLI: #'.$userId);
+            $this->line('Runner: CLI langsung; tidak menunggu worker queue imports.');
+            $this->line('Jeda antar-chunk database: '.$chunkDelayMilliseconds.' ms.');
+            $this->line('Account Utama yang tidak ditemukan: '.($createMissingMainAccounts
+                ? 'dibuat dari nomor dan nama akun workbook yang persis.'
+                : 'dibiarkan untuk mapping dan review manual.'));
+            $this->line($retryCount.' baris pending/gagal akan dievaluasi ulang.');
+            $this->line('Baris yang selesai tidak akan diimpor ulang.');
+
+            if ($retryCount === 0) {
+                $this->comment('Tidak ada baris pending atau gagal untuk diproses ulang.');
+                $this->printSummary($batchId, $businessId, $batch);
+
+                return self::SUCCESS;
+            }
+
+            $this->startPersistentProcessing($batchId, $businessId, $createMissingMainAccounts, true);
+            $processingStarted = true;
+            $batch = $this->runPersistentBatch($batchId, $businessId, $chunkDelayMilliseconds);
+            $this->printSummary($batchId, $businessId, $batch);
+
+            return $batch->status === 'failed' ? self::FAILURE : self::SUCCESS;
+        } catch (\Throwable $exception) {
+            if ($processingStarted) {
+                $this->markInterruptedBatchRecoverable($batchId, $businessId, $exception);
+            }
+
+            $this->error($exception->getMessage());
+            $this->line('Batch dan baris yang sudah tersimpan tetap dapat ditinjau melalui Journal Import di web.');
+
+            return self::FAILURE;
+        }
+    }
+
+    private function findBusinessName(int $businessId): ?string
+    {
+        $business = DB::table('business')->where('id', $businessId)->first();
+
+        return empty($business) ? null : (string) $business->name;
+    }
+
     private function positiveIntegerOption(string $name): ?int
     {
         $value = (string) $this->option($name);
@@ -177,18 +273,34 @@ class ImportJournalWorkbook extends Command
         return (int) $value;
     }
 
-    private function startPersistentProcessing(int $batchId, int $businessId, bool $createMissingMainAccounts): void
+    private function startPersistentProcessing(
+        int $batchId,
+        int $businessId,
+        bool $createMissingMainAccounts,
+        bool $resumeExisting = false
+    ): void
     {
-        $started = DB::transaction(function () use ($batchId, $businessId, $createMissingMainAccounts) {
+        $started = DB::transaction(function () use ($batchId, $businessId, $createMissingMainAccounts, $resumeExisting) {
             $batch = DB::table('accounting_journal_imports')
                 ->where('id', $batchId)
                 ->where('business_id', $businessId)
                 ->lockForUpdate()
                 ->first();
 
-            if (empty($batch) || $batch->status !== 'analyzed' || ! empty($batch->cancel_requested_at)) {
+            $allowedStatuses = $resumeExisting
+                ? ['analyzed', 'partially_imported', 'failed', 'cancelled']
+                : ['analyzed'];
+            $mayResetCancellation = $resumeExisting && ($batch->status ?? null) === 'cancelled';
+            if (empty($batch)
+                || ! in_array($batch->status, $allowedStatuses, true)
+                || (! empty($batch->cancel_requested_at) && ! $mayResetCancellation)) {
                 return false;
             }
+
+            $importOptions = ! empty($batch->import_options) ? json_decode($batch->import_options, true) : [];
+            $importOptions = is_array($importOptions) ? $importOptions : [];
+            $importOptions['execution_mode'] = 'cli';
+            $importOptions['create_missing_main_accounts'] = $createMissingMainAccounts;
 
             $prepareTotal = (int) DB::table('accounting_journal_import_rows')
                 ->where('journal_import_id', $batchId)
@@ -212,10 +324,7 @@ class ImportJournalWorkbook extends Command
                     'cancelled_by' => null,
                     'prepare_cursor' => 0,
                     'tax_reconciliation_cursor' => 0,
-                    'import_options' => json_encode([
-                        'execution_mode' => 'cli',
-                        'create_missing_main_accounts' => $createMissingMainAccounts,
-                    ]),
+                    'import_options' => json_encode($importOptions, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
                     'last_message' => 'Persiapan antrean: 0 / '.$prepareTotal.' draft baris diperiksa.',
                     'error_message' => null,
                 ],
@@ -478,7 +587,7 @@ class ImportJournalWorkbook extends Command
             ->whereNotIn('status', ['imported', 'cancelled'])
             ->update([
                 'status' => 'failed',
-                'last_message' => 'CLI berhenti karena kesalahan; draft tersimpan untuk ditinjau atau dicoba kembali dari web.',
+                'last_message' => 'CLI berhenti karena kesalahan; draft tersimpan untuk ditinjau atau dicoba kembali dari CLI/web.',
                 'error_message' => mb_substr($exception->getMessage(), 0, 2000),
                 'updated_at' => now(),
             ]);
@@ -489,7 +598,7 @@ class ImportJournalWorkbook extends Command
             ->whereIn('processing_status', ['queued', 'running'])
             ->update([
                 'processing_status' => 'failed',
-                'processing_message' => 'CLI berhenti sebelum baris selesai; periksa kesalahan lalu coba kembali dari web.',
+                'processing_message' => 'CLI berhenti sebelum baris selesai; periksa kesalahan lalu coba kembali dari CLI/web.',
                 'processing_error' => mb_substr($exception->getMessage(), 0, 2000),
                 'processing_started_at' => null,
                 'updated_at' => now(),
@@ -526,6 +635,8 @@ class ImportJournalWorkbook extends Command
         }
         if (in_array($batch->status, ['partially_imported', 'cancelled', 'failed'], true)) {
             $this->comment('Sisa batch tersedia pada halaman Journal Import untuk ditinjau atau dilanjutkan.');
+            $this->comment('Baris pending/gagal dapat diproses ulang tanpa workbook: php artisan accounting:import-journal --resume-batch='.$batchId
+                .' --business-id='.$businessId.' --user-id='.(int) ($batch->created_by ?? 0).' --chunk-delay-ms=2000');
         }
     }
 }

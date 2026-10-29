@@ -203,6 +203,76 @@ class JournalImportCliCommandTest extends TestCase
         $this->assertFalse($this->lastProcessingOptions['create_missing_main_accounts'] ?? false);
     }
 
+    public function test_cli_resumes_pending_and_failed_rows_without_reimporting_completed_journals(): void
+    {
+        $workbook = $this->createJournalWorkbook('JE-CLI-RESUME-1', 100, false, 'JE-CLI-RESUME-2', 200);
+        $batch = $this->runImport($workbook, 'imported');
+        $rows = DB::table('accounting_journal_import_rows')
+            ->where('journal_import_id', $batch->id)
+            ->orderBy('entry_index')
+            ->get();
+
+        DB::table('accounting_journal_imports')->where('id', $batch->id)->update([
+            'status' => 'partially_imported',
+            'import_options' => json_encode([
+                'execution_mode' => 'cli',
+                'create_missing_main_accounts' => false,
+                'main_account_mappings' => ['100' => '11'],
+            ]),
+        ]);
+        DB::table('accounting_journal_import_rows')->where('id', $rows[0]->id)->update([
+            'processing_status' => 'failed',
+            'processing_error' => 'Previous CLI attempt failed before saving its outcome.',
+        ]);
+        DB::table('accounting_journal_import_rows')->where('id', $rows[1]->id)->update([
+            'processing_status' => 'pending',
+        ]);
+        $mappingCountBefore = DB::table('accounting_acc_trans_mappings')->count();
+
+        $this->artisan('accounting:import-journal', [
+            '--resume-batch' => $batch->id,
+            '--business-id' => 2,
+            '--user-id' => 7,
+            '--chunk-delay-ms' => 0,
+        ])->expectsOutputToContain('Mode: RESUME')
+            ->expectsOutputToContain('2 baris pending/gagal akan dievaluasi ulang.')
+            ->expectsOutputToContain('Berhasil: 2')
+            ->assertExitCode(0);
+
+        $finishedBatch = DB::table('accounting_journal_imports')->where('id', $batch->id)->first();
+        $this->assertSame('imported', $finishedBatch->status);
+        $finishedOptions = json_decode($finishedBatch->import_options, true);
+        $this->assertTrue($finishedOptions['create_missing_main_accounts'] ?? false);
+        $this->assertSame(['100' => '11'], $finishedOptions['main_account_mappings'] ?? null);
+        $this->assertSame(2, DB::table('accounting_journal_import_rows')
+            ->where('journal_import_id', $batch->id)
+            ->where('processing_status', 'completed')
+            ->count());
+        $this->assertSame(0, DB::table('accounting_journal_import_rows')
+            ->where('journal_import_id', $batch->id)
+            ->whereIn('processing_status', ['pending', 'failed'])
+            ->count());
+        $this->assertSame($mappingCountBefore, DB::table('accounting_acc_trans_mappings')->count());
+    }
+
+    public function test_cli_resume_leaves_an_active_batch_untouched(): void
+    {
+        $batch = $this->runImport($this->createJournalWorkbook('JE-CLI-ACTIVE-1', 100), 'imported');
+        DB::table('accounting_journal_imports')->where('id', $batch->id)->update([
+            'status' => 'importing',
+        ]);
+
+        $this->artisan('accounting:import-journal', [
+            '--resume-batch' => $batch->id,
+            '--business-id' => 2,
+            '--user-id' => 7,
+            '--chunk-delay-ms' => 0,
+        ])->expectsOutputToContain('Batch sedang aktif dan tidak dapat dilanjutkan dari CLI.')
+            ->assertExitCode(1);
+
+        $this->assertSame('importing', DB::table('accounting_journal_imports')->where('id', $batch->id)->value('status'));
+    }
+
     public function test_cli_cancellation_keeps_the_batch_and_unstarted_rows_available_for_web(): void
     {
         $this->requestCancellationAfterJournalPost = true;
