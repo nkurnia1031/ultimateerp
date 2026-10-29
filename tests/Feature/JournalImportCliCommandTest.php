@@ -169,7 +169,6 @@ class JournalImportCliCommandTest extends TestCase
         ])->expectsOutputToContain('Progres Persiapan antrean: 2 / 2 draft baris')
             ->expectsOutputToContain('2 siap, 0 perlu ditinjau')
             ->expectsOutputToContain('Progres Import: 2 / 2 baris import')
-            ->expectsOutputToContain('2 selesai, 0 gagal')
             ->assertExitCode(0);
 
         $batch = DB::table('accounting_journal_imports')->orderByDesc('id')->first();
@@ -179,6 +178,8 @@ class JournalImportCliCommandTest extends TestCase
         $this->assertSame(2, $progress['phases']['preparing_import']['total'] ?? null);
         $this->assertSame(2, $progress['phases']['importing']['processed'] ?? null);
         $this->assertSame(2, $progress['phases']['importing']['total'] ?? null);
+        $this->assertSame(2, $progress['phases']['importing']['counts']['completed'] ?? null);
+        $this->assertSame(0, $progress['phases']['importing']['counts']['failed'] ?? null);
     }
 
     public function test_cli_creates_missing_main_accounts_by_default_and_can_opt_out(): void
