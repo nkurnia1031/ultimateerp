@@ -2,6 +2,7 @@
 
 namespace App\Providers;
 
+use App\Business;
 use App\System;
 use App\Utils\ModuleUtil;
 use Illuminate\Pagination\Paginator;
@@ -13,6 +14,7 @@ use Illuminate\Support\ServiceProvider;
 use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Support\Facades\Storage;
 use League\Flysystem\Filesystem;
+use Modules\Accounting\Services\JournalAlignedCoaProvisioner;
 use Spatie\Dropbox\Client as DropboxClient;
 use Spatie\FlysystemDropbox\DropboxAdapter;
 
@@ -29,6 +31,14 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot()
     {
+        Business::created(function (Business $business) {
+            if (! Schema::hasTable('accounting_accounts')) {
+                return;
+            }
+
+            app(JournalAlignedCoaProvisioner::class)->provisionBusiness($business->id);
+        });
+
         ini_set('memory_limit', '-1');
         set_time_limit(0);
 

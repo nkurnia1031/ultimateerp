@@ -26,6 +26,7 @@ use Modules\Accounting\Services\JournalImportDraftService;
 use Modules\Accounting\Services\JournalImportInvoiceService;
 use Modules\Accounting\Services\JournalImportQueueService;
 use Modules\Accounting\Services\JournalImportCancellationService;
+use Modules\Accounting\Services\JournalAccountTypeResolver;
 use Modules\Accounting\Services\JournalTaxReconciliationService;
 use Modules\Accounting\Utils\AccountingUtil;
 use PhpOffice\PhpSpreadsheet\IOFactory;
@@ -2692,22 +2693,7 @@ class JournalEntryController extends Controller
 
     private function inferPrimaryAccountType($gl_code)
     {
-        $first = substr(trim((string) $gl_code), 0, 1);
-
-        if ($first === '1') {
-            return 'asset';
-        }
-        if ($first === '2') {
-            return 'liability';
-        }
-        if ($first === '3') {
-            return 'equity';
-        }
-        if (in_array($first, ['4', '5'])) {
-            return 'income';
-        }
-
-        return 'expenses';
+        return JournalAccountTypeResolver::fromGlCode($gl_code);
     }
 
     private function parseImportAmount($value)
