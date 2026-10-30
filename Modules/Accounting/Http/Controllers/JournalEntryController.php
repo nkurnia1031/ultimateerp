@@ -1026,6 +1026,7 @@ class JournalEntryController extends Controller
         })->all();
         $componentMatchTypes = ['Expense', 'Purchase Invoice', 'Sales Invoice'];
         $matchComponents = in_array($row->source_type, $componentMatchTypes, true)
+            && $componentService->hasSourceAmounts($components, (string) $row->source_type)
             ? $journalComponentTotals
             : null;
         $response['source_link_candidate_details'] = app(\Modules\Accounting\Services\JournalImportSourceMatcher::class)

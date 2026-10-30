@@ -124,7 +124,7 @@ class JournalImportCandidateResponseTest extends TestCase
         $response->assertJsonPath('rows.0.source_link_candidate_details.1.id', 10);
         $response->assertJsonPath('rows.0.source_link_candidate_details.1.base_difference', 10);
         $response->assertJsonPath('rows.0.source_link_candidate_details.1.tax_difference', 10);
-        $response->assertJsonPath('rows.0.source_link_candidate_details.1.tax_direction_match', null);
+        $response->assertJsonPath('rows.0.source_link_candidate_details.1.tax_direction_match', true);
         $this->assertNotContains(12, array_column($response->json('rows.0.source_link_candidate_details'), 'id'));
     }
 

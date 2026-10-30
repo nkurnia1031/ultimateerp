@@ -22,6 +22,7 @@ class JournalImportSourceMatchPolicy
             ? $this->componentService->groupJournalLines($entry, $businessId)
             : [];
         $sourceComponents = in_array($sourceType, $componentSourceTypes, true)
+            && $this->componentService->hasSourceAmounts($components, $sourceType)
             ? $this->componentService->totalsForSource($components, $sourceType)
             : null;
         $ranked = $this->matcher->rankCandidates($candidates, $date, $amount, $sourceComponents);

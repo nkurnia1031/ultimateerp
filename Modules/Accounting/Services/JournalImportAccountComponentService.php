@@ -119,6 +119,17 @@ class JournalImportAccountComponentService
         ];
     }
 
+    public function hasSourceAmounts(array $components, string $sourceType): bool
+    {
+        if ($components === []) {
+            return false;
+        }
+
+        $totals = $this->totalsForSource($components, $sourceType);
+
+        return abs($totals['base']) > 0.01 || abs($totals['tax']) > 0.01;
+    }
+
     public function accountKey(array $line): string
     {
         return md5(strtolower(trim((string) ($line['account_no'] ?? '')).'|'.trim((string) ($line['account_name'] ?? ''))));
