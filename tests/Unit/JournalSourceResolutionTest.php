@@ -82,6 +82,8 @@ class JournalSourceResolutionTest extends TestCase
             $table->increments('id');
             $table->unsignedInteger('business_id');
             $table->string('name')->nullable();
+            $table->string('account_number')->nullable();
+            $table->dateTime('deleted_at')->nullable();
         });
         $this->database->schema()->create('account_transactions', function ($table) {
             $table->increments('id');
@@ -91,6 +93,8 @@ class JournalSourceResolutionTest extends TestCase
             $table->string('reff_no')->nullable();
             $table->dateTime('operation_date')->nullable();
             $table->decimal('amount', 22, 4)->default(0);
+            $table->text('note')->nullable();
+            $table->unsignedInteger('transfer_transaction_id')->nullable();
             $table->dateTime('deleted_at')->nullable();
         });
 
@@ -123,7 +127,7 @@ class JournalSourceResolutionTest extends TestCase
         $this->assertSame('suggested', $links[0]['source_link_status']);
         $this->assertNull($links[0]['source_record_id']);
         $this->assertSame(10, $links[0]['source_link_candidate_details'][0]['id']);
-        $this->assertStringContainsString('tanggal sumber berbeda', $links[0]['source_link_note']);
+        $this->assertStringContainsString('tidak ditautkan otomatis', $links[0]['source_link_note']);
     }
 
     public function test_date_or_amount_can_disambiguate_duplicate_references(): void
