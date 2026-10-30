@@ -55,6 +55,68 @@ class JournalImportSourceMatcherTest extends TestCase
         $this->assertNull($matcher->uniqueExactCandidate($ranked, '2026-10-03', 100.00));
     }
 
+    public function test_same_total_candidates_are_ranked_by_basis_and_tax_component_fit(): void
+    {
+        $matcher = new JournalImportSourceMatcher();
+        $ranked = $matcher->rankCandidates([
+            $this->candidate(44, ['INV-COMPONENT'], '2026-10-01', 110.00, 110.00, 0.00),
+            $this->candidate(43, ['INV-COMPONENT'], '2026-10-01', 110.00, 100.00, 10.00),
+        ], '2026-10-01', 110.00, ['base' => 100.00, 'tax' => 10.00]);
+
+        $this->assertSame([43, 44], array_column($ranked, 'id'));
+        $this->assertSame(0.0, $ranked[0]['base_difference']);
+        $this->assertSame(0.0, $ranked[0]['tax_difference']);
+        $this->assertTrue($ranked[0]['component_match']);
+        $this->assertSame(20.0, $ranked[1]['component_difference']);
+        $this->assertFalse($ranked[1]['component_match']);
+        $this->assertSame(43, $matcher->uniqueExactCandidate($ranked, '2026-10-01', 110.00, ['base' => 100.00, 'tax' => 10.00])['id']);
+    }
+
+    public function test_transaction_with_matching_total_but_different_components_is_not_exact(): void
+    {
+        $matcher = new JournalImportSourceMatcher();
+        $ranked = $matcher->rankCandidates([
+            $this->candidate(45, ['INV-COMPONENT'], '2026-10-01', 110.00, 110.00, 0.00),
+        ], '2026-10-01', 110.00, ['base' => 100.00, 'tax' => 10.00]);
+
+        $this->assertNull($matcher->uniqueExactCandidate($ranked, '2026-10-01', 110.00, ['base' => 100.00, 'tax' => 10.00]));
+    }
+
+    public function test_transaction_with_matching_components_but_wrong_vat_direction_is_not_exact(): void
+    {
+        $matcher = new JournalImportSourceMatcher();
+        $sourceComponents = [
+            'base' => 100.00,
+            'tax' => 10.00,
+            'tax_direction' => 'output',
+            'tax_direction_conflict' => false,
+        ];
+        $ranked = $matcher->rankCandidates([
+            $this->candidate(46, ['INV-VAT-DIRECTION'], '2026-10-01', 110.00, 100.00, 10.00),
+        ], '2026-10-01', 110.00, $sourceComponents);
+
+        $this->assertFalse($ranked[0]['component_match']);
+        $this->assertFalse($ranked[0]['tax_direction_match']);
+        $this->assertNull($matcher->uniqueExactCandidate($ranked, '2026-10-01', 110.00, $sourceComponents));
+    }
+
+    public function test_conflicting_vat_line_is_not_ignored_when_it_is_on_the_opposite_journal_side(): void
+    {
+        $matcher = new JournalImportSourceMatcher();
+        $sourceComponents = [
+            'base' => 100.00,
+            'tax' => 0.00,
+            'tax_direction' => null,
+            'tax_direction_conflict' => true,
+        ];
+        $ranked = $matcher->rankCandidates([
+            $this->candidate(47, ['INV-VAT-CONFLICT'], '2026-10-01', 100.00, 100.00, 0.00),
+        ], '2026-10-01', 100.00, $sourceComponents);
+
+        $this->assertFalse($ranked[0]['component_match']);
+        $this->assertNull($matcher->uniqueExactCandidate($ranked, '2026-10-01', 100.00, $sourceComponents));
+    }
+
     public function test_equal_ranked_candidates_use_source_id_as_a_stable_tiebreaker(): void
     {
         $matcher = new JournalImportSourceMatcher();
@@ -99,13 +161,16 @@ class JournalImportSourceMatcherTest extends TestCase
         }, [1, 6000, 12000]));
     }
 
-    private function candidate(int $id, array $references, string $date, float $amount): array
+    private function candidate(int $id, array $references, string $date, float $amount, ?float $baseAmount = null, ?float $taxAmount = null): array
     {
         return [
             'id' => $id,
-            'record_type' => 'Transaction',
+            'record_type' => \App\Transaction::class,
+            'transaction_type' => 'expense',
             'date' => $date,
             'amount' => $amount,
+            'base_amount' => $baseAmount,
+            'tax_amount' => $taxAmount,
             'references' => $references,
             'label' => 'Transaction #'.$id,
         ];

@@ -74,6 +74,51 @@ class JournalImportAccountComponentService
         return array_values($lines);
     }
 
+    public function totalsForSource(array $components, string $sourceType): array
+    {
+        $side = $sourceType === 'Sales Invoice' ? 'credit' : 'debit';
+        $base = 0.0;
+        $tax = 0.0;
+        $taxDirections = [];
+        $taxDirectionConflict = false;
+
+        foreach ($components as $component) {
+            if (! is_array($component)) {
+                continue;
+            }
+
+            $amount = (float) ($component[$side] ?? 0);
+            if (! is_finite($amount)) {
+                continue;
+            }
+
+            if (! empty($component['is_tax'])) {
+                $tax += $amount;
+                if ((float) ($component['debit'] ?? 0) > 0 || (float) ($component['credit'] ?? 0) > 0) {
+                    $direction = $component['tax_direction'] ?? null;
+                    if (! empty($component['tax_direction_conflict']) || ! in_array($direction, ['input', 'output'], true)) {
+                        $taxDirectionConflict = true;
+                    } else {
+                        $taxDirections[$direction] = true;
+                    }
+                }
+            } else {
+                $base += $amount;
+            }
+        }
+
+        if (count($taxDirections) > 1) {
+            $taxDirectionConflict = true;
+        }
+
+        return [
+            'base' => round($base, 4),
+            'tax' => round($tax, 4),
+            'tax_direction' => count($taxDirections) === 1 ? array_key_first($taxDirections) : null,
+            'tax_direction_conflict' => $taxDirectionConflict,
+        ];
+    }
+
     public function accountKey(array $line): string
     {
         return md5(strtolower(trim((string) ($line['account_no'] ?? '')).'|'.trim((string) ($line['account_name'] ?? ''))));

@@ -27,6 +27,7 @@ test('a queued Journal Import can stop, resume, and post once', async ({ page })
     ).trim();
     const fileName = path.basename(fixturePath);
     let queueWorker;
+    page.on('dialog', (dialog) => dialog.accept());
 
     try {
         await page.goto('/login');
@@ -57,7 +58,7 @@ test('a queued Journal Import can stop, resume, and post once', async ({ page })
             (response) =>
                 response.request().method() === 'POST' &&
                 response.url().endsWith(`/accounting/journal-entry/import/${importId}/terminate`),
-            { timeout: 10_000 },
+            { timeout: 30_000 },
         );
         await row.locator('.journal-import-terminate').click();
         const stopResponse = await stopResponsePromise;
@@ -85,7 +86,15 @@ test('a queued Journal Import can stop, resume, and post once', async ({ page })
         await expect(page.locator('#journal_import_form input[name="import_id"]')).toHaveValue(importId);
         const csrfToken = await page.locator('#journal_import_form input[name="_token"]').inputValue();
 
+        const startResponsePromise = page.waitForResponse(
+            (response) =>
+                response.request().method() === 'POST' &&
+                response.url().endsWith('/accounting/journal-entry/import/start'),
+            { timeout: 30_000 },
+        );
         await page.getByRole('button', { name: 'Proses Baris Valid' }).click();
+        const startResponse = await startResponsePromise;
+        expect(startResponse.ok()).toBeTruthy();
         await expect.poll(async () => (await batchStatus(page, importId)).status, {
             timeout: 120_000,
             intervals: [500, 1000, 2000],

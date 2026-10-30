@@ -198,9 +198,16 @@ class JournalAlignedCoaProvisionerTest extends TestCase
 
     public function test_journal_account_type_resolver_classifies_series_five_as_expenses(): void
     {
-        $this->assertSame('expenses', JournalAccountTypeResolver::fromGlCode('5-50000'));
-        $this->assertSame('expenses', JournalAccountTypeResolver::fromGlCode('8-80005'));
+        $this->assertSame('asset', JournalAccountTypeResolver::fromGlCode('1-10001'));
+        $this->assertSame('liability', JournalAccountTypeResolver::fromGlCode('2-20001'));
+        $this->assertSame('equity', JournalAccountTypeResolver::fromGlCode('3-30001'));
         $this->assertSame('income', JournalAccountTypeResolver::fromGlCode('4-40000'));
+        $this->assertSame('expenses', JournalAccountTypeResolver::fromGlCode('5-50000'));
+        $this->assertSame('expenses', JournalAccountTypeResolver::fromGlCode('6-60000'));
+        $this->assertSame('expenses', JournalAccountTypeResolver::fromGlCode('8-80005'));
+        $this->assertNull(JournalAccountTypeResolver::fromGlCode('7-70000'));
+        $this->assertNull(JournalAccountTypeResolver::fromGlCode(''));
+        $this->assertNull(JournalAccountTypeResolver::fromGlCode(null));
     }
 
     private function insertOperationalAccounts(int $businessId, array $accounts): void

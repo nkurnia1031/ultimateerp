@@ -483,9 +483,12 @@
                 ['Tanggal', candidate.date || '—'],
                 ['Referensi', (candidate.references || []).join(', ') || '—'],
                 ['Basis', candidateAmount(candidate.base_amount)],
+                ['Selisih basis vs Journal', candidateAmount(candidate.base_difference)],
                 ['Pajak', candidateAmount(candidate.tax_amount)],
+                ['Selisih pajak vs Journal', candidateAmount(candidate.tax_difference)],
+                ['Arah pajak', candidate.tax_direction_match === null ? '—' : (candidate.tax_direction_match ? 'Cocok' : 'Tidak cocok')],
                 ['Total', candidateAmount(candidate.amount)],
-                ['Selisih total vs Journal', amountDifference === null ? '—' : formatDraftNumber(Number(candidate.amount) - Number(row.debit_total || 0))]
+                ['Selisih total vs Journal', amountDifference === null ? '—' : formatDraftNumber(amountDifference)]
             ].forEach(function (field) {
                 sourceSummary.append($('<div class="col-sm-4 col-md-4">')
                     .append($('<p class="small">').append($('<strong>').text(field[0] + ': ')).append(document.createTextNode(field[1]))));

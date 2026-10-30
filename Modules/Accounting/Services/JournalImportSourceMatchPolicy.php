@@ -17,11 +17,18 @@ class JournalImportSourceMatchPolicy
     {
         $date = (string) ($entry['date'] ?? '');
         $amount = (float) ($entry['debit_total'] ?? 0);
-        $ranked = $this->matcher->rankCandidates($candidates, $date, $amount);
-        $exact = $this->matcher->uniqueExactCandidate($ranked, $date, $amount);
+        $componentSourceTypes = ['Expense', 'Purchase Invoice', 'Sales Invoice'];
+        $components = in_array($sourceType, $componentSourceTypes, true)
+            ? $this->componentService->groupJournalLines($entry, $businessId)
+            : [];
+        $sourceComponents = in_array($sourceType, $componentSourceTypes, true)
+            ? $this->componentService->totalsForSource($components, $sourceType)
+            : null;
+        $ranked = $this->matcher->rankCandidates($candidates, $date, $amount, $sourceComponents);
+        $exact = $this->matcher->uniqueExactCandidate($ranked, $date, $amount, $sourceComponents);
         $vatExplained = $exact === null
             && count($ranked) === 1
-            && $this->candidateDifferenceIsExplainedByVat($ranked[0], $sourceType, $entry, $businessId);
+            && $this->candidateDifferenceIsExplainedByVat($ranked[0], $sourceType, $entry, $businessId, $components);
         $selected = $exact ?? ($vatExplained ? $ranked[0] : null);
 
         if ($selected !== null) {
@@ -31,7 +38,7 @@ class JournalImportSourceMatchPolicy
                 'selected_candidate' => $selected,
                 'note' => $vatExplained
                     ? 'Selisih sumber dijelaskan seluruhnya oleh VAT yang cocok dengan TaxRate business; sumber akan dilengkapi.'
-                    : 'Kandidat tunggal cocok pada nomor, tanggal, dan total Journal.',
+                    : 'Kandidat tunggal cocok pada nomor, tanggal, total, dan komponen Journal yang tersedia.',
                 'candidates' => $ranked,
             ];
         }
@@ -65,7 +72,7 @@ class JournalImportSourceMatchPolicy
         ];
     }
 
-    private function candidateDifferenceIsExplainedByVat(array $candidate, string $sourceType, array $entry, int $businessId): bool
+    private function candidateDifferenceIsExplainedByVat(array $candidate, string $sourceType, array $entry, int $businessId, array $components): bool
     {
         if (($candidate['record_type'] ?? null) !== Transaction::class
             || ! in_array($sourceType, ['Expense', 'Purchase Invoice', 'Sales Invoice'], true)) {
@@ -91,7 +98,6 @@ class JournalImportSourceMatchPolicy
             return false;
         }
 
-        $components = $this->componentService->groupJournalLines($entry, $businessId);
         $side = $sourceType === 'Sales Invoice' ? 'credit' : 'debit';
         $otherSide = $side === 'debit' ? 'credit' : 'debit';
         $baseTotal = round((float) collect($components)->reject(fn ($component) => $component['is_tax'])->sum($side), 4);

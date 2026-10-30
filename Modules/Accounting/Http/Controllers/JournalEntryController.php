@@ -1010,12 +1010,12 @@ class JournalEntryController extends Controller
     {
         $response = $this->journalImportDraftService->rowResponse($row);
         $entry = json_decode((string) $row->entry_data, true) ?: [];
-        $components = app(\Modules\Accounting\Services\JournalImportAccountComponentService::class)
-            ->groupJournalLines($entry, (int) $row->business_id, $importOptions);
+        $componentService = app(\Modules\Accounting\Services\JournalImportAccountComponentService::class);
+        $components = $componentService->groupJournalLines($entry, (int) $row->business_id, $importOptions);
         $response['journal_components'] = $components;
-        $componentSide = $row->source_type === 'Sales Invoice' ? 'credit' : 'debit';
-        $response['journal_base_total'] = round((float) collect($components)->reject(fn ($component) => $component['is_tax'])->sum($componentSide), 4);
-        $response['journal_tax_total'] = round((float) collect($components)->filter(fn ($component) => $component['is_tax'])->sum($componentSide), 4);
+        $journalComponentTotals = $componentService->totalsForSource($components, (string) $row->source_type);
+        $response['journal_base_total'] = $journalComponentTotals['base'];
+        $response['journal_tax_total'] = $journalComponentTotals['tax'];
         $response['default_location_id'] = $defaultLocationId;
 
         $candidateDetails = collect($response['source_link_candidate_details'] ?? [])->map(function ($candidate) use ($candidateDetailsByKey) {
@@ -1024,8 +1024,12 @@ class JournalEntryController extends Controller
                 ? array_merge($candidate, $candidateDetailsByKey[$key])
                 : $candidate;
         })->all();
+        $componentMatchTypes = ['Expense', 'Purchase Invoice', 'Sales Invoice'];
+        $matchComponents = in_array($row->source_type, $componentMatchTypes, true)
+            ? $journalComponentTotals
+            : null;
         $response['source_link_candidate_details'] = app(\Modules\Accounting\Services\JournalImportSourceMatcher::class)
-            ->rankCandidates($candidateDetails, (string) ($entry['date'] ?? ''), (float) ($entry['debit_total'] ?? 0));
+            ->rankCandidates($candidateDetails, (string) ($entry['date'] ?? ''), (float) ($entry['debit_total'] ?? 0), $matchComponents);
 
         foreach ($response['source_link_candidate_details'] as $candidate) {
             if (($candidate['record_type'] ?? null) === ($row->source_record_type ?? null)
@@ -3059,12 +3063,18 @@ class JournalEntryController extends Controller
             return null;
         }
 
+        $primaryType = $this->inferPrimaryAccountType($line['account_no']);
+        if ($primaryType === null) {
+            $glCode = trim((string) ($line['account_no'] ?? ''));
+            throw new \RuntimeException('Prefix nomor akun GL "'.$glCode.'" tidak didukung; pilih mapping CoA secara manual sebelum mengimpor baris ini.');
+        }
+
         $created = AccountingAccount::create([
             'account_id' => $main_account_id,
             'business_id' => $business_id,
             'name' => $line['account_name'] ?: $line['account_no'],
             'gl_code' => $line['account_no'],
-            'account_primary_type' => $this->inferPrimaryAccountType($line['account_no']),
+            'account_primary_type' => $primaryType,
             'status' => 'active',
             'created_by' => $user_id,
         ]);

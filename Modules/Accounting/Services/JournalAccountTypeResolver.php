@@ -24,6 +24,10 @@ class JournalAccountTypeResolver
             return 'income';
         }
 
-        return 'expenses';
+        if (in_array($prefix, ['5', '6', '8'], true)) {
+            return 'expenses';
+        }
+
+        return null;
     }
 }
