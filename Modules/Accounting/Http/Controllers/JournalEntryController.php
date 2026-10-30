@@ -1020,10 +1020,14 @@ class JournalEntryController extends Controller
 
         $candidateDetails = collect($response['source_link_candidate_details'] ?? [])->map(function ($candidate) use ($candidateDetailsByKey) {
             $key = ($candidate['record_type'] ?? '').'|'.(int) ($candidate['id'] ?? 0);
+            if ($candidateDetailsByKey === null) {
+                return $candidate;
+            }
+
             return isset($candidateDetailsByKey[$key])
                 ? array_merge($candidate, $candidateDetailsByKey[$key])
-                : $candidate;
-        })->all();
+                : null;
+        })->filter()->values()->all();
         $componentMatchTypes = ['Expense', 'Purchase Invoice', 'Sales Invoice'];
         $matchComponents = in_array($row->source_type, $componentMatchTypes, true)
             && $componentService->hasSourceAmounts($components, (string) $row->source_type)
