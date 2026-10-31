@@ -160,12 +160,17 @@ class JournalImportSourceMatcher
                 && (string) ($candidate['date'] ?? '') === $sourceDate
                 && abs((float) ($candidate['amount'] ?? 0) - $sourceAmount) <= 0.01;
 
-            if (! $matchesTotal || $sourceComponents === null || ($candidate['record_type'] ?? null) !== \App\Transaction::class) {
+            $hasComponentData = ($candidate['record_type'] ?? null) === \App\Transaction::class
+                && in_array((string) ($candidate['transaction_type'] ?? ''), ['sell', 'purchase', 'expense'], true)
+                && is_numeric($candidate['base_amount'] ?? null);
+
+            if (! $matchesTotal || ! $hasComponentData) {
                 return $matchesTotal;
             }
 
             $components = $this->candidateComponents($candidate);
-            if ($components === null
+            if ($sourceComponents === null
+                || $components === null
                 || ! is_numeric($sourceComponents['base'] ?? null)
                 || ! is_numeric($sourceComponents['tax'] ?? null)
                 || abs($components['base'] - (float) $sourceComponents['base']) > 0.01
