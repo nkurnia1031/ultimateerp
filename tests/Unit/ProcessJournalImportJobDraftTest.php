@@ -620,6 +620,10 @@ class ProcessJournalImportJobDraftTest extends TestCase
         $this->assertSame(\App\TransactionPayment::class, $row->source_record_type);
         $this->assertSame(812, (int) $row->source_record_id);
         $this->assertNotNull($row->journal_mapping_id);
+        $sourceLink = DB::table('accounting_journal_import_source_links')->where('journal_import_row_id', 1)->first();
+        $this->assertSame(\App\TransactionPayment::class, $sourceLink->source_record_type);
+        $this->assertSame(812, (int) $sourceLink->source_record_id);
+        $this->assertSame('single', $sourceLink->link_method);
         $this->assertSame('imported', DB::table('accounting_journal_imports')->where('id', 1)->value('status'));
     }
 
@@ -714,6 +718,10 @@ class ProcessJournalImportJobDraftTest extends TestCase
         $this->assertSame(\App\AccountTransaction::class, $row->source_record_type);
         $this->assertSame(501, (int) $row->source_record_id);
         $this->assertNotNull($row->journal_mapping_id);
+        $sourceLink = DB::table('accounting_journal_import_source_links')->where('journal_import_row_id', 1)->first();
+        $this->assertSame(\App\AccountTransaction::class, $sourceLink->source_record_type);
+        $this->assertSame(501, (int) $sourceLink->source_record_id);
+        $this->assertSame('single', $sourceLink->link_method);
         $this->assertSame('imported', DB::table('accounting_journal_imports')->where('id', 1)->value('status'));
     }
 
@@ -772,6 +780,23 @@ class ProcessJournalImportJobDraftTest extends TestCase
             $table->dateTime('difference_approved_at')->nullable();
             $table->text('difference_approval_reason')->nullable();
             $table->timestamps();
+        });
+        $this->database->schema()->create('accounting_journal_import_source_links', function ($table) {
+            $table->increments('id');
+            $table->unsignedInteger('business_id');
+            $table->unsignedBigInteger('journal_import_id');
+            $table->unsignedBigInteger('journal_import_row_id');
+            $table->string('journal_source_type', 100);
+            $table->string('source_record_type', 64);
+            $table->unsignedBigInteger('source_record_id');
+            $table->text('source_reference')->nullable();
+            $table->date('source_date')->nullable();
+            $table->decimal('base_amount', 22, 4)->nullable();
+            $table->decimal('tax_amount', 22, 4)->nullable();
+            $table->decimal('total_amount', 22, 4)->nullable();
+            $table->string('link_method', 32)->default('single');
+            $table->timestamps();
+            $table->unique(['journal_import_row_id', 'source_record_type', 'source_record_id']);
         });
         $this->database->schema()->create('accounting_acc_trans_mappings', function ($table) {
             $table->increments('id');
