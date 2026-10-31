@@ -190,7 +190,7 @@ class ProcessJournalImportJobDraftTest extends TestCase
             ->andReturnUsing(function () use ($error) {
                 throw new \RuntimeException($error);
             });
-        $controller->shouldReceive('deleteTemporaryJournalFile')->twice();
+        $controller->shouldNotReceive('deleteTemporaryJournalFile');
 
         (new ProcessJournalImportJob(1))->handle(
             $controller,
