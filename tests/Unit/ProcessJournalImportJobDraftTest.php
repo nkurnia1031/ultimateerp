@@ -128,6 +128,87 @@ class ProcessJournalImportJobDraftTest extends TestCase
         $this->assertSame('completed', DB::table('accounting_journal_import_rows')->where('id', 1)->value('processing_status'));
     }
 
+    public function test_unsupported_gl_prefix_keeps_manual_mapping_guidance_on_the_review_row(): void
+    {
+        $this->useSqliteDatabase();
+        $this->createTables();
+        $now = now();
+        $error = 'Prefix nomor akun GL "7-70000" tidak didukung; pilih mapping CoA secara manual sebelum mengimpor baris ini.';
+        $entry = [
+            'source_type' => 'Journal Entry',
+            'source_number' => 'JE-UNSUPPORTED-1',
+            'source_key' => 'Journal Entry|JE-UNSUPPORTED-1',
+            'date' => '2026-10-01',
+            'description' => 'Unsupported GL prefix',
+            'is_unbalanced' => false,
+            'is_duplicate' => false,
+            'exists_in_system' => false,
+            'debit_total' => 100,
+            'credit_total' => 100,
+            'lines' => [[
+                'account_no' => '7-70000',
+                'account_name' => 'Suspense account',
+                'debit' => 100,
+                'credit' => 0,
+            ]],
+        ];
+        DB::table('accounting_journal_imports')->insert([
+            'id' => 1,
+            'business_id' => 3,
+            'created_by' => 8,
+            'status' => 'queued_import',
+            'import_options' => '{"create_missing_accounts":true,"create_missing_main_accounts":true}',
+            'processed_entries' => 0,
+            'imported_entries' => 0,
+            'skipped_entries' => 0,
+            'total_entries' => 1,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        DB::table('accounting_journal_import_rows')->insert([
+            'id' => 1,
+            'journal_import_id' => 1,
+            'business_id' => 3,
+            'entry_index' => 0,
+            'source_type' => 'Journal Entry',
+            'source_number' => $entry['source_number'],
+            'source_key' => $entry['source_key'],
+            'source_action' => 'journal',
+            'entry_data' => json_encode($entry),
+            'draft_data' => '{}',
+            'processing_status' => 'queued',
+            'processing_attempts' => 0,
+            'is_reviewed' => false,
+            'reconciliation_status' => 'not_checked',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+
+        $controller = Mockery::mock(JournalEntryController::class);
+        $controller->shouldReceive('processJournalImportEntriesForBatch')
+            ->once()
+            ->andReturnUsing(function () use ($error) {
+                throw new \RuntimeException($error);
+            });
+        $controller->shouldReceive('deleteTemporaryJournalFile')->twice();
+
+        (new ProcessJournalImportJob(1))->handle(
+            $controller,
+            new JournalImportQueueService(),
+            Mockery::mock(JournalImportInvoiceService::class),
+            Mockery::mock(JournalImportExpenseService::class),
+            Mockery::mock(JournalImportPaymentService::class),
+            Mockery::mock(JournalImportBankTransactionService::class)
+        );
+        $this->runTaxContinuation($controller);
+
+        $row = DB::table('accounting_journal_import_rows')->where('id', 1)->first();
+        $this->assertSame('failed', $row->processing_status);
+        $this->assertSame($error, $row->processing_error);
+        $this->assertStringContainsString('mapping CoA secara manual', $row->processing_error);
+        $this->assertSame(0, DB::table('accounting_acc_trans_mappings')->count());
+    }
+
     public function test_worker_stops_after_current_row_and_returns_unstarted_rows_to_pending(): void
     {
         $this->useSqliteDatabase();

@@ -6,6 +6,7 @@ use App\Business;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Modules\Accounting\Http\Controllers\JournalEntryController;
 use Modules\Accounting\Services\JournalAccountTypeResolver;
 use Modules\Accounting\Services\JournalAlignedCoaProvisioner;
 use Tests\TestCase;
@@ -40,8 +41,16 @@ class JournalAlignedCoaProvisionerTest extends TestCase
         });
         Schema::create('accounts', function (Blueprint $table) {
             $table->increments('id');
+            $table->unsignedInteger('journal_import_id')->nullable();
             $table->unsignedInteger('business_id');
             $table->string('name');
+            $table->string('account_number')->nullable();
+            $table->unsignedInteger('account_type_id')->nullable();
+            $table->text('note')->nullable();
+            $table->unsignedInteger('created_by')->nullable();
+            $table->boolean('is_closed')->default(false);
+            $table->softDeletes();
+            $table->timestamps();
         });
         Schema::create('accounting_accounts', function (Blueprint $table) {
             $table->increments('id');
@@ -208,6 +217,42 @@ class JournalAlignedCoaProvisionerTest extends TestCase
         $this->assertNull(JournalAccountTypeResolver::fromGlCode('7-70000'));
         $this->assertNull(JournalAccountTypeResolver::fromGlCode(''));
         $this->assertNull(JournalAccountTypeResolver::fromGlCode(null));
+    }
+
+    public function test_journal_import_rejects_unsupported_prefix_without_leaving_guessed_accounts(): void
+    {
+        $entry = [
+            'source_type' => 'Journal Entry',
+            'source_number' => 'JE-UNSUPPORTED-1',
+            'date' => '2026-10-01',
+            'description' => 'Unsupported GL prefix',
+            'is_unbalanced' => false,
+            'is_duplicate' => false,
+            'exists_in_system' => false,
+            'lines' => [[
+                'account_no' => '7-70000',
+                'account_name' => 'Suspense account',
+                'debit' => 100,
+                'credit' => 0,
+            ]],
+        ];
+        $import = (object) ['id' => 44, 'business_id' => 8, 'created_by' => 9];
+
+        try {
+            DB::transaction(function () use ($entry, $import) {
+                app(JournalEntryController::class)->processJournalImportEntriesForBatch($import, [$entry], [
+                    'create_missing_accounts' => true,
+                    'create_missing_main_accounts' => true,
+                ]);
+            });
+            $this->fail('Unsupported GL prefixes must require a manual CoA mapping.');
+        } catch (\RuntimeException $exception) {
+            $this->assertStringContainsString('7-70000', $exception->getMessage());
+            $this->assertStringContainsString('mapping CoA secara manual', $exception->getMessage());
+        }
+
+        $this->assertSame(0, DB::table('accounting_accounts')->count());
+        $this->assertSame(0, DB::table('accounts')->count());
     }
 
     private function insertOperationalAccounts(int $businessId, array $accounts): void
