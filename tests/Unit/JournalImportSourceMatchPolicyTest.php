@@ -74,6 +74,23 @@ class JournalImportSourceMatchPolicyTest extends TestCase
         $this->assertSame(20.0, $decision['candidates'][0]['component_difference']);
     }
 
+    public function test_transaction_with_saved_components_is_not_auto_linked_when_journal_components_are_unavailable(): void
+    {
+        $taxResolver = Mockery::mock(JournalImportTaxResolver::class);
+        $taxResolver->shouldNotReceive('resolveForEntry');
+        $policy = $this->makePolicy($taxResolver);
+        $candidate = $this->candidate(12, 110, 100, 10);
+
+        $decision = $policy->resolve([$candidate], 'Expense', [
+            'date' => '2026-10-01',
+            'debit_total' => 110,
+        ], 3);
+
+        $this->assertSame('suggested', $decision['status']);
+        $this->assertSame('review', $decision['default_action']);
+        $this->assertNull($decision['selected_candidate']);
+    }
+
     public function test_expense_with_wrong_vat_direction_stays_for_review_even_when_components_match(): void
     {
         $taxResolver = Mockery::mock(JournalImportTaxResolver::class);

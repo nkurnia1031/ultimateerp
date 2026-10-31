@@ -59,24 +59,20 @@ class JournalImportCandidateResponseTest extends TestCase
             ['id' => 11, 'business_id' => 7, 'type' => 'expense', 'invoice_no' => 'EXP-CI', 'transaction_date' => '2026-10-01 00:00:00', 'total_before_tax' => 100, 'tax_amount' => 10, 'final_total' => 110],
             ['id' => 12, 'business_id' => 8, 'type' => 'expense', 'invoice_no' => 'EXP-CI', 'transaction_date' => '2026-10-01 00:00:00', 'total_before_tax' => 100, 'tax_amount' => 10, 'final_total' => 110],
             ['id' => 20, 'business_id' => 7, 'type' => 'sell', 'invoice_no' => 'SELL-CI', 'transaction_date' => '2026-10-01 00:00:00', 'total_before_tax' => 75, 'tax_amount' => 0, 'final_total' => 75],
+            ['id' => 21, 'business_id' => 8, 'type' => 'sell', 'invoice_no' => 'SELL-CI', 'transaction_date' => '2026-10-01 00:00:00', 'total_before_tax' => 75, 'tax_amount' => 0, 'final_total' => 75],
         ]);
         DB::table('transaction_payments')->insert([
-            'id' => 40,
-            'transaction_id' => 20,
-            'payment_ref_no' => 'PAY-CI',
-            'paid_on' => '2026-10-01 00:00:00',
-            'amount' => 75,
-            'method' => 'cash',
+            ['id' => 40, 'transaction_id' => 20, 'payment_ref_no' => 'PAY-CI', 'paid_on' => '2026-10-01 00:00:00', 'amount' => 75, 'method' => 'cash'],
+            ['id' => 41, 'transaction_id' => 20, 'payment_ref_no' => 'PAY-CI', 'paid_on' => '2026-10-01 00:00:00', 'amount' => 70, 'method' => 'cash'],
+            ['id' => 42, 'transaction_id' => 21, 'payment_ref_no' => 'PAY-CI', 'paid_on' => '2026-10-01 00:00:00', 'amount' => 75, 'method' => 'cash'],
         ]);
         DB::table('account_transactions')->insert([
-            'id' => 50,
-            'account_id' => 30,
-            'sub_type' => 'deposit',
-            'reff_no' => 'DEP-CI',
-            'operation_date' => '2026-10-01 00:00:00',
-            'amount' => 100,
-            'type' => 'credit',
-            'note' => 'CI deposit',
+            ['id' => 50, 'account_id' => 30, 'sub_type' => 'deposit', 'reff_no' => 'DEP-CI', 'operation_date' => '2026-10-01 00:00:00', 'amount' => 100, 'type' => 'credit', 'note' => 'CI deposit'],
+            ['id' => 51, 'account_id' => 30, 'sub_type' => 'deposit', 'reff_no' => 'DEP-CI', 'operation_date' => '2026-10-01 00:00:00', 'amount' => 90, 'type' => 'credit', 'note' => 'Other local deposit'],
+            ['id' => 52, 'account_id' => 31, 'sub_type' => 'deposit', 'reff_no' => 'DEP-CI', 'operation_date' => '2026-10-01 00:00:00', 'amount' => 100, 'type' => 'credit', 'note' => 'Foreign deposit'],
+        ]);
+        DB::table('accounts')->insert([
+            ['id' => 31, 'business_id' => 8, 'name' => 'Bank Other CI', 'account_number' => 'CI-31'],
         ]);
 
         $this->insertCandidateRow(1, 'Expense', 'EXP-CI', 110, 110, [
@@ -90,12 +86,16 @@ class JournalImportCandidateResponseTest extends TestCase
         ]);
         $this->insertCandidateRow(2, 'Receive Payment', 'PAY-CI', 75, 75, [
             ['id' => 40, 'record_type' => TransactionPayment::class],
+            ['id' => 41, 'record_type' => TransactionPayment::class],
+            ['id' => 42, 'record_type' => TransactionPayment::class],
         ], [
             ['account_name' => 'Cash', 'type' => 'debit', 'debit' => 75],
             ['account_name' => 'Accounts Receivable', 'type' => 'credit', 'credit' => 75],
         ]);
         $this->insertCandidateRow(3, 'Bank Deposit', 'DEP-CI', 100, 100, [
             ['id' => 50, 'record_type' => AccountTransaction::class],
+            ['id' => 51, 'record_type' => AccountTransaction::class],
+            ['id' => 52, 'record_type' => AccountTransaction::class],
         ], [
             ['account_name' => 'Bank CI', 'type' => 'debit', 'debit' => 100],
             ['account_name' => 'Other income', 'type' => 'credit', 'credit' => 100],
@@ -135,7 +135,9 @@ class JournalImportCandidateResponseTest extends TestCase
         $response->assertOk()
             ->assertJsonPath('rows.0.source_link_candidate_details.0.id', 40)
             ->assertJsonPath('rows.0.source_link_candidate_details.0.amount', 75)
-            ->assertJsonPath('rows.0.source_link_candidate_details.0.record_type', TransactionPayment::class);
+            ->assertJsonPath('rows.0.source_link_candidate_details.0.record_type', TransactionPayment::class)
+            ->assertJsonPath('rows.0.source_link_candidate_details.1.id', 41);
+        $this->assertNotContains(42, array_column($response->json('rows.0.source_link_candidate_details'), 'id'));
     }
 
     public function test_public_draft_rows_endpoint_returns_bank_candidate_details(): void
@@ -145,7 +147,9 @@ class JournalImportCandidateResponseTest extends TestCase
         $response->assertOk()
             ->assertJsonPath('rows.0.source_link_candidate_details.0.id', 50)
             ->assertJsonPath('rows.0.source_link_candidate_details.0.amount', 100)
-            ->assertJsonPath('rows.0.source_link_candidate_details.0.record_type', AccountTransaction::class);
+            ->assertJsonPath('rows.0.source_link_candidate_details.0.record_type', AccountTransaction::class)
+            ->assertJsonPath('rows.0.source_link_candidate_details.1.id', 51);
+        $this->assertNotContains(52, array_column($response->json('rows.0.source_link_candidate_details'), 'id'));
     }
 
     private function requestDraftRows(string $type)
