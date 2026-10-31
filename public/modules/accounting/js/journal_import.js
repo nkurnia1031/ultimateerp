@@ -376,6 +376,7 @@
     var detailSavePending = null;
     var draftSearchTimer = null;
     var draftRequestNumber = 0;
+    var sourceGroupPreview = null;
 
     function draftActionLabel(action) {
         var labels = {
@@ -431,6 +432,74 @@
         container.append($('<p class="small">').append($('<strong>').text(label + ': ')).append(document.createTextNode(String(value))));
     }
 
+    function appendSourceGroupSuggestions(container, row, blocked) {
+        var groups = Array.isArray(row.source_link_group_suggestions) ? row.source_link_group_suggestions : [];
+        if (row.source_link_group_suggestion_status === 'limited') {
+            container.append($('<h4>').text('Pencarian grup sumber dibatasi'));
+            container.append($('<p class="text-warning">').text('Jumlah kandidat terlalu besar untuk dipastikan otomatis. Pilih sumber secara manual.'));
+            return;
+        }
+        if (!groups.length) return;
+
+        container.append($('<h4>').text(groups.length > 1 ? 'Beberapa grup exact ditemukan' : 'Saran grup split exact'));
+
+        groups.forEach(function (group, index) {
+            var panel = $('<div class="panel panel-info">');
+            var body = $('<div class="panel-body">');
+            body.append($('<p>').text('Grup ' + (index + 1) + ': ' + group.members.length + ' transaksi sumber; total ' + formatDraftNumber(group.total_amount)
+                + ' (basis ' + formatDraftNumber(group.base_amount) + ', pajak ' + formatDraftNumber(group.tax_amount) + ').'));
+            var table = $('<table class="table table-condensed table-bordered" style="margin-bottom:8px">');
+            table.append($('<thead>').append($('<tr>')
+                .append($('<th>').text('Transaksi sumber'))
+                .append($('<th>').text('Tanggal / referensi'))
+                .append($('<th class="text-right">').text('Basis'))
+                .append($('<th class="text-right">').text('Pajak'))
+                .append($('<th class="text-right">').text('Total'))));
+            var rows = $('<tbody>');
+            (group.members || []).forEach(function (member) {
+                rows.append($('<tr>')
+                    .append($('<td>').text(member.label || ('Transaksi #' + member.id)))
+                    .append($('<td>').text((member.date || '—') + ' · ' + (member.references || []).join(', ')))
+                    .append($('<td class="text-right">').text(formatDraftNumber(member.base_amount)))
+                    .append($('<td class="text-right">').text(formatDraftNumber(member.tax_amount)))
+                    .append($('<td class="text-right">').text(formatDraftNumber(member.amount))));
+            });
+            table.append(rows);
+            body.append(table);
+            body.append($('<p class="small text-muted">').text('Journal: basis ' + formatDraftNumber(group.journal_base_amount)
+                + ', pajak ' + formatDraftNumber(group.journal_tax_amount) + ', total ' + formatDraftNumber(group.journal_total_amount) + '.'));
+            body.append($('<button type="button" class="btn btn-primary btn-sm journal-draft-source-group-select">')
+                .data('member-ids', group.member_ids || [])
+                .text('Pilih grup ini')
+                .prop('disabled', blocked));
+            panel.append(body);
+            container.append(panel);
+        });
+    }
+
+    function sourceGroupPreviewSummary(response) {
+        var summary = response.summary || {};
+        var table = $('<table class="table table-bordered table-condensed">');
+        table.append($('<thead>').append($('<tr>')
+            .append($('<th>').text('Komponen'))
+            .append($('<th class="text-right">').text('Transaksi sumber'))
+            .append($('<th class="text-right">').text('Journal'))));
+        var body = $('<tbody>');
+        [
+            ['Basis', summary.source_base, summary.journal_base],
+            ['Pajak', summary.source_tax, summary.journal_tax],
+            ['Total', summary.source_total, summary.journal_total]
+        ].forEach(function (item) {
+            body.append($('<tr>')
+                .append($('<td>').text(item[0]))
+                .append($('<td class="text-right">').text(formatDraftNumber(item[1])))
+                .append($('<td class="text-right">').text(formatDraftNumber(item[2]))));
+        });
+        table.append(body);
+
+        return table;
+    }
+
     function openSourceCandidates(row) {
         var candidates = candidatesForRow(row);
         var rowElement = $('#journal_import_draft_table tbody tr').filter(function () {
@@ -462,6 +531,7 @@
 
         $('#journal_import_candidates_empty').toggleClass('hide', candidates.length > 0);
         $('.journal-draft-candidate-create').toggle(row.source_link_status !== 'matched').prop('disabled', blocked);
+        appendSourceGroupSuggestions(list, row, blocked);
         if (!candidates.length) {
             list.append($('<p class="text-muted">').text('Tidak ada kandidat dengan referensi ini. Pastikan detail produk, kategori, akun, dan lokasi sebelum membuat transaksi baru.'));
         }
@@ -607,6 +677,10 @@
             sourceCell.text('Tidak ada transaksi sumber; GL Journal Entry saja.');
         } else {
             var candidates = candidatesForRow(row);
+            if (row.source_link_group && row.source_link_group.status === 'confirmed') {
+                sourceCell.append($('<strong class="small" style="display:block">')
+                    .text('Grup dipilih: ' + (row.source_link_group.members || []).length + ' transaksi sumber'));
+            }
             if (candidates.length) {
                 var selectedCandidate = candidates.filter(function (candidate) {
                     return row.source_record_type === candidate.record_type
@@ -713,6 +787,10 @@
         if (!draft.length || !draftType) {
             return;
         }
+        $('#journal_import_preview_source_groups').toggle(
+            ['Expense', 'Purchase Invoice'].indexOf(draftType) !== -1
+            && ($('#journal_import_processing_filter').val() || 'remaining') === 'remaining'
+        );
         draftPage = pageNumber || 1;
         var requestNumber = ++draftRequestNumber;
         $('#journal_import_draft_status').text('Memuat baris...');
@@ -1088,6 +1166,68 @@
         loadDraftRows(1);
     });
 
+    $(document).on('click', '#journal_import_preview_source_groups', function () {
+        var draft = $('#journal_import_draft');
+        var button = $(this);
+        var status = $('#journal_import_source_groups_status');
+        button.prop('disabled', true).text('Menganalisis grup...');
+        status.text('Memeriksa kandidat exact di seluruh batch.');
+        $.ajax({
+            method: 'GET',
+            url: draft.data('source-groups-preview-url'),
+            dataType: 'json'
+        }).done(function (response) {
+            sourceGroupPreview = response;
+            $('#journal_import_source_groups_error').addClass('hide').empty();
+            $('#journal_import_source_groups_summary').text(
+                response.unique_group_count + ' baris Journal memiliki grup sumber exact yang unik, mencakup '
+                + response.source_record_count + ' transaksi Expense/Purchase Invoice. Beberapa grup exact: '
+                + response.ambiguous_row_count + ' baris; kandidat yang pencariannya dibatasi: '
+                + response.limited_row_count + ' baris; konflik tautan sumber antarbaris Journal: '
+                + response.conflicting_row_count + ' baris.'
+            );
+            $('#journal_import_source_groups_totals').empty().append(sourceGroupPreviewSummary(response));
+            $('#journal_import_source_groups_limits').text(
+                'Konfirmasi hanya menautkan transaksi yang sudah ada dan tidak mem-posting Journal. Baris dengan lebih dari satu grup tetap menunggu pilihan manual.'
+            );
+            $('#journal_import_confirm_source_groups')
+                .prop('disabled', Number(response.unique_group_count || 0) < 1)
+                .text('Konfirmasi ' + Number(response.unique_group_count || 0) + ' grup unik');
+            $('#journal_import_source_groups_modal').modal('show');
+            status.text('Preview grup sumber siap ditinjau.');
+        }).fail(function (xhr) {
+            status.text(xhr.responseJSON && xhr.responseJSON.msg ? xhr.responseJSON.msg : 'Gagal menganalisis grup sumber.');
+        }).always(function () {
+            button.prop('disabled', false).text('Tinjau grup sumber split');
+        });
+    });
+
+    $(document).on('click', '#journal_import_confirm_source_groups', function () {
+        if (!sourceGroupPreview || !sourceGroupPreview.fingerprint) return;
+        var draft = $('#journal_import_draft');
+        var button = $(this);
+        button.prop('disabled', true).text('Mengonfirmasi grup...');
+        $('#journal_import_source_groups_error').addClass('hide').empty();
+        $.ajax({
+            method: 'POST',
+            url: draft.data('source-groups-confirm-url'),
+            contentType: 'application/json',
+            dataType: 'json',
+            headers: { 'X-CSRF-TOKEN': draft.data('csrf-token') },
+            data: JSON.stringify({ fingerprint: sourceGroupPreview.fingerprint })
+        }).done(function (response) {
+            $('#journal_import_source_groups_modal').modal('hide');
+            $('#journal_import_source_groups_status').text(response.msg || 'Grup sumber berhasil dikonfirmasi.');
+            if (window.toastr) toastr.success(response.msg || 'Grup sumber berhasil dikonfirmasi.');
+            sourceGroupPreview = null;
+            loadDraftRows(draftPage);
+        }).fail(function (xhr) {
+            var message = xhr.responseJSON && xhr.responseJSON.msg ? xhr.responseJSON.msg : 'Konfirmasi grup sumber gagal.';
+            $('#journal_import_source_groups_error').removeClass('hide').text(message);
+            button.prop('disabled', false).text('Konfirmasi grup unik');
+        });
+    });
+
     $(document).on('change', '#journal_import_review_filter', function () {
         loadDraftRows(1);
     });
@@ -1134,6 +1274,36 @@
         };
         saveDraftRow(row.id, payload, rowElement, function () {
             modal.modal('hide');
+        });
+    });
+
+    $(document).on('click', '.journal-draft-source-group-select', function () {
+        var button = $(this);
+        var modal = $('#journal_import_candidates_modal');
+        var row = modal.data('draft-row');
+        var rowElement = modal.data('row-element');
+        var memberIds = button.data('member-ids') || [];
+        if (!row || memberIds.length < 2) return;
+        button.prop('disabled', true).text('Menyimpan grup...');
+        $.ajax({
+            method: 'POST',
+            url: $('#journal_import_draft').data('row-url-base') + '/' + encodeURIComponent(row.id) + '/source-group',
+            contentType: 'application/json',
+            dataType: 'json',
+            headers: { 'X-CSRF-TOKEN': $('#journal_import_draft').data('csrf-token') },
+            data: JSON.stringify({ member_ids: memberIds })
+        }).done(function (response) {
+            if (response.success && response.row) {
+                draftRowsById[String(row.id)] = response.row;
+                if (rowElement && rowElement.length) rowElement.replaceWith(renderDraftRow(response.row));
+                modal.modal('hide');
+                $('#journal_import_draft_status').text(response.msg || 'Grup sumber ditautkan.');
+                if (window.toastr) toastr.success(response.msg || 'Grup sumber ditautkan.');
+            }
+        }).fail(function (xhr) {
+            var message = xhr.responseJSON && xhr.responseJSON.msg ? xhr.responseJSON.msg : 'Pilihan grup sumber gagal disimpan.';
+            $('#journal_import_draft_status').addClass('text-danger').text(message);
+            button.prop('disabled', false).text('Pilih grup ini');
         });
     });
 

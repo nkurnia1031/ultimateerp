@@ -170,6 +170,8 @@
                 data-import-id="{{ $batch->id }}"
                 data-rows-url="{{ url('accounting/journal-entry/import/'.$batch->id.'/draft-rows') }}"
                 data-row-url-base="{{ url('accounting/journal-entry/import/'.$batch->id.'/draft-rows') }}"
+                data-source-groups-preview-url="{{ url('accounting/journal-entry/import/'.$batch->id.'/source-groups/preview') }}"
+                data-source-groups-confirm-url="{{ url('accounting/journal-entry/import/'.$batch->id.'/source-groups/confirm') }}"
                 data-options-url="{{ url('accounting/journal-entry/import/'.$batch->id.'/draft-options') }}"
                 data-csrf-token="{{ csrf_token() }}"
                 data-default-type="{{ $activeDraftType }}">
@@ -214,6 +216,14 @@
                             <option value="unreviewed">Belum ditinjau</option>
                             <option value="reviewed">Sudah ditinjau</option>
                         </select>
+                    </div>
+                </div>
+                <div class="row">
+                    <div class="col-sm-12 text-right" style="margin-top: 8px;">
+                        <button type="button" class="btn btn-info btn-sm" id="journal_import_preview_source_groups" style="display:none;">
+                            Tinjau grup sumber split
+                        </button>
+                        <span id="journal_import_source_groups_status" class="text-muted" aria-live="polite"></span>
                     </div>
                 </div>
                 <div class="row">
@@ -374,6 +384,27 @@
                         <div class="modal-footer">
                             <button type="button" class="btn btn-warning journal-draft-candidate-create">Buat transaksi baru</button>
                             <button type="button" class="btn btn-default" data-dismiss="modal">Tutup</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="modal fade" id="journal_import_source_groups_modal" tabindex="-1" role="dialog" aria-labelledby="journal_import_source_groups_title" aria-modal="true">
+                <div class="modal-dialog modal-lg" role="document">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <button type="button" class="close" data-dismiss="modal" aria-label="Tutup"><span aria-hidden="true">&times;</span></button>
+                            <h4 class="modal-title" id="journal_import_source_groups_title">Konfirmasi grup transaksi split</h4>
+                        </div>
+                        <div class="modal-body">
+                            <p id="journal_import_source_groups_summary" class="text-muted"></p>
+                            <div id="journal_import_source_groups_totals"></div>
+                            <p id="journal_import_source_groups_limits" class="help-block"></p>
+                            <div id="journal_import_source_groups_error" class="alert alert-danger hide" role="alert"></div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-default" data-dismiss="modal">Batal</button>
+                            <button type="button" class="btn btn-primary" id="journal_import_confirm_source_groups" disabled>Konfirmasi grup unik</button>
                         </div>
                     </div>
                 </div>

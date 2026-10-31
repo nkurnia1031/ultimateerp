@@ -345,6 +345,18 @@ class ProcessJournalImportJob implements ShouldQueue
                         'updated_at' => now(),
                     ]);
 
+                    app(\Modules\Accounting\Services\JournalImportSourceLinkService::class)->sync(
+                        (int) $row->id,
+                        (int) $import->id,
+                        (int) $import->business_id,
+                        (string) $row->source_type,
+                        $entry,
+                        $entry['source_record_type'] ?? $row->source_record_type,
+                        isset($entry['source_record_id'])
+                            ? (int) $entry['source_record_id']
+                            : ($row->source_record_id === null ? null : (int) $row->source_record_id)
+                    );
+
                     if ($row->source_type === 'Journal Entry') {
                         app(JournalImportIdentityService::class)->completeIdenticalPendingRows(
                             (int) $import->id,

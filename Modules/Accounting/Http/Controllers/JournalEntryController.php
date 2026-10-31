@@ -26,6 +26,7 @@ use Modules\Accounting\Services\JournalImportDraftService;
 use Modules\Accounting\Services\JournalImportInvoiceService;
 use Modules\Accounting\Services\JournalImportQueueService;
 use Modules\Accounting\Services\JournalImportCancellationService;
+use Modules\Accounting\Services\JournalImportSourceGroupService;
 use Modules\Accounting\Services\JournalAccountTypeResolver;
 use Modules\Accounting\Services\JournalTaxReconciliationService;
 use Modules\Accounting\Utils\AccountingUtil;
@@ -444,6 +445,256 @@ class JournalEntryController extends Controller
         ]);
     }
 
+    public function previewSourceGroups(Request $request, $id)
+    {
+        $businessId = (int) $request->session()->get('user.business_id');
+        $this->authorizeJournalImportDraftAccess($businessId);
+        $batch = DB::table('accounting_journal_imports')
+            ->where('business_id', $businessId)
+            ->where('id', $id)
+            ->first();
+        if (empty($batch)) {
+            abort(404);
+        }
+        if (! in_array($batch->status, ['analyzed', 'partially_imported', 'failed', 'cancelled'], true)) {
+            return response()->json(['success' => 0, 'msg' => 'Tunggu proses import selesai sebelum meninjau grup sumber.'], 409);
+        }
+
+        $analysis = $this->analyzeBulkSourceGroups($batch, $businessId);
+
+        return response()->json([
+            'success' => 1,
+            'unique_group_count' => count($analysis['groups']),
+            'source_record_count' => (int) $analysis['source_record_count'],
+            'ambiguous_row_count' => (int) $analysis['ambiguous_row_count'],
+            'limited_row_count' => (int) $analysis['limited_row_count'],
+            'conflicting_row_count' => (int) $analysis['conflicting_row_count'],
+            'summary' => $analysis['summary'],
+            'fingerprint' => $analysis['fingerprint'],
+        ]);
+    }
+
+    public function confirmSourceGroups(Request $request, $id)
+    {
+        $businessId = (int) $request->session()->get('user.business_id');
+        $this->authorizeJournalImportDraftAccess($businessId);
+        $validated = $request->validate([
+            'fingerprint' => ['required', 'string', 'regex:/^[a-f0-9]{64}$/'],
+        ]);
+        $batch = DB::table('accounting_journal_imports')
+            ->where('business_id', $businessId)
+            ->where('id', $id)
+            ->first();
+        if (empty($batch)) {
+            abort(404);
+        }
+        if (! in_array($batch->status, ['analyzed', 'partially_imported', 'failed', 'cancelled'], true)) {
+            return response()->json(['success' => 0, 'msg' => 'Tunggu proses import selesai sebelum mengonfirmasi grup sumber.'], 409);
+        }
+
+        $analysis = $this->analyzeBulkSourceGroups($batch, $businessId);
+        $alreadyConfirmed = $this->confirmedSourceGroupsForBulkFingerprint($batch, $businessId, $validated['fingerprint']);
+        $allForFingerprint = [];
+        foreach (array_merge($alreadyConfirmed, $analysis['groups']) as $item) {
+            $allForFingerprint[(int) $item['row']->id] = $item;
+        }
+        $expectedFingerprint = app(JournalImportSourceGroupService::class)
+            ->bulkFingerprint($businessId, (int) $batch->id, array_values($allForFingerprint));
+        if (! hash_equals($expectedFingerprint, $validated['fingerprint'])) {
+            return response()->json([
+                'success' => 0,
+                'msg' => 'Saran grup berubah sejak preview. Muat ulang analisis grup sebelum mengonfirmasi.',
+            ], 409);
+        }
+        if ($allForFingerprint === []) {
+            return response()->json(['success' => 0, 'msg' => 'Tidak ada grup split dengan kecocokan tepat untuk dikonfirmasi.'], 422);
+        }
+
+        $confirmedRows = 0;
+        $linkedSourceRecords = 0;
+        $alreadyConfirmedDuringWrite = 0;
+        $groupsToWrite = array_values($analysis['groups']);
+        foreach (array_chunk($groupsToWrite, 100) as $groupChunk) {
+            DB::transaction(function () use (
+                $groupChunk,
+                $batch,
+                $businessId,
+                $validated,
+                $request,
+                &$confirmedRows,
+                &$linkedSourceRecords,
+                &$alreadyConfirmedDuringWrite
+            ) {
+                $rowIds = array_map(fn (array $item): int => (int) $item['row']->id, $groupChunk);
+                $lockedRows = DB::table('accounting_journal_import_rows')
+                    ->where('journal_import_id', $batch->id)
+                    ->where('business_id', $businessId)
+                    ->whereIn('id', $rowIds)
+                    ->orderBy('id')
+                    ->lockForUpdate()
+                    ->get()
+                    ->keyBy('id');
+
+                $itemsToWrite = [];
+                foreach ($groupChunk as $item) {
+                    $row = $lockedRows->get((int) $item['row']->id);
+                    if (! empty($row) && ($row->source_action ?? '') === 'link') {
+                        $currentEntry = json_decode((string) $row->entry_data, true) ?: [];
+                        $currentGroup = $currentEntry['source_link_group'] ?? [];
+                        if (($currentGroup['status'] ?? null) === 'confirmed'
+                            && hash_equals($validated['fingerprint'], (string) ($currentGroup['bulk_confirmation_fingerprint'] ?? ''))) {
+                            $alreadyConfirmedDuringWrite++;
+                            continue;
+                        }
+                    }
+                    if (empty($row)
+                        || ! in_array($row->processing_status ?? 'pending', ['pending', 'failed'], true)
+                        || ($row->source_action ?? '') !== 'review') {
+                        throw new \RuntimeException('Status salah satu baris berubah. Muat ulang saran grup sebelum melanjutkan.');
+                    }
+                    $item['row'] = $row;
+                    $itemsToWrite[] = $item;
+                }
+
+                $options = ! empty($batch->import_options) ? json_decode($batch->import_options, true) : [];
+                $options = is_array($options) ? $options : [];
+                $itemsToWrite = app(JournalImportSourceGroupService::class)
+                    ->revalidateUniqueGroups($itemsToWrite, $businessId, $options);
+                foreach ($itemsToWrite as $item) {
+                    if ($this->sourceGroupHasConflictingLink($item['group'], $businessId, (int) $item['row']->id)) {
+                        throw new \RuntimeException('Salah satu transaksi sumber sudah ditautkan ke baris Journal lain; tinjau ulang preview grup.');
+                    }
+                    app(JournalImportSourceGroupService::class)->persistConfirmedGroup(
+                        $item['row'],
+                        $item['entry'],
+                        $item['group'],
+                        (int) $request->session()->get('user.id'),
+                        'bulk_unique',
+                        $validated['fingerprint']
+                    );
+                    $confirmedRows++;
+                    $linkedSourceRecords += count($item['group']['member_ids']);
+                }
+            }, 3);
+        }
+
+        $alreadyCount = count($alreadyConfirmed) + $alreadyConfirmedDuringWrite;
+
+        return response()->json([
+            'success' => 1,
+            'confirmed_rows' => $confirmedRows,
+            'source_record_count' => $linkedSourceRecords,
+            'already_confirmed_rows' => $alreadyCount,
+            'msg' => $confirmedRows > 0
+                ? $confirmedRows.' grup Journal berhasil ditautkan ke '.$linkedSourceRecords.' transaksi sumber.'
+                : 'Grup ini sudah pernah dikonfirmasi; tidak ada tautan duplikat yang dibuat.',
+        ]);
+    }
+
+    public function selectSourceGroup(Request $request, $id, $row_id)
+    {
+        $businessId = (int) $request->session()->get('user.business_id');
+        $this->authorizeJournalImportDraftAccess($businessId);
+        $validated = $request->validate([
+            'member_ids' => 'required|array|min:2|max:36',
+            'member_ids.*' => 'required|integer|min:1|distinct',
+        ]);
+        $batch = DB::table('accounting_journal_imports')
+            ->where('business_id', $businessId)
+            ->where('id', $id)
+            ->first();
+        if (empty($batch)) {
+            abort(404);
+        }
+        if (! in_array($batch->status, ['analyzed', 'partially_imported', 'failed', 'cancelled'], true)) {
+            return response()->json(['success' => 0, 'msg' => 'Tunggu proses import selesai sebelum memilih grup sumber.'], 409);
+        }
+
+        $row = DB::table('accounting_journal_import_rows')
+            ->where('journal_import_id', $batch->id)
+            ->where('business_id', $businessId)
+            ->where('id', $row_id)
+            ->first();
+        if (empty($row)) {
+            abort(404);
+        }
+        if (! in_array($row->source_type, ['Expense', 'Purchase Invoice'], true)
+            || ! in_array($row->processing_status ?? 'pending', ['pending', 'failed'], true)) {
+            return response()->json(['success' => 0, 'msg' => 'Baris ini tidak dapat menerima tautan grup sumber.'], 409);
+        }
+
+        $entry = json_decode((string) $row->entry_data, true) ?: [];
+        if (empty($entry['source_number'])) {
+            $entry['source_number'] = $row->source_number;
+        }
+        $candidates = $this->sourceGroupCandidatesForRow($row, $businessId);
+        $item = ['row' => $row, 'entry' => $entry, 'candidates' => $candidates];
+        $options = ! empty($batch->import_options) ? json_decode($batch->import_options, true) : [];
+        $options = is_array($options) ? $options : [];
+        $groupService = app(JournalImportSourceGroupService::class);
+
+        try {
+            $updatedRow = DB::transaction(function () use ($item, $validated, $businessId, $options, $groupService, $request, $batch, $row) {
+                $lockedRow = DB::table('accounting_journal_import_rows')
+                    ->where('journal_import_id', $batch->id)
+                    ->where('business_id', $businessId)
+                    ->where('id', $row->id)
+                    ->lockForUpdate()
+                    ->first();
+                if (empty($lockedRow)
+                    || ! in_array($lockedRow->processing_status ?? 'pending', ['pending', 'failed'], true)) {
+                    throw new \RuntimeException('Baris sedang diproses atau sudah selesai. Muat ulang halaman.');
+                }
+                if (($lockedRow->source_action ?? '') === 'link') {
+                    $lockedEntry = json_decode((string) $lockedRow->entry_data, true) ?: [];
+                    $existingMembers = array_values(array_map('intval', $lockedEntry['source_link_group']['member_ids'] ?? []));
+                    $requestedMembers = array_values(array_map('intval', $validated['member_ids']));
+                    sort($existingMembers);
+                    sort($requestedMembers);
+                    if (($lockedEntry['source_link_group']['status'] ?? null) === 'confirmed' && $existingMembers === $requestedMembers) {
+                        return $lockedRow;
+                    }
+                    throw new \RuntimeException('Baris sudah memiliki pilihan sumber. Muat ulang sebelum mengubahnya.');
+                }
+
+                $item['row'] = $lockedRow;
+                $group = $groupService->revalidateSelectedGroup($item, $validated['member_ids'], $businessId, $options);
+                if ($group === null) {
+                    throw new \RuntimeException('Grup yang dipilih tidak lagi cocok pada tanggal, referensi, total, basis, dan pajak Journal.');
+                }
+                if ($this->sourceGroupHasConflictingLink($group, $businessId, (int) $lockedRow->id)) {
+                    throw new \RuntimeException('Salah satu transaksi sumber sudah ditautkan ke baris Journal lain.');
+                }
+
+                return $groupService->persistConfirmedGroup(
+                    $lockedRow,
+                    $item['entry'],
+                    $group,
+                    (int) $request->session()->get('user.id'),
+                    'manual_choice'
+                );
+            }, 3);
+        } catch (\RuntimeException $exception) {
+            return response()->json(['success' => 0, 'msg' => $exception->getMessage()], 409);
+        }
+
+        $updatedCandidates = $this->journalSourceCandidateDetailsByKey(collect([$updatedRow]), $businessId);
+        $importOptions = ! empty($batch->import_options) ? json_decode($batch->import_options, true) : [];
+        $importOptions = is_array($importOptions) ? $importOptions : [];
+
+        return response()->json([
+            'success' => 1,
+            'row' => $this->journalImportDraftRowResponse(
+                $updatedRow,
+                $importOptions,
+                null,
+                $updatedCandidates,
+                $this->journalImportDraftService->defaultActiveLocationId($businessId)
+            ),
+            'msg' => 'Grup transaksi sumber berhasil ditautkan.',
+        ]);
+    }
+
     public function updateDraftRow(Request $request, $id, $row_id)
     {
         $business_id = (int) $request->session()->get('user.business_id');
@@ -530,6 +781,24 @@ class JournalEntryController extends Controller
             : ($hasReviewMutation ? false : (bool) $row->is_reviewed);
         $importOptions = ! empty($batch->import_options) ? json_decode($batch->import_options, true) : [];
         $importOptions = is_array($importOptions) ? $importOptions : [];
+
+        $sourceLinkChanged = $action !== (string) $row->source_action
+            || $recordType !== ($row->source_record_type ?? null)
+            || $recordId !== ($row->source_record_id === null ? null : (int) $row->source_record_id);
+        if ($sourceLinkChanged) {
+            unset($entry['source_link_group']);
+            DB::table('accounting_journal_import_source_links')
+                ->where('journal_import_row_id', $row->id)
+                ->where('business_id', $business_id)
+                ->delete();
+            DB::table('accounting_journal_import_rows')
+                ->where('id', $row->id)
+                ->where('business_id', $business_id)
+                ->update([
+                    'entry_data' => json_encode($entry, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                    'updated_at' => now(),
+                ]);
+        }
 
         DB::table('accounting_journal_import_rows')
             ->where('id', $row->id)
@@ -1000,6 +1269,212 @@ class JournalEntryController extends Controller
         }
     }
 
+    private function analyzeBulkSourceGroups(object $batch, int $businessId): array
+    {
+        $groups = [];
+        $ambiguousRows = 0;
+        $limitedRows = 0;
+        $sourceRecordCount = 0;
+        $conflictingRows = 0;
+        $summary = [
+            'source_base' => 0.0,
+            'source_tax' => 0.0,
+            'source_total' => 0.0,
+            'journal_base' => 0.0,
+            'journal_tax' => 0.0,
+            'journal_total' => 0.0,
+        ];
+        $options = ! empty($batch->import_options) ? json_decode($batch->import_options, true) : [];
+        $options = is_array($options) ? $options : [];
+        $groupService = app(JournalImportSourceGroupService::class);
+
+        DB::table('accounting_journal_import_rows')
+            ->where('journal_import_id', $batch->id)
+            ->where('business_id', $businessId)
+            ->whereIn('source_type', ['Expense', 'Purchase Invoice'])
+            ->where('source_action', 'review')
+            ->whereIn('processing_status', ['pending', 'failed'])
+            ->orderBy('id')
+            ->chunkById(100, function ($rows) use (
+                &$groups,
+                &$ambiguousRows,
+                &$limitedRows,
+                &$sourceRecordCount,
+                &$summary,
+                $businessId,
+                $options,
+                $groupService
+            ) {
+                $detailsByKey = $this->journalSourceCandidateDetailsByKey($rows, $businessId);
+                foreach ($rows as $row) {
+                    $entry = json_decode((string) $row->entry_data, true) ?: [];
+                    if (empty($entry['source_number'])) {
+                        $entry['source_number'] = $row->source_number;
+                    }
+                    $candidates = $this->sourceGroupCandidatesFromEntry($entry, $detailsByKey);
+                    $result = $groupService->suggestions(
+                        (int) $row->id,
+                        (string) $row->source_type,
+                        $entry,
+                        $candidates,
+                        $businessId,
+                        $options
+                    );
+                    if ($result['status'] === 'ambiguous') {
+                        $ambiguousRows++;
+                    } elseif ($result['status'] === 'limited') {
+                        $limitedRows++;
+                    }
+                    if ($result['status'] !== 'unique') {
+                        continue;
+                    }
+
+                    $group = $result['groups'][0];
+                    $groups[] = [
+                        'row' => $row,
+                        'entry' => $entry,
+                        'candidates' => $candidates,
+                        'group' => $group,
+                    ];
+                }
+            }, 'id');
+
+        [$groups, $conflictingRows] = $this->removeConflictingSourceGroups($groups, $businessId);
+        foreach ($groups as $item) {
+            $group = $item['group'];
+            $sourceRecordCount += count($group['member_ids']);
+            foreach ([
+                'source_base' => 'base_amount',
+                'source_tax' => 'tax_amount',
+                'source_total' => 'total_amount',
+                'journal_base' => 'journal_base_amount',
+                'journal_tax' => 'journal_tax_amount',
+                'journal_total' => 'journal_total_amount',
+            ] as $summaryKey => $groupKey) {
+                $summary[$summaryKey] += (float) ($group[$groupKey] ?? 0);
+            }
+        }
+
+        foreach ($summary as $key => $amount) {
+            $summary[$key] = round($amount, 4);
+        }
+
+        return [
+            'groups' => $groups,
+            'source_record_count' => $sourceRecordCount,
+            'ambiguous_row_count' => $ambiguousRows,
+            'limited_row_count' => $limitedRows,
+            'conflicting_row_count' => $conflictingRows,
+            'summary' => $summary,
+            'fingerprint' => $groupService->bulkFingerprint($businessId, (int) $batch->id, $groups),
+        ];
+    }
+
+    private function confirmedSourceGroupsForBulkFingerprint(object $batch, int $businessId, string $fingerprint): array
+    {
+        $confirmed = [];
+        $rows = DB::table('accounting_journal_import_rows')
+            ->where('journal_import_id', $batch->id)
+            ->where('business_id', $businessId)
+            ->whereIn('source_type', ['Expense', 'Purchase Invoice'])
+            ->where('source_action', 'link')
+            ->orderBy('id')
+            ->get();
+
+        foreach ($rows as $row) {
+            $entry = json_decode((string) $row->entry_data, true) ?: [];
+            $group = $entry['source_link_group'] ?? null;
+            if (($group['status'] ?? null) !== 'confirmed'
+                || ! hash_equals($fingerprint, (string) ($group['bulk_confirmation_fingerprint'] ?? ''))) {
+                continue;
+            }
+            $confirmed[] = ['row' => $row, 'entry' => $entry, 'candidates' => [], 'group' => $group];
+        }
+
+        return $confirmed;
+    }
+
+    private function removeConflictingSourceGroups(array $groups, int $businessId): array
+    {
+        $groupRowsBySourceId = [];
+        $sourceIds = [];
+        foreach ($groups as $item) {
+            foreach ($item['group']['member_ids'] as $sourceId) {
+                $sourceId = (int) $sourceId;
+                $sourceIds[$sourceId] = $sourceId;
+                $groupRowsBySourceId[$sourceId][(int) $item['row']->id] = true;
+            }
+        }
+
+        $existingRowsBySourceId = [];
+        foreach (array_chunk(array_values($sourceIds), 500) as $ids) {
+            $links = DB::table('accounting_journal_import_source_links')
+                ->where('business_id', $businessId)
+                ->where('source_record_type', Transaction::class)
+                ->whereIn('source_record_id', $ids)
+                ->get(['source_record_id', 'journal_import_row_id']);
+            foreach ($links as $link) {
+                $existingRowsBySourceId[(int) $link->source_record_id][(int) $link->journal_import_row_id] = true;
+            }
+        }
+
+        $conflictingRowIds = [];
+        foreach ($groupRowsBySourceId as $sourceId => $rowIds) {
+            $owners = $rowIds + ($existingRowsBySourceId[$sourceId] ?? []);
+            if (count($owners) > 1) {
+                foreach (array_keys($owners) as $rowId) {
+                    $conflictingRowIds[(int) $rowId] = true;
+                }
+            }
+        }
+
+        $filtered = array_values(array_filter($groups, fn (array $item): bool => ! isset($conflictingRowIds[(int) $item['row']->id])));
+
+        return [$filtered, count($conflictingRowIds)];
+    }
+
+    private function sourceGroupHasConflictingLink(array $group, int $businessId, int $rowId): bool
+    {
+        $memberIds = array_values(array_unique(array_map('intval', $group['member_ids'] ?? [])));
+        if ($memberIds === []) {
+            return false;
+        }
+
+        return DB::table('accounting_journal_import_source_links')
+            ->where('business_id', $businessId)
+            ->where('source_record_type', Transaction::class)
+            ->whereIn('source_record_id', $memberIds)
+            ->where('journal_import_row_id', '<>', $rowId)
+            ->exists();
+    }
+
+    private function sourceGroupCandidatesForRow($row, int $businessId): array
+    {
+        $entry = json_decode((string) $row->entry_data, true) ?: [];
+        if (empty($entry['source_number'])) {
+            $entry['source_number'] = $row->source_number;
+        }
+        $detailsByKey = $this->journalSourceCandidateDetailsByKey(collect([$row]), $businessId);
+
+        return $this->sourceGroupCandidatesFromEntry($entry, $detailsByKey);
+    }
+
+    private function sourceGroupCandidatesFromEntry(array $entry, array $detailsByKey): array
+    {
+        $candidates = [];
+        foreach (($entry['source_link_candidate_details'] ?? []) as $candidate) {
+            if (! is_array($candidate)) {
+                continue;
+            }
+            $key = ($candidate['record_type'] ?? '').'|'.(int) ($candidate['id'] ?? 0);
+            if (isset($detailsByKey[$key])) {
+                $candidates[] = array_merge($candidate, $detailsByKey[$key]);
+            }
+        }
+
+        return $candidates;
+    }
+
     private function journalImportDraftRowResponse(
         $row,
         array $importOptions = [],
@@ -1010,6 +1485,9 @@ class JournalEntryController extends Controller
     {
         $response = $this->journalImportDraftService->rowResponse($row);
         $entry = json_decode((string) $row->entry_data, true) ?: [];
+        if (empty($entry['source_number'])) {
+            $entry['source_number'] = $row->source_number;
+        }
         $componentService = app(\Modules\Accounting\Services\JournalImportAccountComponentService::class);
         $components = $componentService->groupJournalLines($entry, (int) $row->business_id, $importOptions);
         $response['journal_components'] = $components;
@@ -1035,6 +1513,23 @@ class JournalEntryController extends Controller
             : null;
         $response['source_link_candidate_details'] = app(\Modules\Accounting\Services\JournalImportSourceMatcher::class)
             ->rankCandidates($candidateDetails, (string) ($entry['date'] ?? ''), (float) ($entry['debit_total'] ?? 0), $matchComponents);
+        $response['source_link_group'] = $entry['source_link_group'] ?? null;
+        $groupTypes = ['Expense', 'Purchase Invoice'];
+        if (in_array((string) $row->source_type, $groupTypes, true)) {
+            $groupSuggestions = app(JournalImportSourceGroupService::class)->suggestions(
+                (int) $row->id,
+                (string) $row->source_type,
+                $entry,
+                $response['source_link_candidate_details'],
+                (int) $row->business_id,
+                $importOptions
+            );
+            $response['source_link_group_suggestion_status'] = $groupSuggestions['status'];
+            $response['source_link_group_suggestions'] = $groupSuggestions['groups'];
+        } else {
+            $response['source_link_group_suggestion_status'] = 'none';
+            $response['source_link_group_suggestions'] = [];
+        }
 
         foreach ($response['source_link_candidate_details'] as $candidate) {
             if (($candidate['record_type'] ?? null) === ($row->source_record_type ?? null)
@@ -1042,6 +1537,9 @@ class JournalEntryController extends Controller
                 $response['source_link_label'] = $candidate['label'] ?? $response['source_link_label'];
                 break;
             }
+        }
+        if (($response['source_link_group']['status'] ?? null) === 'confirmed') {
+            $response['source_link_label'] = $entry['source_link_label'] ?? 'Grup split terkonfirmasi';
         }
 
         $response['source_components'] = null;
@@ -1750,6 +2248,7 @@ class JournalEntryController extends Controller
             app(\Modules\Accounting\Services\JournalImportBankTransactionService::class)->revertImport((int) $id, (int) $business_id);
             app(JournalImportInvoiceService::class)->revertImport((int) $id, (int) $business_id);
             app(\Modules\Accounting\Services\JournalImportExpenseService::class)->revertImport((int) $id, (int) $business_id);
+            app(JournalImportSourceGroupService::class)->removeForImport((int) $id, (int) $business_id);
             AccountTransaction::where('journal_import_id', $id)->delete();
             AccountingAccountsTransaction::where('journal_import_id', $id)->delete();
             AccountingAccTransMapping::where('business_id', $business_id)
