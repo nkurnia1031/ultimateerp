@@ -3296,6 +3296,22 @@ class JournalEntryController extends Controller
                 return null;
             }
             $root = public_path('uploads/temp/journal_imports');
+        } elseif (preg_match('/^[a-zA-Z]:\//', $path) === 1 || Str::startsWith($path, '/')) {
+            // The legacy coordinator reads originals in place so its dry-run does not
+            // create temporary application files. Keep this path limited to import-legacy.
+            $legacyRoot = realpath(base_path('import-legacy'));
+            $resolvedPath = realpath($path);
+            if ($legacyRoot === false || $resolvedPath === false || is_link($path) || ! is_file($resolvedPath)) {
+                return null;
+            }
+
+            $normalizedRoot = rtrim(str_replace('\\', '/', $legacyRoot), '/').'/';
+            $normalizedPath = str_replace('\\', '/', $resolvedPath);
+            $pathIsInsideLegacyRoot = DIRECTORY_SEPARATOR === '\\'
+                ? strncasecmp($normalizedPath, $normalizedRoot, strlen($normalizedRoot)) === 0
+                : strncmp($normalizedPath, $normalizedRoot, strlen($normalizedRoot)) === 0;
+
+            return $pathIsInsideLegacyRoot ? $resolvedPath : null;
         } else {
             return null;
         }

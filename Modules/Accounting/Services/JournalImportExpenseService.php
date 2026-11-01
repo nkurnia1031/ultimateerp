@@ -118,6 +118,66 @@ class JournalImportExpenseService
         return $transaction->fresh();
     }
 
+    /** Create a reviewable operational Expense from complete legacy evidence without posting GL. */
+    public function createLegacyOperational(array $document, array $draftData, array $expenseLines, int $businessId, int $userId): Transaction
+    {
+        $draftData = $this->draftService->validateDraftData($draftData, $businessId, 'Expense');
+        if ($expenseLines === []) {
+            throw new \RuntimeException('Expense legacy tidak memiliki detail kategori.');
+        }
+
+        $categoryIds = array_values(array_unique(array_map(fn (array $line) => (int) ($line['category_id'] ?? 0), $expenseLines)));
+        if (in_array(0, $categoryIds, true)
+            || DB::table('expense_categories')
+                ->where('business_id', $businessId)
+                ->whereNull('deleted_at')
+                ->whereNull('parent_id')
+                ->whereIn('id', $categoryIds)
+                ->count() !== count($categoryIds)) {
+            throw new \RuntimeException('Kategori detail Expense legacy tidak valid untuk business ini.');
+        }
+        foreach ($expenseLines as $line) {
+            if (! is_numeric($line['amount'] ?? null) || (float) $line['amount'] <= 0) {
+                throw new \RuntimeException('Nominal detail Expense legacy harus lebih besar dari nol.');
+            }
+        }
+
+        $base = round(array_sum(array_column($expenseLines, 'amount')), 4);
+        $taxAmount = is_numeric($document['tax'] ?? null) ? round((float) $document['tax'], 4) : 0.0;
+        if ($taxAmount < 0 || $base <= 0) {
+            throw new \RuntimeException('Basis atau pajak Expense legacy tidak valid untuk pembuatan otomatis.');
+        }
+        if (is_numeric($document['base'] ?? null) && abs($base - (float) $document['base']) > 0.01) {
+            throw new \RuntimeException('Jumlah detail kategori Expense berbeda dari basis sumber operasional.');
+        }
+
+        $total = round($base + $taxAmount, 4);
+        if (is_numeric($document['total'] ?? null) && abs($total - (float) $document['total']) > 0.01) {
+            throw new \RuntimeException('Total Expense legacy tidak sama dengan basis ditambah pajak.');
+        }
+        $tax = $taxAmount > 0 ? $this->legacyTaxRate($businessId, $base, $taxAmount) : null;
+        $date = $this->normalizedDateOrNull((string) ($document['date'] ?? ''));
+        if ($date === null) {
+            throw new \RuntimeException('Tanggal Expense legacy tidak valid.');
+        }
+
+        $prepared = [
+            'sourceNumber' => trim((string) ($document['source_number'] ?? '')),
+            'draftData' => $draftData,
+            'totals' => ['total_before_tax' => $base, 'tax' => $taxAmount, 'final_total' => $total],
+            'entryDate' => $date,
+            'location_id' => (int) ($draftData['location_id'] ?? 0),
+            'category_id' => (int) ($draftData['expense_category_id'] ?? $categoryIds[0]),
+            'tax' => $tax,
+            'lines' => $expenseLines,
+        ];
+        $entry = ['description' => $document['description'] ?? null];
+        $row = (object) ['id' => 0];
+        $import = (object) ['business_id' => $businessId, 'created_by' => $userId];
+
+        return $this->createExpense($row, $entry, $import, $prepared);
+    }
+
     public function revertImport(int $importId, int $businessId): int
     {
         $rows = DB::table('accounting_journal_import_rows')
@@ -441,6 +501,25 @@ class JournalImportExpenseService
         }
 
         return $transaction;
+    }
+
+    private function legacyTaxRate(int $businessId, float $base, float $taxAmount): array
+    {
+        $effectiveRate = round($taxAmount / $base * 100, 6);
+        $matches = \App\TaxRate::where('business_id', $businessId)
+            ->whereNull('deleted_at')
+            ->get()
+            ->filter(function ($rate) use ($effectiveRate, $base, $taxAmount) {
+                return ! $rate->is_tax_group
+                    && abs(round((float) $rate->amount - $effectiveRate, 4)) <= 0.01
+                    && abs(round($base * (float) $rate->amount / 100, 2) - round($taxAmount, 2)) <= 0.01;
+            })
+            ->values();
+
+        return [
+            'id' => $matches->count() === 1 ? (int) $matches[0]->id : null,
+            'rate' => $effectiveRate,
+        ];
     }
 
     private function applyUpdate(Transaction $transaction, array $entry, array $prepared): array

@@ -31,6 +31,10 @@ class JournalImportDraftService
 
     public function defaultActionFor(array $entry): string
     {
+        if (! empty($entry['source_identity_conflict'])) {
+            return 'review';
+        }
+
         if (($entry['source_type'] ?? null) === 'Journal Entry') {
             return 'journal';
         }
