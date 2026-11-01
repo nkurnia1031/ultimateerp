@@ -1618,6 +1618,9 @@
         terminateImport($(this).data('id'), $(this));
     });
 
+    // Server-rendered controls stay disabled until this handler is ready.
+    $('.journal-import-terminate[data-cancel-requested="0"]').prop('disabled', false);
+
     $(function () {
         var button = $('.journal-import-watch').first();
         if (button.length) {

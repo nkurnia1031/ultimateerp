@@ -18,14 +18,6 @@ async function batchStatus(page, importId) {
     }, importId);
 }
 
-function diagnosticText(value) {
-    return String(value)
-        .replace(/Bearer\s+\S+/gi, 'Bearer <REDACTED>')
-        .replace(/([?&][^=&#]*(?:token|password|secret|csrf)[^=&#]*=)[^&#\s]*/gi, '$1<REDACTED>')
-        .replace(/((?:password|token|secret|authorization|csrf)[^=:\s]*[=:]\s*)[^&\s,;]+/gi, '$1<REDACTED>')
-        .slice(0, 300);
-}
-
 test('a queued Journal Import can stop, resume, and post once', async ({ page }) => {
     const sourceNumber = `CI-${Date.now()}-${test.info().retry}`;
     const fixturePath = execFileSync(
@@ -35,44 +27,7 @@ test('a queued Journal Import can stop, resume, and post once', async ({ page })
     ).trim();
     const fileName = path.basename(fixturePath);
     let queueWorker;
-    const browserDiagnostics = {
-        consoleErrors: [],
-        pageErrors: [],
-        terminateRequests: [],
-        terminateResponses: [],
-        failedTerminateRequests: [],
-    };
     page.on('dialog', (dialog) => dialog.accept());
-    page.on('console', (message) => {
-        if (message.type() === 'error') {
-            browserDiagnostics.consoleErrors.push(diagnosticText(message.text()));
-        }
-    });
-    page.on('pageerror', (error) => {
-        browserDiagnostics.pageErrors.push(diagnosticText(error.message || error));
-    });
-    page.on('request', (request) => {
-        const url = new URL(request.url());
-        if (url.pathname.endsWith('/terminate')) {
-            browserDiagnostics.terminateRequests.push({ method: request.method(), path: url.pathname });
-        }
-    });
-    page.on('response', (response) => {
-        const url = new URL(response.url());
-        if (url.pathname.endsWith('/terminate')) {
-            browserDiagnostics.terminateResponses.push({ status: response.status(), path: url.pathname });
-        }
-    });
-    page.on('requestfailed', (request) => {
-        const url = new URL(request.url());
-        if (url.pathname.endsWith('/terminate')) {
-            browserDiagnostics.failedTerminateRequests.push({
-                method: request.method(),
-                path: url.pathname,
-                error: request.failure()?.errorText || 'unknown request failure',
-            });
-        }
-    });
 
     try {
         await page.goto('/login');
@@ -88,83 +43,23 @@ test('a queued Journal Import can stop, resume, and post once', async ({ page })
 
         const row = page.locator('tr').filter({ hasText: fileName });
         await expect(row).toBeVisible();
-        await expect(row.locator('.journal-import-terminate')).toBeVisible();
+        const terminateButton = row.locator('.journal-import-terminate');
+        await expect(terminateButton).toBeVisible();
         const statusId = await row.locator('[id^="journal-import-status-"]').getAttribute('id');
         const importId = statusId.replace('journal-import-status-', '');
 
-        await page.evaluate(() => {
-            window.__journalImportTerminateDiagnostics = {
-                confirmMessage: null,
-                captureClicks: 0,
-                bubbleClicks: 0,
-            };
-            const isTerminateClick = (event) => event.target instanceof Element
-                && event.target.closest('.journal-import-terminate') !== null;
-            document.addEventListener('click', (event) => {
-                if (isTerminateClick(event)) {
-                    window.__journalImportTerminateDiagnostics.captureClicks++;
-                }
-            }, true);
-            document.addEventListener('click', (event) => {
-                if (isTerminateClick(event)) {
-                    window.__journalImportTerminateDiagnostics.bubbleClicks++;
-                }
-            });
-            window.confirm = (message) => {
-                window.__journalImportTerminateDiagnostics.confirmMessage = String(message);
-                return true;
-            };
-        });
-        const terminateHandlerRegistered = await page.evaluate(() => {
-            const clickHandlers = window.jQuery
-                ? (window.jQuery._data(document, 'events')?.click || [])
-                : [];
-
-            return clickHandlers.some((handler) => handler.selector === '.journal-import-terminate');
-        });
+        // The server renders the row before the Accounting JavaScript finishes loading.
+        // Wait for the control to become active after its delegated handler is registered.
+        await expect(terminateButton).toBeEnabled();
         const stopResponsePromise = page.waitForResponse(
             (response) =>
                 response.request().method() === 'POST' &&
                 response.url().endsWith(`/accounting/journal-entry/import/${importId}/terminate`),
             { timeout: 30_000 },
         );
-        await row.locator('.journal-import-terminate').click();
-        let stopResponse;
-        try {
-            stopResponse = await stopResponsePromise;
-        } catch (error) {
-            const pageState = await page.evaluate((id) => {
-                const button = document.querySelector(`#journal-import-action-${id} .journal-import-terminate`);
-                const actionCell = document.querySelector(`#journal-import-action-${id}`);
-
-                return {
-                    terminateHandlerRegistered: (window.jQuery?._data(document, 'events')?.click || [])
-                        .some((handler) => handler.selector === '.journal-import-terminate'),
-                    clickDiagnostics: window.__journalImportTerminateDiagnostics,
-                    button: button ? {
-                        text: button.textContent.trim(),
-                        disabled: button.disabled,
-                        dataId: button.getAttribute('data-id'),
-                    } : null,
-                    terminateUrlPath: actionCell?.dataset.terminateUrl
-                        ? new URL(actionCell.dataset.terminateUrl, window.location.origin).pathname
-                        : null,
-                };
-            }, importId);
-
-            await test.info().attach('terminate-click-diagnostics.json', {
-                body: JSON.stringify({
-                    terminateHandlerRegistered,
-                    pageState,
-                    browserDiagnostics,
-                    failure: diagnosticText(error.message || error),
-                }, null, 2),
-                contentType: 'application/json',
-            });
-            throw error;
-        }
+        await terminateButton.click();
+        const stopResponse = await stopResponsePromise;
         expect(stopResponse.ok()).toBeTruthy();
-        expect(await page.evaluate(() => window.__journalImportTerminateDiagnostics.confirmMessage)).toContain('Hentikan import');
         await expect.poll(async () => (await batchStatus(page, importId)).status).toBe('cancelled');
 
         const resumeLink = row.getByRole('link', { name: 'Lanjutkan import' });

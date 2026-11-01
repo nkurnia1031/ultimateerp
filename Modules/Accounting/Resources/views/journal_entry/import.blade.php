@@ -705,7 +705,7 @@
                                     <button type="button" class="btn btn-default btn-xs journal-import-watch" data-id="{{ $import->id }}">
                                         <i class="fas fa-sync"></i> Pantau progres
                                     </button>
-                                    <button type="button" class="btn btn-warning btn-xs journal-import-terminate" data-id="{{ $import->id }}" @if(!empty($import->cancel_requested_at)) disabled @endif>
+                                    <button type="button" class="btn btn-warning btn-xs journal-import-terminate" data-id="{{ $import->id }}" data-cancel-requested="{{ !empty($import->cancel_requested_at) ? '1' : '0' }}" disabled>
                                         <i class="fas fa-stop"></i> {{ !empty($import->cancel_requested_at) ? 'Menunggu berhenti' : 'Terminate' }}
                                     </button>
                                 @elseif($import->status == 'imported')
