@@ -16,6 +16,7 @@ use Modules\Accounting\Services\LegacyOperationalOnlyProcessor;
 use Modules\Accounting\Services\LegacyAttachmentImporter;
 use Modules\Accounting\Services\JournalImportInvoiceService;
 use Modules\Accounting\Services\JournalImportExpenseService;
+use Modules\Accounting\Services\LegacyAnnualAuditService;
 
 class ImportLegacySources extends Command
 {
@@ -23,6 +24,7 @@ class ImportLegacySources extends Command
         {--business-id= : Business ID that owns the legacy data}
         {--user-id= : Existing user ID recorded as the import author}
         {--year= : Limit Journal entries and dated source files to one year}
+        {--source-dir= : Optional legacy source folder (default: import-legacy)}
         {--apply : Persist the run and process its Journal batch; without this option the command is read-only}
         {--resume-run= : Resume a saved legacy import run for the same source manifest}
         {--chunk-delay-ms=2000 : Delay between Journal Import database chunks (0-30000 ms)}
@@ -41,7 +43,8 @@ class ImportLegacySources extends Command
         LegacyOperationalOnlyProcessor $operationalOnlyProcessor,
         LegacyAttachmentImporter $attachmentImporter,
         JournalImportInvoiceService $invoiceService,
-        JournalImportExpenseService $expenseService
+        JournalImportExpenseService $expenseService,
+        LegacyAnnualAuditService $annualAuditService
     ): int {
         $businessId = $this->positiveOption('business-id');
         $userId = $this->positiveOption('user-id');
@@ -89,15 +92,17 @@ class ImportLegacySources extends Command
             return self::FAILURE;
         }
 
-        $sourceDirectory = realpath(base_path('import-legacy'));
+        $sourceDirectoryOption = trim((string) $this->option('source-dir'));
+        $sourceDirectory = realpath($sourceDirectoryOption !== '' ? $sourceDirectoryOption : base_path('import-legacy'));
         if ($sourceDirectory === false) {
-            $this->error('Folder import-legacy tidak ditemukan.');
+            $this->error('Folder sumber legacy tidak ditemukan atau tidak dapat dibaca.');
 
             return self::FAILURE;
         }
 
         try {
             $inventory = $catalog->scan($sourceDirectory, $year);
+            $auditInventory = $year === null ? $inventory : $catalog->scan($sourceDirectory);
         } catch (\Throwable $exception) {
             $this->error($exception->getMessage());
 
@@ -109,9 +114,17 @@ class ImportLegacySources extends Command
 
         if (! $isApply) {
             try {
-                $analysis = $this->analyzeJournalSources($inventory, $businessId, $year, $journalController, $merger, $draftService, $evidenceReader, $enricher);
+                $analysis = $this->analyzeJournalSources($auditInventory, $businessId, $year, $journalController, $merger, $draftService, $evidenceReader, $enricher);
                 $this->printAnalysis($analysis);
-                $this->comment('Dry-run tidak menulis database atau menyalin file sumber. Tambahkan --apply untuk menyimpan batch.');
+                $annualAudit = $annualAuditService->generate(
+                    $analysis['_annual_audit_data']['journal_entries'] ?? [],
+                    $analysis['_annual_audit_data']['operational_evidence'] ?? [],
+                    $auditInventory,
+                    $businessId,
+                    $year
+                );
+                $this->printAnnualAudit($annualAudit);
+                $this->comment('Dry-run tidak mengubah database atau menyalin file sumber. Laporan audit disimpan lokal; tambahkan --apply untuk menyimpan batch.');
             } catch (\Throwable $exception) {
                 $this->error('Analisis dry-run gagal: '.$exception->getMessage());
 
@@ -176,6 +189,7 @@ class ImportLegacySources extends Command
         }
 
         $this->line('Legacy run ID: '.$runId);
+        $annualAudit = null;
 
         try {
             $run = $runService->findRun($runId, $businessId);
@@ -186,8 +200,15 @@ class ImportLegacySources extends Command
                 ->first();
 
             if ($batch === null || $this->batchNeedsPreparation($batch, $businessId)) {
-                $analysis = $this->analyzeJournalSources($inventory, $businessId, $year, $journalController, $merger, $draftService, $evidenceReader, $enricher);
+                $analysis = $this->analyzeJournalSources($auditInventory, $businessId, $year, $journalController, $merger, $draftService, $evidenceReader, $enricher);
                 $this->printAnalysis($analysis);
+                $annualAudit = $annualAuditService->generate(
+                    $analysis['_annual_audit_data']['journal_entries'] ?? [],
+                    $analysis['_annual_audit_data']['operational_evidence'] ?? [],
+                    $auditInventory,
+                    $businessId,
+                    $year
+                );
 
                 $matchedEvidenceIdentities = [];
                 foreach ($analysis['entries'] as $entry) {
@@ -232,6 +253,7 @@ class ImportLegacySources extends Command
                     $summary['legacy_attachments'] = $attachments;
                     $runService->updateRun($runId, $businessId, 'review', 'Tidak ada entri Journal; transaksi operasional lengkap dibuat atau ditautkan dan sisanya masuk review tanpa posting GL.', $summary, true);
                     $this->comment('Tidak ada Journal entry. Transaksi operasional lengkap diproses tanpa GL; item yang belum aman tetap tersimpan untuk review.');
+                    $this->printAnnualAudit($annualAudit);
                     $this->printAttachmentSummary($attachments);
 
                     return self::SUCCESS;
@@ -259,6 +281,26 @@ class ImportLegacySources extends Command
                 $this->syncBatchAnalysis($importId, $businessId, $analysis);
                 $runService->saveJournalBatch($runId, $businessId, $importId, $this->summaryForStorage($analysis));
                 $runService->syncJournalCrosswalks($runId, $businessId, $importId);
+            }
+
+            if ($annualAudit === null) {
+                $auditAnalysis = $this->analyzeJournalSources(
+                    $auditInventory,
+                    $businessId,
+                    $year,
+                    $journalController,
+                    $merger,
+                    $draftService,
+                    $evidenceReader,
+                    $enricher
+                );
+                $annualAudit = $annualAuditService->generate(
+                    $auditAnalysis['_annual_audit_data']['journal_entries'] ?? [],
+                    $auditAnalysis['_annual_audit_data']['operational_evidence'] ?? [],
+                    $auditInventory,
+                    $businessId,
+                    $year
+                );
             }
 
             $runService->updateRun($runId, $businessId, 'importing', 'Menjalankan batch melalui CLI Journal Import yang sudah ada.');
@@ -324,6 +366,7 @@ class ImportLegacySources extends Command
             $runService->updateRun($runId, $businessId, $runStatus, $message, $summary, $finished);
             $this->line('Legacy run #'.$runId.' — '.$message);
             $this->line('Crosswalk sumber yang tersimpan: '.$crosswalkCount);
+            $this->printAnnualAudit($annualAudit);
             $this->printAttachmentSummary($attachments);
 
             return $exitCode === self::FAILURE ? self::FAILURE : self::SUCCESS;
@@ -373,8 +416,12 @@ class ImportLegacySources extends Command
             $analyses[] = $analysis;
         }
 
-        $merged = $merger->merge($workbooks, $year);
-        $operationalEvidence = $evidenceReader->read($inventory['files'], $root, $year);
+        $allMerged = $merger->merge($workbooks);
+        $merged = $year === null ? $allMerged : $merger->merge($workbooks, $year);
+        $allOperationalEvidence = $evidenceReader->read($inventory['files'], $root);
+        $operationalEvidence = $year === null
+            ? $allOperationalEvidence
+            : $this->filterOperationalEvidenceByYear($allOperationalEvidence, $year);
         $entries = $enricher->enrich($merged['entries'], $operationalEvidence, $businessId, $draftService);
         $journalEvidenceIdentities = array_values(array_unique(array_filter(array_map(
             fn (array $entry) => $entry['legacy_evidence_identity'] ?? null,
@@ -455,6 +502,12 @@ class ImportLegacySources extends Command
             'operational_file_summaries' => $operationalEvidence['file_summaries'] ?? [],
             '_operational_evidence_data' => $operationalEvidence,
             '_standalone_draft_data' => $standaloneDraftData,
+            '_annual_audit_data' => [
+                'journal_entries' => $allMerged['entries'],
+                'journal_duplicate_count' => $allMerged['duplicate_count'],
+                'journal_conflict_count' => $allMerged['conflict_count'],
+                'operational_evidence' => $allOperationalEvidence,
+            ],
         ];
 
         return $summary;
@@ -540,7 +593,13 @@ class ImportLegacySources extends Command
 
     private function summaryForStorage(array $analysis): array
     {
-        unset($analysis['entries'], $analysis['missing_accounts'], $analysis['_operational_evidence_data'], $analysis['_standalone_draft_data']);
+        unset(
+            $analysis['entries'],
+            $analysis['missing_accounts'],
+            $analysis['_operational_evidence_data'],
+            $analysis['_standalone_draft_data'],
+            $analysis['_annual_audit_data']
+        );
 
         return $analysis;
     }
@@ -556,6 +615,69 @@ class ImportLegacySources extends Command
         if (! empty($summary['mapping_report_path'])) {
             $this->line('Laporan nama sumber → tujuan: '.$summary['mapping_report_path']);
         }
+    }
+
+    private function printAnnualAudit(array $audit): void
+    {
+        $this->line('Laporan rekonsiliasi tahunan: '.($audit['output_directory'] ?? ''));
+        if (($audit['reports'] ?? []) === []) {
+            $this->line((string) ($audit['message'] ?? 'Tidak ada laporan tahunan yang dibuat.'));
+        }
+        foreach ((array) ($audit['reports'] ?? []) as $year => $report) {
+            $this->line(
+                '  '.$year.': '.$report['journal_entries'].' Journal; '.$report['operational_matches']
+                .' sumber operasional cocok; '.$report['control_variances'].' selisih kontrol.'
+            );
+            $this->line('    XLSX: '.$report['xlsx']);
+            $this->line('    JSON: '.$report['json']);
+        }
+        foreach ((array) ($audit['control_errors'] ?? []) as $error) {
+            $this->warn('  Kontrol tidak terbaca: '.$error['path'].' — '.$error['message']);
+        }
+    }
+
+    private function filterOperationalEvidenceByYear(array $evidence, int $year): array
+    {
+        $documents = [];
+        $fileCounts = [];
+        $sourceRecordCount = 0;
+        $duplicateCount = 0;
+        $conflictCount = 0;
+        foreach ((array) ($evidence['documents'] ?? []) as $identity => $document) {
+            if (! is_array($document) || (int) substr((string) ($document['date'] ?? ''), 0, 4) !== $year) {
+                continue;
+            }
+            $documents[$identity] = $document;
+            $sourceCount = max(1, (int) ($document['source_count'] ?? 1));
+            $sourceRecordCount += $sourceCount;
+            $duplicateCount += max(0, $sourceCount - 1);
+            $conflictCount += ($document['status'] ?? '') === 'conflict' ? 1 : 0;
+            foreach ((array) ($document['provenance'] ?? []) as $source) {
+                $path = (string) ($source['path'] ?? '');
+                if ($path !== '') {
+                    $fileCounts[$path] = ($fileCounts[$path] ?? 0) + 1;
+                }
+            }
+        }
+
+        $fileSummaries = [];
+        foreach ((array) ($evidence['file_summaries'] ?? []) as $summary) {
+            $path = (string) ($summary['path'] ?? '');
+            $count = (int) ($fileCounts[$path] ?? 0);
+            if ($count > 0 || ! empty($summary['error'])) {
+                $summary['documents'] = $count;
+                $fileSummaries[] = $summary;
+            }
+        }
+
+        return [
+            'documents' => $documents,
+            'document_count' => count($documents),
+            'source_record_count' => $sourceRecordCount,
+            'duplicate_source_count' => $duplicateCount,
+            'conflict_count' => $conflictCount,
+            'file_summaries' => $fileSummaries,
+        ];
     }
 
     private function manifestHash(array $inventory, ?int $year): string

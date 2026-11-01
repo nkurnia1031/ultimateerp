@@ -11,7 +11,11 @@ php artisan migrate --force
 php artisan accounting:import-legacy --business-id=2 --user-id=5
 ```
 
-The preview reports Journal overlap/conflicts, source coverage, operating records that can be linked or safely created, and items held for review. It does not write application data or copy source files.
+The preview reports Journal overlap/conflicts, source coverage, operating records that can be linked or safely created, and items held for review. It does not write application data or copy source files. It also writes one read-only annual reconciliation XLSX and JSON for each year represented by the source periods.
+
+Annual reports are stored privately under storage/app/legacy-import-reports/business-{business-id}/. They include account opening/debit/credit/closing balances, Journal-to-operational base and VAT In/VAT Out comparisons, source file/row provenance, coverage gaps, and comparisons to the General Ledger and Buku Besar control workbooks. Those control workbooks remain comparison evidence; they are never imported as postings.
+
+Use --year=2022 to emit only the 2022 report. The audit still reads Journal history before 2022 to calculate carried balances, while the import preview itself remains limited to 2022. To use a different source folder, pass --source-dir=/path/to/folder; the default is import-legacy/.
 
 Attachment metadata in `json/lampiran.json` is handled after operational crosswalks are saved. Attachments link only through a unique legacy transaction ID or a unique source type/number in that run. Unmatched, unsupported, or ambiguous attachment rows remain reviewable in `accounting_legacy_import_attachments` and do not block other records.
 
