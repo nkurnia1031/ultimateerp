@@ -164,9 +164,7 @@ class JournalTaxReconciliationService
             ->where('business_id', $businessId)
             ->where('journal_mapping_id', $mapping->id)
             ->first(['source_action']);
-        if (($sourceRow->source_action ?? null) === 'link') {
-            return $this->saveResult($mapping, 'not_applicable', 'Transaksi sumber hanya ditautkan; data pajak dan total sumber tidak diubah.', null, null);
-        }
+        $linkedOnly = ($sourceRow->source_action ?? null) === 'link';
 
         $journalLines = DB::table('accounting_accounts_transactions as journal_line')
             ->leftJoin('accounting_accounts as account', function ($join) use ($businessId) {
@@ -231,8 +229,16 @@ class JournalTaxReconciliationService
             }
 
             $finalTotal = $taxableBase + $journalTax;
+            if ($linkedOnly) {
+                $conflict = $this->linkedHeaderTaxConflict($source, (int) $taxRate->id, $journalTax, $taxableBase, $finalTotal);
+                if ($conflict !== null) {
+                    return $this->saveResult($mapping, 'review', $conflict, $journalTax, null, null, $journalTotal, $finalTotal);
+                }
+            }
             $totalMismatch = abs(round($finalTotal - $journalTotal, 4)) > self::MATCH_TOLERANCE;
-            $note = 'Tax Expense diperbarui dari akun pajak Journal; basis transaksi dipertahankan.';
+            $note = $linkedOnly
+                ? 'Pajak Expense yang belum terisi dilengkapi dari akun pajak Journal; basis transaksi dipertahankan.'
+                : 'Tax Expense diperbarui dari akun pajak Journal; basis transaksi dipertahankan.';
             if ($totalMismatch) {
                 $note .= ' Hasil total transaksi ('.number_format($finalTotal, 4, '.', '').') berbeda dari total debit Journal ('.number_format($journalTotal, 4, '.', '').'); perlu ditinjau.';
             }
@@ -257,7 +263,7 @@ class JournalTaxReconciliationService
             return $this->saveResult($mapping, $totalMismatch ? 'review' : 'reconciled', $note, $journalTax, $journalTax, $snapshot, $journalTotal, $finalTotal);
         }
 
-        $lineUpdates = $this->calculateSourceLineTaxes($source, $rate, $taxRate->id);
+        $lineUpdates = $this->calculateSourceLineTaxes($source, $rate, $taxRate->id, $linkedOnly);
         if ($lineUpdates['error'] !== null) {
             return $this->saveResult($mapping, 'review', $lineUpdates['error'], $journalTax, $lineUpdates['tax_amount'], null, $journalTotal);
         }
@@ -281,8 +287,16 @@ class JournalTaxReconciliationService
         }
 
         $finalTotal = $taxableBase + $journalTax;
+        if ($linkedOnly) {
+            $conflict = $this->linkedHeaderTaxConflict($source, (int) $taxRate->id, $journalTax, $taxableBase, $finalTotal);
+            if ($conflict !== null) {
+                return $this->saveResult($mapping, 'review', $conflict, $journalTax, $calculatedTax, null, $journalTotal, $finalTotal);
+            }
+        }
         $totalMismatch = abs(round($finalTotal - $journalTotal, 4)) > self::MATCH_TOLERANCE;
-        $note = 'Tax item dan header diperbarui dari Journal; basis total invoice dipertahankan.';
+        $note = $linkedOnly
+            ? 'Pajak item invoice yang belum terisi dilengkapi dari Journal; basis total invoice dipertahankan.'
+            : 'Tax item dan header diperbarui dari Journal; basis total invoice dipertahankan.';
         if ($totalMismatch) {
             $note .= ' Hasil total transaksi ('.number_format($finalTotal, 4, '.', '').') berbeda dari total debit Journal ('.number_format($journalTotal, 4, '.', '').'); perlu ditinjau.';
         }
@@ -321,7 +335,7 @@ class JournalTaxReconciliationService
         return $this->saveResult($mapping, $totalMismatch ? 'review' : 'reconciled', $note, $journalTax, $calculatedTax, $snapshot, $journalTotal, $finalTotal);
     }
 
-    private function calculateSourceLineTaxes(Transaction $source, float $rate, int $taxRateId): array
+    private function calculateSourceLineTaxes(Transaction $source, float $rate, int $taxRateId, bool $preserveExisting = false): array
     {
         $lines = [];
         $taxAmount = 0.0;
@@ -333,23 +347,35 @@ class JournalTaxReconciliationService
 
             $sourceLines = DB::table('pjt_invoice_lines')
                 ->where('transaction_id', $source->id)
-                ->whereNotNull('tax_rate_id')
                 ->get(['id', 'quantity', 'rate', 'tax_rate_id', 'total']);
 
             foreach ($sourceLines as $line) {
                 $quantity = (float) $line->quantity;
-                $unitTax = round(((float) $line->rate * $rate) / 100, 4);
+                $base = (float) $line->rate;
+                $unitTax = round(($base * $rate) / 100, 4);
+                $expectedTotal = round($quantity * ($base + $unitTax), 4);
+                if ($preserveExisting
+                    && ((! empty($line->tax_rate_id) && (int) $line->tax_rate_id !== $taxRateId)
+                        || ($line->total !== null
+                            && abs((float) $line->total) > self::MATCH_TOLERANCE
+                            && abs((float) $line->total - ($quantity * $base)) > self::MATCH_TOLERANCE
+                            && abs((float) $line->total - $expectedTotal) > self::MATCH_TOLERANCE))) {
+                    return ['lines' => [], 'tax_amount' => null, 'error' => 'Pajak atau total item Project Invoice sudah terisi berbeda dari Journal; item sumber tidak diubah.'];
+                }
                 $taxAmount += $quantity * $unitTax;
                 $lines[] = [
                     'table' => 'pjt_invoice_lines',
                     'id' => $line->id,
                     'before' => ['tax_rate_id' => $line->tax_rate_id, 'total' => $line->total],
-                    'values' => ['tax_rate_id' => $taxRateId, 'total' => round($quantity * ((float) $line->rate + $unitTax), 4), 'updated_at' => now()],
+                    'values' => ['tax_rate_id' => $taxRateId, 'total' => $expectedTotal, 'updated_at' => now()],
                 ];
             }
         } elseif ($source->type === 'sell') {
-            $sourceLines = TransactionSellLine::where('transaction_id', $source->id)
-                ->whereNotNull('tax_id')
+            $sourceLinesQuery = TransactionSellLine::where('transaction_id', $source->id);
+            if (DB::getSchemaBuilder()->hasColumn('transaction_sell_lines', 'parent_sell_line_id')) {
+                $sourceLinesQuery->whereNull('parent_sell_line_id');
+            }
+            $sourceLines = $sourceLinesQuery
                 ->get(['id', 'quantity', 'unit_price', 'tax_id', 'item_tax', 'unit_price_inc_tax']);
 
             foreach ($sourceLines as $line) {
@@ -359,6 +385,9 @@ class JournalTaxReconciliationService
                 $quantity = (float) $line->quantity;
                 $base = (float) $line->unit_price;
                 $unitTax = round(($base * $rate) / 100, 4);
+                if ($preserveExisting && $this->linkedLineTaxConflicts($line, $taxRateId, $unitTax, $base)) {
+                    return ['lines' => [], 'tax_amount' => null, 'error' => 'Pajak atau total item Sales sudah terisi berbeda dari Journal; item sumber tidak diubah.'];
+                }
                 $taxAmount += $quantity * $unitTax;
                 $lines[] = [
                     'table' => 'transaction_sell_lines',
@@ -369,7 +398,6 @@ class JournalTaxReconciliationService
             }
         } else {
             $sourceLines = PurchaseLine::where('transaction_id', $source->id)
-                ->whereNotNull('tax_id')
                 ->get(['id', 'quantity', 'purchase_price', 'tax_id', 'item_tax', 'purchase_price_inc_tax']);
 
             foreach ($sourceLines as $line) {
@@ -379,6 +407,9 @@ class JournalTaxReconciliationService
                 $quantity = (float) $line->quantity;
                 $base = (float) $line->purchase_price;
                 $unitTax = round(($base * $rate) / 100, 4);
+                if ($preserveExisting && $this->linkedLineTaxConflicts($line, $taxRateId, $unitTax, $base, 'purchase_price_inc_tax')) {
+                    return ['lines' => [], 'tax_amount' => null, 'error' => 'Pajak atau total item Purchase sudah terisi berbeda dari Journal; item sumber tidak diubah.'];
+                }
                 $taxAmount += $quantity * $unitTax;
                 $lines[] = [
                     'table' => 'purchase_lines',
@@ -434,6 +465,49 @@ class JournalTaxReconciliationService
         }
 
         return null;
+    }
+
+    private function linkedHeaderTaxConflict(Transaction $source, int $taxRateId, float $journalTax, float $taxableBase, float $expectedFinalTotal): ?string
+    {
+        if (! empty($source->tax_id) && (int) $source->tax_id !== $taxRateId) {
+            return 'TaxRate sumber sudah terisi dan berbeda dari komponen Journal; transaksi sumber tidak diubah dan perlu ditinjau.';
+        }
+
+        if ($source->tax_amount !== null
+            && abs((float) $source->tax_amount) > self::MATCH_TOLERANCE
+            && abs((float) $source->tax_amount - $journalTax) > self::MATCH_TOLERANCE) {
+            return 'Nominal pajak sumber sudah terisi dan berbeda dari komponen Journal; transaksi sumber tidak diubah dan perlu ditinjau.';
+        }
+
+        if ($source->final_total !== null) {
+            $finalTotalIsBlank = abs((float) $source->final_total) <= self::MATCH_TOLERANCE;
+            $matchesExpected = abs((float) $source->final_total - $expectedFinalTotal) <= self::MATCH_TOLERANCE;
+            $taxIsMissing = $source->tax_amount === null || (float) $source->tax_amount <= self::MATCH_TOLERANCE;
+            $matchesBaseWithoutTax = $taxIsMissing
+                && abs((float) $source->final_total - $taxableBase) <= self::MATCH_TOLERANCE;
+            if (! $finalTotalIsBlank && ! $matchesExpected && ! $matchesBaseWithoutTax) {
+                return 'Total akhir sumber sudah terisi dan tidak cocok dengan basis serta pajak Journal; transaksi sumber tidak diubah dan perlu ditinjau.';
+            }
+        }
+
+        return null;
+    }
+
+    private function linkedLineTaxConflicts(object $line, int $taxRateId, float $unitTax, float $base, string $inclusivePriceColumn = 'unit_price_inc_tax'): bool
+    {
+        if (! empty($line->tax_id) && (int) $line->tax_id !== $taxRateId) {
+            return true;
+        }
+        if ($line->item_tax !== null
+            && abs((float) $line->item_tax) > self::MATCH_TOLERANCE
+            && abs((float) $line->item_tax - $unitTax) > self::MATCH_TOLERANCE) {
+            return true;
+        }
+        $inclusivePrice = $line->{$inclusivePriceColumn};
+        return $inclusivePrice !== null
+            && abs((float) $inclusivePrice) > self::MATCH_TOLERANCE
+            && abs((float) $inclusivePrice - $base) > self::MATCH_TOLERANCE
+            && abs((float) $inclusivePrice - ($base + $unitTax)) > self::MATCH_TOLERANCE;
     }
 
     private function journalTransactionTotal($journalLines): float
