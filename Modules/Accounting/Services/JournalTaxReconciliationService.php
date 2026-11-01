@@ -425,14 +425,12 @@ class JournalTaxReconciliationService
 
     private function sourceTaxableBase(Transaction $source): ?float
     {
-        if ($source->total_before_tax !== null && (float) $source->total_before_tax > 0) {
-            return round((float) $source->total_before_tax, 4);
-        }
-
         if ($source->type === 'expense' && DB::getSchemaBuilder()->hasTable('expense_lines')) {
             $base = (float) DB::table('expense_lines')->where('transaction_id', $source->id)->sum('amount');
 
-            return $base > 0 ? round($base, 4) : null;
+            if ($base > 0) {
+                return round($base, 4);
+            }
         }
 
         if ($source->type === 'sell' && $source->sub_type === 'project_invoice' && DB::getSchemaBuilder()->hasTable('pjt_invoice_lines')) {
@@ -441,7 +439,9 @@ class JournalTaxReconciliationService
                 ->get(['quantity', 'rate'])
                 ->sum(fn ($line) => (float) $line->quantity * (float) $line->rate);
 
-            return $base > 0 ? round($base, 4) : null;
+            if ($base > 0) {
+                return round($base, 4);
+            }
         }
 
         if ($source->type === 'sell') {
@@ -452,7 +452,9 @@ class JournalTaxReconciliationService
             $base = (float) $lines->get(['quantity', 'unit_price'])
                 ->sum(fn ($line) => (float) $line->quantity * (float) $line->unit_price);
 
-            return $base > 0 ? round($base, 4) : null;
+            if ($base > 0) {
+                return round($base, 4);
+            }
         }
 
         if ($source->type === 'purchase') {
@@ -461,7 +463,13 @@ class JournalTaxReconciliationService
                 ->get(['quantity', 'purchase_price'])
                 ->sum(fn ($line) => (float) $line->quantity * (float) $line->purchase_price);
 
-            return $base > 0 ? round($base, 4) : null;
+            if ($base > 0) {
+                return round($base, 4);
+            }
+        }
+
+        if ($source->total_before_tax !== null && (float) $source->total_before_tax > 0) {
+            return round((float) $source->total_before_tax, 4);
         }
 
         return null;

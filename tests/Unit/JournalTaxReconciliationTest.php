@@ -110,7 +110,14 @@ class JournalTaxReconciliationTest extends TestCase
 
     public function test_linked_invoice_fills_missing_item_and_header_tax_from_journal(): void
     {
-        $this->createTransaction(107, 'purchase', 100, 0, 100);
+        DB::table('tax_rates')->insert([
+            'id' => 3,
+            'business_id' => 1,
+            'name' => 'PPN 11',
+            'amount' => 11,
+            'is_tax_group' => false,
+        ]);
+        $this->createTransaction(107, 'purchase', 111, 0, 111);
         DB::table('transactions')->where('id', 107)->update(['tax_id' => null]);
         DB::table('purchase_lines')->insert([
             'id' => 7,
@@ -126,8 +133,8 @@ class JournalTaxReconciliationTest extends TestCase
         $this->createJournalMapping(507, 107);
         $this->createJournalLines(507, [
             [10, 100, 'debit'],
-            [20, 10, 'debit'],
-            [40, 110, 'credit'],
+            [20, 11, 'debit'],
+            [40, 111, 'credit'],
         ]);
         $this->createSourceAction(507, 'link');
 
@@ -136,12 +143,49 @@ class JournalTaxReconciliationTest extends TestCase
         $this->assertSame(['reconciled' => 1, 'review' => 0, 'not_applicable' => 0], $result);
         $source = Transaction::find(107);
         $line = DB::table('purchase_lines')->where('id', 7)->first();
-        $this->assertSame(2, (int) $source->tax_id);
+        $this->assertSame(3, (int) $source->tax_id);
+        $this->assertSame(11.0, (float) $source->tax_amount);
+        $this->assertSame(100.0, (float) $source->total_before_tax);
+        $this->assertSame(111.0, (float) $source->final_total);
+        $this->assertSame(3, (int) $line->tax_id);
+        $this->assertSame(5.5, (float) $line->item_tax);
+        $this->assertSame(55.5, (float) $line->purchase_price_inc_tax);
+    }
+
+    public function test_linked_sales_invoice_uses_net_line_base_when_header_total_contains_missing_tax(): void
+    {
+        $this->createTransaction(109, 'sell', 110, 0, 110);
+        DB::table('transactions')->where('id', 109)->update(['tax_id' => null]);
+        DB::table('transaction_sell_lines')->insert([
+            'id' => 9,
+            'transaction_id' => 109,
+            'quantity' => 2,
+            'unit_price' => 50,
+            'tax_id' => null,
+            'item_tax' => 0,
+            'unit_price_inc_tax' => 50,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $this->createJournalMapping(509, 109);
+        $this->createJournalLines(509, [
+            [40, 110, 'debit'],
+            [21, 10, 'credit'],
+            [30, 100, 'credit'],
+        ]);
+        $this->createSourceAction(509, 'link');
+
+        $result = $this->service->reconcileImport(50, 1);
+
+        $this->assertSame(['reconciled' => 1, 'review' => 0, 'not_applicable' => 0], $result);
+        $source = Transaction::find(109);
+        $line = DB::table('transaction_sell_lines')->where('id', 9)->first();
+        $this->assertSame(100.0, (float) $source->total_before_tax);
         $this->assertSame(10.0, (float) $source->tax_amount);
         $this->assertSame(110.0, (float) $source->final_total);
         $this->assertSame(2, (int) $line->tax_id);
         $this->assertSame(5.0, (float) $line->item_tax);
-        $this->assertSame(55.0, (float) $line->purchase_price_inc_tax);
+        $this->assertSame(55.0, (float) $line->unit_price_inc_tax);
     }
 
     public function test_linked_expense_with_conflicting_existing_tax_is_left_for_review(): void
