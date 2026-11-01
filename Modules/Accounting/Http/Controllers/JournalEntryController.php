@@ -474,6 +474,70 @@ class JournalEntryController extends Controller
         ]);
     }
 
+    public function previewCohortMappings(Request $request, $id)
+    {
+        $businessId = (int) $request->session()->get('user.business_id');
+        $this->authorizeJournalImportDraftAccess($businessId);
+        $batch = DB::table('accounting_journal_imports')
+            ->where('business_id', $businessId)
+            ->where('id', $id)
+            ->first();
+        if (empty($batch)) {
+            abort(404);
+        }
+        if (! in_array($batch->status, ['analyzed', 'partially_imported', 'failed', 'cancelled'], true)) {
+            return response()->json(['success' => 0, 'msg' => 'Batch sedang diproses. Tunggu sampai selesai sebelum memetakan baris massal.'], 409);
+        }
+
+        $preview = app(\Modules\Accounting\Services\JournalImportBulkMappingService::class)
+            ->previewExpenseCategories($batch, $businessId);
+
+        return response()->json(['success' => 1] + $preview);
+    }
+
+    public function applyCohortMappings(Request $request, $id)
+    {
+        $businessId = (int) $request->session()->get('user.business_id');
+        $this->authorizeJournalImportDraftAccess($businessId);
+        $batch = DB::table('accounting_journal_imports')
+            ->where('business_id', $businessId)
+            ->where('id', $id)
+            ->first();
+        if (empty($batch)) {
+            abort(404);
+        }
+
+        $validated = $request->validate([
+            'mappings' => ['required', 'array', 'min:1', 'max:50'],
+            'mappings.*.cohort_key' => ['required', 'string', 'regex:/^[a-f0-9]{64}$/'],
+            'mappings.*.fingerprint' => ['required', 'string', 'regex:/^[a-f0-9]{64}$/'],
+            'mappings.*.expense_category_id' => ['required', 'integer', 'min:1'],
+        ]);
+
+        $mappedRows = app(\Modules\Accounting\Services\JournalImportBulkMappingService::class)
+            ->applyExpenseCategoryMappings($batch, $businessId, $validated['mappings']);
+
+        // Reuse the normal batch preparation path so eligible rows are retried
+        // with the same account mappings and bounded worker chunks as a manual run.
+        $request->merge(['import_id' => (int) $batch->id]);
+        $startResponse = $this->startImport($request);
+        $startData = $startResponse->getData(true) ?: [];
+        if ($startResponse->getStatusCode() >= 400 || empty($startData['success'])) {
+            return response()->json([
+                'success' => 0,
+                'mapping_saved' => true,
+                'mapped_rows' => $mappedRows,
+                'msg' => $startData['msg'] ?? 'Mapping tersimpan, tetapi antrean import belum dapat dimulai.',
+            ], $startResponse->getStatusCode());
+        }
+
+        return response()->json(array_merge($startData, [
+            'success' => 1,
+            'mapped_rows' => $mappedRows,
+            'msg' => $mappedRows.' baris Expense diperbarui. Import batch dimulai kembali melalui antrean standar.',
+        ]));
+    }
+
     public function confirmSourceGroups(Request $request, $id)
     {
         $businessId = (int) $request->session()->get('user.business_id');

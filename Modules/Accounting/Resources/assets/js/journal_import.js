@@ -377,6 +377,7 @@
     var draftSearchTimer = null;
     var draftRequestNumber = 0;
     var sourceGroupPreview = null;
+    var cohortMappingPreview = null;
 
     function draftActionLabel(action) {
         var labels = {
@@ -791,6 +792,10 @@
             ['Expense', 'Purchase Invoice'].indexOf(draftType) !== -1
             && ($('#journal_import_processing_filter').val() || 'remaining') === 'remaining'
         );
+        $('#journal_import_preview_cohort_mappings').toggle(
+            draftType === 'Expense'
+            && ($('#journal_import_processing_filter').val() || 'remaining') === 'remaining'
+        );
         draftPage = pageNumber || 1;
         var requestNumber = ++draftRequestNumber;
         $('#journal_import_draft_status').text('Memuat baris...');
@@ -1164,6 +1169,159 @@
         $(this).attr('aria-selected', 'true');
         draftType = String($(this).data('type'));
         loadDraftRows(1);
+    });
+
+    function renderExpenseCategoryCohorts(response) {
+        var tbody = $('#journal_import_cohort_mappings_table tbody').empty();
+        cohortMappingPreview = response;
+        var groups = Array.isArray(response.groups) ? response.groups : [];
+        var categories = Array.isArray(response.categories) ? response.categories : [];
+        if (!groups.length) {
+            $('#journal_import_cohort_mappings_summary').text('Tidak ada kelompok Expense yang menunggu mapping kategori akun.');
+            $('#journal_import_apply_cohort_mappings').prop('disabled', true);
+            $('#journal_import_cohort_mappings_modal').modal('show');
+            return;
+        }
+
+        var totalRows = 0;
+        groups.forEach(function (group) {
+            totalRows += Number(group.row_count || 0);
+            var row = $('<tr>')
+                .attr('data-cohort-key', group.cohort_key)
+                .attr('data-fingerprint', group.fingerprint);
+            row.append($('<td>').text([group.account_no, group.account_name].filter(Boolean).join(' · ')));
+            row.append($('<td>').text(group.location_id ? ('Lokasi #' + group.location_id) : 'Lokasi default belum tersedia'));
+            row.append($('<td class="text-right">').text(Number(group.row_count || 0).toLocaleString()));
+            row.append($('<td class="text-right">').text(formatDraftNumber(group.component_total)));
+            row.append($('<td class="text-right">').text(formatDraftNumber(group.journal_total)));
+
+            var select = $('<select class="form-control journal-import-cohort-category">')
+                .append($('<option>').val('').text('Pilih kategori'));
+            categories.forEach(function (category) {
+                select.append($('<option>').val(String(category.id)).text(category.name));
+            });
+            if (group.suggested_category_id) select.val(String(group.suggested_category_id));
+            row.append($('<td>').append(select));
+            tbody.append(row);
+        });
+
+        $('#journal_import_cohort_mappings_summary').text(
+            groups.length + ' kelompok mencakup ' + totalRows.toLocaleString()
+            + ' baris yang belum selesai. Total akun adalah nilai komponen akun yang dipetakan; total Journal menunjukkan debit penuh tiap baris. Mapping akan diterapkan hanya pada kelompok yang ditampilkan.'
+        );
+        $('#journal_import_cohort_mappings_error').addClass('hide').empty();
+        $('#journal_import_apply_cohort_mappings').prop('disabled', false);
+        $('#journal_import_cohort_mappings_modal').modal('show');
+    }
+
+    $(document).on('click', '#journal_import_preview_cohort_mappings', function () {
+        var draft = $('#journal_import_draft');
+        var button = $(this);
+        button.prop('disabled', true).text('Memuat kelompok...');
+        $('#journal_import_cohort_mappings_status').text('Mengelompokkan baris Expense menurut akun Journal dan lokasi.');
+        $.ajax({
+            method: 'GET',
+            url: draft.data('cohort-mappings-preview-url'),
+            dataType: 'json'
+        }).done(function (response) {
+            if (!response.success) {
+                $('#journal_import_cohort_mappings_status').text(response.msg || 'Preview mapping tidak tersedia.');
+                return;
+            }
+            renderExpenseCategoryCohorts(response);
+            $('#journal_import_cohort_mappings_status').text('Preview mapping Expense siap ditinjau.');
+        }).fail(function (xhr) {
+            var message = xhr.responseJSON && xhr.responseJSON.msg
+                ? xhr.responseJSON.msg
+                : 'Gagal memuat kelompok mapping Expense.';
+            $('#journal_import_cohort_mappings_status').text(message);
+            if (window.toastr) toastr.error(message);
+        }).always(function () {
+            button.prop('disabled', false).text('Mapping kategori Expense massal');
+        });
+    });
+
+    $(document).on('click', '#journal_import_apply_cohort_mappings', function () {
+        if (!cohortMappingPreview) return;
+        var mappings = [];
+        var missingSelection = false;
+        $('#journal_import_cohort_mappings_table tbody tr').each(function () {
+            var categoryId = $(this).find('.journal-import-cohort-category').val();
+            if (!categoryId) {
+                missingSelection = true;
+                return;
+            }
+            mappings.push({
+                cohort_key: String($(this).data('cohort-key') || ''),
+                fingerprint: String($(this).data('fingerprint') || ''),
+                expense_category_id: categoryId
+            });
+        });
+        if (missingSelection || !mappings.length) {
+            $('#journal_import_cohort_mappings_error').removeClass('hide').text('Pilih kategori Expense untuk setiap kelompok sebelum melanjutkan.');
+            return;
+        }
+
+        var mappedRows = mappings.reduce(function (sum, mapping) {
+            var group = (cohortMappingPreview.groups || []).find(function (item) {
+                return String(item.cohort_key) === mapping.cohort_key;
+            });
+            return sum + Number(group ? group.row_count : 0);
+        }, 0);
+        if (!window.confirm('Terapkan mapping kategori ke ' + mappedRows.toLocaleString() + ' baris Expense, lalu mulai ulang persiapan batch? Baris yang sudah selesai tetap tidak diproses ulang.')) {
+            return;
+        }
+
+        var draft = $('#journal_import_draft');
+        var form = $('#journal_import_form');
+        var submitButton = form.find('button[type="submit"]');
+        var button = $(this);
+        button.prop('disabled', true).text('Menerapkan dan memulai...');
+        $('#journal_import_cohort_mappings_error').addClass('hide').empty();
+        $('#journal_import_progress_box').removeClass('hide');
+        $('#journal_import_progress_stale, #journal_import_progress_error').addClass('hide').text('');
+        $('#journal_import_progress_log').empty();
+        $('#journal_import_progress_stage').text('Menyimpan mapping kategori');
+        $('#journal_import_progress_count').text('');
+        $('#journal_import_progress_text').text('Menerapkan mapping lalu mengantrekan baris yang valid.');
+        appendProgressLog('Menerapkan mapping kategori Expense massal.');
+
+        var payload = form.serializeArray();
+        mappings.forEach(function (mapping, index) {
+            payload.push({ name: 'mappings[' + index + '][cohort_key]', value: mapping.cohort_key });
+            payload.push({ name: 'mappings[' + index + '][fingerprint]', value: mapping.fingerprint });
+            payload.push({ name: 'mappings[' + index + '][expense_category_id]', value: mapping.expense_category_id });
+        });
+        $.ajax({
+            method: 'POST',
+            url: draft.data('cohort-mappings-apply-url'),
+            data: $.param(payload),
+            dataType: 'json'
+        }).done(function (response) {
+            if (!response.success) {
+                button.prop('disabled', false).text('Terapkan mapping dan proses baris valid');
+                var message = response.msg || 'Mapping tersimpan, tetapi batch belum dapat dimulai.';
+                $('#journal_import_cohort_mappings_error').removeClass('hide').text(message);
+                return;
+            }
+            $('#journal_import_cohort_mappings_modal').modal('hide');
+            $('#journal_import_cohort_mappings_status').text(response.msg || 'Mapping diterapkan.');
+            if (window.toastr) toastr.success(response.msg || 'Mapping diterapkan.');
+            cohortMappingPreview = null;
+            submitButton.prop('disabled', true);
+            pollForm(response.import_id || draft.data('import-id'), submitButton);
+            loadDraftRows(1);
+        }).fail(function (xhr) {
+            var response = xhr.responseJSON || {};
+            var message = response.msg
+                ? response.msg
+                : (response.errors && response.errors.mappings
+                    ? response.errors.mappings[0]
+                    : 'Mapping belum diterapkan. Muat ulang preview sebelum mencoba lagi.');
+            if (response.mapping_saved) message = 'Mapping tersimpan. ' + message;
+            button.prop('disabled', false).text('Terapkan mapping dan proses baris valid');
+            $('#journal_import_cohort_mappings_error').removeClass('hide').text(message);
+        });
     });
 
     $(document).on('click', '#journal_import_preview_source_groups', function () {

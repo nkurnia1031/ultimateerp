@@ -31,6 +31,8 @@ Route::middleware('web', 'SetSessionData', 'auth', 'language', 'timezone', 'Admi
     Route::get('journal-entry/import/{id}/draft-rows', [\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'draftRows']);
     Route::get('journal-entry/import/{id}/source-groups/preview', [\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'previewSourceGroups']);
     Route::post('journal-entry/import/{id}/source-groups/confirm', [\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'confirmSourceGroups']);
+    Route::get('journal-entry/import/{id}/cohort-mappings/preview', [\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'previewCohortMappings']);
+    Route::post('journal-entry/import/{id}/cohort-mappings/apply', [\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'applyCohortMappings']);
     Route::post('journal-entry/import/{id}/draft-rows/{row_id}/source-group', [\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'selectSourceGroup']);
     Route::patch('journal-entry/import/{id}/draft-rows/approve-differences', [\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'approveDraftDiscrepancies']);
     Route::patch('journal-entry/import/{id}/draft-rows/{row_id}', [\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'updateDraftRow']);
