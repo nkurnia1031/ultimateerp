@@ -929,6 +929,13 @@
             width: '100%',
             allowClear: true,
             placeholder: 'Pilih dari master data',
+            minimumInputLength: 1,
+            language: {
+                inputTooShort: function () { return 'Ketik minimal 1 karakter untuk mencari.'; },
+                noResults: function () { return 'Tidak ada data yang cocok.'; },
+                searching: function () { return 'Mencari...'; },
+                errorLoading: function () { return 'Gagal memuat pilihan. Periksa koneksi lalu coba lagi.'; }
+            },
             dropdownParent: $('#journal_import_detail_modal'),
             ajax: {
                 url: draft.data('options-url'),

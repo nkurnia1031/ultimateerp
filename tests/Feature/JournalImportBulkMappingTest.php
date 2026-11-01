@@ -148,6 +148,20 @@ class JournalImportBulkMappingTest extends TestCase
         $this->assertSame('partially_imported', DB::table('accounting_journal_imports')->where('id', 5)->value('status'));
     }
 
+    public function test_draft_option_search_returns_matching_categories_only_from_active_business(): void
+    {
+        $response = $this->request(
+            'get',
+            '/accounting/journal-entry/import/5/draft-options?kind=expense_category&source_type=Expense&q=Uang'
+        );
+
+        $response->assertOk()->assertExactJson([
+            'results' => [
+                ['id' => 11, 'text' => 'Uang Jalan'],
+            ],
+        ]);
+    }
+
     private function request(string $method, string $uri, array $data = [])
     {
         $user = Mockery::mock(User::class)->makePartial();
