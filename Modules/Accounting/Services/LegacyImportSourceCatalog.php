@@ -92,7 +92,7 @@ class LegacyImportSourceCatalog
 
     private function classify(string $relativePath): string
     {
-        $normalized = strtolower($relativePath);
+        $normalized = '/'.ltrim(str_replace('\\', '/', strtolower($relativePath)), '/');
         $filename = basename($normalized);
         $extension = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
 
