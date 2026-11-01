@@ -248,7 +248,12 @@ class LegacyAttachmentImporterTest extends TestCase
         $this->crosswalk('Expense', '19461', '1209', $this->transaction('expense'));
         Http::fake();
         $traversal = $this->import(true);
-        $this->assertSame(1, $traversal['rejected']);
+        $this->assertSame(
+            'rejected',
+            DB::table('accounting_legacy_import_attachments')
+                ->where('legacy_source_attachment_id', '709')
+                ->value('status')
+        );
         $this->assertFileDoesNotExist($this->documentsDirectory.DIRECTORY_SEPARATOR.'outside.pdf');
         Http::assertNothingSent();
     }
