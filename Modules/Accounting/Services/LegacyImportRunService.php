@@ -203,6 +203,7 @@ class LegacyImportRunService
                     'legacy_import_source_id' => (int) $sourceId,
                     'business_id' => $businessId,
                     'source_identity' => $identity,
+                    'legacy_record_id' => $document['legacy_record_id'] ?? null,
                     'source_type' => (string) ($document['source_type'] ?? 'Unknown'),
                     'source_number' => $document['source_number'] ?? null,
                     'source_date' => $this->validDate($document['date'] ?? null),
@@ -247,7 +248,7 @@ class LegacyImportRunService
                 $chunk,
                 ['legacy_import_run_id', 'legacy_import_source_id', 'source_identity'],
                 [
-                    'business_id', 'source_type', 'source_number', 'source_date', 'journal_import_row_id',
+                    'business_id', 'legacy_record_id', 'source_type', 'source_number', 'source_date', 'journal_import_row_id',
                     'status', 'match_method', 'reason', 'updated_at',
                 ]
             );
@@ -300,6 +301,7 @@ class LegacyImportRunService
                 'legacy_import_source_id' => (int) $sourceId,
                 'business_id' => $businessId,
                 'source_identity' => $identity,
+                'legacy_record_id' => $source['legacy_record_id'] ?? ($document['legacy_record_id'] ?? null),
                 'source_type' => (string) ($document['source_type'] ?? 'Unknown'),
                 'source_number' => $document['source_number'] ?? null,
                 'source_date' => $this->validDate($document['date'] ?? null),
@@ -319,7 +321,7 @@ class LegacyImportRunService
                 $chunk,
                 ['legacy_import_run_id', 'legacy_import_source_id', 'source_identity'],
                 [
-                    'business_id', 'source_type', 'source_number', 'source_date', 'journal_import_row_id',
+                    'business_id', 'legacy_record_id', 'source_type', 'source_number', 'source_date', 'journal_import_row_id',
                     'target_record_type', 'target_record_id', 'status', 'match_method', 'reason', 'updated_at',
                 ]
             );
@@ -376,6 +378,7 @@ class LegacyImportRunService
                             'legacy_import_source_id' => (int) $sourceId,
                             'business_id' => $businessId,
                             'source_identity' => $identity,
+                            'legacy_record_id' => $source['legacy_record_id'] ?? ($entry['legacy_record_id'] ?? null),
                             'source_type' => $sourceType,
                             'source_number' => $entry['source_number'] ?? null,
                             'source_date' => $this->validDate($entry['date'] ?? null),
@@ -398,7 +401,7 @@ class LegacyImportRunService
                         $crosswalks,
                         ['legacy_import_run_id', 'legacy_import_source_id', 'source_identity'],
                         [
-                            'business_id', 'source_type', 'source_number', 'source_date', 'journal_import_row_id',
+                            'business_id', 'legacy_record_id', 'source_type', 'source_number', 'source_date', 'journal_import_row_id',
                             'target_record_type', 'target_record_id', 'status', 'match_method', 'reason', 'updated_at',
                         ]
                     );
@@ -409,6 +412,43 @@ class LegacyImportRunService
         $this->refreshSourceCounts($runId, $businessId);
 
         return $created;
+    }
+
+    public function syncLegacyRecordIds(int $runId, int $businessId, array $evidence): int
+    {
+        $sourceIds = $this->sourceIds($runId, $businessId);
+        $updated = 0;
+        foreach ((array) ($evidence['documents'] ?? []) as $document) {
+            if (! is_array($document)) {
+                continue;
+            }
+            $legacyRecordId = trim((string) ($document['legacy_record_id'] ?? ''));
+            if ($legacyRecordId === '') {
+                continue;
+            }
+            foreach ((array) ($document['provenance'] ?? []) as $source) {
+                if (! is_array($source)) {
+                    continue;
+                }
+                $sourceId = $sourceIds[$source['path'] ?? ''] ?? null;
+                $identity = trim((string) ($source['source_identity'] ?? ''));
+                if ($sourceId === null || preg_match('/^[a-f0-9]{64}$/', $identity) !== 1) {
+                    continue;
+                }
+                $updated += DB::table('accounting_legacy_import_crosswalks')
+                    ->where('legacy_import_run_id', $runId)
+                    ->where('legacy_import_source_id', $sourceId)
+                    ->where('business_id', $businessId)
+                    ->where('source_identity', $identity)
+                    ->whereNull('legacy_record_id')
+                    ->update([
+                        'legacy_record_id' => $source['legacy_record_id'] ?? $legacyRecordId,
+                        'updated_at' => now(),
+                    ]);
+            }
+        }
+
+        return $updated;
     }
 
     public function refreshSourceCounts(int $runId, int $businessId): void

@@ -195,6 +195,7 @@ class LegacyOperationalOnlyProcessorTest extends TestCase
             $table->unsignedBigInteger('legacy_import_source_id');
             $table->unsignedInteger('business_id');
             $table->char('source_identity', 64);
+            $table->string('legacy_record_id', 100)->nullable();
             $table->string('source_type', 100)->nullable();
             $table->text('source_number')->nullable();
             $table->date('source_date')->nullable();

@@ -13,6 +13,7 @@ use Modules\Accounting\Services\LegacyJournalEntryMerger;
 use Modules\Accounting\Services\LegacyOperationalDraftEnricher;
 use Modules\Accounting\Services\LegacyOperationalEvidenceReader;
 use Modules\Accounting\Services\LegacyOperationalOnlyProcessor;
+use Modules\Accounting\Services\LegacyAttachmentImporter;
 use Modules\Accounting\Services\JournalImportInvoiceService;
 use Modules\Accounting\Services\JournalImportExpenseService;
 
@@ -38,6 +39,7 @@ class ImportLegacySources extends Command
         JournalImportDraftService $draftService,
         LegacyImportRunService $runService,
         LegacyOperationalOnlyProcessor $operationalOnlyProcessor,
+        LegacyAttachmentImporter $attachmentImporter,
         JournalImportInvoiceService $invoiceService,
         JournalImportExpenseService $expenseService
     ): int {
@@ -223,10 +225,14 @@ class ImportLegacySources extends Command
                             .$counts['review'].' review).'
                         )
                     );
+                    $runService->syncLegacyRecordIds($runId, $businessId, $analysis['_operational_evidence_data']);
+                    $attachments = $attachmentImporter->import($runId, $businessId, $sourceDirectory);
                     $summary = $this->summaryForStorage($analysis);
                     $summary['operational_only_processing'] = $operationalOnly;
+                    $summary['legacy_attachments'] = $attachments;
                     $runService->updateRun($runId, $businessId, 'review', 'Tidak ada entri Journal; transaksi operasional lengkap dibuat atau ditautkan dan sisanya masuk review tanpa posting GL.', $summary, true);
                     $this->comment('Tidak ada Journal entry. Transaksi operasional lengkap diproses tanpa GL; item yang belum aman tetap tersimpan untuk review.');
+                    $this->printAttachmentSummary($attachments);
 
                     return self::SUCCESS;
                 }
@@ -277,6 +283,7 @@ class ImportLegacySources extends Command
                 : (json_decode((string) ($run->summary ?? ''), true) ?: []);
             $operationalEvidence = $analysis['_operational_evidence_data']
                 ?? $evidenceReader->read($inventory['files'], (string) $inventory['root'], $year);
+            $runService->syncLegacyRecordIds($runId, $businessId, $operationalEvidence);
             $journalEvidenceIdentities = $this->journalEvidenceIdentities($importId, $businessId);
             $journalIdentitySet = array_fill_keys($journalEvidenceIdentities, true);
             $operationalOnlyDocuments = array_diff_key((array) ($operationalEvidence['documents'] ?? []), $journalIdentitySet);
@@ -298,19 +305,26 @@ class ImportLegacySources extends Command
                     .$counts['review'].' review).'
                 )
             );
+            $attachments = $attachmentImporter->import($runId, $businessId, $sourceDirectory);
             $summary['journal_import_id'] = $importId;
             $summary['journal_status'] = $batch->status ?? 'unknown';
             $summary['journal_crosswalks'] = $crosswalkCount;
             $summary['operational_only_processing'] = $operationalOnly;
+            $summary['legacy_attachments'] = $attachments;
 
             [$runStatus, $message, $finished] = $this->runStatusForBatch((string) ($batch->status ?? 'failed'));
             if ($operationalOnly['review'] > 0 || $operationalOnly['created'] > 0 || $operationalOnly['linked_existing'] > 0) {
                 $runStatus = 'review';
                 $message .= ' Transaksi tanpa Journal ditautkan/dibuat bila aman; posting GL tidak dibuat dari sumber operasional saja.';
             }
+            if (($attachments['actionable'] ?? 0) > 0) {
+                $runStatus = 'review';
+                $message .= ' Sebagian lampiran belum dapat ditautkan atau diunduh; rincian tersimpan pada laporan lampiran.';
+            }
             $runService->updateRun($runId, $businessId, $runStatus, $message, $summary, $finished);
             $this->line('Legacy run #'.$runId.' — '.$message);
             $this->line('Crosswalk sumber yang tersimpan: '.$crosswalkCount);
+            $this->printAttachmentSummary($attachments);
 
             return $exitCode === self::FAILURE ? self::FAILURE : self::SUCCESS;
         } catch (\Throwable $exception) {
@@ -531,6 +545,19 @@ class ImportLegacySources extends Command
         return $analysis;
     }
 
+    private function printAttachmentSummary(array $summary): void
+    {
+        $this->line('Lampiran legacy: '.(int) ($summary['linked'] ?? 0).' tertaut, '
+            .(int) ($summary['review'] ?? 0).' review, '
+            .(int) ($summary['failed'] ?? 0).' gagal, '
+            .(int) ($summary['rejected'] ?? 0).' ditolak.');
+        $this->line('Nama file bertabrakan: '.(int) ($summary['collision_groups'] ?? 0).' grup / '
+            .(int) ($summary['collision_attachments'] ?? 0).' lampiran diberi nama tujuan unik.');
+        if (! empty($summary['mapping_report_path'])) {
+            $this->line('Laporan nama sumber → tujuan: '.$summary['mapping_report_path']);
+        }
+    }
+
     private function manifestHash(array $inventory, ?int $year): string
     {
         $manifest = [
@@ -563,7 +590,11 @@ class ImportLegacySources extends Command
     {
         return Schema::hasTable('accounting_legacy_import_runs')
             && Schema::hasTable('accounting_legacy_import_sources')
-            && Schema::hasTable('accounting_legacy_import_crosswalks');
+            && Schema::hasTable('accounting_legacy_import_crosswalks')
+            && Schema::hasColumn('accounting_legacy_import_crosswalks', 'legacy_record_id')
+            && Schema::hasTable('accounting_legacy_import_attachments')
+            && Schema::hasColumn('media', 'storage_location')
+            && Schema::hasColumn('media', 'legacy_source_attachment_id');
     }
 
     private function journalEvidenceIdentities(int $importId, int $businessId): array

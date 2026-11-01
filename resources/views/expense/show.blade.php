@@ -236,6 +236,15 @@
                     </div>
                 </div>
 
+                @if ($expense->media->isNotEmpty())
+                    <div class="box box-solid">
+                        <div class="box-body">
+                            <strong>@lang('lang_v1.attachments'):</strong><br>
+                            @include('sell.partials.media_table', ['medias' => $expense->media])
+                        </div>
+                    </div>
+                @endif
+
             </section>
         </div>
         <div class="modal-footer">

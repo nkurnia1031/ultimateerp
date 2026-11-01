@@ -11,7 +11,13 @@
 			<td>
 				<small>
 					@lang('lang_v1.uploaded_by'):
-					{{$media->uploaded_by_user->user_full_name}}
+					@if ($media->uploaded_by_user)
+						{{$media->uploaded_by_user->user_full_name}}
+					@elseif (!empty($media->legacy_source_attachment_id))
+						Import legacy
+					@else
+						—
+					@endif
 				</small>
 			</td>
 			<td>

@@ -134,6 +134,9 @@ class LegacyOperationalDraftEnricher
 
             $document = $documents[$key];
             $entries[$index]['legacy_evidence_identity'] = $key;
+            if (! empty($document['legacy_record_id'])) {
+                $entries[$index]['legacy_record_id'] = (string) $document['legacy_record_id'];
+            }
             $entries[$index]['legacy_sources'] = $this->mergeSourceProvenance(
                 (array) ($entry['legacy_sources'] ?? []),
                 (array) ($document['provenance'] ?? []),
@@ -517,6 +520,7 @@ class LegacyOperationalDraftEnricher
                 'source_key' => $identity,
                 'source_identity' => (string) ($source['source_identity'] ?? ''),
                 'fingerprint' => $fingerprint,
+                'legacy_record_id' => $source['legacy_record_id'] ?? ($document['legacy_record_id'] ?? null),
             ];
         }
 

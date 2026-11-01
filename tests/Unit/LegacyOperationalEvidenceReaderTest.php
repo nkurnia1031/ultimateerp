@@ -50,6 +50,7 @@ class LegacyOperationalEvidenceReaderTest extends TestCase
         $this->assertSame(2, $result['source_record_count']);
         $this->assertSame('matched', $document['status']);
         $this->assertSame('PUR-2022-001', $document['source_number']);
+        $this->assertSame('9001', $document['legacy_record_id']);
         $this->assertSame(100.0, $document['base']);
         $this->assertSame(10.0, $document['tax']);
         $this->assertSame(110.0, $document['total']);
@@ -166,6 +167,7 @@ class LegacyOperationalEvidenceReaderTest extends TestCase
         file_put_contents($path, json_encode([
             'purchases_lists' => [
                 'transactions' => [[
+                    'id' => 9001,
                     'transaction_date' => '2022-03-12',
                     'transaction_no' => 'PUR-2022-001',
                     'person' => ['name' => 'Supplier A'],

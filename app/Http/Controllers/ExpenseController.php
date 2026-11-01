@@ -598,7 +598,7 @@ class ExpenseController extends Controller
             ->where('id', $id)
             ->with(['expense_lines' => function ($q) {
                 $q->with(['category', 'subCategory']);
-            }])
+            }, 'media.uploaded_by_user'])
             ->first();
 
         $users = User::forDropdown($business_id, true, true);

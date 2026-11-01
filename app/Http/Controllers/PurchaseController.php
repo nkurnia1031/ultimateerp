@@ -545,7 +545,8 @@ class PurchaseController extends Controller
                 'purchase_lines.sub_unit',
                 'location',
                 'payment_lines',
-                'tax'
+                'tax',
+                'media.uploaded_by_user'
             )
             ->firstOrFail();
 

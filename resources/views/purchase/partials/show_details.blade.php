@@ -512,6 +512,17 @@
             </p>
         </div>
     </div>
+    @php
+        $legacyMedia = $purchase->media->where('model_media_type', 'legacy_document');
+    @endphp
+    @if ($legacyMedia->isNotEmpty())
+        <div class="row">
+            <div class="col-md-12">
+                <strong>@lang('lang_v1.attachments'):</strong><br>
+                @include('sell.partials.media_table', ['medias' => $legacyMedia])
+            </div>
+        </div>
+    @endif
     @if (!empty($activities))
         <div class="row">
             <div class="col-md-12">

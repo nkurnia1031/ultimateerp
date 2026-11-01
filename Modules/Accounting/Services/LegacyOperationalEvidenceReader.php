@@ -219,6 +219,11 @@ class LegacyOperationalEvidenceReader
                 (string) ($file['sha256'] ?? ''),
                 (int) $recordIndex + 1
             );
+            $legacyRecordId = is_scalar($record['id'] ?? null) ? trim((string) $record['id']) : '';
+            if ($legacyRecordId !== '') {
+                $document['legacy_record_id'] = $legacyRecordId;
+                $document['provenance'][0]['legacy_record_id'] = $legacyRecordId;
+            }
             $document['contact_name'] = trim((string) ($record['person']['name'] ?? ''));
             $document['description'] = trim((string) ($record['description'] ?? $record['memo'] ?? ''));
             $document['total'] = $this->number($record['original_amount'] ?? $record['total_invoice'] ?? null);
@@ -350,6 +355,13 @@ class LegacyOperationalEvidenceReader
             $group['lines'] = array_merge((array) ($group['lines'] ?? []), (array) ($row['lines'] ?? []));
             $group['expense_lines'] = array_merge((array) ($group['expense_lines'] ?? []), (array) ($row['expense_lines'] ?? []));
             $group['provenance'] = array_merge((array) $group['provenance'], (array) $row['provenance']);
+            $currentLegacyId = trim((string) ($group['legacy_record_id'] ?? ''));
+            $rowLegacyId = trim((string) ($row['legacy_record_id'] ?? ''));
+            if ($currentLegacyId !== '' && $rowLegacyId !== '' && $currentLegacyId !== $rowLegacyId) {
+                $group['legacy_record_id_conflict'] = true;
+            } elseif ($currentLegacyId === '' && $rowLegacyId !== '') {
+                $group['legacy_record_id'] = $rowLegacyId;
+            }
             unset($group);
         }
 
@@ -402,6 +414,21 @@ class LegacyOperationalEvidenceReader
             foreach ((array) ($candidate['expense_lines'] ?? []) as $line) {
                 $expenseLines[$this->expenseLineFingerprint($line)] = $line;
             }
+        }
+
+        $legacyRecordIds = array_values(array_unique(array_filter(array_map(
+            fn (array $candidate) => trim((string) ($candidate['legacy_record_id'] ?? '')),
+            $candidates
+        ))));
+        $legacyRecordIdConflict = count(array_filter(
+            $candidates,
+            fn (array $candidate) => ! empty($candidate['legacy_record_id_conflict'])
+        )) > 0;
+        if (count($legacyRecordIds) > 1 || $legacyRecordIdConflict) {
+            return $this->conflictedDocument($selected, $candidates, 'ID transaksi legacy berbeda untuk nomor dan tanggal sumber yang sama.');
+        }
+        if ($legacyRecordIds !== []) {
+            $selected['legacy_record_id'] = $legacyRecordIds[0];
         }
 
         foreach ($summaryValues as $field => $values) {

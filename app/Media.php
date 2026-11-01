@@ -30,6 +30,10 @@ class Media extends Model
      */
     public function getDisplayNameAttribute()
     {
+        if (trim((string) $this->original_name) !== '') {
+            return $this->original_name;
+        }
+
         $array = explode('_', $this->file_name, 3);
 
         return ! empty($array[2]) ? $array[2] : $array[1];
@@ -40,7 +44,7 @@ class Media extends Model
      */
     public function getDisplayUrlAttribute()
     {
-        $path = asset('/uploads/media/'.rawurlencode($this->file_name));
+        $path = asset('/uploads/'.$this->storageDirectory().'/'.rawurlencode($this->diskFileName()));
 
         return $path;
     }
@@ -50,9 +54,21 @@ class Media extends Model
      */
     public function getDisplayPathAttribute()
     {
-        $path = public_path('uploads/media').'/'.rawurlencode($this->file_name);
+        $path = public_path('uploads/'.$this->storageDirectory()).DIRECTORY_SEPARATOR.$this->diskFileName();
 
         return $path;
+    }
+
+    private function storageDirectory(): string
+    {
+        return in_array($this->storage_location, ['media', 'documents'], true)
+            ? $this->storage_location
+            : 'media';
+    }
+
+    private function diskFileName(): string
+    {
+        return basename(str_replace('\\', '/', (string) $this->file_name));
     }
 
     /**
@@ -218,10 +234,11 @@ class Media extends Model
         $media = Media::where('business_id', $business_id)
                         ->findOrFail($media_id);
 
-        $media_path = public_path('uploads/media/'.$media->file_name);
-
-        if (file_exists($media_path)) {
-            unlink($media_path);
+        if ($media->storage_location !== 'documents' && empty($media->legacy_source_attachment_id)) {
+            $media_path = $media->display_path;
+            if (file_exists($media_path)) {
+                unlink($media_path);
+            }
         }
         $media->delete();
     }

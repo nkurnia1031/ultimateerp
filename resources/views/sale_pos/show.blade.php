@@ -498,6 +498,14 @@
                     </p>
                 </div>
             </div>
+            @if ($sell->media->isNotEmpty())
+                <div class="row">
+                    <div class="col-md-12">
+                        <strong>@lang('lang_v1.attachments'):</strong><br>
+                        @include('sell.partials.media_table', ['medias' => $sell->media])
+                    </div>
+                </div>
+            @endif
             <div class="row">
                 <div class="col-md-12">
                     <strong>{{ __('lang_v1.activities') }}:</strong><br>
