@@ -28,6 +28,10 @@ class ReconciliationFindingInboxTest extends TestCase
         DB::purge('sqlite');
         DB::setDefaultConnection('sqlite');
         $this->createFindingTable();
+        Schema::create('system', function (Blueprint $table) {
+            $table->string('key');
+            $table->text('value')->nullable();
+        });
         Schema::create('transactions', function (Blueprint $table) {
             $table->increments('id');
             $table->decimal('final_total', 22, 4);

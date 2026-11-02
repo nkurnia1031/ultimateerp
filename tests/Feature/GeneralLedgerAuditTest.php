@@ -265,6 +265,9 @@ class GeneralLedgerAuditTest extends TestCase
             $table->decimal('amount', 22, 4); $table->string('type'); $table->string('sub_type')->nullable();
             $table->dateTime('operation_date'); $table->text('note')->nullable(); $table->unsignedBigInteger('journal_import_id')->nullable();
         });
+        Schema::create('accounting_legacy_reconciliation_findings', function (Blueprint $table) {
+            $table->bigIncrements('id'); $table->unsignedInteger('business_id'); $table->string('status'); $table->boolean('is_current');
+        });
         Schema::create('accounting_journal_imports', function (Blueprint $table) {
             $table->bigIncrements('id'); $table->unsignedInteger('business_id'); $table->string('status');
         });
