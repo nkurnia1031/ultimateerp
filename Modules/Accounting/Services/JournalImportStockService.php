@@ -9,7 +9,6 @@ use App\Unit;
 use App\Utils\ProductUtil;
 use App\Utils\TransactionUtil;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
 
 class JournalImportStockService
 {
@@ -292,7 +291,7 @@ class JournalImportStockService
                 ->where('p.business_id', $businessId)
                 ->where('p.is_inactive', 0)
                 ->where('p.enable_stock', 1)
-                ->when(Schema::hasColumn('products', 'deleted_at'), fn ($query) => $query->whereNull('p.deleted_at'))
+                ->when(DB::connection()->getSchemaBuilder()->hasColumn('products', 'deleted_at'), fn ($query) => $query->whereNull('p.deleted_at'))
                 ->whereNull('v.deleted_at')
                 ->first(['v.id as variation_id', 'v.product_id', 'p.unit_id', 'p.sub_unit_ids']);
             if (! $variation) {
@@ -589,7 +588,7 @@ class JournalImportStockService
             ->where('lines.transaction_id', $transactionId)
             ->where('products.business_id', $businessId)
             ->where('products.enable_stock', 1)
-            ->when(Schema::hasColumn('products', 'deleted_at'), fn ($query) => $query->whereNull('products.deleted_at'))
+            ->when(DB::connection()->getSchemaBuilder()->hasColumn('products', 'deleted_at'), fn ($query) => $query->whereNull('products.deleted_at'))
             ->whereNull('variations.deleted_at')
             ->count();
 
