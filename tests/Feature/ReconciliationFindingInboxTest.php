@@ -210,8 +210,11 @@ class ReconciliationFindingInboxTest extends TestCase
 
         $response = $this->actingAs($user)->withSession([
             'user' => ['business_id' => 1],
-            'business' => ['currency_precision' => 2],
-            'currency' => ['code' => 'IDR', 'symbol' => 'Rp', 'symbol_placement' => 'before'],
+            'business' => ['currency_precision' => 2, 'currency_symbol_placement' => 'before'],
+            'currency' => [
+                'code' => 'IDR', 'symbol' => 'Rp', 'symbol_placement' => 'before',
+                'decimal_separator' => '.', 'thousand_separator' => ',',
+            ],
         ])
             ->withoutMiddleware([
                 \App\Http\Middleware\SetSessionData::class,
@@ -228,6 +231,52 @@ class ReconciliationFindingInboxTest extends TestCase
         $this->assertStringNotContainsString('INV-MISSING-LINK', $payload['rows_html']);
         $this->assertStringNotContainsString('TENANT-TWO-SECRET', $payload['rows_html']);
         $this->assertSame(2, $payload['filtered_count']);
+
+        $summaryRows = $this->renderedTableRows($payload['summary_html']);
+        $findingRows = $this->renderedTableRows($payload['rows_html']);
+        $summaryByComponent = [];
+        foreach ($summaryRows as $row) {
+            $summaryByComponent[$row[2]] = ['gross' => $row[4], 'net' => $row[5]];
+        }
+        $detailsByComponent = [];
+        foreach ($findingRows as $row) {
+            $component = null;
+            foreach (['Basis', 'VAT Out'] as $candidate) {
+                if (strpos($row[1], $candidate) !== false) {
+                    $component = $candidate;
+                    break;
+                }
+            }
+            $this->assertNotNull($component);
+            $this->assertArrayNotHasKey($component, $detailsByComponent);
+            $detailsByComponent[$component] = array_slice($row, 4, 3);
+        }
+
+        $this->assertSame([
+            'Basis' => ['gross' => 'Rp 935,000.00', 'net' => 'Rp 935,000.00'],
+            'VAT Out' => ['gross' => 'Rp 935,000.00', 'net' => 'Rp -935,000.00'],
+        ], $summaryByComponent);
+        $this->assertSame([
+            'Basis' => ['Rp 9,065,000.00', 'Rp 10,000,000.00', 'Rp 935,000.00'],
+            'VAT Out' => ['Rp 1,870,000.00', 'Rp 935,000.00', 'Rp -935,000.00'],
+        ], $detailsByComponent);
+        $this->assertSame($detailsByComponent['Basis'][2], $summaryByComponent['Basis']['net']);
+        $this->assertSame($detailsByComponent['VAT Out'][2], $summaryByComponent['VAT Out']['net']);
+    }
+
+    private function renderedTableRows(string $html): array
+    {
+        preg_match_all('/<tr\\b[^>]*>(.*?)<\\/tr>/si', $html, $rowMatches);
+
+        return array_map(function (string $rowHtml): array {
+            preg_match_all('/<td\\b[^>]*>(.*?)<\\/td>/si', $rowHtml, $cellMatches);
+
+            return array_map(function (string $cellHtml): string {
+                $text = html_entity_decode(strip_tags($cellHtml), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+
+                return trim(preg_replace('/\\s+/u', ' ', $text));
+            }, $cellMatches[1]);
+        }, $rowMatches[1]);
     }
 
     private function annualReport(): array
