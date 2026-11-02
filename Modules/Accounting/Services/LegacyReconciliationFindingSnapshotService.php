@@ -224,7 +224,7 @@ class LegacyReconciliationFindingSnapshotService
         ];
         $auditKey = hash('sha256', json_encode([$businessId, $stableAuditData], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '{}');
 
-        DB::transaction(function () use ($businessId, $year, $scopeKey, $rows, $auditKey, $auditedAt, $startDate, $endDate, $accountId, $balanceScope, $movementKeysByAccount): void {
+        DB::transaction(function () use ($businessId, $year, $scopeKey, $rows, $auditKey, $auditedAt, $startDate, $endDate, $accountId, $balanceScope, $balanceComparable, $movementKeysByAccount): void {
             $this->recordAudit($businessId, $year, $scopeKey, $rows, $auditKey, $auditedAt, null);
             $this->upsertFindings($rows, $auditKey, $auditedAt);
 
