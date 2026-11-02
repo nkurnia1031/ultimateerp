@@ -217,16 +217,13 @@ class LegacyAnnualAuditControlReader
 
         $reader = IOFactory::createReaderForFile($path);
         $reader->setReadDataOnly(true);
-        $worksheetInfo = $reader->listWorksheetInfo($path);
+        $worksheetInfo = $this->selectedWorksheetInfo($path, $selectSheet);
         $result = [];
 
-        foreach ($worksheetInfo as $sheetIndex => $info) {
+        foreach ($worksheetInfo as $info) {
             $sheetName = (string) ($info['worksheetName'] ?? '');
-            if (! $selectSheet($sheetName, (int) $sheetIndex)) {
-                continue;
-            }
-
             $lastRow = max(1, (int) ($info['totalRows'] ?? 1));
+            $reader->setLoadSheetsOnly([$sheetName]);
             for ($start = 1; $start <= $lastRow; $start += self::CHUNK_SIZE) {
                 $end = min($lastRow, $start + self::CHUNK_SIZE - 1);
                 $sheetRows = [];
@@ -276,6 +273,200 @@ class LegacyAnnualAuditControlReader
         }
 
         return $result;
+    }
+
+    /**
+     * Read row counts only for sheets the audit consumes. PhpSpreadsheet's
+     * listWorksheetInfo() scans every cell in every sheet; legacy workbooks can
+     * contain irrelevant formatted sheets claiming more than a million rows.
+     * The workbook relationships and each worksheet's dimension are small
+     * metadata entries, so inspect those before opening selected sheets in
+     * bounded row windows.
+     */
+    private function selectedWorksheetInfo(string $path, callable $selectSheet): array
+    {
+        $zip = new \ZipArchive();
+        if ($zip->open($path) !== true) {
+            throw new RuntimeException('File kontrol bukan workbook Excel yang dapat dibaca.');
+        }
+
+        try {
+            $rootRelationships = $this->readXmlEntry($zip, '_rels/.rels');
+            $workbookPath = null;
+            foreach ($rootRelationships->xpath('//*[local-name()="Relationship"]') ?: [] as $relationship) {
+                $attributes = $relationship->attributes();
+                if (str_ends_with((string) ($attributes['Type'] ?? ''), '/officeDocument')) {
+                    $workbookPath = $this->normalizeZipPath((string) ($attributes['Target'] ?? ''), '');
+                    break;
+                }
+            }
+            if ($workbookPath === null || $workbookPath === '') {
+                throw new RuntimeException('Metadata workbook Excel tidak ditemukan.');
+            }
+
+            $workbookDirectory = dirname($workbookPath);
+            $relationshipPath = ($workbookDirectory === '.' ? '' : $workbookDirectory.'/')
+                .'_rels/'.basename($workbookPath).'.rels';
+            $workbookRelationships = $this->readXmlEntry($zip, $relationshipPath);
+            $targets = [];
+            foreach ($workbookRelationships->xpath('//*[local-name()="Relationship"]') ?: [] as $relationship) {
+                $attributes = $relationship->attributes();
+                $targets[(string) ($attributes['Id'] ?? '')] = (string) ($attributes['Target'] ?? '');
+            }
+
+            $workbook = $this->readXmlEntry($zip, $workbookPath);
+            $worksheetInfo = [];
+            $sheetIndex = 0;
+            foreach ($workbook->xpath('//*[local-name()="sheet"]') ?: [] as $sheet) {
+                $attributes = $sheet->attributes();
+                $sheetName = (string) ($attributes['name'] ?? '');
+                if (! $selectSheet($sheetName, $sheetIndex)) {
+                    $sheetIndex++;
+                    continue;
+                }
+
+                $relationshipAttributes = $sheet->attributes('http://schemas.openxmlformats.org/officeDocument/2006/relationships');
+                $relationshipId = (string) ($relationshipAttributes['id'] ?? '');
+                $target = $targets[$relationshipId] ?? '';
+                if ($target === '') {
+                    throw new RuntimeException('Relasi sheet "'.$sheetName.'" tidak ditemukan.');
+                }
+
+                $worksheetPath = $this->normalizeZipPath($target, $workbookDirectory);
+                $worksheetInfo[] = [
+                    'worksheetName' => $sheetName,
+                    'totalRows' => $this->worksheetLastRow($zip, $worksheetPath),
+                ];
+                if ($worksheetInfo[array_key_last($worksheetInfo)]['totalRows'] <= 1) {
+                    array_pop($worksheetInfo);
+                }
+                $sheetIndex++;
+            }
+
+            return $worksheetInfo;
+        } finally {
+            $zip->close();
+        }
+    }
+
+    private function readXmlEntry(\ZipArchive $zip, string $path): \SimpleXMLElement
+    {
+        $contents = $zip->getFromName($path);
+        if ($contents === false) {
+            throw new RuntimeException('Metadata workbook tidak dapat dibaca.');
+        }
+
+        $xml = simplexml_load_string($contents, \SimpleXMLElement::class, LIBXML_NONET | LIBXML_NOBLANKS);
+        if (! $xml instanceof \SimpleXMLElement) {
+            throw new RuntimeException('Format metadata workbook tidak valid.');
+        }
+
+        return $xml;
+    }
+
+    private function normalizeZipPath(string $target, string $baseDirectory): string
+    {
+        $path = str_starts_with($target, '/')
+            ? ltrim($target, '/')
+            : (($baseDirectory !== '' && $baseDirectory !== '.' ? $baseDirectory.'/' : '').$target);
+        $segments = [];
+        foreach (explode('/', str_replace('\\', '/', $path)) as $segment) {
+            if ($segment === '' || $segment === '.') {
+                continue;
+            }
+            if ($segment === '..') {
+                array_pop($segments);
+                continue;
+            }
+            $segments[] = $segment;
+        }
+
+        return implode('/', $segments);
+    }
+
+    private function worksheetLastRow(\ZipArchive $zip, string $worksheetPath): int
+    {
+        $stream = $zip->getStream($worksheetPath);
+        if ($stream === false) {
+            throw new RuntimeException('Sheet workbook tidak dapat dibaca.');
+        }
+
+        try {
+            $prefix = fread($stream, 65536);
+        } finally {
+            fclose($stream);
+        }
+
+        $dimensionLastRow = null;
+        if (preg_match('/<(?:[A-Za-z0-9_]+:)?dimension\b[^>]*\bref=["\']([^"\']+)["\']/', $prefix, $matches) === 1
+            && preg_match('/(?:^|:)[A-Z]{1,3}(\d+)$/i', $matches[1], $rowMatches) === 1) {
+            $dimensionLastRow = max(1, (int) $rowMatches[1]);
+            // Some workbooks extend a sheet's dimension to Excel's row limit
+            // because of formatting. Avoid turning that formatting into a
+            // million-row audit window; find the last row with actual values.
+            if ($dimensionLastRow <= 100000) {
+                return $dimensionLastRow;
+            }
+        }
+
+        // The dimension element is optional in OOXML. For absent or suspicious
+        // dimensions, inspect only this selected sheet and find the last row
+        // with a date-column value. These legacy control formats store dates in
+        // column A; stray values in other columns can extend the dimension to
+        // Excel's row limit without adding an auditable transaction.
+        $contents = $zip->getFromName($worksheetPath);
+        if ($contents === false) {
+            throw new RuntimeException('Sheet workbook tidak dapat dibaca.');
+        }
+        $xml = new \XMLReader();
+        if (! $xml->XML($contents, null, LIBXML_NONET | LIBXML_COMPACT)) {
+            throw new RuntimeException('Konten sheet workbook tidak valid.');
+        }
+
+        $lastDataRow = 0;
+        $currentRow = 0;
+        $rowHasDate = false;
+        $insideDateCell = false;
+        $valueDepth = null;
+        $textDepth = null;
+        try {
+            while ($xml->read()) {
+                if ($xml->nodeType === \XMLReader::ELEMENT) {
+                    if ($xml->localName === 'row') {
+                        $currentRow = (int) ($xml->getAttribute('r') ?? 0);
+                    } elseif ($xml->localName === 'c') {
+                        $insideDateCell = preg_match('/^A\d+$/i', (string) $xml->getAttribute('r')) === 1;
+                        $valueDepth = null;
+                        $textDepth = null;
+                    } elseif ($insideDateCell && $xml->localName === 'f') {
+                        $rowHasDate = true;
+                    } elseif ($insideDateCell && $xml->localName === 'v' && ! $xml->isEmptyElement) {
+                        $valueDepth = $xml->depth;
+                    } elseif ($insideDateCell && $xml->localName === 't' && ! $xml->isEmptyElement) {
+                        $textDepth = $xml->depth;
+                    }
+                } elseif (($xml->nodeType === \XMLReader::TEXT || $xml->nodeType === \XMLReader::CDATA)
+                    && trim($xml->value) !== ''
+                    && ($valueDepth !== null || $textDepth !== null)) {
+                    $rowHasDate = true;
+                } elseif ($xml->nodeType === \XMLReader::END_ELEMENT) {
+                    if ($xml->localName === 'v' && $valueDepth === $xml->depth) {
+                        $valueDepth = null;
+                    } elseif ($xml->localName === 't' && $textDepth === $xml->depth) {
+                        $textDepth = null;
+                    } elseif ($xml->localName === 'c') {
+                        $insideDateCell = false;
+                    } elseif ($xml->localName === 'row' && $rowHasDate) {
+                        $lastDataRow = max($lastDataRow, $currentRow);
+                        $rowHasDate = false;
+                    }
+                }
+            }
+        } finally {
+            $xml->close();
+        }
+
+        return max(1, $lastDataRow);
     }
 
     private function findHeader(array $cells, bool $generalLedger): ?array

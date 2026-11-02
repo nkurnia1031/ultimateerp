@@ -4,6 +4,7 @@ namespace Modules\Accounting\Services;
 
 use App\Transaction;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 class LegacyOperationalOnlyProcessor
 {
@@ -165,7 +166,7 @@ class LegacyOperationalOnlyProcessor
         $query = Transaction::where('business_id', $businessId)
             ->where('type', $transactionType)
             ->whereDate('transaction_date', $date)
-            ->whereNull('deleted_at')
+            ->when(Schema::hasColumn('transactions', 'deleted_at'), fn ($query) => $query->whereNull('deleted_at'))
             ->where(function ($query) use ($number) {
                 $query->where('ref_no', $number);
                 if ($number !== '') {

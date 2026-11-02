@@ -3,6 +3,7 @@
 namespace Modules\Accounting\Services;
 
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use App\Transaction;
 
 class LegacyOperationalDraftEnricher
@@ -222,7 +223,7 @@ class LegacyOperationalDraftEnricher
             ->join('products as product', 'product.id', '=', 'variation.product_id')
             ->where('product.business_id', $businessId)
             ->where('product.is_inactive', 0)
-            ->whereNull('product.deleted_at')
+            ->when(Schema::hasColumn('products', 'deleted_at'), fn ($query) => $query->whereNull('product.deleted_at'))
             ->whereNull('variation.deleted_at')
             ->get([
                 'variation.id as variation_id',

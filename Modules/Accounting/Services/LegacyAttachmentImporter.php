@@ -6,6 +6,7 @@ use App\Media;
 use App\Transaction;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Schema;
 use RuntimeException;
 
 class LegacyAttachmentImporter
@@ -317,7 +318,7 @@ class LegacyAttachmentImporter
             $rows = Transaction::query()
                 ->where('business_id', $businessId)
                 ->whereIn('type', array_merge(...array_values(self::OPERATIONAL_TYPES)))
-                ->whereNull('deleted_at')
+                ->when(Schema::hasColumn('transactions', 'deleted_at'), fn ($query) => $query->whereNull('deleted_at'))
                 ->whereIn('id', $chunk)
                 ->get();
             foreach ($rows as $transaction) {

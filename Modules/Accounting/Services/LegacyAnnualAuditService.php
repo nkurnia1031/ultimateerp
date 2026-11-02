@@ -558,6 +558,9 @@ class LegacyAnnualAuditService
             if ($journal === null && $name !== '') {
                 $journal = $journalByName[$year][$name] ?? null;
             }
+            $balanceSign = $this->accountBalanceSign((string) ($journal['account_no'] ?? $control['account_no'] ?? ''));
+            $signedOpening = $this->signedControlBalance($control['opening_balance'], $balanceSign);
+            $signedClosing = $this->signedControlBalance($control['closing_balance'], $balanceSign);
             $comparisons[] = [
                 'year' => $year,
                 'control_type' => 'general_ledger_account',
@@ -566,17 +569,19 @@ class LegacyAnnualAuditService
                 'account_no' => $control['account_no'],
                 'account_name' => $control['account_name'],
                 'control_opening' => $control['opening_balance'],
+                'control_opening_signed' => $signedOpening,
                 'control_debit' => round((float) $control['debit'], 2),
                 'control_credit' => round((float) $control['credit'], 2),
                 'control_closing' => $control['closing_balance'],
+                'control_closing_signed' => $signedClosing,
                 'journal_opening' => $journal['opening_balance'] ?? null,
                 'journal_debit' => $journal['debit'] ?? null,
                 'journal_credit' => $journal['credit'] ?? null,
                 'journal_closing' => $journal['closing_balance'] ?? null,
-                'opening_variance' => $this->difference($control['opening_balance'], $journal['opening_balance'] ?? null),
+                'opening_variance' => $this->difference($signedOpening, $journal['opening_balance'] ?? null),
                 'debit_variance' => $this->difference($control['debit'], $journal['debit'] ?? null),
                 'credit_variance' => $this->difference($control['credit'], $journal['credit'] ?? null),
-                'closing_variance' => $this->difference($control['closing_balance'], $journal['closing_balance'] ?? null),
+                'closing_variance' => $this->difference($signedClosing, $journal['closing_balance'] ?? null),
                 'match_status' => $journal === null ? 'account_not_matched' : 'matched_for_comparison',
                 'source_rows' => $control['source_rows'],
             ];
@@ -596,9 +601,11 @@ class LegacyAnnualAuditService
                 'account_no' => '',
                 'account_name' => 'Kas/bank gabungan dari akun Journal yang teridentifikasi',
                 'control_opening' => $control['opening_balance'],
+                'control_opening_signed' => $control['opening_balance'],
                 'control_debit' => round((float) $control['debit'], 2),
                 'control_credit' => round((float) $control['credit'], 2),
                 'control_closing' => $control['closing_balance'],
+                'control_closing_signed' => $control['closing_balance'],
                 'journal_opening' => $journal['opening_balance'] ?? null,
                 'journal_debit' => $journal === null ? null : round((float) $journal['debit'], 2),
                 'journal_credit' => $journal === null ? null : round((float) $journal['credit'], 2),
@@ -614,6 +621,27 @@ class LegacyAnnualAuditService
         }
 
         return $comparisons;
+    }
+
+    /**
+     * The legacy control workbook displays credit-normal accounts as positive
+     * balances, while this audit consistently uses debit minus credit. Convert
+     * liabilities, equity, and income to that signed convention before comparing.
+     */
+    private function accountBalanceSign(string $accountNo): int
+    {
+        $accountClass = substr(trim($accountNo), 0, 1);
+
+        return in_array($accountClass, ['2', '3', '4'], true) ? -1 : 1;
+    }
+
+    private function signedControlBalance($balance, int $sign): ?float
+    {
+        if (! is_numeric($balance)) {
+            return null;
+        }
+
+        return round((float) $balance * $sign, 2);
     }
 
     private function annualSummary(array $transactions, array $accounts, array $controls, array $coverage, array $controlErrors): array
@@ -906,14 +934,16 @@ class LegacyAnnualAuditService
 
         $this->writeTable($workbook->createSheet()->setTitle('Kontrol Saldo'), [
             'Tahun', 'Jenis Kontrol', 'File', 'Sheet', 'Nomor Akun', 'Nama Akun',
-            'Saldo Awal Kontrol', 'Debit Kontrol', 'Kredit Kontrol', 'Saldo Akhir Kontrol',
+            'Saldo Awal Kontrol sumber', 'Saldo Awal Kontrol D-K', 'Debit Kontrol', 'Kredit Kontrol',
+            'Saldo Akhir Kontrol sumber', 'Saldo Akhir Kontrol D-K',
             'Saldo Awal Journal', 'Debit Journal', 'Kredit Journal', 'Saldo Akhir Journal',
             'Selisih Opening', 'Selisih Debit', 'Selisih Kredit', 'Selisih Closing', 'Status',
             'Akun Kas/Bank Journal', 'Baris Sumber',
         ], array_map(fn (array $row) => [
             $row['year'], $row['control_type'], $row['source_file'], $row['source_sheet'],
-            $row['account_no'], $row['account_name'], $row['control_opening'], $row['control_debit'],
-            $row['control_credit'], $row['control_closing'], $row['journal_opening'], $row['journal_debit'],
+            $row['account_no'], $row['account_name'], $row['control_opening'], $row['control_opening_signed'],
+            $row['control_debit'], $row['control_credit'], $row['control_closing'], $row['control_closing_signed'],
+            $row['journal_opening'], $row['journal_debit'],
             $row['journal_credit'], $row['journal_closing'], $row['opening_variance'], $row['debit_variance'],
             $row['credit_variance'], $row['closing_variance'], $row['match_status'],
             $this->jsonCell($row['journal_accounts'] ?? []), $this->jsonCell($row['source_rows'] ?? []),
