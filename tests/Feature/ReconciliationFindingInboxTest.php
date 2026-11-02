@@ -27,6 +27,7 @@ class ReconciliationFindingInboxTest extends TestCase
         ]);
         DB::purge('sqlite');
         DB::setDefaultConnection('sqlite');
+        $this->createPermissionTables();
         $this->createFindingTable();
         Schema::create('system', function (Blueprint $table) {
             $table->string('key');
@@ -111,6 +112,12 @@ class ReconciliationFindingInboxTest extends TestCase
         $user = Mockery::mock(User::class)->makePartial();
         $user->forceFill(['id' => 987654, 'business_id' => 1, 'username' => 'reconciliation-test']);
         $user->shouldReceive('can')->andReturnUsing(fn (string $permission) => $permission === 'accounting.view_reports');
+        DB::table(config('permission.table_names.permissions'))->insert([
+            'id' => 1, 'name' => 'accounting.view_reports', 'guard_name' => 'web', 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        DB::table(config('permission.table_names.model_has_permissions'))->insert([
+            'permission_id' => 1, 'model_type' => User::class, 'model_id' => 987654,
+        ]);
         $moduleUtil = Mockery::mock(\App\Utils\ModuleUtil::class);
         $moduleUtil->shouldReceive('hasThePermissionInSubscription')->andReturn(true);
         $this->app->instance(\App\Utils\ModuleUtil::class, $moduleUtil);
@@ -255,6 +262,40 @@ class ReconciliationFindingInboxTest extends TestCase
             $table->timestamps();
             $table->unique(['business_id', 'year', 'audit_key']);
             $table->index(['business_id', 'completed_at']);
+        });
+    }
+
+    private function createPermissionTables(): void
+    {
+        $tables = config('permission.table_names');
+        Schema::create($tables['permissions'], function (Blueprint $table) {
+            $table->increments('id');
+            $table->string('name');
+            $table->string('guard_name');
+            $table->timestamps();
+        });
+        Schema::create($tables['roles'], function (Blueprint $table) {
+            $table->increments('id');
+            $table->string('name');
+            $table->string('guard_name');
+            $table->unsignedInteger('business_id');
+            $table->boolean('is_default')->default(false);
+            $table->timestamps();
+        });
+        Schema::create($tables['model_has_permissions'], function (Blueprint $table) {
+            $table->unsignedInteger('permission_id');
+            $table->morphs('model');
+            $table->primary(['permission_id', 'model_id', 'model_type']);
+        });
+        Schema::create($tables['model_has_roles'], function (Blueprint $table) {
+            $table->unsignedInteger('role_id');
+            $table->morphs('model');
+            $table->primary(['role_id', 'model_id', 'model_type']);
+        });
+        Schema::create($tables['role_has_permissions'], function (Blueprint $table) {
+            $table->unsignedInteger('permission_id');
+            $table->unsignedInteger('role_id');
+            $table->primary(['permission_id', 'role_id']);
         });
     }
 }
