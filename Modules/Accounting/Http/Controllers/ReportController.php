@@ -14,6 +14,7 @@ use Modules\Accounting\Entities\AccountingAccount;
 use Modules\Accounting\Exports\GeneralLedgerExport;
 use Modules\Accounting\Services\GeneralLedgerReportService;
 use Modules\Accounting\Services\GeneralLedgerAuditService;
+use Modules\Accounting\Services\LegacyReconciliationFindingSnapshotService;
 use Modules\Accounting\Utils\AccountingUtil;
 
 class ReportController extends Controller
@@ -133,12 +134,32 @@ class ReportController extends Controller
         return Excel::download(new GeneralLedgerExport($view), $filename);
     }
 
-    public function generalLedgerAudit(Request $request, GeneralLedgerAuditService $auditService)
+    public function generalLedgerAudit(
+        Request $request,
+        GeneralLedgerAuditService $auditService,
+        LegacyReconciliationFindingSnapshotService $findingSnapshots
+    )
     {
         $businessId = (int) $request->session()->get('user.business_id');
         $this->authorizeReports($businessId);
         $filters = $this->generalLedgerAuditFilters($request, $businessId, $auditService);
-        $report = $auditService->report($businessId, $filters['start_date'], $filters['end_date'], $filters, (int) ($filters['page'] ?? 1));
+        $result = $auditService->reportWithSnapshot(
+            $businessId,
+            $filters['start_date'],
+            $filters['end_date'],
+            $filters,
+            (int) ($filters['page'] ?? 1)
+        );
+        $findingSnapshots->persistCashBankAudit(
+            $businessId,
+            $filters['start_date'],
+            $filters['end_date'],
+            $filters['account_id'],
+            $result['snapshot']['summary'],
+            $result['snapshot']['rows']
+        );
+        $report = $result['report'];
+        unset($result);
         $currency = session('currency', []);
 
         return view('accounting::report.general_ledger_audit', $report + $filters + [

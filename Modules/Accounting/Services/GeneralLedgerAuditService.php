@@ -45,6 +45,12 @@ class GeneralLedgerAuditService
 
     public function report(int $businessId, string $startDate, string $endDate, array $filters = [], int $page = 1): array
     {
+        return $this->reportWithSnapshot($businessId, $startDate, $endDate, $filters, $page)['report'];
+    }
+
+    /** Return the displayed report and its complete unfiltered snapshot from the same audit pass. */
+    public function reportWithSnapshot(int $businessId, string $startDate, string $endDate, array $filters = [], int $page = 1): array
+    {
         $data = $this->buildAudit($businessId, $startDate, $endDate, $filters);
         $rows = $this->filterRows($data['rows'], $filters);
         $page = max(1, $page);
@@ -57,11 +63,17 @@ class GeneralLedgerAuditService
         );
 
         return [
-            'summary' => $data['summary'],
-            'rows' => $paginator,
-            'accounts' => $this->paymentAccounts($businessId),
-            'source_types' => $data['source_types'],
-            'statuses' => $data['statuses'],
+            'report' => [
+                'summary' => $data['summary'],
+                'rows' => $paginator,
+                'accounts' => $this->paymentAccounts($businessId),
+                'source_types' => $data['source_types'],
+                'statuses' => $data['statuses'],
+            ],
+            'snapshot' => [
+                'summary' => $data['summary'],
+                'rows' => $data['rows'],
+            ],
         ];
     }
 
@@ -178,6 +190,7 @@ class GeneralLedgerAuditService
         }
 
         $opening = $this->openingBalances($businessId, $startDate, $mappedAccounts, $accountCrosswalk, $selectedMainAccountId);
+        $balanceMapping = $this->balanceMappingScope($mappedAccounts, $accountCrosswalk, $selectedMainAccountId);
         $sourceTotals['source_count'] = count($sourceRows);
         $sourceTotals['posting_group_count'] = count($postingGroups);
         $sourceTotals['status_counts'] = $statusCounts;
@@ -187,6 +200,8 @@ class GeneralLedgerAuditService
         $sourceTotals['closing_balance'] = round($opening['gl'] + $sourceTotals['gl_inflow'] - $sourceTotals['gl_outflow'], 4);
         $sourceTotals['source_closing_balance'] = round($opening['source'] + $sourceTotals['source_inflow'] - $sourceTotals['source_outflow'], 4);
         $sourceTotals['closing_balance_difference'] = round($sourceTotals['closing_balance'] - $sourceTotals['source_closing_balance'], 4);
+        $sourceTotals['cash_bank_balance_comparable'] = $balanceMapping['comparable'];
+        $sourceTotals['cash_bank_mapping_scope'] = $balanceMapping['fingerprint'];
         $sourceTotals['missing_posting_count'] = $statusCounts['missing_posting'] ?? 0;
         $sourceTotals['missing_source_count'] = $statusCounts['missing_source'] ?? 0;
         $sourceTotals['duplicate_count'] = $statusCounts['duplicate_posting'] ?? 0;
@@ -466,6 +481,48 @@ class GeneralLedgerAuditService
         return $byMain;
     }
 
+    private function balanceMappingScope($mappedAccounts, array $accountCrosswalk, ?int $selectedMainAccountId): array
+    {
+        $mappedGlIds = $mappedAccounts->keys()->map(fn ($id) => (int) $id)->sort()->values()->all();
+        $crosswalkByGl = [];
+        $selectedCrosswalk = $selectedMainAccountId === null
+            ? $accountCrosswalk
+            : [$selectedMainAccountId => ($accountCrosswalk[$selectedMainAccountId] ?? [])];
+
+        foreach ($selectedCrosswalk as $mainAccountId => $accounts) {
+            foreach ($accounts as $account) {
+                $crosswalkByGl[(int) $account['id']][] = (int) $mainAccountId;
+            }
+        }
+        foreach ($crosswalkByGl as &$mainIds) {
+            sort($mainIds);
+        }
+        unset($mainIds);
+        ksort($crosswalkByGl);
+
+        $comparable = $mappedGlIds !== [];
+        foreach ($mappedGlIds as $glAccountId) {
+            if (count($crosswalkByGl[$glAccountId] ?? []) !== 1) {
+                $comparable = false;
+                break;
+            }
+        }
+        foreach ($selectedCrosswalk as $accounts) {
+            if (count($accounts) > 1) {
+                $comparable = false;
+                break;
+            }
+        }
+
+        $fingerprint = hash('sha256', json_encode([
+            'selected_main_account_id' => $selectedMainAccountId,
+            'mapped_gl_account_ids' => $mappedGlIds,
+            'crosswalk_by_gl' => $crosswalkByGl,
+        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '{}');
+
+        return ['comparable' => $comparable, 'fingerprint' => $fingerprint];
+    }
+
     private function loadPostingGroups(int $businessId, string $startDate, string $endDate, $mappedAccounts): array
     {
         if ($mappedAccounts->isEmpty()) {
@@ -653,7 +710,7 @@ class GeneralLedgerAuditService
             'contact' => $source['contact'], 'payment_account' => $source['payment_account'],
             'account_id' => $source['account_id'], 'operational_amount' => $sourceSignedAmount,
             'accounting_amount' => $postingAmount, 'difference' => $postingAmount === null ? null : round($sourceSignedAmount - $postingAmount, 4),
-            'source_vat' => $sourceVat, 'journal_vat' => $journalVat,
+            'source_vat' => $sourceVat, 'journal_vat' => $journalVat, 'tax_direction' => $vatDirection,
             'vat_difference' => $sourceVat === null || $journalVat === null ? null : round($sourceVat - $journalVat, 4),
             'status' => 'matched', 'reason' => '', 'source_record_type' => $source['source_record_type'],
             'source_record_id' => $source['source_record_id'], 'posting_count' => count($candidateKeys),

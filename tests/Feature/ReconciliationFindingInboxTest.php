@@ -99,6 +99,92 @@ class ReconciliationFindingInboxTest extends TestCase
         $this->assertSame(0, $summary['open_count']);
     }
 
+    public function test_comparable_annual_audit_resolves_cleared_findings_and_reopens_returning_variances(): void
+    {
+        $service = app(LegacyReconciliationFindingSnapshotService::class);
+        $report = $this->annualReport();
+        $service->persistReport(1, $report);
+        $findingKey = DB::table('accounting_legacy_reconciliation_findings')
+            ->where('type', 'transaction')->where('component', 'base')->value('finding_key');
+
+        $report['transaction_reconciliation'][0]['journal_base'] = 9065000;
+        $report['transaction_reconciliation'][0]['base_variance'] = 0;
+        $report['generated_at'] = '2026-11-04T10:00:00+07:00';
+        $service->persistReport(1, $report);
+
+        $cleared = DB::table('accounting_legacy_reconciliation_findings')->where('finding_key', $findingKey)->first();
+        $this->assertFalse((bool) $cleared->is_current);
+        $this->assertSame('resolved', $cleared->status);
+        $this->assertSame('audit_cleared', json_decode($cleared->resolution_history, true)[0]['action']);
+        $this->assertSame(1, $service->summary(1, ['status' => 'resolved'])['filtered_count']);
+
+        $report['transaction_reconciliation'][0]['journal_base'] = 10000000;
+        $report['transaction_reconciliation'][0]['base_variance'] = 935000;
+        $report['generated_at'] = '2026-11-05T10:00:00+07:00';
+        $service->persistReport(1, $report);
+
+        $reopened = DB::table('accounting_legacy_reconciliation_findings')->where('finding_key', $findingKey)->first();
+        $history = json_decode($reopened->resolution_history, true);
+        $this->assertTrue((bool) $reopened->is_current);
+        $this->assertSame('open', $reopened->status);
+        $this->assertSame(['audit_cleared', 'reopened'], array_column($history, 'action'));
+    }
+
+    public function test_cash_bank_snapshot_is_idempotent_and_only_clears_comparable_periods(): void
+    {
+        $service = app(LegacyReconciliationFindingSnapshotService::class);
+        $summary = [
+            'opening_balance' => 101, 'source_opening_balance' => 100, 'opening_balance_difference' => 1,
+            'closing_balance' => 301, 'source_closing_balance' => 300, 'closing_balance_difference' => 1,
+        ];
+        $row = [
+            'date' => '2022-01-04', 'source_type' => 'Purchase Invoice', 'source_number' => 'PUR-50',
+            'description' => 'Pembayaran pembelian', 'account_id' => 10, 'payment_account' => 'Kas Utama',
+            'operational_amount' => 100, 'accounting_amount' => 98, 'difference' => 2,
+            'source_vat' => 10, 'journal_vat' => 8, 'vat_difference' => 2, 'tax_direction' => 'input',
+            'source_record_type' => 'App\\TransactionPayment', 'source_record_id' => 50,
+        ];
+
+        $this->assertSame(4, $service->persistCashBankAudit(1, '2022-01-01', '2022-01-31', null, $summary, [$row]));
+        $this->assertSame(4, $service->persistCashBankAudit(1, '2022-01-01', '2022-01-31', null, $summary, [$row]));
+        $this->assertSame(4, DB::table('accounting_legacy_reconciliation_findings')->where('type', 'cash_bank')->count());
+
+        $service->persistCashBankAudit(1, '2022-02-01', '2022-02-28', null, $summary, [array_merge($row, [
+            'date' => '2022-02-04', 'source_number' => 'PUR-51', 'source_record_id' => 51,
+        ])]);
+        $clearedSummary = [
+            'opening_balance' => 100, 'source_opening_balance' => 100, 'opening_balance_difference' => 0,
+            'closing_balance' => 300, 'source_closing_balance' => 300, 'closing_balance_difference' => 0,
+        ];
+        $clearedRow = array_merge($row, ['difference' => 0, 'accounting_amount' => 100, 'vat_difference' => 0, 'journal_vat' => 10]);
+        $this->assertSame(0, $service->persistCashBankAudit(1, '2022-01-01', '2022-01-31', null, $clearedSummary, [$clearedRow]));
+
+        $this->assertSame(4, DB::table('accounting_legacy_reconciliation_findings')->where('type', 'cash_bank')->where('is_current', true)->count());
+        $this->assertSame(4, DB::table('accounting_legacy_reconciliation_findings')->where('type', 'cash_bank')->where('status', 'resolved')->count());
+        $this->assertSame(8, DB::table('accounting_legacy_reconciliation_findings')->where('type', 'cash_bank')->count());
+    }
+
+    public function test_incomplete_cash_bank_mapping_does_not_clear_prior_balance_findings(): void
+    {
+        $service = app(LegacyReconciliationFindingSnapshotService::class);
+        $summary = [
+            'opening_balance' => 101, 'source_opening_balance' => 100, 'opening_balance_difference' => 1,
+            'closing_balance' => 301, 'source_closing_balance' => 300, 'closing_balance_difference' => 1,
+            'cash_bank_mapping_scope' => 'mapping-a',
+        ];
+        $service->persistCashBankAudit(1, '2022-03-01', '2022-03-31', null, $summary, []);
+
+        $summary['opening_balance'] = 100;
+        $summary['closing_balance'] = 300;
+        $summary['opening_balance_difference'] = 0;
+        $summary['closing_balance_difference'] = 0;
+        $summary['cash_bank_balance_comparable'] = false;
+        $service->persistCashBankAudit(1, '2022-03-01', '2022-03-31', null, $summary, []);
+
+        $this->assertSame(2, DB::table('accounting_legacy_reconciliation_findings')
+            ->where('type', 'cash_bank')->where('is_current', true)->where('scope_key', 'like', 'cash-bank-balance:2022-03-01:2022-03-31:all:%')->count());
+    }
+
     public function test_findings_page_filters_searches_and_scopes_rows_to_the_active_business(): void
     {
         app(LegacyReconciliationFindingSnapshotService::class)->persistReport(1, $this->annualReport());
@@ -211,7 +297,7 @@ class ReconciliationFindingInboxTest extends TestCase
     private function findingRow(array $overrides = []): array
     {
         return array_merge([
-            'business_id' => 1, 'year' => 2023, 'type' => 'transaction', 'component' => 'base',
+            'business_id' => 1, 'year' => 2023, 'scope_key' => 'legacy-annual', 'type' => 'transaction', 'component' => 'base',
             'finding_key' => hash('sha256', 'tenant-two-secret'), 'source_identity' => 'test-source',
             'source_type' => 'Expense', 'source_number' => 'TENANT-TWO-SECRET', 'source_date' => '2023-01-01',
             'account_no' => '', 'account_name' => '', 'description' => 'Tenant lain',
@@ -228,6 +314,7 @@ class ReconciliationFindingInboxTest extends TestCase
             $table->bigIncrements('id');
             $table->unsignedInteger('business_id');
             $table->unsignedSmallInteger('year');
+            $table->string('scope_key', 120)->default('legacy-annual');
             $table->string('type', 40);
             $table->string('component', 40);
             $table->char('finding_key', 64);
@@ -256,6 +343,7 @@ class ReconciliationFindingInboxTest extends TestCase
             $table->bigIncrements('id');
             $table->unsignedInteger('business_id');
             $table->unsignedSmallInteger('year');
+            $table->string('scope_key', 120)->default('legacy-annual');
             $table->char('audit_key', 64);
             $table->char('source_manifest_sha256', 64)->nullable();
             $table->unsignedInteger('finding_count')->default(0);

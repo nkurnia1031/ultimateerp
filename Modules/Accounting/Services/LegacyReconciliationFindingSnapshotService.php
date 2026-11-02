@@ -13,6 +13,8 @@ class LegacyReconciliationFindingSnapshotService
 {
     private const VARIANCE_TOLERANCE = 0.01;
 
+    private const LEGACY_SCOPE = 'legacy-annual';
+
     private const PAGE_SIZE = 50;
 
     private const TRANSACTION_COMPONENTS = [
@@ -67,39 +69,199 @@ class LegacyReconciliationFindingSnapshotService
         }
 
         $generatedAt = $this->timestamp($report['generated_at'] ?? null);
+        $scopeKey = self::LEGACY_SCOPE;
         $auditPayload = $report;
         unset($auditPayload['generated_at']);
         $auditKey = hash('sha256', implode('|', [
+            $scopeKey,
             $businessId,
             $year,
             json_encode($auditPayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '{}',
         ]));
-        $rows = $this->findingsFromReport($businessId, $year, $report, $auditKey, $generatedAt);
+        $rows = $this->findingsFromReport($businessId, $year, $report, $auditKey, $generatedAt, $scopeKey);
 
-        DB::transaction(function () use ($businessId, $year, $rows, $auditKey, $report, $generatedAt): void {
-            $now = now();
-            DB::table('accounting_legacy_reconciliation_audits')->upsert([[
-                'business_id' => $businessId,
-                'year' => $year,
-                'audit_key' => $auditKey,
-                'source_manifest_sha256' => $report['source_manifest_sha256'] ?? null,
-                'finding_count' => count($rows),
-                'completed_at' => $generatedAt,
-                'created_at' => $now,
-                'updated_at' => $now,
-            ]], ['business_id', 'year', 'audit_key'], [
-                'source_manifest_sha256', 'finding_count', 'completed_at', 'updated_at',
-            ]);
+        $this->persistSnapshot($businessId, $year, $scopeKey, $rows, $auditKey, $generatedAt, $report['source_manifest_sha256'] ?? null);
 
-            foreach (array_chunk($rows, 250) as $chunk) {
-                DB::table('accounting_legacy_reconciliation_findings')->upsert(
-                    $chunk,
-                    ['business_id', 'finding_key'],
-                    [
-                        'year', 'type', 'component', 'source_identity', 'source_type', 'source_number', 'source_date',
-                        'account_no', 'account_name', 'description', 'expected_amount', 'actual_amount', 'variance',
-                        'evidence', 'is_current', 'last_audit_key', 'last_audited_at', 'updated_at',
-                    ]
+        return count($rows);
+    }
+
+    /**
+     * Persist the completed read-only cash/bank audit without changing operational or GL source rows.
+     * Movement findings are comparable by transaction within the audited date range. Balance findings
+     * are comparable only for the same exact date range and account selection.
+     */
+    public function persistCashBankAudit(
+        int $businessId,
+        string $startDate,
+        string $endDate,
+        ?int $accountId,
+        array $summary,
+        array $auditRows
+    ): int {
+        if ($businessId < 1 || ! $this->isValidDate($startDate) || ! $this->isValidDate($endDate) || $endDate < $startDate) {
+            throw new InvalidArgumentException('Business atau rentang tanggal audit kas/bank tidak valid.');
+        }
+
+        $auditedAt = now()->toDateTimeString();
+        $year = (int) substr($startDate, 0, 4);
+        $balanceComparable = ! array_key_exists('cash_bank_balance_comparable', $summary)
+            || $summary['cash_bank_balance_comparable'] === true;
+        $balanceScope = $this->cashBankBalanceScope(
+            $startDate,
+            $endDate,
+            $accountId,
+            (string) ($summary['cash_bank_mapping_scope'] ?? 'unscoped')
+        );
+        $rows = [];
+
+        foreach ($balanceComparable ? [
+            'opening' => ['source_opening_balance', 'opening_balance', 'opening_balance_difference'],
+            'closing' => ['source_closing_balance', 'closing_balance', 'closing_balance_difference'],
+        ] : [] as $component => [$sourceField, $actualField, $varianceField]) {
+            $componentDate = $component === 'opening' ? $startDate : $endDate;
+            $finding = $this->makeFinding(
+                $businessId,
+                (int) substr($componentDate, 0, 4),
+                'cash_bank',
+                $component,
+                $this->identityHash(['scope' => $balanceScope, 'component' => $component]),
+                [
+                    'date' => $componentDate,
+                    'period_start' => $startDate,
+                    'period_end' => $endDate,
+                    'account_id' => $accountId,
+                    'source_type' => 'Audit kas/bank',
+                    'source_number' => $startDate.' — '.$endDate,
+                    'description' => $component === 'opening' ? 'Perbedaan saldo awal kas/bank' : 'Perbedaan saldo akhir kas/bank',
+                    'expected_source' => $summary[$sourceField] ?? null,
+                    'actual_gl' => $summary[$actualField] ?? null,
+                ],
+                $summary[$sourceField] ?? null,
+                $summary[$actualField] ?? null,
+                $summary[$varianceField] ?? null,
+                '',
+                $auditedAt,
+                '',
+                $accountId === null ? 'Kas/Bank gabungan' : 'Akun pembayaran #'.$accountId,
+                $balanceScope
+            );
+            if ($finding !== null) {
+                $rows[$finding['finding_key']] = $finding;
+            }
+        }
+
+        $movementKeysByAccount = [];
+        foreach ($auditRows as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+
+            $sourceDate = $this->dateOrNull($row['date'] ?? null);
+            $accountIdForRow = empty($row['account_id']) ? null : (int) $row['account_id'];
+            if ($sourceDate === null || $accountIdForRow === null) {
+                continue;
+            }
+            $movementScope = $this->cashBankMovementScope($accountIdForRow);
+            $identity = $this->cashBankMovementIdentity($row, $accountIdForRow);
+            $movementKey = $this->makeFinding(
+                $businessId,
+                (int) substr($sourceDate, 0, 4),
+                'cash_bank',
+                'movement',
+                $identity,
+                $row,
+                $row['operational_amount'] ?? null,
+                $row['accounting_amount'] ?? null,
+                is_numeric($row['difference'] ?? null) ? -(float) $row['difference'] : null,
+                '',
+                $auditedAt,
+                '',
+                (string) ($row['payment_account'] ?? ''),
+                $movementScope
+            );
+            if ($movementKey !== null) {
+                $rows[$movementKey['finding_key']] = $movementKey;
+                $movementKeysByAccount[$accountIdForRow][] = $movementKey['finding_key'];
+            }
+
+            $vatDirection = (string) ($row['tax_direction'] ?? '');
+            $vatComponent = $vatDirection === 'input' ? 'vat_in' : ($vatDirection === 'output' ? 'vat_out' : null);
+            if ($vatComponent !== null && is_numeric($row['vat_difference'] ?? null)) {
+                $vatFinding = $this->makeFinding(
+                    $businessId,
+                    (int) substr($sourceDate, 0, 4),
+                    'cash_bank',
+                    $vatComponent,
+                    $identity,
+                    $row,
+                    $row['source_vat'] ?? null,
+                    $row['journal_vat'] ?? null,
+                    -(float) $row['vat_difference'],
+                    '',
+                    $auditedAt,
+                    '',
+                    (string) ($row['payment_account'] ?? ''),
+                    $movementScope
+                );
+                if ($vatFinding !== null) {
+                    $rows[$vatFinding['finding_key']] = $vatFinding;
+                    $movementKeysByAccount[$accountIdForRow][] = $vatFinding['finding_key'];
+                }
+            }
+        }
+
+        $scopeKey = 'cash-bank-audit:'.$startDate.':'.$endDate.':'.($accountId === null ? 'all' : (string) $accountId).':'.(string) ($summary['cash_bank_mapping_scope'] ?? 'unscoped');
+        $stableAuditData = [
+            'scope' => $scopeKey,
+            'balance_comparable' => $balanceComparable,
+            'summary' => array_intersect_key($summary, array_flip([
+                'opening_balance', 'source_opening_balance', 'opening_balance_difference',
+                'closing_balance', 'source_closing_balance', 'closing_balance_difference',
+            ])),
+            'findings' => array_values(array_map(function (array $row): array {
+                return [$row['finding_key'], $row['expected_amount'], $row['actual_amount'], $row['variance']];
+            }, $rows)),
+        ];
+        $auditKey = hash('sha256', json_encode([$businessId, $stableAuditData], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '{}');
+
+        DB::transaction(function () use ($businessId, $year, $scopeKey, $rows, $auditKey, $auditedAt, $startDate, $endDate, $accountId, $balanceScope, $movementKeysByAccount): void {
+            $this->recordAudit($businessId, $year, $scopeKey, $rows, $auditKey, $auditedAt, null);
+            $this->upsertFindings($rows, $auditKey, $auditedAt);
+
+            $balanceKeys = array_values(array_filter(array_keys($rows), function ($key) use ($rows): bool {
+                return in_array($rows[$key]['component'], ['opening', 'closing'], true);
+            }));
+            if ($balanceComparable) {
+                $this->resolveMissingFindings(
+                    DB::table('accounting_legacy_reconciliation_findings')
+                        ->where('business_id', $businessId)->where('type', 'cash_bank')->where('scope_key', $balanceScope)
+                        ->where('is_current', true),
+                    $balanceKeys,
+                    $auditKey,
+                    $auditedAt,
+                    'Selisih saldo tidak muncul pada audit kas/bank ulang dengan periode, akun, dan mapping yang sama.'
+                );
+            }
+
+            $accountIds = $accountId === null
+                ? DB::table('accounting_legacy_reconciliation_findings')
+                    ->where('business_id', $businessId)->where('type', 'cash_bank')->where('scope_key', 'like', 'cash-bank-movement:%')
+                    ->whereBetween('source_date', [$startDate, $endDate])->distinct()->pluck('scope_key')->map(function ($scope): ?int {
+                        $parts = explode(':', (string) $scope);
+                        return isset($parts[1]) && ctype_digit($parts[1]) ? (int) $parts[1] : null;
+                    })->filter()->unique()->values()->all()
+                : [$accountId];
+
+            foreach ($accountIds as $movementAccountId) {
+                $movementScope = $this->cashBankMovementScope((int) $movementAccountId);
+                $this->resolveMissingFindings(
+                    DB::table('accounting_legacy_reconciliation_findings')
+                        ->where('business_id', $businessId)->where('type', 'cash_bank')->where('scope_key', $movementScope)
+                        ->whereBetween('source_date', [$startDate, $endDate])->where('is_current', true),
+                    array_values(array_unique($movementKeysByAccount[(int) $movementAccountId] ?? [])),
+                    $auditKey,
+                    $auditedAt,
+                    'Selisih transaksi tidak muncul pada audit kas/bank ulang dalam periode yang sama.'
                 );
             }
         });
@@ -134,7 +296,7 @@ class LegacyReconciliationFindingSnapshotService
             })->all();
 
         return [
-            'open_count' => (int) $this->baseQuery($businessId)->where('status', 'open')->count(),
+            'open_count' => (int) $this->baseQuery($businessId)->where('is_current', true)->where('status', 'open')->count(),
             'filtered_count' => (int) (clone $query)->count(),
             'by_year_type_component' => $byYearTypeComponent,
             'last_audited_at' => DB::table('accounting_legacy_reconciliation_audits')
@@ -169,7 +331,7 @@ class LegacyReconciliationFindingSnapshotService
 
     public function openCount(int $businessId): int
     {
-        return (int) $this->baseQuery($businessId)->where('status', 'open')->count();
+        return (int) $this->baseQuery($businessId)->where('is_current', true)->where('status', 'open')->count();
     }
 
     public function typeLabel(string $type): string
@@ -179,6 +341,7 @@ class LegacyReconciliationFindingSnapshotService
             'control' => 'Kontrol buku besar',
             'account_balance' => 'Saldo akun',
             'unbalanced_journal' => 'Journal tidak seimbang',
+            'cash_bank' => 'Audit kas/bank',
         ][$type] ?? $type;
     }
 
@@ -187,11 +350,11 @@ class LegacyReconciliationFindingSnapshotService
         return [
             'base' => 'Basis', 'vat_in' => 'VAT In', 'vat_out' => 'VAT Out', 'total' => 'Total',
             'opening' => 'Saldo awal', 'debit' => 'Debit', 'credit' => 'Kredit',
-            'closing' => 'Saldo akhir', 'debit_credit' => 'Debit vs kredit',
+            'closing' => 'Saldo akhir', 'debit_credit' => 'Debit vs kredit', 'movement' => 'Selisih transaksi kas/bank',
         ][$component] ?? $component;
     }
 
-    private function findingsFromReport(int $businessId, int $year, array $report, string $auditKey, string $auditedAt): array
+    private function findingsFromReport(int $businessId, int $year, array $report, string $auditKey, string $auditedAt, string $scopeKey): array
     {
         $findings = [];
         foreach ((array) ($report['transaction_reconciliation'] ?? []) as $row) {
@@ -212,7 +375,10 @@ class LegacyReconciliationFindingSnapshotService
                     $row[$journalField] ?? null,
                     $variance,
                     $auditKey,
-                    $auditedAt
+                    $auditedAt,
+                    '',
+                    '',
+                    $scopeKey
                 );
                 if ($finding !== null) {
                     $findings[$finding['finding_key']] = $finding;
@@ -231,7 +397,10 @@ class LegacyReconciliationFindingSnapshotService
                 $row['journal_debit'] ?? null,
                 $imbalance,
                 $auditKey,
-                $auditedAt
+                $auditedAt,
+                '',
+                '',
+                $scopeKey
             );
             if ($finding !== null) {
                 $findings[$finding['finding_key']] = $finding;
@@ -260,7 +429,8 @@ class LegacyReconciliationFindingSnapshotService
                 $auditKey,
                 $auditedAt,
                 (string) ($row['account_no'] ?? ''),
-                (string) ($row['account_name'] ?? '')
+                (string) ($row['account_name'] ?? ''),
+                $scopeKey
             );
             if ($finding !== null) {
                 $findings[$finding['finding_key']] = $finding;
@@ -299,7 +469,8 @@ class LegacyReconciliationFindingSnapshotService
                     $auditKey,
                     $auditedAt,
                     (string) ($row['account_no'] ?? ''),
-                    (string) ($row['account_name'] ?? '')
+                    (string) ($row['account_name'] ?? ''),
+                    $scopeKey
                 );
                 if ($finding !== null) {
                     $findings[$finding['finding_key']] = $finding;
@@ -323,14 +494,19 @@ class LegacyReconciliationFindingSnapshotService
         string $auditKey,
         string $auditedAt,
         string $accountNo = '',
-        string $accountName = ''
+        string $accountName = '',
+        string $scopeKey = self::LEGACY_SCOPE
     ): ?array {
         if (! is_numeric($expected) || ! is_numeric($actual) || ! is_numeric($variance)
             || ! is_finite((float) $variance) || abs((float) $variance) <= self::VARIANCE_TOLERANCE) {
             return null;
         }
 
-        $key = hash('sha256', implode('|', [$businessId, $year, $type, $sourceIdentity, $component]));
+        $keyParts = [$businessId, $year, $type, $sourceIdentity, $component];
+        if ($scopeKey !== self::LEGACY_SCOPE) {
+            $keyParts[] = $scopeKey;
+        }
+        $key = hash('sha256', implode('|', $keyParts));
         $sourceDate = $this->dateOrNull($evidence['date'] ?? null);
         $sourceType = (string) ($evidence['source_type'] ?? ($type === 'control' ? 'Legacy control' : 'Journal'));
         $sourceNumber = (string) ($evidence['source_number'] ?? $evidence['source_file'] ?? '');
@@ -339,6 +515,7 @@ class LegacyReconciliationFindingSnapshotService
         return [
             'business_id' => $businessId,
             'year' => $year,
+            'scope_key' => $scopeKey,
             'type' => $type,
             'component' => $component,
             'finding_key' => $key,
@@ -385,6 +562,192 @@ class LegacyReconciliationFindingSnapshotService
         return hash('sha256', json_encode($parts, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '{}');
     }
 
+    private function persistSnapshot(int $businessId, int $year, string $scopeKey, array $rows, string $auditKey, string $auditedAt, ?string $manifest): void
+    {
+        DB::transaction(function () use ($businessId, $year, $scopeKey, $rows, $auditKey, $auditedAt, $manifest): void {
+            $this->recordAudit($businessId, $year, $scopeKey, $rows, $auditKey, $auditedAt, $manifest);
+            $this->upsertFindings($rows, $auditKey, $auditedAt);
+            $keys = array_column($rows, 'finding_key');
+            $this->resolveMissingFindings(
+                DB::table('accounting_legacy_reconciliation_findings')
+                    ->where('business_id', $businessId)->where('year', $year)->where('scope_key', $scopeKey)->where('is_current', true),
+                $keys,
+                $auditKey,
+                $auditedAt,
+                'Selisih tidak muncul pada audit legacy ulang untuk tahun ini.'
+            );
+        });
+    }
+
+    private function recordAudit(int $businessId, int $year, string $scopeKey, array $rows, string $auditKey, string $auditedAt, ?string $manifest): void
+    {
+        $now = now();
+        DB::table('accounting_legacy_reconciliation_audits')->upsert([[
+            'business_id' => $businessId,
+            'year' => $year,
+            'scope_key' => $scopeKey,
+            'audit_key' => $auditKey,
+            'source_manifest_sha256' => $manifest,
+            'finding_count' => count($rows),
+            'completed_at' => $auditedAt,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]], ['business_id', 'year', 'audit_key'], [
+            'scope_key', 'source_manifest_sha256', 'finding_count', 'completed_at', 'updated_at',
+        ]);
+    }
+
+    private function upsertFindings(array $rows, string $auditKey, string $auditedAt): void
+    {
+        $now = now();
+        $existingByKey = [];
+        foreach (array_chunk(array_column($rows, 'finding_key'), 400) as $keys) {
+            if ($keys === []) {
+                continue;
+            }
+            $existingByKey += DB::table('accounting_legacy_reconciliation_findings')
+                ->where('business_id', $rows[0]['business_id'] ?? 0)
+                ->whereIn('finding_key', $keys)
+                ->get(['finding_key', 'status', 'is_current', 'resolution_history'])
+                ->keyBy('finding_key')->all();
+        }
+        $reopenedHistory = [];
+        foreach ($rows as &$row) {
+            $existing = $existingByKey[$row['finding_key']] ?? null;
+            if ($existing) {
+                $row['resolution_history'] = $existing->resolution_history;
+                $row['status'] = $existing->status;
+                if (! (bool) $existing->is_current || $existing->status === 'resolved') {
+                    $row['status'] = 'open';
+                    $row['resolution_history'] = $this->appendResolutionEvent(
+                        $existing->resolution_history,
+                        'reopened',
+                        'Selisih muncul kembali pada audit.',
+                        $auditKey,
+                        $auditedAt
+                    );
+                    $reopenedHistory[$row['finding_key']] = $row['resolution_history'];
+                }
+            }
+            $row['is_current'] = true;
+            $row['last_audit_key'] = $auditKey;
+            $row['last_audited_at'] = $auditedAt;
+            $row['updated_at'] = $now;
+        }
+        unset($row);
+
+        foreach (array_chunk($rows, 250) as $chunk) {
+            DB::table('accounting_legacy_reconciliation_findings')->upsert(
+                $chunk,
+                ['business_id', 'finding_key'],
+                [
+                    'year', 'scope_key', 'type', 'component', 'source_identity', 'source_type', 'source_number', 'source_date',
+                    'account_no', 'account_name', 'description', 'expected_amount', 'actual_amount', 'variance', 'evidence',
+                    'status', 'is_current', 'last_audit_key', 'last_audited_at', 'updated_at',
+                ]
+            );
+        }
+
+        foreach (array_chunk($reopenedHistory, 150, true) as $chunk) {
+            $caseSql = 'CASE finding_key ';
+            $caseBindings = [];
+            foreach ($chunk as $findingKey => $history) {
+                $caseSql .= 'WHEN ? THEN ? ';
+                $caseBindings[] = $findingKey;
+                $caseBindings[] = $history;
+            }
+            $caseSql .= 'ELSE resolution_history END';
+            $placeholders = implode(',', array_fill(0, count($chunk), '?'));
+            $businessId = (int) ($rows[0]['business_id'] ?? 0);
+            $bindings = array_merge($caseBindings, [$businessId], array_keys($chunk));
+            DB::update(
+                'UPDATE accounting_legacy_reconciliation_findings SET resolution_history = '.$caseSql.' WHERE business_id = ? AND finding_key IN ('.$placeholders.')',
+                $bindings
+            );
+        }
+    }
+
+    private function resolveMissingFindings($query, array $currentKeys, string $auditKey, string $auditedAt, string $reason): void
+    {
+        if ($currentKeys !== []) {
+            $query->whereNotIn('finding_key', $currentKeys);
+        }
+        $staleRows = $query->get(['id', 'resolution_history']);
+        if ($staleRows->isEmpty()) {
+            return;
+        }
+
+        $now = now()->toDateTimeString();
+        foreach ($staleRows->chunk(150) as $chunk) {
+            $ids = [];
+            $caseSql = 'CASE id ';
+            $bindings = [];
+            foreach ($chunk as $stale) {
+                $ids[] = (int) $stale->id;
+                $caseSql .= 'WHEN ? THEN ? ';
+                $bindings[] = (int) $stale->id;
+                $bindings[] = $this->appendResolutionEvent($stale->resolution_history, 'audit_cleared', $reason, $auditKey, $auditedAt);
+            }
+            $caseSql .= 'ELSE resolution_history END';
+            $idPlaceholders = implode(',', array_fill(0, count($ids), '?'));
+            $caseBindings = $bindings;
+            $bindings = array_merge([$now, $auditKey, $auditedAt], $caseBindings, $ids);
+            DB::update(
+                'UPDATE accounting_legacy_reconciliation_findings SET status = \'resolved\', is_current = 0, updated_at = ?, last_audit_key = ?, last_audited_at = ?, resolution_history = '.$caseSql.' WHERE id IN ('.$idPlaceholders.')',
+                $bindings
+            );
+        }
+    }
+
+    private function appendResolutionEvent(?string $history, string $action, string $reason, string $auditKey, string $at): string
+    {
+        $events = json_decode((string) $history, true);
+        if (! is_array($events)) {
+            $events = [];
+        }
+        $events[] = ['action' => $action, 'reason' => $reason, 'audit_key' => $auditKey, 'at' => $at];
+
+        return json_encode($events, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '[]';
+    }
+
+    private function cashBankMovementScope(int $accountId): string
+    {
+        return 'cash-bank-movement:'.$accountId;
+    }
+
+    private function cashBankBalanceScope(string $startDate, string $endDate, ?int $accountId, string $mappingScope): string
+    {
+        return 'cash-bank-balance:'.$startDate.':'.$endDate.':'.($accountId === null ? 'all' : (string) $accountId).':'.$mappingScope;
+    }
+
+    private function cashBankMovementIdentity(array $row, int $accountId): string
+    {
+        if (! empty($row['source_record_type']) && ! empty($row['source_record_id'])) {
+            return $this->identityHash([
+                'account_id' => $accountId,
+                'source_type' => strtolower((string) $row['source_record_type']),
+                'source_id' => (int) $row['source_record_id'],
+            ]);
+        }
+
+        return $this->identityHash([
+            'account_id' => $accountId,
+            'date' => (string) ($row['date'] ?? ''),
+            'source_type' => (string) ($row['source_type'] ?? ''),
+            'source_number' => (string) ($row['source_number'] ?? ''),
+            'description' => (string) ($row['description'] ?? ''),
+        ]);
+    }
+
+    private function isValidDate(string $value): bool
+    {
+        if (preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $value, $matches) !== 1) {
+            return false;
+        }
+
+        return checkdate((int) $matches[2], (int) $matches[3], (int) $matches[1]);
+    }
+
     private function filteredQuery(int $businessId, array $filters): Builder
     {
         $query = $this->baseQuery($businessId);
@@ -416,8 +779,7 @@ class LegacyReconciliationFindingSnapshotService
     private function baseQuery(int $businessId): Builder
     {
         return DB::table('accounting_legacy_reconciliation_findings')
-            ->where('business_id', $businessId)
-            ->where('is_current', true);
+            ->where('business_id', $businessId);
     }
 
     private function timestamp($value): string

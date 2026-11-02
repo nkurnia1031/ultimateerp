@@ -1,11 +1,12 @@
 @forelse($rows as $finding)
     @php
-        $componentLabels = ['base' => 'Basis', 'vat_in' => 'VAT In', 'vat_out' => 'VAT Out', 'total' => 'Total', 'opening' => 'Saldo awal', 'debit' => 'Debit', 'credit' => 'Kredit', 'closing' => 'Saldo akhir', 'debit_credit' => 'Debit vs kredit'];
         $evidence = json_decode($finding->evidence, true) ?: [];
     @endphp
     <tr>
         <td>{{ $finding->source_date ?: '—' }}<br><small class="text-muted">{{ $finding->year }}</small></td>
-        <td><strong>{{ $findings->typeLabel($finding->type) }}</strong><br>{{ $componentLabels[$finding->component] ?? $finding->component }}<br><small>{{ $finding->description }}</small></td>
+        <td><strong>{{ $findings->typeLabel($finding->type) }}</strong><br>{{ $findings->componentLabel($finding->component) }}<br><small>{{ $finding->description }}</small>
+            @if(! empty($evidence['period_start']) && ! empty($evidence['period_end']))<br><small>Periode {{ $evidence['period_start'] }} — {{ $evidence['period_end'] }}</small>@endif
+        </td>
         <td>{{ $finding->source_type ?: '—' }}<br><strong>{{ $finding->source_number ?: '—' }}</strong></td>
         <td>{{ trim($finding->account_no.' '.$finding->account_name) ?: '—' }}</td>
         <td class="text-right">@if($finding->expected_amount !== null) @format_currency($finding->expected_amount) @else — @endif</td>

@@ -6,6 +6,7 @@ use App\User;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Modules\Accounting\Services\LegacyReconciliationFindingSnapshotService;
 use Spatie\Permission\Models\Permission;
 
 class JournalImportE2ESeeder extends Seeder
@@ -21,6 +22,7 @@ class JournalImportE2ESeeder extends Seeder
 
                 $this->ensurePermissions($userId);
                 $this->seedGeneralLedgerFixture($businessId, $userId, $now);
+                $this->seedReconciliationFixture($businessId);
 
                 return;
             }
@@ -91,7 +93,30 @@ class JournalImportE2ESeeder extends Seeder
 
             $this->ensurePermissions($userId);
             $this->seedGeneralLedgerFixture($businessId, $userId, $now);
+            $this->seedReconciliationFixture($businessId);
         });
+    }
+
+    private function seedReconciliationFixture(int $businessId): void
+    {
+        app(LegacyReconciliationFindingSnapshotService::class)->persistReport($businessId, [
+            'business_id' => $businessId,
+            'year' => 2022,
+            'generated_at' => '2026-11-04T10:00:00+00:00',
+            'source_manifest_sha256' => str_repeat('c', 64),
+            'transaction_reconciliation' => [[
+                'date' => '2022-01-15',
+                'source_type' => 'Journal Entry',
+                'source_number' => 'CI-JRN-UNBALANCED',
+                'description' => 'Fixture Playwright temuan tidak seimbang',
+                'operational_identity' => null,
+                'journal_debit' => 125,
+                'journal_credit' => 100,
+                'journal_balance_variance' => 25,
+            ]],
+            'account_balances' => [],
+            'control_comparison' => [],
+        ]);
     }
 
     private function ensurePermissions(int $userId): void

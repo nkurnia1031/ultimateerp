@@ -177,6 +177,10 @@ class GeneralLedgerAuditTest extends TestCase
         $response->assertOk();
         $response->assertSee('PUR-50');
         $response->assertDontSee('TENANT-SECRET');
+        $this->assertGreaterThan(0, DB::table('accounting_legacy_reconciliation_findings')
+            ->where('business_id', 1)->where('type', 'cash_bank')->where('is_current', true)->count());
+        $this->assertSame(1, DB::table('accounting_legacy_reconciliation_audits')
+            ->where('business_id', 1)->where('scope_key', 'like', 'cash-bank-audit:2022-01-01:2022-01-31:all:%')->count());
         $this->assertSame($movementCount, DB::table('account_transactions')->count());
         $this->assertSame($postingCount, DB::table('accounting_accounts_transactions')->count());
 
@@ -266,7 +270,21 @@ class GeneralLedgerAuditTest extends TestCase
             $table->dateTime('operation_date'); $table->text('note')->nullable(); $table->unsignedBigInteger('journal_import_id')->nullable();
         });
         Schema::create('accounting_legacy_reconciliation_findings', function (Blueprint $table) {
-            $table->bigIncrements('id'); $table->unsignedInteger('business_id'); $table->string('status'); $table->boolean('is_current');
+            $table->bigIncrements('id'); $table->unsignedInteger('business_id'); $table->unsignedSmallInteger('year');
+            $table->string('scope_key', 120)->default('legacy-annual'); $table->string('type', 40); $table->string('component', 40);
+            $table->char('finding_key', 64); $table->char('source_identity', 64); $table->string('source_type', 100)->nullable();
+            $table->text('source_number')->nullable(); $table->date('source_date')->nullable(); $table->string('account_no', 100)->default('');
+            $table->string('account_name')->default(''); $table->text('description')->nullable();
+            $table->decimal('expected_amount', 22, 4)->nullable(); $table->decimal('actual_amount', 22, 4)->nullable();
+            $table->decimal('variance', 22, 4); $table->longText('evidence'); $table->string('status', 24)->default('open');
+            $table->boolean('is_current')->default(true); $table->char('last_audit_key', 64); $table->dateTime('last_audited_at');
+            $table->longText('resolution_history')->nullable(); $table->timestamps(); $table->unique(['business_id', 'finding_key']);
+        });
+        Schema::create('accounting_legacy_reconciliation_audits', function (Blueprint $table) {
+            $table->bigIncrements('id'); $table->unsignedInteger('business_id'); $table->unsignedSmallInteger('year');
+            $table->string('scope_key', 120)->default('legacy-annual'); $table->char('audit_key', 64);
+            $table->char('source_manifest_sha256', 64)->nullable(); $table->unsignedInteger('finding_count')->default(0);
+            $table->dateTime('completed_at'); $table->timestamps(); $table->unique(['business_id', 'year', 'audit_key']);
         });
         Schema::create('accounting_journal_imports', function (Blueprint $table) {
             $table->bigIncrements('id'); $table->unsignedInteger('business_id'); $table->string('status');
