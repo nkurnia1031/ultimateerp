@@ -141,7 +141,7 @@ class ReconciliationFindingInboxTest extends TestCase
         $this->assertStringContainsString('INV-2023', $payload['rows_html']);
         $this->assertStringNotContainsString('INV-MISSING-LINK', $payload['rows_html']);
         $this->assertStringNotContainsString('TENANT-TWO-SECRET', $payload['rows_html']);
-        $this->assertStringContainsString('Rp', $payload['rows_html']);
+        $this->assertSame(1, $payload['filtered_count']);
     }
 
     private function annualReport(): array
