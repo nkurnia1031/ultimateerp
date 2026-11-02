@@ -17,6 +17,7 @@ use Modules\Accounting\Services\LegacyAttachmentImporter;
 use Modules\Accounting\Services\JournalImportInvoiceService;
 use Modules\Accounting\Services\JournalImportExpenseService;
 use Modules\Accounting\Services\LegacyAnnualAuditService;
+use Modules\Accounting\Services\LegacyReconciliationFindingSnapshotService;
 
 class ImportLegacySources extends Command
 {

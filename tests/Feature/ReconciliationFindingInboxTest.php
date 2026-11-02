@@ -132,15 +132,16 @@ class ReconciliationFindingInboxTest extends TestCase
                 \App\Http\Middleware\Language::class,
                 \App\Http\Middleware\Timezone::class,
                 \App\Http\Middleware\AdminSidebarMenu::class,
-            ])->get(route('accounting.reconciliation.findings', [
+            ])->get(route('accounting.reconciliation.findings.data', [
                 'year' => 2023, 'type' => 'transaction', 'status' => 'open', 'search' => 'INV-2023',
             ]));
 
         $response->assertOk();
-        $response->assertSee('INV-2023');
-        $response->assertDontSee('INV-MISSING-LINK');
-        $response->assertDontSee('TENANT-TWO-SECRET');
-        $response->assertSee('Rp');
+        $payload = $response->json();
+        $this->assertStringContainsString('INV-2023', $payload['rows_html']);
+        $this->assertStringNotContainsString('INV-MISSING-LINK', $payload['rows_html']);
+        $this->assertStringNotContainsString('TENANT-TWO-SECRET', $payload['rows_html']);
+        $this->assertStringContainsString('Rp', $payload['rows_html']);
     }
 
     private function annualReport(): array
