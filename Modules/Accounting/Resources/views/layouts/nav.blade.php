@@ -51,6 +51,15 @@
                         </li>
                     @endif
                     @if(auth()->user()->can('accounting.view_reports'))
+                    @php
+                        $reconciliationBusinessId = (int) request()->session()->get('user.business_id');
+                        $reconciliationOpenCount = app(\Modules\Accounting\Services\LegacyReconciliationFindingSnapshotService::class)->openCount($reconciliationBusinessId);
+                    @endphp
+                    <li @if(request()->routeIs('accounting.reconciliation.findings*')) class="active" @endif>
+                        <a href="{{ route('accounting.reconciliation.findings') }}">Temuan Rekonsiliasi
+                            @if($reconciliationOpenCount > 0)<span class="badge bg-yellow" aria-label="{{ $reconciliationOpenCount }} temuan terbuka">{{ number_format($reconciliationOpenCount) }}</span>@endif
+                        </a>
+                    </li>
                     <li @if(request()->segment(2) == 'reports') class="active" @endif><a href="{{action([\Modules\Accounting\Http\Controllers\ReportController::class, 'index'])}}">
                         @lang('accounting::lang.reports')
                     </a></li>

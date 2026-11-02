@@ -44,7 +44,8 @@ class ImportLegacySources extends Command
         LegacyAttachmentImporter $attachmentImporter,
         JournalImportInvoiceService $invoiceService,
         JournalImportExpenseService $expenseService,
-        LegacyAnnualAuditService $annualAuditService
+        LegacyAnnualAuditService $annualAuditService,
+        LegacyReconciliationFindingSnapshotService $findingSnapshots
     ): int {
         $businessId = $this->positiveOption('business-id');
         $userId = $this->positiveOption('user-id');
@@ -261,6 +262,7 @@ class ImportLegacySources extends Command
                     $summary['operational_only_processing'] = $operationalOnly;
                     $summary['legacy_attachments'] = $attachments;
                     $runService->updateRun($runId, $businessId, 'review', 'Tidak ada entri Journal; transaksi operasional lengkap dibuat atau ditautkan dan sisanya masuk review tanpa posting GL.', $summary, true);
+                    $this->persistAnnualFindings($findingSnapshots, $businessId, $year, $annualAudit);
                     $this->comment('Tidak ada Journal entry. Transaksi operasional lengkap diproses tanpa GL; item yang belum aman tetap tersimpan untuk review.');
                     $this->printAnnualAudit($annualAudit);
                     $this->printAttachmentSummary($attachments);
@@ -380,6 +382,7 @@ class ImportLegacySources extends Command
                 $message .= ' Sebagian lampiran belum dapat ditautkan atau diunduh; rincian tersimpan pada laporan lampiran.';
             }
             $runService->updateRun($runId, $businessId, $runStatus, $message, $summary, $finished);
+            $this->persistAnnualFindings($findingSnapshots, $businessId, $year, $annualAudit);
             $this->line('Legacy run #'.$runId.' — '.$message);
             $this->line('Crosswalk sumber yang tersimpan: '.$crosswalkCount);
             $this->printAnnualAudit($annualAudit);
@@ -731,8 +734,28 @@ class ImportLegacySources extends Command
             && Schema::hasTable('accounting_legacy_import_crosswalks')
             && Schema::hasColumn('accounting_legacy_import_crosswalks', 'legacy_record_id')
             && Schema::hasTable('accounting_legacy_import_attachments')
+            && Schema::hasTable('accounting_legacy_reconciliation_audits')
+            && Schema::hasTable('accounting_legacy_reconciliation_findings')
             && Schema::hasColumn('media', 'storage_location')
             && Schema::hasColumn('media', 'legacy_source_attachment_id');
+    }
+
+    private function persistAnnualFindings(
+        LegacyReconciliationFindingSnapshotService $findingSnapshots,
+        int $businessId,
+        ?int $year,
+        array $annualAudit
+    ): void {
+        $reports = $findingSnapshots->persistReports($businessId, (array) ($annualAudit['reports'] ?? []));
+        if ($reports === []) {
+            $reports = $findingSnapshots->persistFromDirectory(
+                $businessId,
+                (string) ($annualAudit['output_directory'] ?? storage_path('app/legacy-import-reports/business-'.$businessId)),
+                $year
+            );
+        }
+
+        $this->line('Snapshot temuan rekonsiliasi tersimpan: '.array_sum($reports).' temuan pada '.count($reports).' tahun.');
     }
 
     private function journalEvidenceIdentities(int $importId, int $businessId): array

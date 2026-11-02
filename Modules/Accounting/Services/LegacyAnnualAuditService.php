@@ -285,6 +285,8 @@ class LegacyAnnualAuditService
         $sourceType = trim((string) ($entry['source_type'] ?? ''));
         $sourceNumber = trim((string) ($entry['source_number'] ?? ''));
         $journal = $this->journalComponents($entry);
+        $journalDebit = $this->journalSideTotal($entry, 'debit');
+        $journalCredit = $this->journalSideTotal($entry, 'credit');
         $operational = $document === null ? null : $this->operationalAmounts($document, $sourceType);
         $matchApplicable = in_array($sourceType, ['Sales Invoice', 'Purchase Invoice', 'Expense'], true);
         $documentStatus = (string) ($document['status'] ?? '');
@@ -315,6 +317,9 @@ class LegacyAnnualAuditService
             'journal_vat_out' => $journal['vat_out'],
             'journal_other_tax' => $journal['other_tax'],
             'journal_total' => $journal['total'],
+            'journal_debit' => $journalDebit,
+            'journal_credit' => $journalCredit,
+            'journal_balance_variance' => round($journalDebit - $journalCredit, 2),
             'operational_base' => $operational['base'] ?? null,
             'operational_vat_in' => $operational['vat_in'] ?? null,
             'operational_vat_out' => $operational['vat_out'] ?? null,
@@ -357,6 +362,9 @@ class LegacyAnnualAuditService
             'journal_vat_out' => null,
             'journal_other_tax' => null,
             'journal_total' => null,
+            'journal_debit' => null,
+            'journal_credit' => null,
+            'journal_balance_variance' => null,
             'operational_base' => $amounts['base'],
             'operational_vat_in' => $amounts['vat_in'],
             'operational_vat_out' => $amounts['vat_out'],
@@ -374,6 +382,23 @@ class LegacyAnnualAuditService
             'has_operational_source' => true,
             'operational_identity' => $identity,
         ];
+    }
+
+    private function journalSideTotal(array $entry, string $side): float
+    {
+        $totalField = $side.'_total';
+        if (is_numeric($entry[$totalField] ?? null)) {
+            return round((float) $entry[$totalField], 2);
+        }
+
+        $total = 0.0;
+        foreach ((array) ($entry['lines'] ?? []) as $line) {
+            if (is_array($line)) {
+                $total += $this->amount($line[$side] ?? 0);
+            }
+        }
+
+        return round($total, 2);
     }
 
     private function journalComponents(array $entry): array
@@ -928,6 +953,7 @@ class LegacyAnnualAuditService
             'Basis Operasional', 'VAT In Operasional', 'VAT Out Operasional', 'Total Operasional',
             'Selisih Basis', 'Selisih VAT In', 'Selisih VAT Out', 'Selisih Total', 'Status Match',
             'Alasan', 'Resolusi Konflik Journal', 'Komponen Akun Journal', 'File/Baris Journal', 'File/Baris Operasional',
+            'Debit Journal', 'Kredit Journal', 'Selisih Debit/Kredit',
         ], array_map(fn (array $row) => [
             $row['year'], $row['date'], $row['source_type'], $row['source_number'], $row['description'],
             $row['label'], $row['label_source'], $row['journal_base'], $row['journal_vat_in'],
@@ -937,7 +963,8 @@ class LegacyAnnualAuditService
             $row['vat_out_variance'], $row['total_variance'], $row['match_status'], $row['match_reason'],
             $this->jsonCell($row['journal_conflict_resolution'] ?? []),
             $this->jsonCell($row['journal_components'] ?? []), $this->jsonCell($row['journal_sources'] ?? []),
-            $this->jsonCell($row['operational_sources'] ?? []),
+            $this->jsonCell($row['operational_sources'] ?? []), $row['journal_debit'] ?? null,
+            $row['journal_credit'] ?? null, $row['journal_balance_variance'] ?? null,
         ], (array) $report['transaction_reconciliation']));
 
         $this->writeTable($workbook->createSheet()->setTitle('Kontrol Saldo'), [

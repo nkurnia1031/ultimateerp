@@ -9,6 +9,7 @@ use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
 use Modules\Accounting\Entities\AccountingAccount;
 use Modules\Accounting\Entities\AccountingAccountType;
+use Modules\Accounting\Services\LegacyReconciliationFindingSnapshotService;
 use Modules\Accounting\Utils\AccountingUtil;
 
 class AccountingController extends Controller
@@ -154,13 +155,20 @@ class AccountingController extends Controller
             $all_charts[$k] = $chart;
         }
 
+        $reconciliationSummary = null;
+        if (auth()->user()->can('accounting.view_reports')) {
+            $reconciliationSummary = app(LegacyReconciliationFindingSnapshotService::class)
+                ->summary((int) $business_id, ['status' => 'open']);
+        }
+
         return view('accounting::accounting.dashboard')->with(compact(
             'coa_overview_chart',
             'all_charts',
             'coa_overview',
             'account_types',
             'end_date',
-            'start_date'
+            'start_date',
+            'reconciliationSummary'
         ));
     }
 

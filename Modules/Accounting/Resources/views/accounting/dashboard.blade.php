@@ -6,6 +6,16 @@
     @include('accounting::layouts.nav')
     
     <section class="content">
+        @if(is_array($reconciliationSummary) && $reconciliationSummary['open_count'] > 0)
+            <div class="row">
+                <div class="col-md-12">
+                    <div class="alert alert-warning" role="status">
+                        <strong>{{ number_format($reconciliationSummary['open_count']) }} temuan rekonsiliasi terbuka.</strong>
+                        <a class="alert-link" href="{{ route('accounting.reconciliation.findings') }}">Tinjau temuan per tahun dan jenis</a>.
+                    </div>
+                </div>
+            </div>
+        @endif
         <div class="row">
             <div class="col-md-12">
                 <div class="form-group pull-right">

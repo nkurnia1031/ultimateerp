@@ -28,6 +28,16 @@ class ReconciliationFindingInboxTest extends TestCase
         DB::purge('sqlite');
         DB::setDefaultConnection('sqlite');
         $this->createFindingTable();
+        Schema::create('transactions', function (Blueprint $table) {
+            $table->increments('id');
+            $table->decimal('final_total', 22, 4);
+        });
+        Schema::create('accounting_accounts_transactions', function (Blueprint $table) {
+            $table->increments('id');
+            $table->decimal('amount', 22, 4);
+        });
+        DB::table('transactions')->insert(['id' => 1, 'final_total' => 123.45]);
+        DB::table('accounting_accounts_transactions')->insert(['id' => 1, 'amount' => 67.89]);
     }
 
     public function test_persisting_the_same_annual_report_is_idempotent_and_keeps_offsets_visible(): void
@@ -36,18 +46,52 @@ class ReconciliationFindingInboxTest extends TestCase
         $report = $this->annualReport();
 
         $firstCount = $service->persistReport(1, $report);
+        $report['generated_at'] = '2026-11-03T10:05:00+07:00';
         $secondCount = $service->persistReport(1, $report);
 
-        $this->assertSame(5, $firstCount);
-        $this->assertSame(5, $secondCount);
-        $this->assertSame(5, DB::table('accounting_legacy_reconciliation_findings')->count());
+        $this->assertSame(9, $firstCount);
+        $this->assertSame(9, $secondCount);
+        $this->assertSame(9, DB::table('accounting_legacy_reconciliation_findings')->count());
+        $this->assertSame(1, DB::table('accounting_legacy_reconciliation_audits')->count());
 
         $summary = $service->summary(1);
-        $transactionSummary = collect($summary['by_year_and_type'])->firstWhere('type', 'transaction');
-        $this->assertSame(1870000.0, (float) $transactionSummary['gross_amount']);
-        $this->assertSame(0.0, (float) $transactionSummary['net_amount']);
-        $this->assertSame(5, $summary['open_count']);
-        $this->assertSame(5, DB::table('accounting_legacy_reconciliation_findings')->where('is_current', true)->count());
+        $baseSummary = collect($summary['by_year_type_component'])->firstWhere('component', 'base');
+        $vatSummary = collect($summary['by_year_type_component'])->firstWhere('component', 'vat_out');
+        $debitSummary = collect($summary['by_year_type_component'])->firstWhere(function (array $row): bool {
+            return $row['type'] === 'control' && $row['component'] === 'debit';
+        });
+        $this->assertSame(935000.0, (float) $baseSummary['gross_amount']);
+        $this->assertSame(935000.0, (float) $baseSummary['net_amount']);
+        $this->assertSame(935000.0, (float) $vatSummary['gross_amount']);
+        $this->assertSame(-935000.0, (float) $vatSummary['net_amount']);
+        $this->assertSame(1870000.0, (float) $debitSummary['gross_amount']);
+        $this->assertSame(0.0, (float) $debitSummary['net_amount']);
+        $this->assertSame(2, DB::table('accounting_legacy_reconciliation_findings')->where('type', 'control')->where('component', 'debit')->count());
+        $this->assertSame(9, $summary['open_count']);
+        $this->assertSame(9, DB::table('accounting_legacy_reconciliation_findings')->where('is_current', true)->count());
+        $this->assertSame(10.0, (float) DB::table('accounting_legacy_reconciliation_findings')
+            ->where('type', 'unbalanced_journal')->value('variance'));
+        $this->assertSame('2026-11-03 10:05:00', $summary['last_audited_at']);
+        $this->assertSame(123.45, (float) DB::table('transactions')->where('id', 1)->value('final_total'));
+        $this->assertSame(67.89, (float) DB::table('accounting_accounts_transactions')->where('id', 1)->value('amount'));
+    }
+
+    public function test_completed_audit_with_no_findings_still_has_a_timestamp_and_year_filter(): void
+    {
+        $report = $this->annualReport();
+        $report['year'] = 2024;
+        $report['generated_at'] = '2026-11-04T11:15:00+07:00';
+        $report['transaction_reconciliation'] = [];
+        $report['account_balances'] = [];
+        $report['control_comparison'] = [];
+
+        $service = app(LegacyReconciliationFindingSnapshotService::class);
+        $this->assertSame(0, $service->persistReport(1, $report));
+
+        $summary = $service->summary(1);
+        $this->assertSame('2026-11-04 11:15:00', $summary['last_audited_at']);
+        $this->assertSame([2024], $service->years(1));
+        $this->assertSame(0, $summary['open_count']);
     }
 
     public function test_findings_page_filters_searches_and_scopes_rows_to_the_active_business(): void
@@ -67,8 +111,17 @@ class ReconciliationFindingInboxTest extends TestCase
         $moduleUtil->shouldReceive('hasThePermissionInSubscription')->andReturn(true);
         $this->app->instance(\App\Utils\ModuleUtil::class, $moduleUtil);
 
-        $response = $this->actingAs($user)->withSession(['user' => ['business_id' => 1]])
-            ->get(route('accounting.reconciliation.findings', [
+        $response = $this->actingAs($user)->withSession([
+            'user' => ['business_id' => 1],
+            'business' => ['currency_precision' => 2],
+            'currency' => ['code' => 'IDR', 'symbol' => 'Rp', 'symbol_placement' => 'before'],
+        ])
+            ->withoutMiddleware([
+                \App\Http\Middleware\SetSessionData::class,
+                \App\Http\Middleware\Language::class,
+                \App\Http\Middleware\Timezone::class,
+                \App\Http\Middleware\AdminSidebarMenu::class,
+            ])->get(route('accounting.reconciliation.findings', [
                 'year' => 2023, 'type' => 'transaction', 'status' => 'open', 'search' => 'INV-2023',
             ]));
 
@@ -107,6 +160,16 @@ class ReconciliationFindingInboxTest extends TestCase
                     'journal_debit' => 500000, 'journal_credit' => 500000, 'journal_balance_variance' => 0,
                     'journal_components' => [], 'journal_sources' => [], 'operational_sources' => [],
                 ],
+                [
+                    'date' => '2023-01-04', 'source_type' => 'Journal Entry', 'source_number' => 'JRN-UNBAL',
+                    'description' => 'Jurnal tidak seimbang', 'operational_identity' => null,
+                    'journal_base' => 0, 'operational_base' => null, 'base_variance' => null,
+                    'journal_vat_in' => 0, 'operational_vat_in' => null, 'vat_in_variance' => null,
+                    'journal_vat_out' => 0, 'operational_vat_out' => null, 'vat_out_variance' => null,
+                    'journal_total' => 0, 'operational_total' => null, 'total_variance' => null,
+                    'journal_debit' => 100, 'journal_credit' => 90, 'journal_balance_variance' => 10,
+                    'journal_components' => [], 'journal_sources' => [], 'operational_sources' => [],
+                ],
             ],
             'account_balances' => [[
                 'year' => 2023, 'account_no' => '1-10001', 'account_name' => 'Kas Utama',
@@ -117,10 +180,18 @@ class ReconciliationFindingInboxTest extends TestCase
                 'year' => 2023, 'control_type' => 'general_ledger_account', 'source_file' => 'buku.xlsx',
                 'source_sheet' => 'BUKU BESAR', 'account_no' => '1-10001', 'account_name' => 'Kas Utama',
                 'control_opening_signed' => 100, 'journal_opening' => 105, 'opening_variance' => -5,
-                'control_debit' => 200, 'journal_debit' => 194, 'debit_variance' => 6,
+                'control_debit' => 1129000, 'journal_debit' => 194000, 'debit_variance' => 935000,
                 'control_credit' => 150, 'journal_credit' => 156, 'credit_variance' => -6,
                 'control_closing_signed' => 150, 'journal_closing' => 143, 'closing_variance' => 7,
                 'source_rows' => [12],
+            ], [
+                'year' => 2023, 'control_type' => 'general_ledger_account', 'source_file' => 'buku.xlsx',
+                'source_sheet' => 'BUKU BESAR', 'account_no' => '1-10002', 'account_name' => 'Kas Kedua',
+                'control_opening_signed' => 0, 'journal_opening' => 0, 'opening_variance' => 0,
+                'control_debit' => 100, 'journal_debit' => 935100, 'debit_variance' => -935000,
+                'control_credit' => 0, 'journal_credit' => 0, 'credit_variance' => 0,
+                'control_closing_signed' => 0, 'journal_closing' => 0, 'closing_variance' => 0,
+                'source_rows' => [13],
             ]],
         ];
     }
@@ -168,6 +239,18 @@ class ReconciliationFindingInboxTest extends TestCase
             $table->unique(['business_id', 'finding_key']);
             $table->index(['business_id', 'is_current', 'status']);
             $table->index(['business_id', 'year', 'type', 'is_current']);
+        });
+        Schema::create('accounting_legacy_reconciliation_audits', function (Blueprint $table) {
+            $table->bigIncrements('id');
+            $table->unsignedInteger('business_id');
+            $table->unsignedSmallInteger('year');
+            $table->char('audit_key', 64);
+            $table->char('source_manifest_sha256', 64)->nullable();
+            $table->unsignedInteger('finding_count')->default(0);
+            $table->dateTime('completed_at');
+            $table->timestamps();
+            $table->unique(['business_id', 'year', 'audit_key']);
+            $table->index(['business_id', 'completed_at']);
         });
     }
 }

@@ -16,3 +16,8 @@ Istilah domain untuk fitur penjualan dan import akuntansi.
 | Akun CoA | Akun yang mengelompokkan nilai debit dan kredit dalam pembukuan, dengan kode dan sifat akun seperti aset, liabilitas, ekuitas, pendapatan, atau biaya. |
 | Akun operasional | Akun yang dipilih pada transaksi atau pembayaran untuk mencatat rekening kas/bank atau akun sumber operasional; akun ini bukan dengan sendirinya akun posting CoA. |
 | Crosswalk akun | Hubungan eksplisit antara akun operasional dan akun CoA dalam business yang sama. Hubungan otomatis hanya dibuat jika kecocokannya tepat dan tunggal; kecocokan ambigu perlu dipetakan manual. |
+| Anomali rekonsiliasi | Selisih bernilai yang dapat dihitung antara Journal, transaksi operasional, posting GL, atau workbook kontrol. Sumber operasional yang tidak tertaut tidak menjadi anomali jika posting Journal sudah seimbang dan tidak ada selisih nominal. |
+| Temuan rekonsiliasi | Anomali rekonsiliasi yang disimpan untuk ditinjau dalam business dan periode tertentu, dengan bukti sumber, nominal pembanding, dan status penyelesaian. |
+| Selisih diterima | Anomali yang setelah ditinjau dinyatakan sah oleh pengguna berwenang; alasan wajib disimpan dan nilai tetap tersedia di histori audit. |
+| Koreksi rekonsiliasi | Perubahan terkonfirmasi untuk menghilangkan anomali. Nilai operasional hanya dikoreksi bila komponennya didukung bukti yang unik; selisih GL lainnya memakai jurnal penyesuaian tertaut, tanpa mengubah Journal legacy. |
+| Akun pembulatan | Akun CoA yang dipetakan secara eksplisit per business untuk jurnal pembulatan yang berada di bawah presisi mata uang business. |
