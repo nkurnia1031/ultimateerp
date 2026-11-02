@@ -156,10 +156,8 @@ class LegacyOperationalDraftEnricher
 
             if (! $this->amountMatches($entry, $document)) {
                 $entries[$index]['legacy_evidence_status'] = 'amount_mismatch';
-                $entries[$index]['legacy_evidence_reason'] = 'Total sumber operational berbeda dari total Journal; detail tidak diterapkan otomatis.';
-                $entries[$index]['source_identity_conflict'] = true;
-                $entries[$index]['source_identity_conflict_message'] = $entries[$index]['legacy_evidence_reason'];
-                continue;
+                $entries[$index]['legacy_evidence_reason'] = 'Total atau pajak sumber operational berbeda dari Journal; detail legacy tetap dipakai untuk basis transaksi, sedangkan Journal menjadi sumber nominal pajak dan posting GL.';
+                $entries[$index]['legacy_amount_mismatch'] = true;
             }
 
             $draft = [];

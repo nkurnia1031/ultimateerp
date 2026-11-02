@@ -199,6 +199,15 @@ class ImportLegacySources extends Command
                 ->where('business_id', $businessId)
                 ->first();
 
+            $journalAlreadyImported = $batch !== null && (string) $batch->status === 'imported';
+            if ($journalAlreadyImported) {
+                $annualAudit = [
+                    'output_directory' => storage_path('app/legacy-import-reports/business-'.$businessId),
+                    'reports' => [],
+                    'message' => 'Audit tahunan sudah dibuat pada proses sebelumnya dan dipertahankan.',
+                ];
+            }
+
             if ($batch === null || $this->batchNeedsPreparation($batch, $businessId)) {
                 $analysis = $this->analyzeJournalSources($auditInventory, $businessId, $year, $journalController, $merger, $draftService, $evidenceReader, $enricher);
                 $this->printAnalysis($analysis);
@@ -303,17 +312,24 @@ class ImportLegacySources extends Command
                 );
             }
 
-            $runService->updateRun($runId, $businessId, 'importing', 'Menjalankan batch melalui CLI Journal Import yang sudah ada.');
-            $arguments = [
-                '--business-id' => $businessId,
-                '--user-id' => $userId,
-                '--resume-batch' => $importId,
-                '--chunk-delay-ms' => $delay,
-            ];
-            if ((bool) $this->option('no-create-missing-main-accounts')) {
-                $arguments['--no-create-missing-main-accounts'] = true;
+            if ($journalAlreadyImported) {
+                $exitCode = self::SUCCESS;
+                $this->line('Batch Journal #'.$importId.' sudah imported; lanjut sinkronisasi sumber operasional dan lampiran tanpa mengulang posting.');
+            } else {
+                $runService->updateRun($runId, $businessId, 'importing', 'Menjalankan batch melalui CLI Journal Import yang sudah ada.');
+                $runService->enableLegacyAuthoritativeJournalMode((int) $importId, $businessId);
+                $this->line('Mode legacy-authoritative: posting Journal tetap diproses; link operasional dipakai jika datanya cukup dan unik.');
+                $arguments = [
+                    '--business-id' => $businessId,
+                    '--user-id' => $userId,
+                    '--resume-batch' => $importId,
+                    '--chunk-delay-ms' => $delay,
+                ];
+                if ((bool) $this->option('no-create-missing-main-accounts')) {
+                    $arguments['--no-create-missing-main-accounts'] = true;
+                }
+                $exitCode = $this->call('accounting:import-journal', $arguments);
             }
-            $exitCode = $this->call('accounting:import-journal', $arguments);
 
             $batch = DB::table('accounting_journal_imports')
                 ->where('id', $importId)
@@ -526,7 +542,7 @@ class ImportLegacySources extends Command
                 'missing_accounts' => $analysis['missing_account_count'],
                 'unsupported_entries' => $analysis['unsupported_count'],
                 'summary' => json_encode($this->summaryForStorage($analysis), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
-                'last_message' => 'Analisis lintas workbook selesai; overlap identik digabung dan konflik dipertahankan untuk review.',
+                'last_message' => 'Analisis lintas workbook selesai; overlap identik digabung dan versi konflik dipilih dari export dengan periode terbaru.',
                 'status' => 'analyzed',
                 'updated_at' => now(),
             ]);

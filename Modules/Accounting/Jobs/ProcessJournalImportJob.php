@@ -210,21 +210,6 @@ class ProcessJournalImportJob implements ShouldQueue
                     $entry = json_decode((string) $row->entry_data, true) ?: [];
                     $sourceKey = (string) ($entry['source_key'] ?? $row->source_key ?? '');
 
-                    if (in_array($row->source_type, ['Receive Payment', 'Purchase Payment'], true)) {
-                        $dependencyIssue = $paymentService->dependencyIssue($row, $entry, (int) $import->business_id);
-                        if ($dependencyIssue !== null) {
-                            DB::table('accounting_journal_import_rows')->where('id', $row->id)->update([
-                                'processing_status' => 'pending',
-                                'processing_message' => $dependencyIssue,
-                                'processing_error' => null,
-                                'processing_started_at' => null,
-                                'updated_at' => now(),
-                            ]);
-
-                            return;
-                        }
-                    }
-
                     $existingMapping = DB::table('accounting_acc_trans_mappings')
                         ->where('business_id', $import->business_id)
                         ->where('type', 'journal_entry')
@@ -266,6 +251,24 @@ class ProcessJournalImportJob implements ShouldQueue
                         return;
                     }
 
+                    $legacyJournalOnly = ! empty($options['legacy_authoritative'])
+                        && (string) $row->source_action === 'journal'
+                        && (string) $row->source_type !== 'Journal Entry';
+                    if (! $legacyJournalOnly && in_array($row->source_type, ['Receive Payment', 'Purchase Payment'], true)) {
+                        $dependencyIssue = $paymentService->dependencyIssue($row, $entry, (int) $import->business_id);
+                        if ($dependencyIssue !== null) {
+                            DB::table('accounting_journal_import_rows')->where('id', $row->id)->update([
+                                'processing_status' => 'pending',
+                                'processing_message' => $dependencyIssue,
+                                'processing_error' => null,
+                                'processing_started_at' => null,
+                                'updated_at' => now(),
+                            ]);
+
+                            return;
+                        }
+                    }
+
                     $issue = $queueService->entryIssue(
                         $entry,
                         (string) $row->source_action,
@@ -278,7 +281,12 @@ class ProcessJournalImportJob implements ShouldQueue
                         throw new \RuntimeException($issue);
                     }
 
-                    if (in_array($row->source_type, ['Sales Invoice', 'Purchase Invoice'], true)) {
+                    if ($legacyJournalOnly) {
+                        unset($entry['source_record_type'], $entry['source_record_id'], $entry['source_link_group']);
+                        $entry['source_link_status'] = 'unmatched';
+                        $entry['source_link_note'] = $entry['source_link_note']
+                            ?? 'Journal GL diposting dari sumber legacy; detail operasional belum dapat ditautkan dengan aman.';
+                    } elseif (in_array($row->source_type, ['Sales Invoice', 'Purchase Invoice'], true)) {
                         $sourceTransaction = $invoiceService->process($row, $entry, $import, $options);
                         $entry['source_record_type'] = \App\Transaction::class;
                         $entry['source_record_id'] = (int) $sourceTransaction->id;
@@ -336,11 +344,13 @@ class ProcessJournalImportJob implements ShouldQueue
 
                     DB::table('accounting_journal_import_rows')->where('id', $row->id)->update([
                         'processing_status' => 'completed',
-                        'processing_message' => 'Baris Journal Import berhasil diproses dan dikaitkan ke mapping GL.',
+                        'processing_message' => $legacyJournalOnly
+                            ? 'Posting GL berhasil dibuat dari Journal legacy; sumber operasional dicatat sebagai belum tertaut pada audit.'
+                            : 'Baris Journal Import berhasil diproses dan dikaitkan ke mapping GL.',
                         'processing_error' => null,
                         'journal_mapping_id' => $mapping->id,
-                        'source_record_type' => $entry['source_record_type'] ?? $row->source_record_type,
-                        'source_record_id' => $entry['source_record_id'] ?? $row->source_record_id,
+                        'source_record_type' => $legacyJournalOnly ? null : ($entry['source_record_type'] ?? $row->source_record_type),
+                        'source_record_id' => $legacyJournalOnly ? null : ($entry['source_record_id'] ?? $row->source_record_id),
                         'processed_at' => now(),
                         'updated_at' => now(),
                     ]);
@@ -517,8 +527,14 @@ class ProcessJournalImportJob implements ShouldQueue
     private function taxReconciliationTotal(int $importId, int $businessId): int
     {
         return (int) DB::table('accounting_acc_trans_mappings')
-            ->where('journal_import_id', $importId)
             ->where('business_id', $businessId)
+            ->where(function ($query) use ($importId) {
+                $query->where('journal_import_id', $importId)
+                    ->orWhereIn('id', DB::table('accounting_journal_import_rows')
+                        ->select('journal_mapping_id')
+                        ->where('journal_import_id', $importId)
+                        ->whereNotNull('journal_mapping_id'));
+            })
             ->where('source_link_status', 'matched')
             ->whereNotNull('source_record_id')
             ->count();

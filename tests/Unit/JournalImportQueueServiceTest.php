@@ -50,6 +50,37 @@ class JournalImportQueueServiceTest extends TestCase
         $this->assertFalse($service->queueDecision($entry, 'journal', 'queued')['eligible']);
     }
 
+    public function test_legacy_authoritative_mode_allows_balanced_gl_posting_without_an_operational_link(): void
+    {
+        $service = new JournalImportQueueService();
+        $entry = [
+            'source_type' => 'Expense',
+            'source_key' => 'Expense|LEGACY-1|2022-01-01',
+            'source_identity_conflict' => true,
+            'is_unbalanced' => false,
+            'is_duplicate' => false,
+            'exists_in_system' => false,
+            'lines' => [['debit' => 100, 'credit' => 0], ['debit' => 0, 'credit' => 100]],
+        ];
+
+        $this->assertTrue($service->queueDecision(
+            $entry,
+            'journal',
+            'pending',
+            'mismatch',
+            null,
+            ['legacy_authoritative' => true]
+        )['eligible']);
+        $this->assertFalse($service->queueDecision(
+            array_merge($entry, ['is_unbalanced' => true]),
+            'journal',
+            'pending',
+            'mismatch',
+            null,
+            ['legacy_authoritative' => true]
+        )['eligible']);
+    }
+
     public function test_queueing_uses_saved_rows_ignores_review_marker_and_keeps_ineligible_rows_pending(): void
     {
         $this->useSqliteDatabase();
@@ -148,6 +179,54 @@ class JournalImportQueueServiceTest extends TestCase
         $this->assertSame(8, (int) $row->difference_approved_by);
         $this->assertSame('Approved by review', $row->difference_approval_reason);
         $this->assertNotEmpty($row->difference_approved_at);
+    }
+
+    public function test_legacy_authoritative_queue_falls_back_to_gl_when_operational_source_is_ambiguous(): void
+    {
+        $this->useSqliteDatabase();
+        $this->createDraftRowsTable();
+        $this->database->schema()->create('accounting_journal_imports', function ($table) {
+            $table->increments('id');
+            $table->unsignedInteger('business_id');
+            $table->longText('import_options')->nullable();
+            $table->timestamps();
+        });
+        DB::table('accounting_journal_imports')->insert([
+            'id' => 20,
+            'business_id' => 3,
+            'import_options' => json_encode(['legacy_authoritative' => true]),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $entry = [
+            'source_type' => 'Expense',
+            'source_key' => 'Expense|LEGACY-AMB-1|2022-01-01',
+            'source_link_status' => 'ambiguous',
+            'source_identity_conflict' => true,
+            'source_identity_conflict_message' => 'Ada beberapa sumber operasional.',
+            'source_record_type' => '\\App\\Transaction',
+            'source_record_id' => 999,
+            'is_unbalanced' => false,
+            'is_duplicate' => false,
+            'exists_in_system' => false,
+            'debit_total' => 100,
+            'credit_total' => 100,
+            'lines' => [['debit' => 100, 'credit' => 0], ['debit' => 0, 'credit' => 100]],
+        ];
+        $this->insertDraftRow(1, 'Expense', $entry, 'review');
+
+        $queued = DB::transaction(fn () => (new JournalImportQueueService())->queueRowsForBatch(20, 3));
+        $row = DB::table('accounting_journal_import_rows')->where('id', 1)->first();
+        $storedEntry = json_decode($row->entry_data, true);
+
+        $this->assertSame(1, $queued);
+        $this->assertSame('queued', $row->processing_status);
+        $this->assertSame('journal', $row->source_action);
+        $this->assertNull($row->source_record_type);
+        $this->assertNull($row->source_record_id);
+        $this->assertSame('unmatched', $storedEntry['source_link_status']);
+        $this->assertArrayNotHasKey('source_identity_conflict', $storedEntry);
+        $this->assertSame('Ada beberapa sumber operasional.', $storedEntry['legacy_operational_fallback_reason']);
     }
 
     public function test_discrepancy_approval_rejects_missing_mismatch_or_empty_reason(): void

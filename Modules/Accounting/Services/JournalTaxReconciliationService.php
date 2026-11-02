@@ -38,7 +38,21 @@ class JournalTaxReconciliationService
 
     public function reconcileImportChunk(int $journalImportId, int $businessId, int $afterId, int $limit = 50): array
     {
-        $mappings = AccountingAccTransMapping::where('journal_import_id', $journalImportId)
+        $import = DB::table('accounting_journal_imports')
+            ->where('id', $journalImportId)
+            ->where('business_id', $businessId)
+            ->first(['import_options']);
+        $options = json_decode((string) ($import->import_options ?? ''), true);
+        $legacyAuthoritative = is_array($options) && ! empty($options['legacy_authoritative']);
+
+        $mappings = AccountingAccTransMapping::where('business_id', $businessId)
+            ->where(function ($query) use ($journalImportId) {
+                $query->where('journal_import_id', $journalImportId)
+                    ->orWhereIn('id', DB::table('accounting_journal_import_rows')
+                        ->select('journal_mapping_id')
+                        ->where('journal_import_id', $journalImportId)
+                        ->whereNotNull('journal_mapping_id'));
+            })
             ->where('business_id', $businessId)
             ->where('source_link_status', 'matched')
             ->whereNotNull('source_record_id')
@@ -55,8 +69,13 @@ class JournalTaxReconciliationService
             $lastId = (int) $mapping->id;
 
             try {
-                $status = DB::transaction(function () use ($mapping, $businessId) {
-                    return $this->reconcileMapping($mapping, $businessId);
+                $sourceAction = DB::table('accounting_journal_import_rows')
+                    ->where('journal_import_id', $journalImportId)
+                    ->where('business_id', $businessId)
+                    ->where('journal_mapping_id', $mapping->id)
+                    ->value('source_action');
+                $status = DB::transaction(function () use ($mapping, $businessId, $legacyAuthoritative, $sourceAction) {
+                    return $this->reconcileMapping($mapping, $businessId, $legacyAuthoritative, $sourceAction);
                 });
             } catch (\Throwable $exception) {
                 Log::warning('Journal Import tax reconciliation failed for a mapping.', [
@@ -140,9 +159,10 @@ class JournalTaxReconciliationService
         return $restored;
     }
 
-    private function reconcileMapping(AccountingAccTransMapping $mapping, int $businessId): string
+    private function reconcileMapping(AccountingAccTransMapping $mapping, int $businessId, bool $legacyAuthoritative = false, ?string $sourceActionOverride = null): string
     {
-        if (in_array($mapping->tax_reconciliation_status, ['reconciled', 'review'], true) && ! empty($mapping->source_tax_snapshot)) {
+        if (in_array($mapping->tax_reconciliation_status, ['reconciled', 'review'], true)
+            && ! empty($mapping->source_tax_snapshot)) {
             return $mapping->tax_reconciliation_status;
         }
 
@@ -164,7 +184,8 @@ class JournalTaxReconciliationService
             ->where('business_id', $businessId)
             ->where('journal_mapping_id', $mapping->id)
             ->first(['source_action']);
-        $linkedOnly = ($sourceRow->source_action ?? null) === 'link';
+        $linkedOnly = ($sourceActionOverride ?? $sourceRow->source_action ?? null) === 'link'
+            && ! $legacyAuthoritative;
 
         $journalLines = DB::table('accounting_accounts_transactions as journal_line')
             ->leftJoin('accounting_accounts as account', function ($join) use ($businessId) {

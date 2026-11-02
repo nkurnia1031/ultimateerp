@@ -112,7 +112,10 @@ class LegacyImportRunService
                 'last_message' => 'Batch dibuat oleh coordinator import-legacy.',
                 'status' => 'analyzed',
                 'summary' => json_encode($summary, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
-                'import_options' => json_encode(['legacy_import_run_id' => $runId], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                'import_options' => json_encode([
+                    'legacy_import_run_id' => $runId,
+                    'legacy_authoritative' => true,
+                ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
                 'created_by' => $userId,
                 'created_at' => $now,
                 'updated_at' => $now,
@@ -165,6 +168,29 @@ class LegacyImportRunService
             ->update([
                 'journal_import_id' => $importId,
                 'status' => 'analyzed',
+                'updated_at' => now(),
+            ]);
+    }
+
+    public function enableLegacyAuthoritativeJournalMode(int $importId, int $businessId): void
+    {
+        $batch = DB::table('accounting_journal_imports')
+            ->where('id', $importId)
+            ->where('business_id', $businessId)
+            ->first(['import_options']);
+        if (! $batch) {
+            throw new \RuntimeException('Batch Journal Import tidak ditemukan untuk mode legacy-authoritative.');
+        }
+
+        $options = json_decode((string) ($batch->import_options ?? ''), true);
+        $options = is_array($options) ? $options : [];
+        $options['legacy_authoritative'] = true;
+
+        DB::table('accounting_journal_imports')
+            ->where('id', $importId)
+            ->where('business_id', $businessId)
+            ->update([
+                'import_options' => json_encode($options, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
                 'updated_at' => now(),
             ]);
     }

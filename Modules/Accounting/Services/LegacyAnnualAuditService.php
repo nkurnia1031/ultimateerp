@@ -291,7 +291,9 @@ class LegacyAnnualAuditService
         $status = ! $matchApplicable
             ? 'not_applicable'
             : ($document === null ? 'missing_operational_source' : ($documentStatus === 'matched' ? 'matched' : 'conflict'));
-        if (! empty($entry['source_identity_conflict'])) {
+        if (! empty($entry['legacy_conflict_resolution'])) {
+            $status = 'journal_conflict_resolved';
+        } elseif (! empty($entry['source_identity_conflict'])) {
             $status = 'journal_conflict';
         } elseif ($status === 'matched' && $document !== null
             && abs((float) ($journal['total'] ?? 0) - (float) ($operational['total'] ?? 0)) > 0.01
@@ -322,7 +324,11 @@ class LegacyAnnualAuditService
             'vat_out_variance' => $this->difference($journal['vat_out'], $operational['vat_out'] ?? null),
             'total_variance' => $this->difference($journal['total'], $operational['total'] ?? null),
             'match_status' => $status,
-            'match_reason' => $document['review_reason'] ?? $entry['source_identity_conflict_message'] ?? null,
+            'match_reason' => $document['review_reason']
+                ?? $entry['legacy_evidence_reason']
+                ?? ($entry['legacy_conflict_resolution']['message'] ?? null)
+                ?? ($entry['source_identity_conflict_message'] ?? null),
+            'journal_conflict_resolution' => $entry['legacy_conflict_resolution'] ?? null,
             'journal_components' => $journal['components'],
             'journal_sources' => $this->provenance((array) ($entry['legacy_sources'] ?? [])),
             'operational_sources' => $this->provenance((array) ($document['provenance'] ?? [])),
@@ -670,6 +676,7 @@ class LegacyAnnualAuditService
             'operational_matches' => $count($statuses, ['matched']),
             'missing_operational_source' => $count($statuses, ['missing_operational_source']),
             'source_conflicts' => $count($statuses, ['conflict', 'journal_conflict', 'operational_conflict']),
+            'journal_conflicts_resolved' => $count($statuses, ['journal_conflict_resolved']),
             'amount_mismatches' => $count($statuses, ['amount_mismatch']),
             'operational_only' => $count($statuses, ['operational_only', 'operational_conflict']),
             'journal_duplicate_sources' => array_sum(array_map(
@@ -920,7 +927,7 @@ class LegacyAnnualAuditService
             'Basis Journal', 'VAT In Journal', 'VAT Out Journal', 'Pajak Lain Journal', 'Total Journal',
             'Basis Operasional', 'VAT In Operasional', 'VAT Out Operasional', 'Total Operasional',
             'Selisih Basis', 'Selisih VAT In', 'Selisih VAT Out', 'Selisih Total', 'Status Match',
-            'Alasan', 'Komponen Akun Journal', 'File/Baris Journal', 'File/Baris Operasional',
+            'Alasan', 'Resolusi Konflik Journal', 'Komponen Akun Journal', 'File/Baris Journal', 'File/Baris Operasional',
         ], array_map(fn (array $row) => [
             $row['year'], $row['date'], $row['source_type'], $row['source_number'], $row['description'],
             $row['label'], $row['label_source'], $row['journal_base'], $row['journal_vat_in'],
@@ -928,6 +935,7 @@ class LegacyAnnualAuditService
             $row['operational_base'], $row['operational_vat_in'], $row['operational_vat_out'],
             $row['operational_total'], $row['base_variance'], $row['vat_in_variance'],
             $row['vat_out_variance'], $row['total_variance'], $row['match_status'], $row['match_reason'],
+            $this->jsonCell($row['journal_conflict_resolution'] ?? []),
             $this->jsonCell($row['journal_components'] ?? []), $this->jsonCell($row['journal_sources'] ?? []),
             $this->jsonCell($row['operational_sources'] ?? []),
         ], (array) $report['transaction_reconciliation']));

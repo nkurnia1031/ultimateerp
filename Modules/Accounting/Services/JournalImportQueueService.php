@@ -3,6 +3,7 @@
 namespace Modules\Accounting\Services;
 
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 
 class JournalImportQueueService
@@ -21,6 +22,7 @@ class JournalImportQueueService
             ->first();
         $options = $optionsOverride ?? (! empty($import->import_options) ? json_decode($import->import_options, true) : []);
         $options = is_array($options) ? $options : [];
+        $legacyAuthoritative = ! empty($options['legacy_authoritative']);
         $rowsQuery = DB::table('accounting_journal_import_rows')
             ->where('journal_import_id', $importId)
             ->where('business_id', $businessId)
@@ -45,19 +47,19 @@ class JournalImportQueueService
         foreach ($rows as $row) {
             $entry = json_decode((string) $row->entry_data, true) ?: [];
             $sourceKey = (string) ($entry['source_key'] ?? $row->source_key ?? '');
+            $sourceType = (string) ($entry['source_type'] ?? $row->source_type ?? '');
+            $amountMismatch = ($entry['legacy_evidence_status'] ?? null) === 'amount_mismatch'
+                || ! empty($entry['legacy_amount_mismatch']);
+            if ($legacyAuthoritative && $amountMismatch && ! empty($entry['source_identity_conflict'])) {
+                unset($entry['source_identity_conflict'], $entry['source_identity_conflict_message']);
+                DB::table('accounting_journal_import_rows')->where('id', $row->id)->update([
+                    'entry_data' => json_encode($entry, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                    'updated_at' => now(),
+                ]);
+                $row->entry_data = json_encode($entry, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            }
 
-            if (($entry['source_type'] ?? $row->source_type) === 'Journal Entry' && $sourceKey !== '') {
-                if (! empty($entry['source_identity_conflict'])) {
-                    DB::table('accounting_journal_import_rows')->where('id', $row->id)->update([
-                        'processing_status' => 'pending',
-                        'processing_message' => (string) ($entry['source_identity_conflict_message']
-                            ?? 'Kunci sumber berulang dengan isi berbeda; tinjau konflik sebelum memproses.'),
-                        'processing_error' => null,
-                        'updated_at' => now(),
-                    ]);
-                    continue;
-                }
-
+            if ($sourceKey !== '') {
                 $existingMapping = DB::table('accounting_acc_trans_mappings')
                     ->where('business_id', $businessId)
                     ->where('type', 'journal_entry')
@@ -80,6 +82,9 @@ class JournalImportQueueService
                         continue;
                     }
 
+                    $sourceAttached = $legacyAuthoritative
+                        && $this->attachMatchedSourceToExistingMapping($row, $entry, $existingMapping, $businessId);
+
                     DB::table('accounting_journal_import_rows')->where('id', $row->id)->update([
                         'processing_status' => 'completed',
                         'processing_message' => $identityMatch === 'identical'
@@ -87,11 +92,35 @@ class JournalImportQueueService
                             : 'Posting Journal dengan kunci ini sudah tersedia; tidak dibuat ulang.',
                         'processing_error' => null,
                         'journal_mapping_id' => $existingMapping->id,
+                        'source_action' => $sourceAttached ? 'link' : $row->source_action,
+                        'source_record_type' => $legacyAuthoritative
+                            ? ($sourceAttached ? ($existingMapping->source_record_type ?: $entry['source_record_type']) : null)
+                            : ($row->source_record_type ?? null),
+                        'source_record_id' => $legacyAuthoritative
+                            ? ($sourceAttached ? ($existingMapping->source_record_id ?: $entry['source_record_id']) : null)
+                            : ($row->source_record_id ?? null),
                         'processed_at' => now(),
                         'updated_at' => now(),
                     ]);
                     continue;
                 }
+            }
+
+            if ($legacyAuthoritative) {
+                $row = $this->prepareLegacyAuthoritativeRow($row, $entry, $sourceType, $businessId);
+                if ($row === null) {
+                    continue;
+                }
+                $entry = json_decode((string) $row->entry_data, true) ?: $entry;
+            } elseif ($sourceType === 'Journal Entry' && ! empty($entry['source_identity_conflict'])) {
+                DB::table('accounting_journal_import_rows')->where('id', $row->id)->update([
+                    'processing_status' => 'pending',
+                    'processing_message' => (string) ($entry['source_identity_conflict_message']
+                        ?? 'Kunci sumber berulang dengan isi berbeda; tinjau konflik sebelum memproses.'),
+                    'processing_error' => null,
+                    'updated_at' => now(),
+                ]);
+                continue;
             }
 
             if (in_array((string) $row->source_type, ['Sales Invoice', 'Purchase Invoice', 'Expense', 'Receive Payment', 'Purchase Payment', 'Bank Deposit', 'Bank Transfer', 'Bank Withdrawal', 'Reversal', 'Stock Adjustment', 'Stock In/Out', 'Opening Balance'], true)) {
@@ -105,7 +134,8 @@ class JournalImportQueueService
                             : (in_array($row->source_type, ['Stock Adjustment', 'Stock In/Out', 'Opening Balance'], true)
                                 ? JournalImportStockService::class
                                 : JournalImportInvoiceService::class)));
-                $shouldCalculateTotal = in_array($row->source_action, ['link', 'update'], true) || $hasDraftData;
+                $shouldCalculateTotal = $row->source_action !== 'journal'
+                    && (in_array($row->source_action, ['link', 'update'], true) || $hasDraftData);
                 $businessTotal = $shouldCalculateTotal
                     ? app($serviceClass)->draftTotal($row, $entry, $import, $options)
                     : null;
@@ -190,7 +220,8 @@ class JournalImportQueueService
         ?int $businessId = null
     ): ?string
     {
-        if (! empty($entry['source_identity_conflict'])) {
+        $legacyJournalOnly = ! empty($options['legacy_authoritative']) && $action === 'journal';
+        if (! empty($entry['source_identity_conflict']) && ! $legacyJournalOnly) {
             return (string) ($entry['source_identity_conflict_message']
                 ?? 'Kunci sumber berulang dengan isi berbeda; tinjau konflik sebelum memproses.');
         }
@@ -202,20 +233,20 @@ class JournalImportQueueService
         $isBankTransaction = in_array($sourceType, ['Bank Deposit', 'Bank Transfer', 'Bank Withdrawal', 'Reversal'], true);
         $isStockTransaction = in_array($sourceType, ['Stock Adjustment', 'Stock In/Out', 'Opening Balance'], true);
         $isSourceTransaction = $isInvoice || $isExpense || $isPayment || $isBankTransaction || $isStockTransaction;
-        if ($sourceType !== 'Journal Entry' && ! $isSourceTransaction) {
+        if ($sourceType !== 'Journal Entry' && ! $isSourceTransaction && ! $legacyJournalOnly) {
             return 'Jenis transaksi ini menunggu handler transaksi terkait.';
         }
 
         if ($sourceType === 'Journal Entry' && $action !== 'journal') {
             return 'Baris Journal Entry harus diproses sebagai posting GL.';
         }
-        if ($isSourceTransaction && ! in_array($action, ['create', 'update', 'link'], true)) {
+        if ($isSourceTransaction && ! $legacyJournalOnly && ! in_array($action, ['create', 'update', 'link'], true)) {
             return $isPayment
                 ? 'Pilih Buat baru, Lengkapi sumber, atau Tautkan pembayaran untuk memproses transaksi.'
                 : 'Pilih Buat baru, Lengkapi sumber, atau Tautkan sumber untuk memproses transaksi.';
         }
 
-        if ($isSourceTransaction && $row !== null && $businessId !== null) {
+        if ($isSourceTransaction && ! $legacyJournalOnly && $row !== null && $businessId !== null) {
             $draftService = app(JournalImportDraftService::class);
             $recordType = $row->source_record_type ?? null;
             $recordId = empty($row->source_record_id) ? null : (int) $row->source_record_id;
@@ -250,7 +281,7 @@ class JournalImportQueueService
             return 'Debit dan kredit belum seimbang.';
         }
 
-        if (! empty($entry['is_duplicate'])) {
+        if (! empty($entry['is_duplicate']) && ! ($legacyJournalOnly && ! empty($entry['source_key']))) {
             return 'Baris ditandai duplikat dalam workbook.';
         }
 
@@ -267,6 +298,186 @@ class JournalImportQueueService
         }
 
         return null;
+    }
+
+    private function prepareLegacyAuthoritativeRow(object $row, array $entry, string $sourceType, int $businessId): ?object
+    {
+        $sourceKey = (string) ($entry['source_key'] ?? $row->source_key ?? '');
+        $debit = (float) ($entry['debit_total'] ?? 0);
+        $credit = (float) ($entry['credit_total'] ?? 0);
+        $lines = $entry['lines'] ?? [];
+
+        if ((! is_array($lines) || $lines === [])
+            && abs($debit) <= 0.0001
+            && abs($credit) <= 0.0001
+            && $sourceKey !== '') {
+            DB::table('accounting_journal_import_rows')->where('id', $row->id)->update([
+                'source_action' => 'journal',
+                'processing_status' => 'completed',
+                'processing_message' => 'Grup Journal kosong dengan debit dan kredit nol; diarsipkan tanpa membuat posting GL.',
+                'processing_error' => null,
+                'processed_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+            return null;
+        }
+
+        $action = (string) ($row->source_action ?? 'review');
+        $sourceStatus = (string) ($entry['source_link_status'] ?? 'unmatched');
+        $sourceRecordType = $row->source_record_type ?? ($entry['source_record_type'] ?? null);
+        $sourceRecordId = empty($row->source_record_id)
+            ? (empty($entry['source_record_id']) ? null : (int) $entry['source_record_id'])
+            : (int) $row->source_record_id;
+        $isAmountMismatch = ($entry['legacy_evidence_status'] ?? null) === 'amount_mismatch'
+            || ! empty($entry['legacy_amount_mismatch']);
+        if ($sourceKey !== '' && ! empty($entry['is_duplicate'])) {
+            // The worker checks the persisted source key again before posting each row.
+            // This lets the first valid copy post and archives subsequent copies idempotently.
+            $entry['is_duplicate'] = false;
+        }
+        if ($isAmountMismatch) {
+            unset($entry['source_identity_conflict'], $entry['source_identity_conflict_message']);
+        }
+
+        if ($sourceType === 'Journal Entry') {
+            $action = 'journal';
+        } elseif ($action === 'review') {
+            $action = $sourceStatus === 'matched' && $sourceRecordType !== null && $sourceRecordId !== null
+                ? 'link'
+                : 'journal';
+        }
+
+        $fallbackReason = null;
+        if ($action !== 'journal') {
+            $candidateRow = clone $row;
+            $candidateRow->source_record_type = $sourceRecordType;
+            $candidateRow->source_record_id = $sourceRecordId;
+            $issue = $this->entryIssue(
+                $entry,
+                $action,
+                (string) ($row->reconciliation_status ?? 'not_checked'),
+                $candidateRow,
+                ['legacy_authoritative' => true],
+                $businessId
+            );
+            if ($issue !== null) {
+                $fallbackReason = $issue;
+                $action = 'journal';
+            }
+        } elseif ($sourceType !== 'Journal Entry') {
+            $fallbackReason = ! empty($entry['source_identity_conflict_message'])
+                ? (string) $entry['source_identity_conflict_message']
+                : (string) ($entry['legacy_evidence_reason'] ?? 'Detail transaksi operasional tidak cukup untuk dibuat atau ditautkan dengan aman.');
+        }
+
+        if ($action === 'journal' && ($sourceType !== 'Journal Entry' || ! empty($entry['source_identity_conflict']))) {
+            unset($entry['source_record_type'], $entry['source_record_id'], $entry['source_link_group']);
+            unset($entry['source_identity_conflict'], $entry['source_identity_conflict_message']);
+            $entry['source_link_status'] = 'unmatched';
+            $entry['source_link_note'] = $fallbackReason
+                ? 'Posting GL mengikuti Journal legacy; sumber operasional tidak ditautkan: '.$fallbackReason
+                : 'Posting GL mengikuti Journal legacy; detail operasional belum cukup untuk ditautkan.';
+            $entry['legacy_operational_fallback_reason'] = $fallbackReason;
+        }
+
+        $entry['source_action'] = $action;
+        DB::table('accounting_journal_import_rows')->where('id', $row->id)->update([
+            'source_action' => $action,
+            'source_record_type' => $action === 'journal' ? null : $sourceRecordType,
+            'source_record_id' => $action === 'journal' ? null : $sourceRecordId,
+            'entry_data' => json_encode($entry, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            'processing_message' => $action === 'journal' && $sourceType !== 'Journal Entry'
+                ? 'Journal GL diprioritaskan; detail operasional akan dicatat pada audit legacy.'
+                : ($row->processing_message ?? null),
+            'updated_at' => now(),
+        ]);
+
+        return DB::table('accounting_journal_import_rows')->where('id', $row->id)->first();
+    }
+
+    private function attachMatchedSourceToExistingMapping(object $row, array $entry, object $mapping, int $businessId): bool
+    {
+        $amountMismatch = ($entry['legacy_evidence_status'] ?? null) === 'amount_mismatch'
+            || ! empty($entry['legacy_amount_mismatch']);
+        if (! Schema::hasColumn('accounting_acc_trans_mappings', 'source_record_type')
+            || ! Schema::hasColumn('accounting_acc_trans_mappings', 'source_link_status')) {
+            return false;
+        }
+
+        $draftService = app(JournalImportDraftService::class);
+        if (! empty($mapping->source_record_type) && ! empty($mapping->source_record_id)) {
+            $isAllowed = $draftService->isCurrentSourceRecordAllowed(
+                (string) $row->source_type,
+                (string) $mapping->source_record_type,
+                (int) $mapping->source_record_id,
+                $businessId
+            );
+            if ($isAllowed && Schema::hasTable('accounting_journal_import_source_links')) {
+                $existingEntry = $entry;
+                unset($existingEntry['source_link_group']);
+                app(JournalImportSourceLinkService::class)->sync(
+                    (int) $row->id,
+                    (int) $row->journal_import_id,
+                    $businessId,
+                    (string) $row->source_type,
+                    $existingEntry,
+                    (string) $mapping->source_record_type,
+                    (int) $mapping->source_record_id
+                );
+            }
+
+            return $isAllowed;
+        }
+
+        if (($entry['source_link_status'] ?? null) !== 'matched'
+            || empty($entry['source_record_type'])
+            || empty($entry['source_record_id'])
+            || (! empty($entry['source_identity_conflict']) && ! $amountMismatch)) {
+            return false;
+        }
+
+        $recordType = (string) $entry['source_record_type'];
+        $recordId = (int) $entry['source_record_id'];
+        if (! $draftService->isCurrentSourceRecordAllowed((string) $row->source_type, $recordType, $recordId, $businessId)) {
+            return false;
+        }
+
+        $hasExistingSource = ! empty($mapping->source_record_type) || ! empty($mapping->source_record_id);
+        if ($hasExistingSource
+            && ((string) ($mapping->source_record_type ?? '') !== $recordType
+                || (int) ($mapping->source_record_id ?? 0) !== $recordId)) {
+            return false;
+        }
+        if (! $hasExistingSource) {
+            DB::table('accounting_acc_trans_mappings')
+                ->where('id', $mapping->id)
+                ->where('business_id', $businessId)
+                ->whereNull('source_record_id')
+                ->update([
+                    'source_record_type' => $recordType,
+                    'source_record_id' => $recordId,
+                    'source_link_status' => 'matched',
+                    'source_link_note' => 'Relasi operasional unik dipulihkan dari sumber legacy saat deduplikasi Journal.',
+                    'updated_at' => now(),
+                ]);
+        }
+
+        if (Schema::hasTable('accounting_journal_import_source_links')) {
+            $linkedType = ! empty($mapping->source_record_type) ? (string) $mapping->source_record_type : $recordType;
+            $linkedId = ! empty($mapping->source_record_id) ? (int) $mapping->source_record_id : $recordId;
+            app(JournalImportSourceLinkService::class)->sync(
+                (int) $row->id,
+                (int) $row->journal_import_id,
+                $businessId,
+                (string) $row->source_type,
+                $entry,
+                $linkedType,
+                $linkedId
+            );
+        }
+
+        return true;
     }
 
     public function recordReconciliation(int $rowId, int $businessId, float $businessTotal, float $journalTotal, float $tolerance = 0.01): object

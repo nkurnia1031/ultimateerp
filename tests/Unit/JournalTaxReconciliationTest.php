@@ -399,6 +399,51 @@ class JournalTaxReconciliationTest extends TestCase
         $this->assertSame([55.0, 82.5], $lines->pluck('unit_price_inc_tax')->map(fn ($amount) => (float) $amount)->all());
     }
 
+    public function test_legacy_authoritative_mode_replaces_existing_operational_vat_with_journal_vat(): void
+    {
+        DB::table('tax_rates')->insert([
+            'id' => 3,
+            'business_id' => 1,
+            'name' => 'PPN 11',
+            'amount' => 11,
+            'is_tax_group' => false,
+        ]);
+        DB::table('accounting_journal_imports')->where('id', 50)->update([
+            'import_options' => json_encode(['legacy_authoritative' => true]),
+        ]);
+        $this->createTransaction(112, 'sell', 100, 5, 105);
+        DB::table('transaction_sell_lines')->insert([
+            'id' => 12,
+            'transaction_id' => 112,
+            'quantity' => 2,
+            'unit_price' => 50,
+            'tax_id' => 1,
+            'item_tax' => 2.5,
+            'unit_price_inc_tax' => 52.5,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $this->createJournalMapping(512, 112);
+        $this->createJournalLines(512, [
+            [40, 111, 'debit'],
+            [21, 11, 'credit'],
+            [30, 100, 'credit'],
+        ]);
+        $this->createSourceAction(512, 'link');
+
+        $result = $this->service->reconcileImport(50, 1);
+        $source = Transaction::find(112);
+        $line = DB::table('transaction_sell_lines')->where('id', 12)->first();
+
+        $this->assertSame(['reconciled' => 1, 'review' => 0, 'not_applicable' => 0], $result);
+        $this->assertSame(3, (int) $source->tax_id);
+        $this->assertSame(11.0, (float) $source->tax_amount);
+        $this->assertSame(111.0, (float) $source->final_total);
+        $this->assertSame(3, (int) $line->tax_id);
+        $this->assertSame(5.5, (float) $line->item_tax);
+        $this->assertSame(55.5, (float) $line->unit_price_inc_tax);
+    }
+
     private function createSchema(): void
     {
         $schema = $this->database->schema();
@@ -442,6 +487,16 @@ class JournalTaxReconciliationTest extends TestCase
             $table->text('source_tax_snapshot')->nullable();
             $table->timestamps();
         });
+        $schema->create('accounting_journal_imports', function ($table) {
+            $table->increments('id');
+            $table->unsignedInteger('business_id');
+            $table->longText('import_options')->nullable();
+        });
+        DB::table('accounting_journal_imports')->insert([
+            'id' => 50,
+            'business_id' => 1,
+            'import_options' => '{}',
+        ]);
         $schema->create('accounting_accounts_transactions', function ($table) {
             $table->increments('id');
             $table->unsignedInteger('acc_trans_mapping_id');

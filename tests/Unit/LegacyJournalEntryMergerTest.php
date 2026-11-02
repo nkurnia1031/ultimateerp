@@ -3,7 +3,6 @@
 namespace Tests\Unit;
 
 use Modules\Accounting\Services\LegacyJournalEntryMerger;
-use Modules\Accounting\Services\JournalImportDraftService;
 use PHPUnit\Framework\TestCase;
 
 class LegacyJournalEntryMergerTest extends TestCase
@@ -25,7 +24,7 @@ class LegacyJournalEntryMergerTest extends TestCase
         );
     }
 
-    public function test_conflicting_entries_keep_both_versions_and_mark_them_for_review(): void
+    public function test_conflicting_entries_choose_the_newest_source_export_and_keep_audit_provenance(): void
     {
         $first = $this->entry();
         $second = $this->entry();
@@ -33,17 +32,17 @@ class LegacyJournalEntryMergerTest extends TestCase
         $second['debit_total'] = 120;
 
         $result = (new LegacyJournalEntryMerger())->merge([
-            ['path' => 'journal-2022.xlsx', 'sha256' => 'a', 'entries' => [$first]],
-            ['path' => 'journal-2021-2025.xlsx', 'sha256' => 'b', 'entries' => [$second]],
+            ['path' => 'journal_01-01-1990_01-01-2022.xlsx', 'sha256' => 'a', 'entries' => [$first]],
+            ['path' => 'journal_01-01-2021_31-12-2025.xlsx', 'sha256' => 'b', 'entries' => [$second]],
         ]);
 
-        $this->assertCount(2, $result['entries']);
+        $this->assertCount(1, $result['entries']);
         $this->assertSame(1, $result['conflict_count']);
         $this->assertSame(0, $result['duplicate_count']);
-        $this->assertTrue($result['entries'][0]['source_identity_conflict']);
-        $this->assertTrue($result['entries'][1]['source_identity_conflict']);
-        $this->assertSame('review', (new JournalImportDraftService())->defaultActionFor($result['entries'][0]));
-        $this->assertSame('review', (new JournalImportDraftService())->defaultActionFor($result['entries'][1]));
+        $this->assertSame(120, $result['entries'][0]['lines'][0]['debit']);
+        $this->assertArrayNotHasKey('source_identity_conflict', $result['entries'][0]);
+        $this->assertSame('journal_01-01-2021_31-12-2025.xlsx', $result['entries'][0]['legacy_conflict_resolution']['selected_source']['path']);
+        $this->assertCount(1, $result['entries'][0]['legacy_conflict_resolution']['alternatives']);
     }
 
     public function test_year_filter_keeps_only_entries_whose_transaction_date_is_in_that_year(): void
