@@ -185,6 +185,12 @@ class JournalImportQueueServiceTest extends TestCase
     {
         $this->useSqliteDatabase();
         $this->createDraftRowsTable();
+        $this->database->schema()->create('accounting_acc_trans_mappings', function ($table) {
+            $table->increments('id');
+            $table->unsignedInteger('business_id');
+            $table->string('type');
+            $table->string('import_source_key')->nullable();
+        });
         $this->database->schema()->create('accounting_journal_imports', function ($table) {
             $table->increments('id');
             $table->unsignedInteger('business_id');
