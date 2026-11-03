@@ -243,9 +243,9 @@ class LegacyReconciliationFindingSnapshotService
             $this->recordAudit($businessId, $year, $scopeKey, $rows, $auditKey, $auditedAt, null);
             $this->upsertFindings($rows, $auditKey, $auditedAt);
 
-            $balanceKeys = array_values(array_filter(array_keys($rows), function ($key) use ($rows): bool {
-                return in_array($rows[$key]['component'], ['opening', 'closing'], true);
-            }));
+            $balanceKeys = array_column(array_filter($rows, function (array $row): bool {
+                return in_array($row['component'] ?? '', ['opening', 'closing'], true);
+            }), 'finding_key');
             if ($balanceComparable) {
                 $this->resolveMissingFindings(
                     DB::table('accounting_legacy_reconciliation_findings')

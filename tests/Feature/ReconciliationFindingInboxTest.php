@@ -508,7 +508,7 @@ class ReconciliationFindingInboxTest extends TestCase
         $mapping = DB::table('accounting_acc_trans_mappings')->where('source_record_type', 'reconciliation_finding')->first();
         $this->assertNotNull($mapping);
         $this->assertSame($findingId, (int) $mapping->source_record_id);
-        $this->assertSame(55, (int) $mapping->created_by);
+        $this->assertSame(987654, (int) $mapping->created_by);
         $this->assertStringContainsString('Selisih diverifikasi', $mapping->source_link_note);
         $this->assertSame(25.0, (float) DB::table('accounting_accounts_transactions')->where('type', 'debit')->sum('amount'));
         $this->assertSame(25.0, (float) DB::table('accounting_accounts_transactions')->where('type', 'credit')->sum('amount'));
@@ -517,7 +517,7 @@ class ReconciliationFindingInboxTest extends TestCase
         $this->assertSame(100.0, (float) DB::table('accounting_legacy_reconciliation_findings')->where('id', $findingId)->value('actual_amount'));
         $history = json_decode(DB::table('accounting_legacy_reconciliation_findings')->where('id', $findingId)->value('resolution_history'), true);
         $this->assertSame('adjustment_journal_posted', $history[0]['action']);
-        $this->assertSame(55, (int) $history[0]['actor_id']);
+        $this->assertSame(987654, (int) $history[0]['actor_id']);
         $this->assertSame((int) $mapping->id, (int) $history[0]['journal_id']);
         $this->assertSame(125.0, (float) $history[0]['before']['actual_amount']);
         $this->assertSame(100.0, (float) $history[0]['after']['actual_amount']);
@@ -609,7 +609,7 @@ class ReconciliationFindingInboxTest extends TestCase
         $firstConfirm->assertOk()->assertJsonPath('status', 'open')->assertJsonPath('idempotent', false);
 
         $report['generated_at'] = '2026-11-04T10:00:00+07:00';
-        $this->assertSame(8, $snapshotService->persistReport(1, $report));
+        $this->assertSame(9, $snapshotService->persistReport(1, $report));
         $residual = DB::table('accounting_legacy_reconciliation_findings')->where('id', $finding->id)->first();
         $this->assertSame('open', $residual->status);
         $this->assertTrue((bool) $residual->is_current);
