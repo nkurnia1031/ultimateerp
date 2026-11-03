@@ -38,6 +38,9 @@ test('reviewers can bulk review only visible differences without reloading the p
     const explainedRow = page.locator(`#journal_import_draft_table tr[data-row-id="${await explainedPendingRow.getAttribute('data-row-id')}"]`);
     const unexplainedRow = page.locator(`#journal_import_draft_table tr[data-row-id="${await unexplainedPendingRow.getAttribute('data-row-id')}"]`);
     const unchangedRow = page.locator(`#journal_import_draft_table tr[data-row-id="${await unchangedPendingRow.getAttribute('data-row-id')}"]`);
+    const explainedRowId = Number(await explainedRow.getAttribute('data-row-id'));
+    const unexplainedRowId = Number(await unexplainedRow.getAttribute('data-row-id'));
+    const unchangedRowId = Number(await unchangedRow.getAttribute('data-row-id'));
     const explainedCheckbox = explainedRow.locator('.journal-draft-difference-select');
     const unexplainedCheckbox = unexplainedRow.locator('.journal-draft-difference-select');
     const unchangedCheckbox = unchangedRow.locator('.journal-draft-difference-select');
@@ -75,9 +78,9 @@ test('reviewers can bulk review only visible differences without reloading the p
         const response = await fetch(`/accounting/journal-entry/import/${id}/draft-rows?type=Expense&processing_filter=all`);
         return response.json();
     }, importId);
-    const explained = storedRows.rows.find((row) => row.source_number === 'CI-BULK-EXPLAINED');
-    const unexplained = storedRows.rows.find((row) => row.source_number === 'CI-BULK-UNEXPLAINED');
-    const unchanged = storedRows.rows.find((row) => row.source_number === 'CI-BULK-NO-DIFFERENCE');
+    const explained = storedRows.rows.find((row) => Number(row.id) === explainedRowId);
+    const unexplained = storedRows.rows.find((row) => Number(row.id) === unexplainedRowId);
+    const unchanged = storedRows.rows.find((row) => Number(row.id) === unchangedRowId);
     expect(explained).toMatchObject({ reconciliation_status: 'auto_approved', is_reviewed: true });
     expect(unexplained).toMatchObject({ reconciliation_status: 'approved', is_reviewed: true });
     expect(unexplained.difference_approval_reason).toBe('Selisih telah dicocokkan dengan sumber jurnal.');
