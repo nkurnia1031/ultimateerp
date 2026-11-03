@@ -19,6 +19,10 @@ class LegacyAnnualAuditCommandTest extends TestCase
 
     private string $reportDirectory;
 
+    private array $additionalJournalEntries = [];
+
+    private array $additionalOperationalDocuments = [];
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -74,20 +78,24 @@ class LegacyAnnualAuditCommandTest extends TestCase
         $controller = Mockery::mock(JournalEntryController::class);
         $controller->shouldReceive('analyzeJournalWorkbook')
             ->twice()
-            ->andReturn([
-                'entries' => [
-                    $this->saleEntry('INV-2022', '2022-12-31', 100, 11),
-                    $this->saleEntry('INV-2023', '2023-01-02', 200, 22),
-                    $this->expenseEntry('EXP-MISSING', '2023-01-03', 50),
-                    $this->expenseWithVatEntry('EXP-VATIN', '2023-01-04', 50, 5),
-                ],
-                'missing_accounts' => [],
-            ]);
+            ->andReturnUsing(function (): array {
+                return [
+                    'entries' => array_merge([
+                        $this->saleEntry('INV-2022', '2022-12-31', 100, 11),
+                        $this->saleEntry('INV-2023', '2023-01-02', 200, 22),
+                        $this->expenseEntry('EXP-MISSING', '2023-01-03', 50),
+                        $this->expenseWithVatEntry('EXP-VATIN', '2023-01-04', 50, 5),
+                    ], $this->additionalJournalEntries),
+                    'missing_accounts' => [],
+                ];
+            });
         $this->app->instance(JournalEntryController::class, $controller);
 
         $draftService = Mockery::mock(JournalImportDraftService::class);
         $draftService->shouldReceive('sourceTypes')->zeroOrMoreTimes()->andReturn([
             'Journal Entry', 'Sales Invoice', 'Purchase Invoice', 'Expense',
+            'Receive Payment', 'Purchase Payment', 'Bank Deposit', 'Bank Transfer',
+            'Bank Withdrawal', 'Stock Adjustment', 'Stock In/Out', 'Opening Balance', 'Reversal',
         ]);
         $this->app->instance(JournalImportDraftService::class, $draftService);
 
@@ -146,7 +154,11 @@ class LegacyAnnualAuditCommandTest extends TestCase
             'file_summaries' => [],
         ];
         $reader = Mockery::mock(LegacyOperationalEvidenceReader::class);
-        $reader->shouldReceive('read')->once()->andReturn($evidence);
+        $reader->shouldReceive('read')->once()->andReturnUsing(function () use ($evidence): array {
+            $evidence['documents'] = array_merge($evidence['documents'], $this->additionalOperationalDocuments);
+
+            return $evidence;
+        });
         $this->app->instance(LegacyOperationalEvidenceReader::class, $reader);
     }
 
@@ -230,6 +242,62 @@ class LegacyAnnualAuditCommandTest extends TestCase
         }
     }
 
+    public function test_annual_audit_checks_supported_non_invoice_source_types_and_keeps_journal_entries_gl_only(): void
+    {
+        $typesRequiringOperationalSource = [
+            'Receive Payment', 'Purchase Payment', 'Bank Deposit', 'Bank Transfer',
+            'Bank Withdrawal', 'Stock Adjustment', 'Stock In/Out', 'Opening Balance', 'Reversal',
+        ];
+        $this->additionalJournalEntries = array_merge(
+            [$this->sourceTypeEntry('Journal Entry', 'JE-ONLY')],
+            array_map(
+                fn (string $type): array => $this->sourceTypeEntry($type, 'REF-'.strtoupper(str_replace(' ', '-', $type))),
+                $typesRequiringOperationalSource
+            )
+        );
+        $this->additionalOperationalDocuments['Receive Payment|REF-RECEIVE-PAYMENT|2023-02-01'] = [
+            'source_type' => 'Receive Payment',
+            'source_number' => 'REF-RECEIVE-PAYMENT',
+            'date' => '2023-02-01',
+            'status' => 'matched',
+            'source_count' => 1,
+            'base' => 100,
+            'tax' => 0,
+            'total' => 100,
+            'category_name' => 'Pembayaran',
+            'description' => 'Pembayaran fixture',
+            'lines' => [],
+            'expense_lines' => [],
+            'provenance' => [[
+                'path' => 'PEMBAYARAN/receive-payment.xlsx',
+                'row' => 2,
+                'source_identity' => 'fixture-payment',
+            ]],
+        ];
+
+        $this->artisan('accounting:import-legacy', [
+            '--business-id' => 987654,
+            '--user-id' => 987654,
+            '--year' => 2023,
+            '--source-dir' => $this->sourceDirectory,
+        ])->assertExitCode(0);
+
+        $reportPath = $this->reportDirectory.DIRECTORY_SEPARATOR.'business-987654-2023.json';
+        $report = json_decode((string) file_get_contents($reportPath), true);
+        $rows = collect($report['transaction_reconciliation'])->keyBy('source_number');
+
+        $this->assertSame('not_applicable', $rows['JE-ONLY']['match_status']);
+        $this->assertSame('matched', $rows['REF-RECEIVE-PAYMENT']['match_status']);
+        $this->assertSame('Pembayaran', $rows['REF-RECEIVE-PAYMENT']['label']);
+        foreach (array_slice($typesRequiringOperationalSource, 1) as $type) {
+            $number = 'REF-'.strtoupper(str_replace(' ', '-', $type));
+            $this->assertSame('missing_operational_source', $rows[$number]['match_status'], $type);
+            $this->assertSame('journal_description', $rows[$number]['label_source'], $type);
+        }
+        $this->assertSame(9, $report['summary']['missing_operational_source']);
+        $this->assertSame(0, $report['summary']['unsupported_source_types']);
+    }
+
     private function saleEntry(string $number, string $date, float $base, float $tax): array
     {
         $total = $base + $tax;
@@ -285,6 +353,24 @@ class LegacyAnnualAuditCommandTest extends TestCase
                 ['account_no' => '5-80001', 'account_name' => 'Office Expense', 'debit' => $base, 'credit' => 0],
                 ['account_no' => '1-10002', 'account_name' => 'VAT In', 'debit' => $tax, 'credit' => 0],
                 ['account_no' => '1-10001', 'account_name' => 'Cash', 'debit' => 0, 'credit' => $total],
+            ],
+            'legacy_sources' => [],
+        ];
+    }
+
+    private function sourceTypeEntry(string $sourceType, string $number): array
+    {
+        return [
+            'source_type' => $sourceType,
+            'source_number' => $number,
+            'date' => '2023-02-01',
+            'description' => $sourceType.' '.$number,
+            'source_key' => $sourceType.'|'.$number.'|2023-02-01',
+            'debit_total' => 100,
+            'credit_total' => 100,
+            'lines' => [
+                ['account_no' => '1-10001', 'account_name' => 'Cash', 'debit' => 100, 'credit' => 0],
+                ['account_no' => '2-20001', 'account_name' => 'Clearing', 'debit' => 0, 'credit' => 100],
             ],
             'legacy_sources' => [],
         ];

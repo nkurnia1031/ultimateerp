@@ -12,6 +12,26 @@ use RuntimeException;
 
 class LegacyAnnualAuditService
 {
+    /**
+     * Journal Entry is a GL-only posting. Every other supported workbook type
+     * represents an operational source that the audit must try to identify;
+     * absent evidence is a coverage finding, not "not applicable".
+     */
+    private const OPERATIONAL_SOURCE_TYPES = [
+        'Sales Invoice',
+        'Purchase Invoice',
+        'Expense',
+        'Receive Payment',
+        'Purchase Payment',
+        'Bank Deposit',
+        'Bank Transfer',
+        'Bank Withdrawal',
+        'Stock Adjustment',
+        'Stock In/Out',
+        'Opening Balance',
+        'Reversal',
+    ];
+
     private LegacyAnnualAuditControlReader $controlReader;
 
     private JournalImportAccountComponentService $componentService;
@@ -288,11 +308,16 @@ class LegacyAnnualAuditService
         $journalDebit = $this->journalSideTotal($entry, 'debit');
         $journalCredit = $this->journalSideTotal($entry, 'credit');
         $operational = $document === null ? null : $this->operationalAmounts($document, $sourceType);
-        $matchApplicable = in_array($sourceType, ['Sales Invoice', 'Purchase Invoice', 'Expense'], true);
         $documentStatus = (string) ($document['status'] ?? '');
-        $status = ! $matchApplicable
-            ? 'not_applicable'
-            : ($document === null ? 'missing_operational_source' : ($documentStatus === 'matched' ? 'matched' : 'conflict'));
+        if ($sourceType === 'Journal Entry') {
+            $status = 'not_applicable';
+        } elseif (in_array($sourceType, self::OPERATIONAL_SOURCE_TYPES, true)) {
+            $status = $document === null
+                ? 'missing_operational_source'
+                : ($documentStatus === 'matched' ? 'matched' : 'conflict');
+        } else {
+            $status = 'unsupported_source_type';
+        }
         if (! empty($entry['legacy_conflict_resolution'])) {
             $status = 'journal_conflict_resolved';
         } elseif (! empty($entry['source_identity_conflict'])) {
@@ -700,6 +725,7 @@ class LegacyAnnualAuditService
             'operational_documents' => count($operationalRows),
             'operational_matches' => $count($statuses, ['matched']),
             'missing_operational_source' => $count($statuses, ['missing_operational_source']),
+            'unsupported_source_types' => $count($statuses, ['unsupported_source_type']),
             'source_conflicts' => $count($statuses, ['conflict', 'journal_conflict', 'operational_conflict']),
             'journal_conflicts_resolved' => $count($statuses, ['journal_conflict_resolved']),
             'amount_mismatches' => $count($statuses, ['amount_mismatch']),
