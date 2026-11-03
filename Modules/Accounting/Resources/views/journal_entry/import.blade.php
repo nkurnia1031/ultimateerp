@@ -174,6 +174,8 @@
                 data-source-groups-confirm-url="{{ url('accounting/journal-entry/import/'.$batch->id.'/source-groups/confirm') }}"
                 data-cohort-mappings-preview-url="{{ url('accounting/journal-entry/import/'.$batch->id.'/cohort-mappings/preview') }}"
                 data-cohort-mappings-apply-url="{{ url('accounting/journal-entry/import/'.$batch->id.'/cohort-mappings/apply') }}"
+                data-review-groups-url="{{ url('accounting/journal-entry/import/'.$batch->id.'/review-groups') }}"
+                data-review-group-resolve-url="{{ url('accounting/journal-entry/import/'.$batch->id.'/review-groups/resolve') }}"
                 data-options-url="{{ url('accounting/journal-entry/import/'.$batch->id.'/draft-options') }}"
                 data-csrf-token="{{ csrf_token() }}"
                 data-default-type="{{ $activeDraftType }}">
@@ -235,6 +237,34 @@
                 <div class="row">
                     <div class="col-sm-12 text-right">
                         <span id="journal_import_draft_status" class="text-muted" aria-live="polite"></span>
+                    </div>
+                </div>
+                <div class="panel panel-info" id="journal_import_review_groups_panel" style="margin-top: 14px;">
+                    <div class="panel-heading clearfix">
+                        <strong>Kelompok baris yang perlu ditindaklanjuti</strong>
+                        <button type="button" class="btn btn-default btn-xs pull-right" id="journal_import_refresh_review_groups">Perbarui kelompok</button>
+                    </div>
+                    <div class="panel-body">
+                        <p class="help-block" style="margin-bottom: 8px;">Baris dikelompokkan menurut jenis, alasan blokir, dan field yang kurang. Nilai bersama hanya diterapkan ke kelompok yang lolos validasi business; produk, jumlah, harga, dan pilihan sumber tetap ditinjau per baris.</p>
+                        <div id="journal_import_review_groups_status" class="text-muted" aria-live="polite">Memuat kelompok...</div>
+                        <div class="table-responsive" style="margin-top: 8px;">
+                            <table class="table table-condensed table-bordered" id="journal_import_review_groups_table">
+                                <thead>
+                                    <tr>
+                                        <th>Jumlah</th>
+                                        <th>Jenis / alasan blokir</th>
+                                        <th>Field kurang</th>
+                                        <th>Tindakan berikutnya</th>
+                                        <th>Aksi</th>
+                                    </tr>
+                                </thead>
+                                <tbody><tr><td colspan="5" class="text-center text-muted">Memuat kelompok...</td></tr></tbody>
+                            </table>
+                        </div>
+                        <div id="journal_import_group_filter_notice" class="alert alert-info hide" role="status">
+                            <span>Daftar baris sedang dibatasi ke satu kelompok masalah.</span>
+                            <button type="button" class="btn btn-link btn-xs" id="journal_import_clear_group_filter">Tampilkan semua baris tersisa</button>
+                        </div>
                     </div>
                 </div>
                 <div class="table-responsive" role="region" aria-label="Baris transaksi Journal import" tabindex="0" style="margin-top: 10px;">

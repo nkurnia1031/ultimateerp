@@ -368,6 +368,8 @@ class JournalEntryController extends Controller
             'review_filter' => 'nullable|in:all,reviewed,unreviewed',
             'status_filter' => 'nullable|in:all,errors,differences',
             'search' => 'nullable|string|max:100',
+            'group_context' => 'nullable|string|max:5000',
+            'group_key' => ['required_with:group_context', 'nullable', 'string', 'regex:/^[a-f0-9]{64}$/'],
             'page' => 'nullable|integer|min:1',
             'per_page' => 'nullable|integer|min:1|max:100',
         ]);
@@ -380,6 +382,15 @@ class JournalEntryController extends Controller
             ->where('journal_import_id', $batch->id)
             ->where('business_id', $business_id)
             ->where('source_type', $type);
+        if ($request->filled('group_context')) {
+            $groupService = app(\Modules\Accounting\Services\JournalImportGroupedReviewService::class);
+            $groupContext = $groupService->decodeContext((string) $request->input('group_context'), (string) $request->input('group_key'));
+            if ($groupContext['source_type'] !== $type) {
+                return response()->json(['success' => 0, 'msg' => 'Kelompok tidak sesuai dengan jenis transaksi aktif.'], 422);
+            }
+            $groupRowIds = $groupService->matchingRowIds($batch, $business_id, $groupContext);
+            $query->whereIn('id', $groupRowIds === [] ? [0] : $groupRowIds);
+        }
         $processingFilter = $request->input('processing_filter', 'remaining');
         if ($processingFilter === 'remaining') {
             $query->whereIn('processing_status', ['pending', 'failed']);
@@ -443,6 +454,98 @@ class JournalEntryController extends Controller
             'total' => $rows->total(),
             'last_page' => $rows->lastPage(),
         ]);
+    }
+
+    public function reviewGroups(Request $request, $id)
+    {
+        $businessId = (int) $request->session()->get('user.business_id');
+        $this->authorizeJournalImportDraftAccess($businessId);
+        $validated = $request->validate([
+            'type' => 'required|string',
+        ]);
+        if (! in_array($validated['type'], $this->journalImportDraftService->sourceTypes(), true)) {
+            return response()->json(['success' => 0, 'msg' => 'Jenis transaksi tidak valid.'], 422);
+        }
+
+        $batch = DB::table('accounting_journal_imports')
+            ->where('business_id', $businessId)
+            ->where('id', $id)
+            ->first();
+        if (empty($batch)) {
+            abort(404);
+        }
+        if (! in_array($batch->status, ['analyzed', 'partially_imported', 'failed', 'cancelled', 'imported'], true)) {
+            return response()->json(['success' => 0, 'msg' => 'Tunggu pemrosesan batch selesai sebelum mengelompokkan baris.'], 409);
+        }
+
+        $summary = app(\Modules\Accounting\Services\JournalImportGroupedReviewService::class)
+            ->summarize($batch, $businessId, $validated['type']);
+
+        return response()->json(['success' => 1] + $summary);
+    }
+
+    public function resolveReviewGroup(Request $request, $id)
+    {
+        $businessId = (int) $request->session()->get('user.business_id');
+        $this->authorizeJournalImportDraftAccess($businessId);
+        $validated = $request->validate([
+            'group_key' => ['required', 'string', 'regex:/^[a-f0-9]{64}$/'],
+            'group_context' => 'required|string|max:5000',
+            'expected_count' => 'required|integer|min:1|max:50000',
+            'field' => 'required|string|in:location_id,movement_direction',
+            'value' => 'required|string|max:32',
+        ]);
+
+        $batch = DB::table('accounting_journal_imports')
+            ->where('business_id', $businessId)
+            ->where('id', $id)
+            ->first();
+        if (empty($batch)) {
+            abort(404);
+        }
+        if (! in_array($batch->status, ['analyzed', 'partially_imported', 'failed', 'cancelled'], true)) {
+            return response()->json(['success' => 0, 'msg' => 'Batch sedang diproses. Tunggu sebelum mengubah kelompok.'], 409);
+        }
+
+        $groupService = app(\Modules\Accounting\Services\JournalImportGroupedReviewService::class);
+        $context = $groupService->decodeContext($validated['group_context'], $validated['group_key']);
+        $rowIds = $groupService->matchingRowIds($batch, $businessId, $context);
+        if (count($rowIds) !== (int) $validated['expected_count']) {
+            return response()->json([
+                'success' => 0,
+                'msg' => 'Jumlah atau isi kelompok berubah sejak dibuka. Muat ulang ringkasan kelompok sebelum menerapkan.',
+            ], 409);
+        }
+
+        $updatedRows = $groupService->applyGroupValue(
+            $batch,
+            $businessId,
+            $context,
+            $validated['field'],
+            $validated['value'],
+            $rowIds
+        );
+
+        // Start the established, bounded batch preparation pipeline after the group edit.
+        $savedOptions = ! empty($batch->import_options) ? json_decode($batch->import_options, true) : [];
+        $request->merge(is_array($savedOptions) ? $savedOptions : []);
+        $request->merge(['import_id' => (int) $batch->id]);
+        $startResponse = $this->startImport($request);
+        $startData = $startResponse->getData(true) ?: [];
+        if ($startResponse->getStatusCode() >= 400 || empty($startData['success'])) {
+            return response()->json([
+                'success' => 0,
+                'mapping_saved' => true,
+                'updated_rows' => $updatedRows,
+                'msg' => $startData['msg'] ?? 'Perubahan tersimpan, tetapi antrean import belum dapat dimulai. Batch dapat dilanjutkan dari halaman ini.',
+            ], $startResponse->getStatusCode());
+        }
+
+        return response()->json(array_merge($startData, [
+            'success' => 1,
+            'updated_rows' => $updatedRows,
+            'msg' => $updatedRows.' baris diperbarui. Baris yang memenuhi syarat dicoba ulang melalui antrean standar.',
+        ]));
     }
 
     public function previewSourceGroups(Request $request, $id)

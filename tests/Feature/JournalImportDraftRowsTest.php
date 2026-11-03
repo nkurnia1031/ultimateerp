@@ -7,7 +7,9 @@ use App\Utils\ModuleUtil;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Bus;
 use Mockery;
+use Modules\Accounting\Jobs\ProcessJournalImportJob;
 use Tests\TestCase;
 
 class JournalImportDraftRowsTest extends TestCase
@@ -33,6 +35,7 @@ class JournalImportDraftRowsTest extends TestCase
         DB::setDefaultConnection('sqlite');
 
         $this->createSchema();
+        Bus::fake();
         DB::table('accounting_journal_imports')->insert([
             'id' => 5,
             'business_id' => 7,
@@ -113,6 +116,102 @@ class JournalImportDraftRowsTest extends TestCase
             ->assertJsonPath('phase_history.workbook_analysis.processed', 98445);
     }
 
+    public function test_public_review_groups_filter_rows_and_bulk_apply_only_the_active_business_default_location(): void
+    {
+        $this->insertIncompleteExpenseRow(10, 'EXP-10', 'pending', 'Draft Expense belum siap: Pilih lokasi/gudang aktif dari business ini.');
+        $this->insertIncompleteExpenseRow(11, 'EXP-11', 'failed', 'Draft Expense belum siap: Pilih lokasi/gudang aktif dari business ini.');
+        $this->insertIncompleteExpenseRow(12, 'EXP-12', 'pending', 'Draft Expense belum siap: Lengkapi produk, kuantitas, satuan, dan harga.');
+        $this->insertIncompleteExpenseRow(13, 'EXP-DONE', 'completed', 'Draft Expense belum siap: Pilih lokasi/gudang aktif dari business ini.');
+        $this->insertIncompleteExpenseRow(14, 'EXP-FOREIGN', 'pending', 'Draft Expense belum siap: Pilih lokasi/gudang aktif dari business ini.', 8);
+        DB::table('business_locations')->insert([
+            'id' => 71,
+            'business_id' => 8,
+            'name' => 'Lokasi tenant lain',
+            'is_active' => 1,
+        ]);
+
+        $summary = $this->requestReviewGroups('Expense');
+        $summary->assertOk()
+            ->assertJsonPath('total_rows', 3)
+            ->assertJsonPath('total_groups', 2);
+        $locationGroup = collect($summary->json('groups'))->firstWhere('missing_field', 'location_id');
+        $this->assertSame(2, $locationGroup['row_count']);
+        $this->assertSame('Isi lokasi: Lokasi aktif test', $locationGroup['bulk_actions'][0]['label']);
+
+        $filtered = $this->requestDraftRows([
+            'type' => 'Expense',
+            'group_context' => $locationGroup['group_context'],
+            'group_key' => $locationGroup['group_key'],
+        ]);
+        $filtered->assertOk()->assertJsonPath('total', 2);
+        $this->assertSame([10, 11], array_column($filtered->json('rows'), 'id'));
+
+        $foreignLocation = $this->requestReviewGroupResolution([
+            'group_key' => $locationGroup['group_key'],
+            'group_context' => $locationGroup['group_context'],
+            'expected_count' => 2,
+            'field' => 'location_id',
+            'value' => '71',
+        ]);
+        $foreignLocation->assertUnprocessable();
+        $this->assertSame('{}', DB::table('accounting_journal_import_rows')->where('id', 10)->value('draft_data'));
+
+        $resolved = $this->requestReviewGroupResolution([
+            'group_key' => $locationGroup['group_key'],
+            'group_context' => $locationGroup['group_context'],
+            'expected_count' => 2,
+            'field' => 'location_id',
+            'value' => '70',
+        ]);
+        $resolved->assertOk()->assertJsonPath('success', 1)->assertJsonPath('updated_rows', 2)->assertJsonPath('status', 'preparing_import');
+        foreach ([10, 11] as $rowId) {
+            $draft = json_decode((string) DB::table('accounting_journal_import_rows')->where('id', $rowId)->value('draft_data'), true);
+            $this->assertSame(70, $draft['location_id']);
+            $this->assertSame(1, (int) DB::table('accounting_journal_import_rows')->where('id', $rowId)->value('is_reviewed'));
+        }
+        $detailsDraft = json_decode((string) DB::table('accounting_journal_import_rows')->where('id', 12)->value('draft_data'), true);
+        $this->assertArrayNotHasKey('details', $detailsDraft);
+        Bus::assertDispatched(ProcessJournalImportJob::class);
+    }
+
+    public function test_stock_direction_is_suggested_only_when_all_inventory_components_prove_the_same_side(): void
+    {
+        $this->insertIncompleteStockRow(20, 'STOCK-IN', [
+            ['account_no' => '1-10001', 'account_name' => 'Persediaan Barang', 'type' => 'debit', 'debit' => 100, 'credit' => 0],
+            ['account_no' => '2-20001', 'account_name' => 'Hutang Usaha', 'type' => 'credit', 'debit' => 0, 'credit' => 100],
+        ]);
+        $this->insertIncompleteStockRow(21, 'STOCK-AMBIGUOUS', [
+            ['account_no' => '1-10001', 'account_name' => 'Persediaan Barang', 'type' => 'debit', 'debit' => 100, 'credit' => 0],
+            ['account_no' => '1-10001', 'account_name' => 'Persediaan Barang', 'type' => 'credit', 'debit' => 0, 'credit' => 100],
+        ]);
+
+        $summary = $this->requestReviewGroups('Stock In/Out');
+        $directionGroup = collect($summary->json('groups'))->first(function ($group) {
+            return $group['suggested_direction'] === 'in';
+        });
+        $this->assertNotNull($directionGroup);
+        $this->assertSame('in', $directionGroup['suggested_direction']);
+        $this->assertContains('movement_direction', array_column($directionGroup['bulk_actions'], 'field'));
+
+        $ambiguousGroup = collect($summary->json('groups'))->first(function ($group) {
+            return $group['suggested_direction'] === null;
+        });
+        $this->assertNotNull($ambiguousGroup);
+        $this->assertNotContains('movement_direction', array_column($ambiguousGroup['bulk_actions'], 'field'));
+
+        $resolved = $this->requestReviewGroupResolution([
+            'group_key' => $directionGroup['group_key'],
+            'group_context' => $directionGroup['group_context'],
+            'expected_count' => 1,
+            'field' => 'movement_direction',
+            'value' => 'in',
+        ]);
+        $resolved->assertOk()->assertJsonPath('updated_rows', 1);
+        $draft = json_decode((string) DB::table('accounting_journal_import_rows')->where('id', 20)->value('draft_data'), true);
+        $this->assertSame('in', $draft['movement_direction']);
+        $this->assertArrayNotHasKey('details', $draft, 'Direction inference must not fabricate product lines or quantities.');
+    }
+
     private function requestDraftRows(array $query)
     {
         $user = Mockery::mock(User::class)->makePartial();
@@ -143,6 +242,92 @@ class JournalImportDraftRowsTest extends TestCase
             \App\Http\Middleware\AdminSidebarMenu::class,
         ])->actingAs($user)->withSession(['user' => ['business_id' => 7]])
             ->getJson('/accounting/journal-entry/import/5/status');
+    }
+
+    private function requestReviewGroups(string $sourceType)
+    {
+        $user = Mockery::mock(User::class)->makePartial();
+        $user->id = 55;
+        $user->shouldReceive('can')->with('superadmin')->andReturn(false);
+        $user->shouldReceive('can')->with('accounting.add_journal')->andReturn(true);
+
+        return $this->withoutMiddleware([
+            \App\Http\Middleware\SetSessionData::class,
+            \App\Http\Middleware\Language::class,
+            \App\Http\Middleware\Timezone::class,
+            \App\Http\Middleware\AdminSidebarMenu::class,
+        ])->actingAs($user)->withSession(['user' => ['business_id' => 7]])
+            ->getJson('/accounting/journal-entry/import/5/review-groups?'.http_build_query(['type' => $sourceType]));
+    }
+
+    private function requestReviewGroupResolution(array $payload)
+    {
+        $user = Mockery::mock(User::class)->makePartial();
+        $user->id = 55;
+        $user->shouldReceive('can')->with('superadmin')->andReturn(false);
+        $user->shouldReceive('can')->with('accounting.add_journal')->andReturn(true);
+
+        return $this->withoutMiddleware([
+            \App\Http\Middleware\SetSessionData::class,
+            \App\Http\Middleware\Language::class,
+            \App\Http\Middleware\Timezone::class,
+            \App\Http\Middleware\AdminSidebarMenu::class,
+        ])->actingAs($user)->withSession(['user' => ['business_id' => 7]])
+            ->postJson('/accounting/journal-entry/import/5/review-groups/resolve', $payload);
+    }
+
+    private function insertIncompleteExpenseRow(int $id, string $number, string $status, string $message, int $businessId = 7): void
+    {
+        DB::table('accounting_journal_import_rows')->insert([
+            'id' => $id,
+            'journal_import_id' => 5,
+            'business_id' => $businessId,
+            'entry_index' => $id,
+            'source_type' => 'Expense',
+            'source_number' => $number,
+            'source_action' => 'create',
+            'entry_data' => json_encode([
+                'source_type' => 'Expense',
+                'source_number' => $number,
+                'source_link_status' => 'unmatched',
+                'date' => '2025-01-01',
+                'description' => 'Biaya test',
+                'debit_total' => 100,
+                'credit_total' => 100,
+                'lines' => [],
+            ]),
+            'draft_data' => '{}',
+            'processing_status' => $status,
+            'processing_message' => $message,
+            'processing_error' => null,
+            'reconciliation_status' => 'not_checked',
+        ]);
+    }
+
+    private function insertIncompleteStockRow(int $id, string $number, array $lines): void
+    {
+        DB::table('accounting_journal_import_rows')->insert([
+            'id' => $id,
+            'journal_import_id' => 5,
+            'business_id' => 7,
+            'entry_index' => $id,
+            'source_type' => 'Stock In/Out',
+            'source_number' => $number,
+            'source_action' => 'create',
+            'entry_data' => json_encode([
+                'source_type' => 'Stock In/Out',
+                'source_number' => $number,
+                'source_link_status' => 'unmatched',
+                'debit_total' => 100,
+                'credit_total' => 100,
+                'lines' => $lines,
+            ]),
+            'draft_data' => '{}',
+            'processing_status' => 'pending',
+            'processing_message' => 'Draft stok belum siap: Pilih arah pergerakan stok Masuk atau Keluar.',
+            'processing_error' => null,
+            'reconciliation_status' => 'not_checked',
+        ]);
     }
 
     private function insertDraftRow(int $id, int $entryIndex, string $status): void
@@ -182,8 +367,12 @@ class JournalImportDraftRowsTest extends TestCase
             $table->unsignedInteger('imported_entries')->default(0);
             $table->unsignedInteger('skipped_entries')->default(0);
             $table->longText('progress_data')->nullable();
+            $table->unsignedBigInteger('prepare_cursor')->default(0);
+            $table->unsignedBigInteger('tax_reconciliation_cursor')->default(0);
             $table->dateTime('cancel_requested_at')->nullable();
+            $table->unsignedInteger('cancel_requested_by')->nullable();
             $table->dateTime('cancelled_at')->nullable();
+            $table->unsignedInteger('cancelled_by')->nullable();
             $table->longText('last_message')->nullable();
             $table->longText('error_message')->nullable();
             $table->dateTime('created_at')->nullable();

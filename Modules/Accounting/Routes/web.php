@@ -28,6 +28,8 @@ Route::middleware('web', 'SetSessionData', 'auth', 'language', 'timezone', 'Admi
     Route::get('journal-entry/import/{id}/review', [\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'reviewImport']);
     Route::get('journal-entry/import/{id}/status', [\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'importStatus']);
     Route::post('journal-entry/import/{id}/terminate', [\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'terminateImport']);
+    Route::get('journal-entry/import/{id}/review-groups', [\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'reviewGroups']);
+    Route::post('journal-entry/import/{id}/review-groups/resolve', [\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'resolveReviewGroup']);
     Route::get('journal-entry/import/{id}/draft-rows', [\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'draftRows']);
     Route::get('journal-entry/import/{id}/source-groups/preview', [\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'previewSourceGroups']);
     Route::post('journal-entry/import/{id}/source-groups/confirm', [\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'confirmSourceGroups']);

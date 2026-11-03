@@ -378,6 +378,10 @@
     var draftRequestNumber = 0;
     var sourceGroupPreview = null;
     var cohortMappingPreview = null;
+    var reviewGroupContext = null;
+    var reviewGroupKey = null;
+    var reviewImportPollers = {};
+    var reviewImportPollers = {};
 
     function draftActionLabel(action) {
         var labels = {
@@ -803,19 +807,25 @@
             $('<tr>').append($('<td colspan="9" class="text-center text-muted">').text('Memuat draft...'))
         );
 
+        var requestData = {
+            type: draftType,
+            processing_filter: $('#journal_import_processing_filter').val() || 'remaining',
+            review_filter: $('#journal_import_review_filter').val() || 'all',
+            status_filter: $('#journal_import_status_filter').val() || 'all',
+            search: $('#journal_import_draft_search').val() || '',
+            page: draftPage,
+            per_page: 50
+        };
+        if (reviewGroupContext && reviewGroupKey) {
+            requestData.group_context = reviewGroupContext;
+            requestData.group_key = reviewGroupKey;
+        }
+
         $.ajax({
             method: 'GET',
             url: draft.data('rows-url'),
             dataType: 'json',
-            data: {
-                type: draftType,
-                processing_filter: $('#journal_import_processing_filter').val() || 'remaining',
-                review_filter: $('#journal_import_review_filter').val() || 'all',
-                status_filter: $('#journal_import_status_filter').val() || 'all',
-                search: $('#journal_import_draft_search').val() || '',
-                page: draftPage,
-                per_page: 50
-            }
+            data: requestData
         }).done(function (response) {
             if (requestNumber !== draftRequestNumber) return;
             var tbody = $('#journal_import_draft_table tbody').empty();
@@ -845,6 +855,139 @@
                 $('<tr>').append($('<td colspan="9" class="text-center text-danger">').text(message))
             );
         });
+    }
+
+    function loadReviewGroups() {
+        var draft = $('#journal_import_draft');
+        if (!draft.length || !draftType) return;
+        var status = $('#journal_import_review_groups_status');
+        var tbody = $('#journal_import_review_groups_table tbody').empty();
+        status.removeClass('text-danger').text('Mengelompokkan baris yang belum selesai...');
+        tbody.append($('<tr>').append($('<td colspan="5" class="text-center text-muted">').text('Memuat kelompok...')));
+
+        $.ajax({
+            method: 'GET',
+            url: draft.data('review-groups-url'),
+            dataType: 'json',
+            data: { type: draftType }
+        }).done(function (response) {
+            tbody.empty();
+            if (!response.success || !Array.isArray(response.groups) || response.groups.length === 0) {
+                tbody.append($('<tr>').append($('<td colspan="5" class="text-center text-muted">').text('Tidak ada baris pending/gagal untuk jenis transaksi ini.')));
+                status.text('0 kelompok · 0 baris tersisa.');
+                $('.journal-import-type-tab').filter(function () {
+                    return String($(this).data('type')) === draftType;
+                }).find('[data-type-count]').text('0');
+                return;
+            }
+
+            response.groups.forEach(function (group) {
+                var row = $('<tr>');
+                row.append($('<td class="text-right">').text(Number(group.row_count || 0).toLocaleString()));
+                var reason = $('<td>');
+                reason.append($('<strong>').text(group.source_type + ' · ' + (group.source_action || 'review')));
+                reason.append($('<div class="text-muted">').text(group.blocking_reason || 'Alasan belum tersedia.'));
+                row.append(reason);
+                row.append($('<td>').text(group.missing_field_label || 'Informasi transaksi'));
+                var nextAction = $('<td>').text(group.next_action || 'Tinjau baris satu per satu.');
+                if (group.suggested_direction) {
+                    nextAction.append($('<div class="text-success">').text('Arah dari akun persediaan: ' + (group.suggested_direction === 'in' ? 'Masuk' : 'Keluar')));
+                }
+                row.append(nextAction);
+
+                var actions = $('<td>');
+                var viewButton = $('<button type="button" class="btn btn-default btn-xs journal-import-view-review-group">')
+                    .text('Lihat baris')
+                    .data('group-context', group.group_context)
+                    .data('group-key', group.group_key)
+                    .data('source-type', group.source_type);
+                actions.append(viewButton);
+                (group.bulk_actions || []).forEach(function (bulkAction) {
+                    actions.append(' ');
+                    actions.append($('<button type="button" class="btn btn-primary btn-xs journal-import-resolve-review-group" style="margin-top:3px;">')
+                        .text(bulkAction.label + ' & coba lagi')
+                        .data('group-context', group.group_context)
+                        .data('group-key', group.group_key)
+                        .data('expected-count', Number(group.row_count || 0))
+                        .data('field', bulkAction.field)
+                        .data('value', bulkAction.value)
+                        .data('label', bulkAction.label));
+                });
+                row.append(actions);
+                tbody.append(row);
+            });
+            $('.journal-import-type-tab').filter(function () {
+                return String($(this).data('type')) === draftType;
+            }).find('[data-type-count]').text(Number(response.total_rows || 0));
+            status.text(Number(response.total_groups || 0).toLocaleString() + ' kelompok · ' + Number(response.total_rows || 0).toLocaleString() + ' baris pending/gagal.');
+            $('.journal-import-type-tab').filter(function () {
+                return String($(this).data('type')) === draftType;
+            }).find('[data-type-count]').text(Number(response.total_rows || 0));
+        }).fail(function (xhr) {
+            var message = xhr.responseJSON && xhr.responseJSON.msg ? xhr.responseJSON.msg : 'Gagal mengelompokkan baris tersisa.';
+            tbody.empty().append($('<tr>').append($('<td colspan="5" class="text-center text-danger">').text(message)));
+            status.addClass('text-danger').text(message);
+        });
+    }
+
+    function pollReviewImport(importId) {
+        var id = String(importId);
+        if (reviewImportPollers[id]) return;
+        reviewImportPollers[id] = true;
+
+        function poll() {
+            $.ajax({
+                method: 'GET',
+                url: statusUrl(id),
+                dataType: 'json'
+            }).done(function (response) {
+                if (response.success) updateRow(response);
+                if (response.success && isActive(response.status)) {
+                    window.setTimeout(poll, 2000);
+                    return;
+                }
+                delete reviewImportPollers[id];
+                if (response.success) {
+                    $('#journal_import_draft_status').text(response.last_message || 'Pemrosesan selesai.');
+                    loadDraftRows(1);
+                    loadReviewGroups();
+                }
+            }).fail(function () {
+                window.setTimeout(poll, 5000);
+            });
+        }
+
+        poll();
+    }
+
+    function pollReviewImport(importId) {
+        var id = String(importId);
+        if (reviewImportPollers[id]) return;
+        reviewImportPollers[id] = true;
+
+        function poll() {
+            $.ajax({
+                method: 'GET',
+                url: statusUrl(id),
+                dataType: 'json'
+            }).done(function (response) {
+                if (response.success) updateRow(response);
+                if (response.success && isActive(response.status)) {
+                    window.setTimeout(poll, 2000);
+                    return;
+                }
+                delete reviewImportPollers[id];
+                if (response.success) {
+                    $('#journal_import_draft_status').text(response.last_message || 'Pemrosesan selesai.');
+                    loadDraftRows(1);
+                    loadReviewGroups();
+                }
+            }).fail(function () {
+                window.setTimeout(poll, 5000);
+            });
+        }
+
+        poll();
     }
 
     function saveDraftRow(rowId, payload, rowElement, afterSave) {
@@ -1175,7 +1318,11 @@
         $(this).closest('li').addClass('active');
         $(this).attr('aria-selected', 'true');
         draftType = String($(this).data('type'));
+        reviewGroupContext = null;
+        reviewGroupKey = null;
+        $('#journal_import_group_filter_notice').addClass('hide');
         loadDraftRows(1);
+        loadReviewGroups();
     });
 
     function renderCohortMappings(response) {
@@ -1410,6 +1557,11 @@
         loadDraftRows(1);
     });
     $(document).on('change', '#journal_import_processing_filter', function () {
+        if ($(this).val() !== 'remaining') {
+            reviewGroupContext = null;
+            reviewGroupKey = null;
+            $('#journal_import_group_filter_notice').addClass('hide');
+        }
         loadDraftRows(1);
     });
     $(document).on('change', '#journal_import_status_filter', function () {
@@ -1427,6 +1579,77 @@
     });
     $(document).on('click', '#journal_import_draft_next', function () {
         if (draftPage < draftLastPage) loadDraftRows(draftPage + 1);
+    });
+
+    $(document).on('click', '#journal_import_refresh_review_groups', function () {
+        loadReviewGroups();
+    });
+
+    $(document).on('click', '.journal-import-view-review-group', function () {
+        reviewGroupContext = String($(this).data('group-context') || '');
+        reviewGroupKey = String($(this).data('group-key') || '');
+        draftType = String($(this).data('source-type') || draftType);
+        $('#journal_import_processing_filter').val('remaining');
+        $('#journal_import_group_filter_notice').removeClass('hide');
+        loadDraftRows(1);
+    });
+
+    $(document).on('click', '#journal_import_clear_group_filter', function () {
+        reviewGroupContext = null;
+        reviewGroupKey = null;
+        $('#journal_import_group_filter_notice').addClass('hide');
+        loadDraftRows(1);
+    });
+
+    $(document).on('click', '.journal-import-resolve-review-group', function () {
+        var button = $(this);
+        var draft = $('#journal_import_draft');
+        var expectedCount = Number(button.data('expected-count') || 0);
+        var label = String(button.data('label') || 'Pilihan kelompok');
+        var field = String(button.data('field') || '');
+        var directionLabel = button.data('value') === 'in' ? 'Masuk' : (button.data('value') === 'out' ? 'Keluar' : '');
+        if (!expectedCount || !window.confirm('Terapkan ' + label + (directionLabel ? ' (' + directionLabel + ')' : '') + ' ke ' + expectedCount.toLocaleString() + ' baris pending/gagal, lalu mulai mencoba ulang melalui antrean standar?')) {
+            return;
+        }
+
+        button.prop('disabled', true).text('Memvalidasi dan menyimpan...');
+        $('#journal_import_review_groups_status').removeClass('text-danger').text('Menyimpan perubahan kelompok dalam bagian kecil...');
+        $.ajax({
+            method: 'POST',
+            url: draft.data('review-group-resolve-url'),
+            contentType: 'application/json',
+            dataType: 'json',
+            headers: { 'X-CSRF-TOKEN': draft.data('csrf-token') },
+            data: JSON.stringify({
+                group_key: button.data('group-key'),
+                group_context: button.data('group-context'),
+                expected_count: expectedCount,
+                field: field,
+                value: String(button.data('value') || '')
+            })
+        }).done(function (response) {
+            reviewGroupContext = null;
+            reviewGroupKey = null;
+            $('#journal_import_group_filter_notice').addClass('hide');
+            $('#journal_import_review_groups_status').text(response.msg || 'Kelompok diperbarui dan dicoba ulang.');
+            $('#journal_import_draft_status').text(response.last_message || response.msg || 'Batch dimulai kembali.');
+            if (window.toastr) toastr.success(response.msg || 'Kelompok diperbarui dan dicoba ulang.');
+            loadDraftRows(1);
+            if (response.import_id) {
+                pollWatch(response.import_id);
+                pollReviewImport(response.import_id);
+            }
+            button.prop('disabled', false).text(label + ' & coba lagi');
+        }).fail(function (xhr) {
+            var response = xhr.responseJSON || {};
+            var message = response.msg || 'Kelompok gagal disimpan.';
+            if (response.mapping_saved) {
+                message = 'Perubahan tersimpan untuk ' + Number(response.updated_rows || 0).toLocaleString() + ' baris, tetapi batch belum mulai. ' + message;
+            }
+            $('#journal_import_review_groups_status').addClass('text-danger').text(message);
+            button.prop('disabled', false).text(label + ' & coba lagi');
+            if (window.toastr) toastr.error(message);
+        });
     });
 
     $(document).on('change', '.journal-draft-action', function () {
@@ -1543,6 +1766,7 @@
         if (draft.length) {
             draftType = String(draft.data('default-type') || 'Journal Entry');
             loadDraftRows(1);
+            loadReviewGroups();
         }
     });
 
