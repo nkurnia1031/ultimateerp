@@ -17,6 +17,13 @@
         var searchTimer = null;
         var currentPage = 1;
         var currentAction = null;
+        var accountOptionsElement = document.getElementById('finding_account_options');
+        var accountOptions = [];
+        try {
+            accountOptions = accountOptionsElement ? JSON.parse(accountOptionsElement.textContent || '[]') : [];
+        } catch (error) {
+            accountOptions = [];
+        }
 
         function modalShow() {
             if (modal && typeof modal.modal === 'function') {
@@ -35,8 +42,9 @@
         }
 
         function formatMoney(value, symbol) {
+            var precision = Math.max(0, Math.min(4, Number(page.dataset.currencyPrecision || 2)));
             var formatted = new Intl.NumberFormat('id-ID', {
-                minimumFractionDigits: 2,
+                minimumFractionDigits: precision,
                 maximumFractionDigits: 4
             }).format(Number(value || 0));
             return (symbol ? symbol + ' ' : '') + formatted;
@@ -94,6 +102,15 @@
             document.getElementById('finding_action_accept').classList.add('hidden');
             document.getElementById('finding_accept_reason').value = '';
             document.getElementById('finding_action_values').textContent = '';
+            document.getElementById('finding_adjustment_wrap').classList.add('hidden');
+            document.getElementById('finding_adjustment_review').classList.add('hidden');
+            document.getElementById('finding_adjustment_reason').value = '';
+            document.getElementById('finding_adjustment_lines').textContent = '';
+            document.getElementById('finding_adjustment_comparison').textContent = '';
+            document.getElementById('finding_adjustment_review_lines').textContent = '';
+            document.getElementById('finding_adjustment_confirm_intent').checked = false;
+            document.getElementById('finding_adjustment_confirm').classList.add('hidden');
+            document.getElementById('finding_adjustment_confirm').disabled = true;
         }
 
         function addProposalRow(label, before, after) {
@@ -206,6 +223,208 @@
             modalShow();
         }
 
+        function addAdjustmentLine(accountId, debit, credit) {
+            var tbody = document.getElementById('finding_adjustment_lines');
+            var row = document.createElement('tr');
+            var accountCell = document.createElement('td');
+            var account = document.createElement('select');
+            account.className = 'form-control input-sm js-adjustment-account';
+            account.setAttribute('aria-label', 'Pilih akun CoA');
+            var placeholder = document.createElement('option');
+            placeholder.value = '';
+            placeholder.textContent = 'Pilih CoA';
+            account.appendChild(placeholder);
+            accountOptions.forEach(function (item) {
+                var option = document.createElement('option');
+                option.value = String(item.id);
+                option.textContent = item.name + ' (#' + item.id + ')';
+                account.appendChild(option);
+            });
+            if (accountId) {
+                account.value = String(accountId);
+            }
+            accountCell.appendChild(account);
+            row.appendChild(accountCell);
+
+            [['debit', debit], ['credit', credit]].forEach(function (field) {
+                var cell = document.createElement('td');
+                var input = document.createElement('input');
+                input.type = 'number';
+                input.min = '0';
+                input.step = '0.0001';
+                input.value = field[1] || '';
+                input.className = 'form-control input-sm text-right js-adjustment-' + field[0];
+                input.setAttribute('aria-label', field[0] === 'debit' ? 'Nominal debit' : 'Nominal kredit');
+                cell.appendChild(input);
+                row.appendChild(cell);
+            });
+
+            var actionCell = document.createElement('td');
+            var remove = document.createElement('button');
+            remove.type = 'button';
+            remove.className = 'btn btn-xs btn-default js-remove-adjustment-line';
+            remove.textContent = 'Hapus';
+            remove.setAttribute('aria-label', 'Hapus baris akun');
+            actionCell.appendChild(remove);
+            row.appendChild(actionCell);
+            tbody.appendChild(row);
+        }
+
+        function adjustmentLines() {
+            return Array.prototype.map.call(document.querySelectorAll('#finding_adjustment_lines tr'), function (row) {
+                return {
+                    accounting_account_id: row.querySelector('.js-adjustment-account').value,
+                    debit: row.querySelector('.js-adjustment-debit').value || '0',
+                    credit: row.querySelector('.js-adjustment-credit').value || '0'
+                };
+            });
+        }
+
+        function clearAdjustmentReview() {
+            if (currentAction && currentAction.type === 'journal') {
+                currentAction.fingerprint = null;
+            }
+            document.getElementById('finding_adjustment_review').classList.add('hidden');
+            document.getElementById('finding_adjustment_confirm').classList.add('hidden');
+            document.getElementById('finding_adjustment_confirm').disabled = true;
+            document.getElementById('finding_adjustment_confirm_intent').checked = false;
+        }
+
+        function appendAdjustmentComparison(label, before, after, symbol) {
+            var row = document.createElement('tr');
+            [label, formatMoney(before, symbol), formatMoney(after, symbol)].forEach(function (value, index) {
+                var cell = document.createElement('td');
+                cell.textContent = value;
+                if (index > 0) {
+                    cell.className = 'text-right';
+                }
+                row.appendChild(cell);
+            });
+            document.getElementById('finding_adjustment_comparison').appendChild(row);
+        }
+
+        function startAdjustment(findingId, actionType, variance) {
+            var title = actionType === 'rounding' ? 'Tinjau jurnal pembulatan' : 'Tinjau jurnal penyesuaian';
+            resetActionModal(title);
+            currentAction = { type: 'journal', action: actionType, findingId: findingId, variance: Number(variance || 0) };
+            var amount = Math.abs(Number(variance || 0)).toFixed(4);
+            var roundingAccountId = page.dataset.roundingAccountId;
+            var preferredAccount = actionType === 'rounding' ? roundingAccountId : '';
+            addAdjustmentLine(preferredAccount, amount, '');
+            addAdjustmentLine('', '', amount);
+            document.getElementById('finding_adjustment_context').textContent =
+                'Temuan #' + findingId + ' Â· selisih ' + formatMoney(variance, '') + '. Pilih akun untuk setiap baris; ' +
+                (actionType === 'rounding'
+                    ? 'akun pembulatan yang dipetakan harus dipakai tepat satu kali.'
+                    : 'nilai jurnal tidak boleh melebihi selisih. Baris VAT In/Out tetap dapat dipisahkan.');
+            document.getElementById('finding_adjustment_wrap').classList.remove('hidden');
+            document.getElementById('finding_adjustment_confirm').classList.remove('hidden');
+            document.getElementById('finding_adjustment_confirm').disabled = true;
+            setActionStatus('Isi alasan dan periksa semua akun serta nominal sebelum meminta preview.', 'info');
+            modalShow();
+        }
+
+        function previewAdjustment(button) {
+            if (!currentAction || currentAction.type !== 'journal') {
+                return;
+            }
+            var reason = document.getElementById('finding_adjustment_reason').value.trim();
+            if (!reason) {
+                setActionStatus('Alasan jurnal wajib diisi.', 'danger');
+                document.getElementById('finding_adjustment_reason').focus();
+                return;
+            }
+            button.disabled = true;
+            setActionStatus('Memvalidasi CoA, keseimbangan jurnal, dan nilai temuanâ€¦', 'info');
+            requestJson(urlFor(page.dataset.adjustmentPreviewUrlTemplate, currentAction.findingId), {
+                action: currentAction.action,
+                reason: reason,
+                lines: adjustmentLines()
+            }).then(function (payload) {
+                var proposal = payload.proposal;
+                currentAction.fingerprint = proposal.fingerprint;
+                currentAction.reason = proposal.reason;
+                document.getElementById('finding_adjustment_context').textContent =
+                    'Sumber: ' + (proposal.source.type || 'â€”') + ' #' + (proposal.source.number || 'â€”') +
+                    ' Â· ' + (proposal.source.date || 'tanggal tidak tersedia') + ' Â· ' + (proposal.source.description || '') +
+                    ' Â· Akun: ' + [proposal.source.account_no, proposal.source.account_name].filter(Boolean).join(' ') +
+                    ' Â· Komponen: ' + proposal.component + ' Â· Alasan: ' + proposal.reason;
+                document.getElementById('finding_adjustment_comparison').textContent = '';
+                document.getElementById('finding_adjustment_review_lines').textContent = '';
+                appendAdjustmentComparison('Nilai pembanding', proposal.before.expected_amount, proposal.after.expected_amount, payload.currency_symbol);
+                appendAdjustmentComparison('Nilai aktual', proposal.before.actual_amount, proposal.after.actual_amount, payload.currency_symbol);
+                appendAdjustmentComparison('Sisa selisih', proposal.before.variance, proposal.after.variance, payload.currency_symbol);
+                proposal.lines.forEach(function (line) {
+                    var row = document.createElement('tr');
+                    [line.account_name + ' (#' + line.accounting_account_id + ')', formatMoney(line.debit_minor / 10000, payload.currency_symbol), formatMoney(line.credit_minor / 10000, payload.currency_symbol)].forEach(function (value, index) {
+                        var cell = document.createElement('td');
+                        cell.textContent = value;
+                        if (index > 0) { cell.className = 'text-right'; }
+                        row.appendChild(cell);
+                    });
+                    document.getElementById('finding_adjustment_review_lines').appendChild(row);
+                });
+                document.getElementById('finding_adjustment_debit_total').textContent = formatMoney(proposal.debit_total, payload.currency_symbol);
+                document.getElementById('finding_adjustment_credit_total').textContent = formatMoney(proposal.credit_total, payload.currency_symbol);
+                document.getElementById('finding_adjustment_vat_components').textContent = 'Bukti pajak terpisah Â· VAT In Journal/operasional: ' +
+                    formatMoney(proposal.vat_components.journal_vat_in, payload.currency_symbol) + ' / ' + formatMoney(proposal.vat_components.operational_vat_in, payload.currency_symbol) +
+                    ' Â· VAT Out Journal/operasional: ' + formatMoney(proposal.vat_components.journal_vat_out, payload.currency_symbol) + ' / ' + formatMoney(proposal.vat_components.operational_vat_out, payload.currency_symbol);
+                document.getElementById('finding_adjustment_review').classList.remove('hidden');
+                document.getElementById('finding_adjustment_confirm').classList.remove('hidden');
+                document.getElementById('finding_adjustment_confirm').disabled = !document.getElementById('finding_adjustment_confirm_intent').checked;
+                setActionStatus('Periksa nilai sumber, rincian VAT, akun, dan jurnal. Konfirmasi akan memposting jurnal tertaut.', 'info');
+            }).catch(function (error) {
+                setActionStatus(error.message || 'Preview jurnal tidak dapat dibuat.', 'danger');
+            }).finally(function () {
+                button.disabled = false;
+            });
+        }
+
+        function confirmAdjustment(button) {
+            if (!currentAction || currentAction.type !== 'journal' || !currentAction.fingerprint) {
+                setActionStatus('Buat preview ulang sebelum memposting jurnal.', 'danger');
+                return;
+            }
+            if (!document.getElementById('finding_adjustment_confirm_intent').checked) {
+                setActionStatus('Konfirmasi bahwa jurnal ini ditujukan untuk mengurangi selisih.', 'danger');
+                return;
+            }
+            button.disabled = true;
+            setActionStatus('Memposting jurnal dan memeriksa ulang selisihâ€¦', 'info');
+            requestJson(urlFor(page.dataset.adjustmentConfirmUrlTemplate, currentAction.findingId), {
+                action: currentAction.action,
+                reason: document.getElementById('finding_adjustment_reason').value.trim(),
+                lines: adjustmentLines(),
+                fingerprint: currentAction.fingerprint,
+                confirmation_ack: true
+            }).then(function (payload) {
+                setActionStatus(payload.message || 'Jurnal tertaut berhasil diposting.', payload.status === 'resolved' ? 'success' : 'warning');
+                document.getElementById('finding_adjustment_confirm').classList.add('hidden');
+                loadPage(currentPage);
+            }).catch(function (error) {
+                setActionStatus(error.message || 'Jurnal tidak dapat diposting.', 'danger');
+            }).finally(function () {
+                button.disabled = false;
+            });
+        }
+
+        function saveRoundingAccount(button) {
+            var select = document.getElementById('finding_rounding_account');
+            if (!select) { return; }
+            button.disabled = true;
+            var status = document.getElementById('finding_rounding_account_status');
+            status.textContent = 'Menyimpan mappingâ€¦';
+            requestJson(page.dataset.roundingAccountUrl, { accounting_account_id: select.value || null }).then(function (payload) {
+                page.dataset.roundingAccountId = payload.accounting_account_id || '';
+                status.textContent = payload.message;
+                loadPage(currentPage);
+            }).catch(function (error) {
+                status.textContent = error.message || 'Mapping tidak dapat disimpan.';
+            }).finally(function () {
+                button.disabled = false;
+            });
+        }
+
         function confirmCorrection(button) {
             if (!currentAction || currentAction.type !== 'correction') {
                 return;
@@ -280,8 +499,53 @@
             var acceptButton = event.target.closest('.js-accept-finding');
             if (acceptButton) {
                 acceptFinding(acceptButton.dataset.findingId);
+                return;
+            }
+            var adjustmentButton = event.target.closest('.js-post-finding-adjustment');
+            if (adjustmentButton) {
+                startAdjustment(adjustmentButton.dataset.findingId, adjustmentButton.dataset.action, adjustmentButton.dataset.variance);
             }
         });
+
+        document.getElementById('finding_adjustment_lines').addEventListener('input', clearAdjustmentReview);
+        document.getElementById('finding_adjustment_lines').addEventListener('change', clearAdjustmentReview);
+        document.getElementById('finding_adjustment_lines').addEventListener('click', function (event) {
+            var remove = event.target.closest('.js-remove-adjustment-line');
+            if (!remove) { return; }
+            remove.closest('tr').remove();
+            clearAdjustmentReview();
+        });
+        document.getElementById('finding_adjustment_reason').addEventListener('input', clearAdjustmentReview);
+        document.getElementById('finding_adjustment_add_line').addEventListener('click', function () {
+            addAdjustmentLine('', '', '');
+            clearAdjustmentReview();
+        });
+        document.getElementById('finding_adjustment_reverse_sides').addEventListener('click', function () {
+            Array.prototype.forEach.call(document.querySelectorAll('#finding_adjustment_lines tr'), function (row) {
+                var debit = row.querySelector('.js-adjustment-debit');
+                var credit = row.querySelector('.js-adjustment-credit');
+                var previousDebit = debit.value;
+                debit.value = credit.value;
+                credit.value = previousDebit;
+            });
+            clearAdjustmentReview();
+        });
+        document.getElementById('finding_adjustment_preview').addEventListener('click', function () {
+            previewAdjustment(this);
+        });
+        document.getElementById('finding_adjustment_confirm_intent').addEventListener('change', function () {
+            document.getElementById('finding_adjustment_confirm').disabled = !this.checked || !currentAction || !currentAction.fingerprint;
+        });
+        document.getElementById('finding_adjustment_confirm').addEventListener('click', function () {
+            confirmAdjustment(this);
+        });
+
+        var saveRoundingButton = document.getElementById('finding_save_rounding_account');
+        if (saveRoundingButton) {
+            saveRoundingButton.addEventListener('click', function () {
+                saveRoundingAccount(this);
+            });
+        }
 
         document.getElementById('finding_action_confirm').addEventListener('click', function () {
             confirmCorrection(this);

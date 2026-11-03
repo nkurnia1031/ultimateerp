@@ -121,7 +121,12 @@ class SettingsController extends Controller
         }
 
         try {
-            $accounting_settings = $request->only(['journal_entry_prefix', 'transfer_prefix', 'accounting_default_map']);
+            $existingAccountingSettings = $this->accountingUtil->getAccountingSettings($business_id);
+            $existingAccountingSettings = is_array($existingAccountingSettings) ? $existingAccountingSettings : [];
+            $accounting_settings = array_merge(
+                $existingAccountingSettings,
+                $request->only(['journal_entry_prefix', 'transfer_prefix', 'accounting_default_map'])
+            );
 
             Business::where('id', $business_id)
                         ->update(['accounting_settings' => json_encode($accounting_settings)]);

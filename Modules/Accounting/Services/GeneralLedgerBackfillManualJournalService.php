@@ -13,6 +13,13 @@ class GeneralLedgerBackfillManualJournalService
 {
     private const REVIEW_TABLE = 'accounting_general_ledger_backfill_reviews';
 
+    private $journalPosting;
+
+    public function __construct(AccountingManualJournalPostingService $journalPosting)
+    {
+        $this->journalPosting = $journalPosting;
+    }
+
     /**
      * Create a balanced Journal linked to one review source, atomically.
      * Repeating the call for a linked source returns the existing Journal.
@@ -40,7 +47,6 @@ class GeneralLedgerBackfillManualJournalService
                 || ! Schema::hasColumn('accounting_acc_trans_mappings', 'source_record_id')) {
                 throw ValidationException::withMessages(['source' => 'Source link Accounting belum tersedia; jalankan migrasi terlebih dahulu.']);
             }
-
             $existing = DB::table('accounting_acc_trans_mappings')
                 ->where('business_id', $businessId)
                 ->where('source_record_type', (string) $review->source_record_type)
@@ -64,113 +70,31 @@ class GeneralLedgerBackfillManualJournalService
                 throw ValidationException::withMessages(['source' => 'Status antrean ini tidak dapat ditutup dengan jurnal manual.']);
             }
 
-            $preparedLines = $this->prepareLines($businessId, $lines);
-            $debitTotal = array_sum(array_column($preparedLines, 'debit_minor'));
-            $creditTotal = array_sum(array_column($preparedLines, 'credit_minor'));
-            if ($debitTotal <= 0 || $creditTotal <= 0 || $debitTotal !== $creditTotal) {
-                throw ValidationException::withMessages(['lines' => 'Total debit dan kredit harus sama dan lebih dari nol.']);
-            }
-
             $operationDate = $this->lockAndValidateSource($businessId, $review);
             $reference = 'GLR-'.$businessId.'-'.$reviewId;
             $note = 'Jurnal manual untuk sumber '.$this->sourceLabel((string) $review->source_record_type).' #'.(int) $review->source_record_id.'. Alasan: '.$reason;
-            $now = now();
-            $mappingId = DB::table('accounting_acc_trans_mappings')->insertGetId([
-                'business_id' => $businessId,
-                'ref_no' => $reference,
-                'type' => 'journal_entry',
-                'created_by' => $userId,
-                'operation_date' => $operationDate,
-                'note' => $note,
-                'source_record_type' => (string) $review->source_record_type,
-                'source_record_id' => (int) $review->source_record_id,
-                'source_link_status' => 'matched',
-                'source_link_note' => $reason,
-                'created_at' => $now,
-                'updated_at' => $now,
-            ]);
-
-            foreach ($preparedLines as $line) {
-                $amountMinor = $line['debit_minor'] > 0 ? $line['debit_minor'] : $line['credit_minor'];
-                DB::table('accounting_accounts_transactions')->insert([
-                    'accounting_account_id' => $line['accounting_account_id'],
-                    'acc_trans_mapping_id' => $mappingId,
-                    'transaction_id' => null,
-                    'transaction_payment_id' => null,
-                    'amount' => number_format($amountMinor / 10000, 4, '.', ''),
-                    'type' => $line['debit_minor'] > 0 ? 'debit' : 'credit',
-                    'sub_type' => 'journal_entry',
-                    'map_type' => 'general_ledger_backfill_manual',
-                    'created_by' => $userId,
-                    'operation_date' => $operationDate,
-                    'note' => mb_substr($note, 0, 1000),
-                    'created_at' => $now,
-                    'updated_at' => $now,
-                ]);
-            }
-
-            $this->resolveQueueItem($review, (object) ['id' => $mappingId, 'ref_no' => $reference], $userId, $reason, false);
+            $posted = $this->journalPosting->create(
+                $businessId,
+                $userId,
+                (string) $review->source_record_type,
+                (int) $review->source_record_id,
+                $reference,
+                $operationDate,
+                $reason,
+                $lines,
+                'general_ledger_backfill_manual',
+                $note
+            );
+            $this->resolveQueueItem($review, (object) ['id' => $posted['journal_id'], 'ref_no' => $posted['ref_no']], $userId, $reason, ! $posted['created']);
 
             return [
-                'created' => true,
-                'journal_id' => $mappingId,
-                'ref_no' => $reference,
+                'created' => $posted['created'],
+                'journal_id' => $posted['journal_id'],
+                'ref_no' => $posted['ref_no'],
                 'source_record_id' => (int) $review->source_record_id,
-                'total' => number_format($debitTotal / 10000, 4, '.', ''),
+                'total' => $posted['total'],
             ];
         });
-    }
-
-    private function prepareLines(int $businessId, array $lines): array
-    {
-        $normalized = [];
-        $accountIds = [];
-        foreach ($lines as $index => $line) {
-            $accountId = (int) ($line['accounting_account_id'] ?? 0);
-            $debit = $this->amountMinor($line['debit'] ?? 0, 'lines.'.$index.'.debit');
-            $credit = $this->amountMinor($line['credit'] ?? 0, 'lines.'.$index.'.credit');
-            if ($accountId < 1 || (($debit > 0) === ($credit > 0))) {
-                throw ValidationException::withMessages(['lines.'.$index => 'Setiap baris harus memilih satu CoA dan mengisi debit atau kredit saja.']);
-            }
-            $accountIds[] = $accountId;
-            $normalized[] = [
-                'accounting_account_id' => $accountId,
-                'debit_minor' => $debit,
-                'credit_minor' => $credit,
-            ];
-        }
-
-        $accountIds = array_values(array_unique($accountIds));
-        $accounts = DB::table('accounting_accounts')
-            ->where('business_id', $businessId)
-            ->where('status', 'active')
-            ->whereIn('id', $accountIds)
-            ->lockForUpdate()
-            ->pluck('id')
-            ->map(fn ($id) => (int) $id)
-            ->all();
-        if (count($accounts) !== count($accountIds)) {
-            throw ValidationException::withMessages(['lines' => 'Semua akun harus CoA aktif milik business saat ini.']);
-        }
-
-        return $normalized;
-    }
-
-    private function amountMinor($value, string $key): int
-    {
-        if ($value === null || $value === '') {
-            return 0;
-        }
-        if (! is_numeric($value) || ! is_finite((float) $value) || (float) $value < 0 || (float) $value > 999999999999) {
-            throw ValidationException::withMessages([$key => 'Nominal harus angka positif dengan maksimal 4 angka desimal.']);
-        }
-
-        $rounded = round((float) $value, 4);
-        if (abs($rounded - (float) $value) > 0.0000001) {
-            throw ValidationException::withMessages([$key => 'Nominal tidak boleh melebihi 4 angka desimal.']);
-        }
-
-        return (int) round($rounded * 10000);
     }
 
     private function lockAndValidateSource(int $businessId, object $review): string

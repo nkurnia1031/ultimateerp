@@ -5,31 +5,53 @@ namespace Modules\Accounting\Http\Controllers;
 use App\Utils\ModuleUtil;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
+use Modules\Accounting\Entities\AccountingAccount;
 use Modules\Accounting\Services\ReconciliationFindingActionService;
 use Modules\Accounting\Services\LegacyReconciliationFindingSnapshotService;
+use Modules\Accounting\Services\ReconciliationFindingJournalService;
 
 class ReconciliationFindingController extends Controller
 {
-    public function index(Request $request, ModuleUtil $moduleUtil, LegacyReconciliationFindingSnapshotService $findings)
+    public function index(Request $request, ModuleUtil $moduleUtil, LegacyReconciliationFindingSnapshotService $findings, ReconciliationFindingJournalService $journalActions)
     {
         $businessId = $this->authorizeReports($request, $moduleUtil);
         $filters = $this->filters($request);
         $rows = $findings->paginate($businessId, $filters, (int) $request->input('page', 1));
         $summary = $findings->summary($businessId, $filters);
         $years = $findings->years($businessId);
+        $roundingAccountId = $journalActions->roundingAccountId($businessId);
+        $accountOptions = AccountingAccount::forDropdown($businessId)->map(function ($name, $id): array {
+            return ['id' => (int) $id, 'name' => (string) $name];
+        })->values()->all();
+        $currencyPrecision = $journalActions->currencyPrecision($businessId);
+        $canPostJournals = $request->user()->can('superadmin')
+            || $request->user()->can('accounting.add_journal');
+        $canManageRounding = $request->user()->can('superadmin') || $request->user()->can('accounting.manage_accounts');
+        $linkedJournals = $journalActions->linkedJournals($businessId, collect($rows->items())->pluck('id')->map(fn ($id): int => (int) $id)->all());
 
-        return view('accounting::reconciliation.findings', compact('rows', 'summary', 'years', 'filters', 'findings'));
+        return view('accounting::reconciliation.findings', compact(
+            'rows', 'summary', 'years', 'filters', 'findings', 'roundingAccountId', 'accountOptions',
+            'currencyPrecision', 'canPostJournals', 'canManageRounding'
+        ));
     }
 
-    public function data(Request $request, ModuleUtil $moduleUtil, LegacyReconciliationFindingSnapshotService $findings)
+    public function data(Request $request, ModuleUtil $moduleUtil, LegacyReconciliationFindingSnapshotService $findings, ReconciliationFindingJournalService $journalActions)
     {
         $businessId = $this->authorizeReports($request, $moduleUtil);
         $filters = $this->filters($request);
         $rows = $findings->paginate($businessId, $filters, (int) $request->input('page', 1));
         $summary = $findings->summary($businessId, $filters);
+        $findingIds = collect($rows->items())->pluck('id')->map(fn ($id): int => (int) $id)->all();
+        $linkedJournals = $journalActions->linkedJournals($businessId, $findingIds);
+        $roundingAccountId = $journalActions->roundingAccountId($businessId);
+        $currencyPrecision = $journalActions->currencyPrecision($businessId);
+        $canPostJournals = $request->user()->can('superadmin')
+            || $request->user()->can('accounting.add_journal');
 
         return response()->json([
-            'rows_html' => view('accounting::reconciliation.partials.rows', compact('rows', 'findings'))->render(),
+            'rows_html' => view('accounting::reconciliation.partials.rows', compact(
+                'rows', 'findings', 'linkedJournals', 'roundingAccountId', 'currencyPrecision', 'canPostJournals'
+            ))->render(),
             'summary_html' => view('accounting::reconciliation.partials.summary', compact('summary'))->render(),
             'pagination_html' => view('accounting::reconciliation.partials.pagination', compact('rows'))->render(),
             'filtered_count' => $summary['filtered_count'],
@@ -77,6 +99,87 @@ class ReconciliationFindingController extends Controller
         $result = $actions->accept($businessId, $findingId, (int) $request->user()->id, $validated['reason']);
 
         return response()->json($result);
+    }
+
+    public function saveRoundingAccount(Request $request, ModuleUtil $moduleUtil, ReconciliationFindingJournalService $actions)
+    {
+        $businessId = $this->authorizeMutation($request, $moduleUtil);
+        $validated = $request->validate([
+            'accounting_account_id' => ['nullable', 'integer', 'min:1'],
+        ]);
+        $accountId = empty($validated['accounting_account_id']) ? null : (int) $validated['accounting_account_id'];
+        $savedId = $actions->saveRoundingAccount($businessId, $accountId, (int) $request->user()->id);
+        $name = $savedId === null ? null : AccountingAccount::where('business_id', $businessId)->where('id', $savedId)->value('name');
+
+        return response()->json([
+            'success' => true,
+            'accounting_account_id' => $savedId,
+            'account_name' => $name,
+            'message' => $savedId === null ? 'Mapping akun pembulatan dihapus.' : 'Akun pembulatan business disimpan.',
+        ]);
+    }
+
+    public function adjustmentPreview(Request $request, ModuleUtil $moduleUtil, ReconciliationFindingJournalService $actions, int $findingId)
+    {
+        $businessId = $this->authorizeJournalMutation($request, $moduleUtil);
+        $validated = $this->validateAdjustmentRequest($request);
+        $result = $actions->preview(
+            $businessId,
+            $findingId,
+            (int) $request->user()->id,
+            $validated['action'],
+            $validated['reason'],
+            $validated['lines']
+        );
+        $result['currency_symbol'] = (string) ($request->session()->get('currency')['symbol'] ?? '');
+
+        return response()->json($result);
+    }
+
+    public function adjustmentConfirm(Request $request, ModuleUtil $moduleUtil, ReconciliationFindingJournalService $actions, int $findingId)
+    {
+        $businessId = $this->authorizeJournalMutation($request, $moduleUtil);
+        $validated = $this->validateAdjustmentRequest($request);
+        $validated['fingerprint'] = $request->validate([
+            'fingerprint' => ['required', 'string', 'size:64', 'regex:/^[a-f0-9]{64}$/'],
+        ])['fingerprint'];
+        $request->validate(['confirmation_ack' => ['required', 'accepted']]);
+        $result = $actions->confirm(
+            $businessId,
+            $findingId,
+            (int) $request->user()->id,
+            $validated['action'],
+            $validated['reason'],
+            $validated['lines'],
+            $validated['fingerprint']
+        );
+
+        return response()->json($result);
+    }
+
+    private function validateAdjustmentRequest(Request $request): array
+    {
+        $request->merge(['reason' => trim((string) $request->input('reason', ''))]);
+
+        return $request->validate([
+            'action' => ['required', 'in:adjustment,rounding'],
+            'reason' => ['required', 'string', 'min:5', 'max:2000'],
+            'lines' => ['required', 'array', 'min:2', 'max:100'],
+            'lines.*.accounting_account_id' => ['required', 'integer', 'min:1'],
+            'lines.*.debit' => ['nullable', 'numeric', 'min:0'],
+            'lines.*.credit' => ['nullable', 'numeric', 'min:0'],
+        ]);
+    }
+
+    private function authorizeJournalMutation(Request $request, ModuleUtil $moduleUtil): int
+    {
+        $businessId = $this->authorizeReports($request, $moduleUtil);
+        $user = $request->user();
+        if (! $user->can('superadmin') && ! $user->can('accounting.add_journal')) {
+            abort(403, 'Unauthorized action.');
+        }
+
+        return $businessId;
     }
 
     private function authorizeReports(Request $request, ModuleUtil $moduleUtil): int

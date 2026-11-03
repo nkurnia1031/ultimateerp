@@ -6,6 +6,7 @@ use Carbon\Carbon;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use InvalidArgumentException;
 use RuntimeException;
 
@@ -78,7 +79,10 @@ class LegacyReconciliationFindingSnapshotService
             $year,
             json_encode($auditPayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '{}',
         ]));
-        $rows = $this->findingsFromReport($businessId, $year, $report, $auditKey, $generatedAt, $scopeKey);
+        $rows = $this->applyLinkedJournalRechecks(
+            $businessId,
+            $this->findingsFromReport($businessId, $year, $report, $auditKey, $generatedAt, $scopeKey)
+        );
 
         $this->persistSnapshot($businessId, $year, $scopeKey, $rows, $auditKey, $generatedAt, $report['source_manifest_sha256'] ?? null);
 
@@ -209,6 +213,17 @@ class LegacyReconciliationFindingSnapshotService
                 }
             }
         }
+
+        $rows = $this->applyLinkedJournalRechecks($businessId, array_values($rows));
+        $rows = array_column($rows, null, 'finding_key');
+        $movementKeysByAccount = [];
+        foreach ($rows as $row) {
+            if (($row['type'] ?? '') !== 'cash_bank' || ! preg_match('/^cash-bank-movement:(\d+)$/', (string) ($row['scope_key'] ?? ''), $matches)) {
+                continue;
+            }
+            $movementKeysByAccount[(int) $matches[1]][] = (string) $row['finding_key'];
+        }
+        $rows = array_values($rows);
 
         $scopeKey = 'cash-bank-audit:'.$startDate.':'.$endDate.':'.($accountId === null ? 'all' : (string) $accountId).':'.(string) ($summary['cash_bank_mapping_scope'] ?? 'unscoped');
         $stableAuditData = [
@@ -479,6 +494,147 @@ class LegacyReconciliationFindingSnapshotService
         }
 
         return array_values($findings);
+    }
+
+    /**
+     * Reapply a confirmed, balanced adjustment journal to the comparable source snapshot.
+     * Legacy workbooks remain immutable; this only prevents a later audit of the same source
+     * from reopening a variance that the linked GL adjustment already covered.
+     */
+    private function applyLinkedJournalRechecks(int $businessId, array $rows): array
+    {
+        if ($rows === []
+            || ! Schema::hasTable('accounting_legacy_reconciliation_findings')
+            || ! Schema::hasTable('accounting_acc_trans_mappings')
+            || ! Schema::hasTable('accounting_accounts_transactions')) {
+            return $rows;
+        }
+
+        $keys = array_values(array_unique(array_filter(array_column($rows, 'finding_key'))));
+        $findingsByKey = [];
+        foreach (array_chunk($keys, 400) as $keyChunk) {
+            $findingsByKey += DB::table('accounting_legacy_reconciliation_findings')
+                ->where('business_id', $businessId)
+                ->whereIn('finding_key', $keyChunk)
+                ->get(['id', 'finding_key', 'resolution_history'])
+                ->keyBy('finding_key')->all();
+        }
+        if ($findingsByKey === []) {
+            return $rows;
+        }
+
+        $findingsById = [];
+        foreach ($findingsByKey as $finding) {
+            $findingsById[(int) $finding->id] = $finding;
+        }
+        $findingIds = array_keys($findingsById);
+        $mappingsByFinding = [];
+        foreach (array_chunk($findingIds, 400) as $idChunk) {
+            foreach (DB::table('accounting_acc_trans_mappings')
+                ->where('business_id', $businessId)
+                ->where('source_record_type', 'reconciliation_finding')
+                ->whereIn('source_record_id', $idChunk)
+                ->get(['id', 'source_record_id', 'ref_no']) as $mapping) {
+                $mappingsByFinding[(int) $mapping->source_record_id][] = $mapping;
+            }
+        }
+
+        $mappingIds = [];
+        foreach ($mappingsByFinding as $mappings) {
+            foreach ($mappings as $mapping) {
+                $mappingIds[] = (int) $mapping->id;
+            }
+        }
+        $totalsByMapping = [];
+        foreach (array_chunk($mappingIds, 400) as $idChunk) {
+            $totals = DB::table('accounting_accounts_transactions')
+                ->where('sub_type', 'journal_entry')
+                ->whereIn('acc_trans_mapping_id', $idChunk)
+                ->select('acc_trans_mapping_id')
+                ->selectRaw('COUNT(*) as line_count')
+                ->selectRaw("SUM(CASE WHEN type = 'debit' THEN amount ELSE 0 END) as debit_total")
+                ->selectRaw("SUM(CASE WHEN type = 'credit' THEN amount ELSE 0 END) as credit_total")
+                ->groupBy('acc_trans_mapping_id')
+                ->get();
+            foreach ($totals as $total) {
+                $totalsByMapping[(int) $total->acc_trans_mapping_id] = $total;
+            }
+        }
+
+        $adjustmentsByKey = [];
+        foreach ($mappingsByFinding as $findingId => $mappings) {
+            $finding = $findingsById[(int) $findingId] ?? null;
+            if (! $finding) {
+                continue;
+            }
+            $history = json_decode((string) $finding->resolution_history, true);
+            if (! is_array($history)) {
+                continue;
+            }
+            $key = (string) $finding->finding_key;
+            foreach ($mappings as $mapping) {
+                $mappingId = (int) $mapping->id;
+                $totals = $totalsByMapping[$mappingId] ?? null;
+                if (! $totals || (int) $totals->line_count < 2) {
+                    continue;
+                }
+
+                $debit = round((float) $totals->debit_total, 4);
+                $credit = round((float) $totals->credit_total, 4);
+                if ($debit <= 0 || $debit !== $credit) {
+                    continue;
+                }
+
+                $journalEvent = null;
+                foreach (array_reverse($history) as $event) {
+                    if (is_array($event)
+                        && in_array($event['action'] ?? '', ['adjustment_journal_posted', 'rounding_journal_posted'], true)
+                        && (int) ($event['journal_id'] ?? 0) === $mappingId) {
+                        $journalEvent = $event;
+                        break;
+                    }
+                }
+                if (! $journalEvent) {
+                    continue;
+                }
+
+                $direction = (int) ($journalEvent['variance_direction'] ?? 0);
+                if (! in_array($direction, [-1, 1], true)) {
+                    $beforeVariance = $journalEvent['before']['variance'] ?? null;
+                    $direction = is_numeric($beforeVariance) && (float) $beforeVariance < 0 ? -1 : 1;
+                }
+                $adjustmentsByKey[$key] ??= ['signed_amount' => 0.0, 'journals' => []];
+                $adjustmentsByKey[$key]['signed_amount'] += $direction * $debit;
+                $adjustmentsByKey[$key]['journals'][] = [
+                    'journal_id' => $mappingId,
+                    'journal_ref' => (string) $mapping->ref_no,
+                    'amount' => $debit,
+                    'variance_direction' => $direction,
+                ];
+            }
+        }
+
+        foreach ($rows as &$row) {
+            $adjustment = $adjustmentsByKey[$row['finding_key'] ?? ''] ?? null;
+            if (! $adjustment || ! is_numeric($row['variance'] ?? null) || ! is_numeric($row['actual_amount'] ?? null)) {
+                continue;
+            }
+
+            $row['actual_amount'] = round((float) $row['actual_amount'] - $adjustment['signed_amount'], 4);
+            $row['variance'] = round((float) $row['variance'] - $adjustment['signed_amount'], 4);
+            $evidence = json_decode((string) ($row['evidence'] ?? '{}'), true);
+            $evidence = is_array($evidence) ? $evidence : [];
+            $evidence['linked_adjustment'] = [
+                'journals' => $adjustment['journals'],
+                'amount_applied_to_comparison' => round($adjustment['signed_amount'], 4),
+            ];
+            $row['evidence'] = json_encode($evidence, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '{}';
+        }
+        unset($row);
+
+        return array_values(array_filter($rows, fn (array $row): bool =>
+            ! is_numeric($row['variance'] ?? null) || abs((float) $row['variance']) > self::VARIANCE_TOLERANCE
+        ));
     }
 
     private function makeFinding(

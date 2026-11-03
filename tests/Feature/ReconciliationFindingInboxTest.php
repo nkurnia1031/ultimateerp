@@ -33,6 +33,12 @@ class ReconciliationFindingInboxTest extends TestCase
             $table->string('key');
             $table->text('value')->nullable();
         });
+        Schema::create('business', function (Blueprint $table) {
+            $table->increments('id');
+            $table->integer('currency_precision')->default(2);
+            $table->text('accounting_settings')->nullable();
+        });
+        DB::table('business')->insert(['id' => 1, 'currency_precision' => 2, 'accounting_settings' => null]);
         Schema::create('transactions', function (Blueprint $table) {
             $table->increments('id');
             $table->unsignedInteger('business_id')->default(0);
@@ -58,7 +64,41 @@ class ReconciliationFindingInboxTest extends TestCase
         });
         Schema::create('accounting_accounts_transactions', function (Blueprint $table) {
             $table->increments('id');
-            $table->decimal('amount', 22, 4);
+            $table->unsignedBigInteger('accounting_account_id')->nullable();
+            $table->integer('acc_trans_mapping_id')->nullable();
+            $table->integer('transaction_id')->nullable();
+            $table->integer('transaction_payment_id')->nullable();
+            $table->decimal('amount', 22, 4)->default(0);
+            $table->string('type')->nullable();
+            $table->string('sub_type')->nullable();
+            $table->string('map_type')->nullable();
+            $table->integer('created_by')->nullable();
+            $table->dateTime('operation_date')->nullable();
+            $table->text('note')->nullable();
+            $table->dateTime('created_at')->nullable();
+            $table->dateTime('updated_at')->nullable();
+        });
+        Schema::create('accounting_accounts', function (Blueprint $table) {
+            $table->increments('id');
+            $table->unsignedInteger('business_id');
+            $table->string('name');
+            $table->string('status')->default('active');
+            $table->string('account_primary_type')->nullable();
+        });
+        Schema::create('accounting_acc_trans_mappings', function (Blueprint $table) {
+            $table->increments('id');
+            $table->unsignedInteger('business_id');
+            $table->string('ref_no', 100);
+            $table->string('type', 100);
+            $table->integer('created_by');
+            $table->dateTime('operation_date');
+            $table->text('note')->nullable();
+            $table->string('source_record_type', 64)->nullable();
+            $table->unsignedBigInteger('source_record_id')->nullable();
+            $table->string('source_link_status', 20)->nullable();
+            $table->text('source_link_note')->nullable();
+            $table->dateTime('created_at')->nullable();
+            $table->dateTime('updated_at')->nullable();
         });
         DB::table('transactions')->insert(['id' => 1, 'final_total' => 123.45]);
         DB::table('accounting_accounts_transactions')->insert(['id' => 1, 'amount' => 67.89]);
@@ -388,6 +428,15 @@ class ReconciliationFindingInboxTest extends TestCase
             ]);
         $crossBusiness->assertNotFound();
 
+        $crossBusinessJournal = $this->postJson(
+            route('accounting.reconciliation.findings.adjustmentPreview', ['findingId' => $findingId]),
+            ['action' => 'adjustment', 'reason' => 'Koreksi jurnal cross business.', 'lines' => [
+                ['accounting_account_id' => 101, 'debit' => 1, 'credit' => 0],
+                ['accounting_account_id' => 102, 'debit' => 0, 'credit' => 1],
+            ]]
+        );
+        $crossBusinessJournal->assertNotFound();
+
         $reader = Mockery::mock(User::class)->makePartial();
         $reader->forceFill(['id' => 987655, 'business_id' => 1, 'username' => 'reports-only']);
         $reader->shouldReceive('can')->andReturnUsing(fn (string $permission) => $permission === 'accounting.view_reports');
@@ -397,7 +446,245 @@ class ReconciliationFindingInboxTest extends TestCase
                 'reason' => 'Sumber sah.',
             ]);
         $forbidden->assertForbidden();
+        $forbiddenJournal = $this->postJson(
+            route('accounting.reconciliation.findings.adjustmentPreview', ['findingId' => $findingId]),
+            ['action' => 'adjustment', 'reason' => 'Koreksi tidak berizin.', 'lines' => [
+                ['accounting_account_id' => 101, 'debit' => 1, 'credit' => 0],
+                ['accounting_account_id' => 102, 'debit' => 0, 'credit' => 1],
+            ]]
+        );
+        $forbiddenJournal->assertForbidden();
         $this->assertSame('open', DB::table('accounting_legacy_reconciliation_findings')->where('id', $findingId)->value('status'));
+    }
+
+    public function test_adjustment_preview_posts_balanced_linked_journal_and_rechecks_idempotently(): void
+    {
+        $this->withoutReconciliationPageBootstrapMiddleware();
+        $this->insertAdjustmentAccounts();
+        $findingId = $this->insertAdjustmentFinding(25, 100, 125, [
+            'journal_vat_in' => 10, 'operational_vat_in' => 0,
+            'journal_vat_out' => 0, 'operational_vat_out' => 0,
+        ]);
+        $user = $this->accountingManagerUser();
+        $payload = [
+            'action' => 'adjustment',
+            'reason' => 'Selisih diverifikasi dari bukti jurnal dan transaksi.',
+            'lines' => [
+                ['accounting_account_id' => 101, 'debit' => '25.0000', 'credit' => '0'],
+                ['accounting_account_id' => 102, 'debit' => '0', 'credit' => '25.0000'],
+            ],
+        ];
+
+        $foreignAccount = $payload;
+        $foreignAccount['lines'][0]['accounting_account_id'] = 201;
+        $foreignAccountPreview = $this->actingAs($user)->withSession(['user' => ['business_id' => 1]])
+            ->postJson(route('accounting.reconciliation.findings.adjustmentPreview', ['findingId' => $findingId]), $foreignAccount);
+        $foreignAccountPreview->assertStatus(422)->assertJsonValidationErrors('lines');
+        $this->assertSame(0, DB::table('accounting_acc_trans_mappings')->count());
+
+        $preview = $this->actingAs($user)->withSession(['user' => ['business_id' => 1]])
+            ->postJson(route('accounting.reconciliation.findings.adjustmentPreview', ['findingId' => $findingId]), $payload);
+        $preview->assertOk()
+            ->assertJsonPath('supported', true)
+            ->assertJsonPath('proposal.before.variance', 25)
+            ->assertJsonPath('proposal.after.variance', 0)
+            ->assertJsonPath('proposal.vat_components.journal_vat_in', 10)
+            ->assertJsonPath('proposal.lines.0.account_name', 'Kas Koreksi')
+            ->assertJsonPath('proposal.debit_total', '25.0000');
+        $payload['fingerprint'] = $preview->json('proposal.fingerprint');
+
+        $missingConfirmation = $this->postJson(
+            route('accounting.reconciliation.findings.adjustmentConfirm', ['findingId' => $findingId]),
+            $payload
+        );
+        $missingConfirmation->assertStatus(422)->assertJsonValidationErrors('confirmation_ack');
+        $this->assertSame(0, DB::table('accounting_acc_trans_mappings')->count());
+
+        $confirm = $this->postJson(
+            route('accounting.reconciliation.findings.adjustmentConfirm', ['findingId' => $findingId]),
+            $payload + ['confirmation_ack' => true]
+        );
+        $confirm->assertOk()->assertJsonPath('status', 'resolved')->assertJsonPath('idempotent', false);
+        $mapping = DB::table('accounting_acc_trans_mappings')->where('source_record_type', 'reconciliation_finding')->first();
+        $this->assertNotNull($mapping);
+        $this->assertSame($findingId, (int) $mapping->source_record_id);
+        $this->assertSame(55, (int) $mapping->created_by);
+        $this->assertStringContainsString('Selisih diverifikasi', $mapping->source_link_note);
+        $this->assertSame(25.0, (float) DB::table('accounting_accounts_transactions')->where('type', 'debit')->sum('amount'));
+        $this->assertSame(25.0, (float) DB::table('accounting_accounts_transactions')->where('type', 'credit')->sum('amount'));
+        $this->assertSame('resolved', DB::table('accounting_legacy_reconciliation_findings')->where('id', $findingId)->value('status'));
+        $this->assertFalse((bool) DB::table('accounting_legacy_reconciliation_findings')->where('id', $findingId)->value('is_current'));
+        $this->assertSame(100.0, (float) DB::table('accounting_legacy_reconciliation_findings')->where('id', $findingId)->value('actual_amount'));
+        $history = json_decode(DB::table('accounting_legacy_reconciliation_findings')->where('id', $findingId)->value('resolution_history'), true);
+        $this->assertSame('adjustment_journal_posted', $history[0]['action']);
+        $this->assertSame(55, (int) $history[0]['actor_id']);
+        $this->assertSame((int) $mapping->id, (int) $history[0]['journal_id']);
+        $this->assertSame(125.0, (float) $history[0]['before']['actual_amount']);
+        $this->assertSame(100.0, (float) $history[0]['after']['actual_amount']);
+
+        $retry = $this->postJson(
+            route('accounting.reconciliation.findings.adjustmentConfirm', ['findingId' => $findingId]),
+            $payload + ['confirmation_ack' => true]
+        );
+        $retry->assertOk()->assertJsonPath('idempotent', true)->assertJsonPath('journal_id', (int) $mapping->id);
+        $this->assertSame(2, DB::table('accounting_accounts_transactions')->where('acc_trans_mapping_id', $mapping->id)->count());
+    }
+
+    public function test_rounding_requires_explicit_mapping_and_respects_currency_unit_threshold(): void
+    {
+        $this->withoutReconciliationPageBootstrapMiddleware();
+        $this->insertAdjustmentAccounts();
+        DB::table('business')->where('id', 1)->update(['currency_precision' => 0]);
+        $roundingFindingId = $this->insertAdjustmentFinding(0.5, 10, 10.5);
+        $boundaryFindingId = $this->insertAdjustmentFinding(1, 10, 11, [], 'precision-boundary');
+        $user = $this->accountingManagerUser();
+        $roundingPayload = [
+            'action' => 'rounding',
+            'reason' => 'Pembulatan sesuai bukti dan presisi mata uang.',
+            'lines' => [
+                ['accounting_account_id' => 101, 'debit' => '0.5000', 'credit' => '0'],
+                ['accounting_account_id' => 102, 'debit' => '0', 'credit' => '0.5000'],
+            ],
+        ];
+
+        $unmapped = $this->actingAs($user)->withSession(['user' => ['business_id' => 1]])
+            ->postJson(route('accounting.reconciliation.findings.adjustmentPreview', ['findingId' => $roundingFindingId]), $roundingPayload);
+        $unmapped->assertStatus(422)->assertJsonValidationErrors('finding');
+
+        $mapped = $this->postJson(route('accounting.reconciliation.findings.roundingAccount'), ['accounting_account_id' => 101]);
+        $mapped->assertOk()->assertJsonPath('accounting_account_id', 101);
+        $this->assertSame(101, app(\Modules\Accounting\Services\ReconciliationFindingJournalService::class)->roundingAccountId(1));
+
+        $preview = $this->postJson(route('accounting.reconciliation.findings.adjustmentPreview', ['findingId' => $roundingFindingId]), $roundingPayload);
+        $preview->assertOk()->assertJsonPath('proposal.action', 'rounding')->assertJsonPath('proposal.status_after_recheck', 'resolved');
+
+        $atBoundary = $this->postJson(route('accounting.reconciliation.findings.adjustmentPreview', ['findingId' => $boundaryFindingId]), array_merge($roundingPayload, [
+            'lines' => [
+                ['accounting_account_id' => 101, 'debit' => '1.0000', 'credit' => '0'],
+                ['accounting_account_id' => 102, 'debit' => '0', 'credit' => '1.0000'],
+            ],
+        ]));
+        $atBoundary->assertStatus(422)->assertJsonValidationErrors('finding');
+
+        $normal = $this->postJson(route('accounting.reconciliation.findings.adjustmentPreview', ['findingId' => $boundaryFindingId]), array_merge($roundingPayload, [
+            'action' => 'adjustment',
+            'lines' => [
+                ['accounting_account_id' => 101, 'debit' => '1.0000', 'credit' => '0'],
+                ['accounting_account_id' => 102, 'debit' => '0', 'credit' => '1.0000'],
+            ],
+        ]));
+        $normal->assertOk()->assertJsonPath('proposal.action', 'adjustment')->assertJsonPath('proposal.status_after_recheck', 'resolved');
+        $this->assertSame(0, DB::table('accounting_acc_trans_mappings')->count());
+    }
+
+    public function test_partial_linked_adjustments_can_continue_and_annual_reaudit_keeps_only_the_residual(): void
+    {
+        $this->withoutReconciliationPageBootstrapMiddleware();
+        $this->insertAdjustmentAccounts();
+        $snapshotService = app(LegacyReconciliationFindingSnapshotService::class);
+        $report = $this->annualReport();
+        $this->assertSame(9, $snapshotService->persistReport(1, $report));
+
+        $finding = DB::table('accounting_legacy_reconciliation_findings')
+            ->where('type', 'transaction')->where('component', 'base')->where('source_number', 'INV-2023')->first();
+        $this->assertNotNull($finding);
+        $user = $this->accountingManagerUser();
+        $payload = [
+            'action' => 'adjustment',
+            'reason' => 'Koreksi bertahap berdasarkan pemeriksaan dokumen.',
+            'lines' => [
+                ['accounting_account_id' => 101, 'debit' => '100000.0000', 'credit' => '0'],
+                ['accounting_account_id' => 102, 'debit' => '0', 'credit' => '100000.0000'],
+            ],
+        ];
+
+        $firstPreview = $this->actingAs($user)->withSession(['user' => ['business_id' => 1]])
+            ->postJson(route('accounting.reconciliation.findings.adjustmentPreview', ['findingId' => $finding->id]), $payload);
+        $firstPreview->assertOk()->assertJsonPath('proposal.after.variance', 835000);
+        $firstPayload = array_merge($payload, ['fingerprint' => $firstPreview->json('proposal.fingerprint'), 'confirmation_ack' => true]);
+        $firstConfirm = $this->postJson(
+            route('accounting.reconciliation.findings.adjustmentConfirm', ['findingId' => $finding->id]),
+            $firstPayload
+        );
+        $firstConfirm->assertOk()->assertJsonPath('status', 'open')->assertJsonPath('idempotent', false);
+
+        $report['generated_at'] = '2026-11-04T10:00:00+07:00';
+        $this->assertSame(8, $snapshotService->persistReport(1, $report));
+        $residual = DB::table('accounting_legacy_reconciliation_findings')->where('id', $finding->id)->first();
+        $this->assertSame('open', $residual->status);
+        $this->assertTrue((bool) $residual->is_current);
+        $this->assertSame(835000.0, (float) $residual->variance);
+
+        $secondPayload = array_merge($payload, [
+            'lines' => [
+                ['accounting_account_id' => 101, 'debit' => '835000.0000', 'credit' => '0'],
+                ['accounting_account_id' => 102, 'debit' => '0', 'credit' => '835000.0000'],
+            ],
+        ]);
+        $secondPreview = $this->postJson(
+            route('accounting.reconciliation.findings.adjustmentPreview', ['findingId' => $finding->id]),
+            $secondPayload
+        );
+        $secondPreview->assertOk()->assertJsonPath('proposal.after.variance', 0);
+        $secondPayload['fingerprint'] = $secondPreview->json('proposal.fingerprint');
+        $secondPayload['confirmation_ack'] = true;
+        $secondConfirm = $this->postJson(
+            route('accounting.reconciliation.findings.adjustmentConfirm', ['findingId' => $finding->id]),
+            $secondPayload
+        );
+        $secondConfirm->assertOk()->assertJsonPath('status', 'resolved')->assertJsonPath('idempotent', false);
+
+        $retry = $this->postJson(
+            route('accounting.reconciliation.findings.adjustmentConfirm', ['findingId' => $finding->id]),
+            $secondPayload
+        );
+        $retry->assertOk()->assertJsonPath('idempotent', true)->assertJsonPath('journal_id', $secondConfirm->json('journal_id'));
+        $this->assertSame(2, DB::table('accounting_acc_trans_mappings')
+            ->where('source_record_type', 'reconciliation_finding')->where('source_record_id', $finding->id)->count());
+        $this->assertSame(4, DB::table('accounting_accounts_transactions')->where('sub_type', 'journal_entry')->count());
+        $linked = app(\Modules\Accounting\Services\ReconciliationFindingJournalService::class)
+            ->linkedJournals(1, [(int) $finding->id]);
+        $this->assertCount(2, $linked[(int) $finding->id]);
+
+        $report['generated_at'] = '2026-11-05T10:00:00+07:00';
+        $this->assertSame(8, $snapshotService->persistReport(1, $report));
+        $resolved = DB::table('accounting_legacy_reconciliation_findings')->where('id', $finding->id)->first();
+        $this->assertSame('resolved', $resolved->status);
+        $this->assertFalse((bool) $resolved->is_current);
+        $this->assertSame(0.0, (float) $resolved->variance);
+    }
+
+    private function insertAdjustmentAccounts(): void
+    {
+        DB::table('accounting_accounts')->insert([
+            ['id' => 101, 'business_id' => 1, 'name' => 'Kas Koreksi', 'status' => 'active', 'account_primary_type' => 'asset'],
+            ['id' => 102, 'business_id' => 1, 'name' => 'VAT In Koreksi', 'status' => 'active', 'account_primary_type' => 'asset'],
+            ['id' => 201, 'business_id' => 2, 'name' => 'Akun Tenant Lain', 'status' => 'active', 'account_primary_type' => 'asset'],
+        ]);
+    }
+
+    private function insertAdjustmentFinding(float $variance, float $expected, float $actual, array $evidence = [], string $key = 'journal-adjustment'): int
+    {
+        $identity = hash('sha256', $key.'-'.$variance.'-'.$expected.'-'.$actual);
+        DB::table('accounting_legacy_reconciliation_findings')->insert($this->findingRow([
+            'business_id' => 1,
+            'type' => 'transaction',
+            'component' => 'vat_in',
+            'finding_key' => hash('sha256', $key.'-'.$variance),
+            'source_identity' => $identity,
+            'source_type' => 'Expense',
+            'source_number' => 'EXP-ADJ-'.$key,
+            'source_date' => '2023-01-02',
+            'expected_amount' => $expected,
+            'actual_amount' => $actual,
+            'variance' => $variance,
+            'evidence' => json_encode(array_merge([
+                'date' => '2023-01-02', 'source_type' => 'Expense', 'source_number' => 'EXP-ADJ-'.$key,
+                'journal_total' => $actual, 'operational_total' => $expected,
+            ], $evidence)),
+        ]));
+
+        return (int) DB::table('accounting_legacy_reconciliation_findings')->where('finding_key', hash('sha256', $key.'-'.$variance))->value('id');
     }
 
     private function insertActionableExpenseVatFinding(): int
@@ -425,7 +712,7 @@ class ReconciliationFindingInboxTest extends TestCase
         $user = Mockery::mock(User::class)->makePartial();
         $user->forceFill(['id' => 987654, 'business_id' => 1, 'username' => 'reconciliation-test']);
         $user->shouldReceive('can')->andReturnUsing(fn (string $permission) => in_array($permission, [
-            'accounting.view_reports', 'accounting.manage_accounts', 'expense.edit',
+            'accounting.view_reports', 'accounting.manage_accounts', 'accounting.add_journal', 'expense.edit',
         ], true));
         $this->app->instance(\App\Utils\ModuleUtil::class, Mockery::mock(\App\Utils\ModuleUtil::class, function ($mock): void {
             $mock->shouldReceive('hasThePermissionInSubscription')->andReturn(true);

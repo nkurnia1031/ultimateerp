@@ -2,6 +2,8 @@
     @php
         $evidence = json_decode($finding->evidence, true) ?: [];
         $resolutionHistory = json_decode($finding->resolution_history, true) ?: [];
+        $findingJournals = $linkedJournals[(int) $finding->id] ?? [];
+        $roundingThreshold = 10 ** (-max(0, min(4, (int) ($currencyPrecision ?? 2))));
     @endphp
     <tr>
         <td>{{ $finding->source_date ?: '—' }}<br><small class="text-muted">{{ $finding->year }}</small></td>
@@ -18,7 +20,7 @@
                 <details><summary>Histori ({{ count($resolutionHistory) }})</summary>
                     <ul class="list-unstyled">
                         @foreach($resolutionHistory as $event)
-                            <li><strong>{{ ['accepted' => 'Diterima', 'operational_tax_corrected' => 'Pajak dikoreksi', 'audit_cleared' => 'Lunas saat audit', 'reopened' => 'Dibuka kembali'][$event['action'] ?? ''] ?? ($event['action'] ?? 'Aksi') }}</strong>
+                            <li><strong>{{ ['accepted' => 'Diterima', 'operational_tax_corrected' => 'Pajak dikoreksi', 'adjustment_journal_posted' => 'Jurnal penyesuaian diposting', 'rounding_journal_posted' => 'Jurnal pembulatan diposting', 'audit_cleared' => 'Lunas saat audit', 'reopened' => 'Dibuka kembali'][$event['action'] ?? ''] ?? ($event['action'] ?? 'Aksi') }}</strong>
                                 @if(! empty($event['actor_id']))<br><small>Pengguna #{{ $event['actor_id'] }}</small>@endif
                                 @if(! empty($event['at']))<br><small>{{ $event['at'] }}</small>@endif
                                 @if(! empty($event['reason']))<br><small>{{ $event['reason'] }}</small>@endif
@@ -31,13 +33,31 @@
             @if($evidence !== [])<details><summary>Bukti</summary><pre>{{ json_encode($evidence, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) }}</pre></details>@endif
         </td>
         <td class="text-nowrap">
-            @if($finding->status === 'open' && (bool) $finding->is_current && (auth()->user()->can('superadmin') || auth()->user()->can('accounting.manage_accounts')))
-                @if(in_array($finding->type, ['transaction', 'cash_bank'], true))
-                    <button type="button" class="btn btn-xs btn-info js-review-finding-source" data-finding-id="{{ $finding->id }}">Tinjau sumber</button><br>
-                @elseif(in_array($finding->type, ['unbalanced_journal', 'account_balance', 'control'], true))
-                    <a class="btn btn-xs btn-default" href="{{ route('journal-entry.index', ['search' => $finding->source_number ?: $finding->account_no]) }}">Buka jurnal</a><br>
+            @foreach($findingJournals as $linkedJournal)
+                <a class="btn btn-xs btn-default" href="{{ route('journal-entry.index', ['search' => $linkedJournal->ref_no]) }}">Jurnal {{ $linkedJournal->ref_no }}</a><br>
+            @endforeach
+            @if($finding->status === 'open' && (bool) $finding->is_current && (auth()->user()->can('superadmin') || auth()->user()->can('accounting.manage_accounts') || auth()->user()->can('accounting.add_journal')))
+                @if(auth()->user()->can('superadmin') || auth()->user()->can('accounting.manage_accounts'))
+                    @if(in_array($finding->type, ['transaction', 'cash_bank'], true))
+                        <button type="button" class="btn btn-xs btn-info js-review-finding-source" data-finding-id="{{ $finding->id }}">Tinjau sumber</button><br>
+                    @elseif(in_array($finding->type, ['unbalanced_journal', 'account_balance', 'control'], true))
+                        <a class="btn btn-xs btn-default" href="{{ route('journal-entry.index', ['search' => $finding->source_number ?: $finding->account_no]) }}">Buka jurnal</a><br>
+                    @endif
                 @endif
-                <button type="button" class="btn btn-xs btn-warning js-accept-finding" data-finding-id="{{ $finding->id }}">Terima selisih</button>
+                @if($canPostJournals ?? false)
+                    @if(abs((float) $finding->variance) >= $roundingThreshold)
+                        <button type="button" class="btn btn-xs btn-primary js-post-finding-adjustment" data-finding-id="{{ $finding->id }}" data-variance="{{ $finding->variance }}" data-action="adjustment">Jurnal penyesuaian</button><br>
+                    @else
+                        @if($roundingAccountId)
+                            <button type="button" class="btn btn-xs btn-info js-post-finding-adjustment" data-finding-id="{{ $finding->id }}" data-variance="{{ $finding->variance }}" data-action="rounding">Jurnal pembulatan</button><br>
+                        @else
+                            <small class="text-warning">Petakan akun pembulatan dahulu.</small><br>
+                        @endif
+                    @endif
+                @endif
+                @if(auth()->user()->can('superadmin') || auth()->user()->can('accounting.manage_accounts'))
+                    <button type="button" class="btn btn-xs btn-warning js-accept-finding" data-finding-id="{{ $finding->id }}">Terima selisih</button>
+                @endif
             @else
                 <span class="text-muted">—</span>
             @endif

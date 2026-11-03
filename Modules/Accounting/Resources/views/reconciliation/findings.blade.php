@@ -14,7 +14,36 @@
     data-data-url="{{ route('accounting.reconciliation.findings.data') }}"
     data-preview-url-template="{{ route('accounting.reconciliation.findings.correctionPreview', ['findingId' => 999999999999]) }}"
     data-confirm-url-template="{{ route('accounting.reconciliation.findings.correctionConfirm', ['findingId' => 999999999999]) }}"
-    data-accept-url-template="{{ route('accounting.reconciliation.findings.accept', ['findingId' => 999999999999]) }}">
+    data-accept-url-template="{{ route('accounting.reconciliation.findings.accept', ['findingId' => 999999999999]) }}"
+    data-adjustment-preview-url-template="{{ route('accounting.reconciliation.findings.adjustmentPreview', ['findingId' => 999999999999]) }}"
+    data-adjustment-confirm-url-template="{{ route('accounting.reconciliation.findings.adjustmentConfirm', ['findingId' => 999999999999]) }}"
+    data-rounding-account-url="{{ route('accounting.reconciliation.findings.roundingAccount') }}"
+    data-currency-precision="{{ $currencyPrecision }}"
+    data-rounding-account-id="{{ $roundingAccountId ?: '' }}">
+    @if($canManageRounding)
+        <div class="box box-warning">
+            <div class="box-header with-border"><h3 class="box-title">Akun pembulatan business</h3></div>
+            <div class="box-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <label for="finding_rounding_account">CoA pembulatan yang dipakai untuk selisih di bawah {{ number_format(10 ** (-$currencyPrecision), $currencyPrecision, ',', '.') }}</label>
+                        <select id="finding_rounding_account" class="form-control">
+                            <option value="">Belum dipetakan</option>
+                            @foreach($accountOptions as $account)
+                                <option value="{{ $account['id'] }}" @if((int) $roundingAccountId === $account['id']) selected @endif>{{ $account['name'] }} (#{{ $account['id'] }})</option>
+                            @endforeach
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <p class="help-block">Pilih dan simpan CoA secara eksplisit. Sistem tidak akan memilih atau membuat akun otomatis.</p>
+                        <button type="button" id="finding_save_rounding_account" class="btn btn-warning">Simpan mapping</button>
+                        <span id="finding_rounding_account_status" class="text-muted" role="status" aria-live="polite"></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    @endif
+    <script type="application/json" id="finding_account_options">@json($accountOptions)</script>
     <div class="row">
         <div class="col-md-4 col-sm-6">
             <div class="info-box"><span class="info-box-icon bg-yellow"><i class="fa fa-exclamation-triangle"></i></span>
@@ -73,7 +102,7 @@
 </section>
 
 <div class="modal fade" id="reconciliation_finding_action_modal" tabindex="-1" role="dialog" aria-labelledby="finding_action_title" aria-hidden="true">
-    <div class="modal-dialog" role="document">
+    <div class="modal-dialog modal-lg" role="document">
         <div class="modal-content">
             <div class="modal-header">
                 <button type="button" class="close" data-dismiss="modal" aria-label="Tutup"><span aria-hidden="true">&times;</span></button>
@@ -100,11 +129,48 @@
                     <textarea id="finding_accept_reason" class="form-control" rows="3" maxlength="2000" aria-describedby="finding_accept_help"></textarea>
                     <p id="finding_accept_help" class="help-block">Alasan, pengguna, dan waktu akan tersimpan di histori temuan.</p>
                 </div>
+                <div id="finding_adjustment_wrap" class="hidden">
+                    <p id="finding_adjustment_context" class="text-muted"></p>
+                    <div class="form-group">
+                        <label for="finding_adjustment_reason">Alasan jurnal <span class="text-danger">(wajib)</span></label>
+                        <textarea id="finding_adjustment_reason" class="form-control" rows="2" maxlength="2000" aria-describedby="finding_adjustment_help"></textarea>
+                        <p id="finding_adjustment_help" class="help-block">Alasan, pelaku, dan jurnal yang tertaut akan tersimpan di histori. Nilai harus diarahkan untuk mengurangi selisih yang dipilih.</p>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-bordered" id="finding_adjustment_lines_table">
+                            <thead><tr><th>CoA</th><th class="text-right">Debit</th><th class="text-right">Kredit</th><th></th></tr></thead>
+                            <tbody id="finding_adjustment_lines"></tbody>
+                        </table>
+                    </div>
+                    <button type="button" id="finding_adjustment_add_line" class="btn btn-default btn-sm">Tambah baris CoA</button>
+                    <button type="button" id="finding_adjustment_reverse_sides" class="btn btn-default btn-sm">Balik sisi debit/kredit</button>
+                    <button type="button" id="finding_adjustment_preview" class="btn btn-info btn-sm pull-right">Tinjau usulan</button>
+                    <div id="finding_adjustment_review" class="hidden" aria-live="polite">
+                        <hr>
+                        <h4>Perbandingan sebelum dan sesudah</h4>
+                        <div class="table-responsive">
+                            <table class="table table-bordered">
+                                <thead><tr><th>Nilai</th><th class="text-right">Sebelum</th><th class="text-right">Setelah pemeriksaan jurnal</th></tr></thead>
+                                <tbody id="finding_adjustment_comparison"></tbody>
+                            </table>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="table table-bordered table-striped">
+                                <thead><tr><th>Akun</th><th class="text-right">Debit</th><th class="text-right">Kredit</th></tr></thead>
+                                <tbody id="finding_adjustment_review_lines"></tbody>
+                                <tfoot><tr><th>Total jurnal</th><th id="finding_adjustment_debit_total" class="text-right"></th><th id="finding_adjustment_credit_total" class="text-right"></th></tr></tfoot>
+                            </table>
+                        </div>
+                        <p id="finding_adjustment_vat_components" class="text-muted"></p>
+                        <label><input type="checkbox" id="finding_adjustment_confirm_intent"> Saya sudah memeriksa bukti dan memastikan jurnal ini ditujukan untuk mengurangi selisih tersebut.</label>
+                    </div>
+                </div>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-default" data-dismiss="modal">Batal</button>
                 <button type="button" id="finding_action_confirm" class="btn btn-primary hidden">Konfirmasi koreksi pajak</button>
                 <button type="button" id="finding_action_accept" class="btn btn-warning hidden">Terima selisih</button>
+                <button type="button" id="finding_adjustment_confirm" class="btn btn-primary hidden" disabled>Konfirmasi dan posting jurnal</button>
             </div>
         </div>
     </div>
