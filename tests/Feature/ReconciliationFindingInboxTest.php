@@ -39,6 +39,16 @@ class ReconciliationFindingInboxTest extends TestCase
             $table->text('accounting_settings')->nullable();
         });
         DB::table('business')->insert(['id' => 1, 'currency_precision' => 2, 'accounting_settings' => null]);
+        Schema::create('accounting_journal_import_rows', function (Blueprint $table) {
+            $table->bigIncrements('id');
+            $table->unsignedBigInteger('journal_import_id');
+            $table->unsignedBigInteger('journal_mapping_id')->nullable();
+            $table->unsignedInteger('business_id');
+            $table->string('source_type', 100)->nullable();
+            $table->string('source_number', 100)->nullable();
+            $table->string('source_key', 255)->nullable();
+            $table->longText('entry_data');
+        });
         Schema::create('transactions', function (Blueprint $table) {
             $table->increments('id');
             $table->unsignedInteger('business_id')->default(0);

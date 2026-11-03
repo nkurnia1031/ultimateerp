@@ -214,7 +214,7 @@ class ReconciliationFindingController extends Controller
     {
         $validated = $request->validate([
             'year' => 'nullable|integer|min:1900|max:2200',
-            'type' => 'nullable|in:transaction,control,account_balance,unbalanced_journal,cash_bank',
+            'type' => 'nullable|in:transaction,control,account_balance,unbalanced_journal,cash_bank,loan_classification',
             'status' => 'nullable|in:open,accepted,resolved,all',
             'search' => 'nullable|string|max:120',
             'page' => 'nullable|integer|min:1',

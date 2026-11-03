@@ -198,6 +198,8 @@ class JournalAlignedCoaProvisionerTest extends TestCase
         $migration = require $migrationPath;
         $migration->up();
         $cashAccount = DB::table('accounting_accounts')->where('business_id', 2)->where('gl_code', '1-10001')->first();
+        $this->assertSame('cash', DB::table('accounting_general_ledger_cash_bank_mappings')
+            ->where('business_id', 2)->where('accounting_account_id', $cashAccount->id)->value('classification'));
         DB::table('accounting_general_ledger_cash_bank_mappings')
             ->where('business_id', 2)->where('accounting_account_id', $cashAccount->id)
             ->update(['classification' => 'excluded']);
@@ -219,7 +221,7 @@ class JournalAlignedCoaProvisionerTest extends TestCase
         $this->assertSame(25, (int) $accounts['1-10008']->account_id);
         $this->assertSame(0, DB::table('accounting_accounts')->where('business_id', 2)->where('account_id', 11)->count());
         $this->assertFalse(DB::table('accounting_accounts')->where('business_id', 3)->where('gl_code', '1-10008')->exists());
-        $this->assertSame(6, DB::table('accounting_general_ledger_cash_bank_mappings')->where('business_id', 2)->whereIn('classification', ['cash', 'bank'])->count());
+        $this->assertSame(5, DB::table('accounting_general_ledger_cash_bank_mappings')->where('business_id', 2)->whereIn('classification', ['cash', 'bank'])->count());
     }
 
     public function test_conflicting_existing_account_type_is_reported_without_overwriting_it(): void
