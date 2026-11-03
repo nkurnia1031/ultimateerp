@@ -92,6 +92,9 @@ class ReconciliationFindingActionService
                 ->where('business_id', $businessId)
                 ->where('id', $findingId)
                 ->update([
+                    'expected_amount' => round((float) $sourceAfter->tax_amount, 4),
+                    'actual_amount' => round((float) $proposal['journal_vat'], 4),
+                    'variance' => $verifiedVariance,
                     'status' => $status,
                     'is_current' => $isCleared ? false : (bool) $finding->is_current,
                     'resolution_history' => $history,

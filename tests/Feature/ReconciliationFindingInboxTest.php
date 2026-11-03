@@ -374,6 +374,38 @@ class ReconciliationFindingInboxTest extends TestCase
         $this->assertSame(100.0, (float) $history[0]['after']['tax_amount']);
     }
 
+    public function test_expense_vat_correction_keeps_and_refreshes_a_remaining_variance(): void
+    {
+        $this->withoutReconciliationPageBootstrapMiddleware();
+        DB::table('tax_rates')->insert([
+            'id' => 7, 'business_id' => 1, 'name' => 'PPN 10%', 'amount' => 10, 'is_tax_group' => false,
+        ]);
+        DB::table('transactions')->insert([
+            'id' => 101, 'business_id' => 1, 'type' => 'expense', 'status' => 'final',
+            'ref_no' => 'EXP-2023-1', 'transaction_date' => '2023-01-02 09:00:00',
+            'total_before_tax' => 1000, 'tax_id' => null, 'tax_amount' => 0, 'final_total' => 1000,
+        ]);
+        DB::unprepared('CREATE TRIGGER preserve_a_tax_difference AFTER UPDATE ON transactions FOR EACH ROW BEGIN UPDATE transactions SET tax_amount = NEW.tax_amount - 10 WHERE id = NEW.id; END');
+        $findingId = $this->insertActionableExpenseVatFinding();
+        $user = $this->accountingManagerUser();
+
+        $preview = $this->actingAs($user)->withSession(['user' => ['business_id' => 1]])
+            ->postJson(route('accounting.reconciliation.findings.correctionPreview', ['findingId' => $findingId]));
+        $preview->assertOk()->assertJsonPath('supported', true);
+
+        $confirm = $this->postJson(route('accounting.reconciliation.findings.correctionConfirm', ['findingId' => $findingId]), [
+            'fingerprint' => $preview->json('proposal.fingerprint'),
+        ]);
+
+        $confirm->assertOk()->assertJsonPath('status', 'open')->assertJsonPath('verified_variance', 10);
+        $finding = DB::table('accounting_legacy_reconciliation_findings')->where('id', $findingId)->first();
+        $this->assertSame('open', $finding->status);
+        $this->assertTrue((bool) $finding->is_current);
+        $this->assertSame(90.0, (float) $finding->expected_amount);
+        $this->assertSame(100.0, (float) $finding->actual_amount);
+        $this->assertSame(10.0, (float) $finding->variance);
+    }
+
     public function test_expense_vat_correction_rejects_ambiguous_sources_and_accept_requires_a_reason(): void
     {
         $this->withoutReconciliationPageBootstrapMiddleware();
