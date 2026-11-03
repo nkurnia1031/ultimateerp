@@ -162,6 +162,62 @@ class JournalImportBulkMappingTest extends TestCase
         ]);
     }
 
+    public function test_draft_option_search_returns_units_for_a_variation_without_leaking_other_businesses(): void
+    {
+        Schema::create('units', function (Blueprint $table) {
+            $table->increments('id');
+            $table->unsignedInteger('business_id');
+            $table->string('actual_name');
+            $table->string('short_name');
+            $table->dateTime('deleted_at')->nullable();
+        });
+        Schema::create('products', function (Blueprint $table) {
+            $table->increments('id');
+            $table->unsignedInteger('business_id');
+            $table->boolean('is_inactive')->default(false);
+            $table->boolean('enable_stock')->default(true);
+            $table->unsignedInteger('unit_id');
+            $table->text('sub_unit_ids')->nullable();
+        });
+        Schema::create('variations', function (Blueprint $table) {
+            $table->increments('id');
+            $table->unsignedInteger('product_id');
+            $table->dateTime('deleted_at')->nullable();
+        });
+
+        DB::table('units')->insert([
+            ['id' => 31, 'business_id' => 7, 'actual_name' => 'Pieces', 'short_name' => 'Pcs', 'deleted_at' => null],
+            ['id' => 32, 'business_id' => 7, 'actual_name' => 'Box', 'short_name' => 'Box', 'deleted_at' => null],
+            ['id' => 81, 'business_id' => 8, 'actual_name' => 'Pieces', 'short_name' => 'Pcs', 'deleted_at' => null],
+        ]);
+        DB::table('products')->insert([
+            ['id' => 21, 'business_id' => 7, 'is_inactive' => 0, 'enable_stock' => 1, 'unit_id' => 31, 'sub_unit_ids' => '[32]'],
+            ['id' => 22, 'business_id' => 8, 'is_inactive' => 0, 'enable_stock' => 1, 'unit_id' => 81, 'sub_unit_ids' => '[]'],
+        ]);
+        DB::table('variations')->insert([
+            ['id' => 41, 'product_id' => 21, 'deleted_at' => null],
+            ['id' => 42, 'product_id' => 22, 'deleted_at' => null],
+        ]);
+
+        $response = $this->request(
+            'get',
+            '/accounting/journal-entry/import/5/draft-options?kind=unit&source_type=Purchase%20Invoice&variation_id=41&q=Pcs'
+        );
+
+        $response->assertOk()->assertExactJson([
+            'results' => [
+                ['id' => 31, 'text' => 'Pieces (Pcs)'],
+            ],
+        ]);
+
+        $foreignVariation = $this->request(
+            'get',
+            '/accounting/journal-entry/import/5/draft-options?kind=unit&source_type=Purchase%20Invoice&variation_id=42&q=Pcs'
+        );
+
+        $foreignVariation->assertOk()->assertExactJson(['results' => []]);
+    }
+
     private function request(string $method, string $uri, array $data = [])
     {
         $user = Mockery::mock(User::class)->makePartial();
