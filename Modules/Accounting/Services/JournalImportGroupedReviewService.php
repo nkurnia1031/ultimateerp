@@ -95,7 +95,7 @@ class JournalImportGroupedReviewService
 
     public function decodeContext(string $token, ?string $expectedGroupKey = null): array
     {
-        $padding = strlen($token) % 4;
+        $padding = (4 - (strlen($token) % 4)) % 4;
         $decoded = base64_decode(strtr($token.str_repeat('=', $padding), '-_', '+/'), true);
         $context = $decoded === false ? null : json_decode($decoded, true);
         if (! is_array($context)
