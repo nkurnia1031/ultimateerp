@@ -21,9 +21,23 @@ test('reviewers can bulk review only visible differences without reloading the p
     const draft = page.locator('#journal_import_draft');
     await expect(draft).toBeVisible();
     const importId = await draft.getAttribute('data-import-id');
-    const explainedRow = page.locator('#journal_import_draft_table tr').filter({ hasText: 'CI-BULK-EXPLAINED' });
-    const unexplainedRow = page.locator('#journal_import_draft_table tr').filter({ hasText: 'CI-BULK-UNEXPLAINED' });
-    const unchangedRow = page.locator('#journal_import_draft_table tr').filter({ hasText: 'CI-BULK-NO-DIFFERENCE' });
+    const draftRows = page.locator('#journal_import_draft_table tr[data-row-id]');
+    const explainedPendingRow = draftRows
+        .filter({ hasText: 'CI-BULK-EXPLAINED' })
+        .filter({ has: page.locator('.journal-draft-difference-select:not(:disabled)') });
+    const unexplainedPendingRow = draftRows
+        .filter({ hasText: 'CI-BULK-UNEXPLAINED' })
+        .filter({ has: page.locator('.journal-draft-difference-select:not(:disabled)') });
+    const unchangedPendingRow = draftRows
+        .filter({ hasText: 'CI-BULK-NO-DIFFERENCE' })
+        .filter({ has: page.locator('.journal-draft-difference-select:disabled') });
+    await expect(explainedPendingRow).toHaveCount(1);
+    await expect(unexplainedPendingRow).toHaveCount(1);
+    await expect(unchangedPendingRow).toHaveCount(1);
+
+    const explainedRow = page.locator(`#journal_import_draft_table tr[data-row-id="${await explainedPendingRow.getAttribute('data-row-id')}"]`);
+    const unexplainedRow = page.locator(`#journal_import_draft_table tr[data-row-id="${await unexplainedPendingRow.getAttribute('data-row-id')}"]`);
+    const unchangedRow = page.locator(`#journal_import_draft_table tr[data-row-id="${await unchangedPendingRow.getAttribute('data-row-id')}"]`);
     const explainedCheckbox = explainedRow.locator('.journal-draft-difference-select');
     const unexplainedCheckbox = unexplainedRow.locator('.journal-draft-difference-select');
     const unchangedCheckbox = unchangedRow.locator('.journal-draft-difference-select');

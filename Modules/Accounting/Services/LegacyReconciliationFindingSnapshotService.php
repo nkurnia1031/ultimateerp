@@ -90,6 +90,155 @@ class LegacyReconciliationFindingSnapshotService
     }
 
     /**
+     * Snapshot unresolved principal/interest classification evidence from a persisted Journal Import.
+     * This only writes review findings; it never changes Journal or operational records.
+     */
+    public function persistLoanClassificationFromJournalImport(int $businessId, int $journalImportId, ?string $sourceManifest = null): int
+    {
+        if ($businessId !== 2 || $journalImportId < 1
+            || ! Schema::hasTable('accounting_journal_import_rows')
+            || ! Schema::hasColumn('accounting_journal_import_rows', 'business_id')
+            || ! Schema::hasColumn('accounting_journal_import_rows', 'entry_data')) {
+            return 0;
+        }
+
+        $findingsByYear = [];
+        $fingerprints = [];
+        DB::table('accounting_journal_import_rows')
+            ->where('business_id', $businessId)
+            ->where('journal_import_id', $journalImportId)
+            ->where('entry_data', 'like', '%8-80005%')
+            ->orderBy('id')
+            ->chunkById(500, function ($journalRows) use ($businessId, $journalImportId, &$findingsByYear, &$fingerprints): void {
+                foreach ($journalRows as $journalRow) {
+                    $entry = json_decode((string) $journalRow->entry_data, true);
+                    if (! is_array($entry)) {
+                        continue;
+                    }
+
+                    $date = $this->dateOrNull($entry['date'] ?? null);
+                    $year = $date === null ? 0 : (int) substr($date, 0, 4);
+                    if ($year < 1900 || $year > 2200) {
+                        continue;
+                    }
+
+                    $sourceType = trim((string) ($entry['source_type'] ?? $journalRow->source_type ?? 'Journal Entry'));
+                    $sourceNumber = trim((string) ($entry['source_number'] ?? $journalRow->source_number ?? ''));
+                    $entryDescription = trim((string) ($entry['description'] ?? ''));
+                    $installmentOrdinal = 0;
+                    foreach ((array) ($entry['lines'] ?? []) as $line) {
+                        if (! is_array($line) || $this->normalizedAccountCode($line['account_no'] ?? '') !== '8-80005') {
+                            continue;
+                        }
+
+                        $debit = is_numeric($line['debit'] ?? null) ? (float) $line['debit'] : 0.0;
+                        $credit = is_numeric($line['credit'] ?? null) ? (float) $line['credit'] : 0.0;
+                        $amount = round($debit + $credit, 4);
+                        if (! is_finite($amount) || $amount <= 0) {
+                            continue;
+                        }
+                        $installmentOrdinal++;
+
+                        $description = trim((string) ($line['description'] ?? $entryDescription));
+                        $relatedLiabilityLines = [];
+                        foreach ((array) ($entry['lines'] ?? []) as $relatedLine) {
+                            if (! is_array($relatedLine) || $this->normalizedAccountCode($relatedLine['account_no'] ?? '') !== '2-20400') {
+                                continue;
+                            }
+                            $relatedLiabilityLines[] = [
+                                'account_no' => '2-20400',
+                                'account_name' => (string) ($relatedLine['account_name'] ?? ''),
+                                'debit' => is_numeric($relatedLine['debit'] ?? null) ? (float) $relatedLine['debit'] : 0.0,
+                                'credit' => is_numeric($relatedLine['credit'] ?? null) ? (float) $relatedLine['credit'] : 0.0,
+                                'description' => (string) ($relatedLine['description'] ?? ''),
+                            ];
+                        }
+
+                        $identity = hash('sha256', json_encode([
+                            'year' => $year,
+                            'source_type' => $sourceType,
+                            'source_number' => $sourceNumber,
+                            'date' => $date,
+                            'description' => $description,
+                            'debit' => $debit,
+                            'credit' => $credit,
+                            'occurrence' => $installmentOrdinal,
+                        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '{}');
+                        if (isset($fingerprints[$identity])) {
+                            continue;
+                        }
+                        $fingerprints[$identity] = true;
+
+                        $findingKey = hash('sha256', implode('|', [
+                            $businessId, $year, 'loan_classification', 'principal_interest_unconfirmed', $identity,
+                        ]));
+                        $evidence = [
+                            'classification_status' => 'unconfirmed',
+                            'classification_reason' => 'Jadwal angsuran atau rekening koran Bank Mestika tidak tersedia pada sumber legacy.',
+                            'source_type' => $sourceType,
+                            'source_number' => $sourceNumber,
+                            'date' => $date,
+                            'description' => $description,
+                            'account_no' => '8-80005',
+                            'account_name' => (string) ($line['account_name'] ?? 'Bank Loan'),
+                            'debit' => $debit,
+                            'credit' => $credit,
+                            'journal_import_id' => $journalImportId,
+                            'journal_import_row_id' => (int) $journalRow->id,
+                            'related_bank_loans_lines' => $relatedLiabilityLines,
+                        ];
+                        $findingsByYear[$year][$findingKey] = [
+                            'business_id' => $businessId,
+                            'year' => $year,
+                            'scope_key' => 'legacy-loan-classification',
+                            'type' => 'loan_classification',
+                            'component' => 'principal_interest_unconfirmed',
+                            'finding_key' => $findingKey,
+                            'source_identity' => $identity,
+                            'source_type' => $sourceType,
+                            'source_number' => $sourceNumber,
+                            'source_date' => $date,
+                            'account_no' => '8-80005',
+                            'account_name' => (string) ($line['account_name'] ?? 'Bank Loan'),
+                            'description' => 'Klasifikasi pokok/bunga belum terkonfirmasi; nominal Journal '.number_format($amount, 2, '.', ',').' tidak diubah.',
+                            'expected_amount' => null,
+                            'actual_amount' => $amount,
+                            'variance' => 0,
+                            'evidence' => json_encode($evidence, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '{}',
+                            'status' => 'open',
+                            'is_current' => true,
+                            'last_audit_key' => '',
+                            'last_audited_at' => '',
+                            'resolution_history' => null,
+                            'created_at' => now(),
+                            'updated_at' => now(),
+                        ];
+                    }
+                }
+            }, 'id');
+
+        $total = 0;
+        foreach ($findingsByYear as $year => $findings) {
+            $rows = array_values($findings);
+            $auditedAt = now()->toDateTimeString();
+            $auditKey = hash('sha256', implode('|', [
+                'legacy-loan-classification', $businessId, $year, $journalImportId,
+                $sourceManifest ?? '', hash('sha256', implode('|', array_column($rows, 'finding_key'))),
+            ]));
+            foreach ($rows as &$row) {
+                $row['last_audit_key'] = $auditKey;
+                $row['last_audited_at'] = $auditedAt;
+            }
+            unset($row);
+
+            $this->persistSnapshot($businessId, (int) $year, 'legacy-loan-classification', $rows, $auditKey, $auditedAt, $sourceManifest);
+            $total += count($rows);
+        }
+
+        return $total;
+    }
+
+    /**
      * Persist the completed read-only cash/bank audit without changing operational or GL source rows.
      * Movement findings are comparable by transaction within the audited date range. Balance findings
      * are comparable only for the same exact date range and account selection.
@@ -357,6 +506,7 @@ class LegacyReconciliationFindingSnapshotService
             'account_balance' => 'Saldo akun',
             'unbalanced_journal' => 'Journal tidak seimbang',
             'cash_bank' => 'Audit kas/bank',
+            'loan_classification' => 'Klasifikasi pinjaman',
         ][$type] ?? $type;
     }
 
@@ -366,6 +516,7 @@ class LegacyReconciliationFindingSnapshotService
             'base' => 'Basis', 'vat_in' => 'VAT In', 'vat_out' => 'VAT Out', 'total' => 'Total',
             'opening' => 'Saldo awal', 'debit' => 'Debit', 'credit' => 'Kredit',
             'closing' => 'Saldo akhir', 'debit_credit' => 'Debit vs kredit', 'movement' => 'Selisih transaksi kas/bank',
+            'principal_interest_unconfirmed' => 'Pokok/bunga belum terkonfirmasi',
         ][$component] ?? $component;
     }
 
@@ -716,6 +867,11 @@ class LegacyReconciliationFindingSnapshotService
         ksort($parts);
 
         return hash('sha256', json_encode($parts, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '{}');
+    }
+
+    private function normalizedAccountCode($value): string
+    {
+        return strtoupper(preg_replace('/\s+/u', '', trim((string) $value)));
     }
 
     private function persistSnapshot(int $businessId, int $year, string $scopeKey, array $rows, string $auditKey, string $auditedAt, ?string $manifest): void

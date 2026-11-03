@@ -384,6 +384,14 @@ class ImportLegacySources extends Command
             }
             $runService->updateRun($runId, $businessId, $runStatus, $message, $summary, $finished);
             $this->persistAnnualFindings($findingSnapshots, $businessId, $year, $annualAudit);
+            $loanFindingCount = $findingSnapshots->persistLoanClassificationFromJournalImport(
+                $businessId,
+                (int) $importId,
+                $manifestHash
+            );
+            if ($loanFindingCount > 0) {
+                $this->line('Snapshot klasifikasi pinjaman belum terkonfirmasi: '.$loanFindingCount.' temuan tersimpan untuk ditinjau.');
+            }
             $this->line('Legacy run #'.$runId.' — '.$message);
             $this->line('Crosswalk sumber yang tersimpan: '.$crosswalkCount);
             $this->printAnnualAudit($annualAudit);

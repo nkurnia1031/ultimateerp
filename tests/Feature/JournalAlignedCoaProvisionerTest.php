@@ -91,7 +91,7 @@ class JournalAlignedCoaProvisionerTest extends TestCase
             [19, 'Purchase Discounts'],
             [20, 'Employee Receivables (Expenses)'],
             [21, 'Employee Benefit Expense'],
-            [25, 'Giro'],
+            [25, 'Giro', '0965'],
         ]);
 
         DB::table('accounting_accounts')->insert([
@@ -128,7 +128,7 @@ class JournalAlignedCoaProvisionerTest extends TestCase
         $bmAccounts = DB::table('accounting_accounts')->where('business_id', 2)->get()->keyBy('gl_code');
         $otherAccounts = DB::table('accounting_accounts')->where('business_id', 3)->get()->keyBy('gl_code');
 
-        $this->assertSame(70, $bmAccounts->count());
+        $this->assertSame(71, $bmAccounts->count());
         $this->assertSame(65, $otherAccounts->count());
         $this->assertSame('expenses', $bmAccounts['5-50000']->account_primary_type);
         $this->assertSame('expenses', $bmAccounts['5-50100']->account_primary_type);
@@ -137,14 +137,15 @@ class JournalAlignedCoaProvisionerTest extends TestCase
         $this->assertSame('asset', $bmAccounts['1-10500']->account_primary_type);
         $this->assertSame('Cash and cash equivalents', $otherAccounts['1-10001']->name);
 
-        foreach (['1-10004', '1-10005', '1-10006', '1-10007', '8-80005'] as $businessSpecificCode) {
+        foreach (['1-10004', '1-10005', '1-10006', '1-10007', '1-10008', '8-80005'] as $businessSpecificCode) {
             $this->assertFalse($otherAccounts->has($businessSpecificCode));
         }
         $this->assertSame(7, (int) $bmAccounts['1-10004']->account_id);
         $this->assertSame(17, (int) $bmAccounts['1-10100']->account_id);
         $this->assertSame('1-10100', $bmAccounts['1-10100']->gl_code);
         $this->assertSame(18, (int) $bmAccounts['2-20100']->account_id);
-        $this->assertSame(0, DB::table('accounting_accounts')->where('business_id', 2)->whereIn('account_id', [11, 25])->count());
+        $this->assertSame(25, (int) $bmAccounts['1-10008']->account_id);
+        $this->assertSame(0, DB::table('accounting_accounts')->where('business_id', 2)->where('account_id', 11)->count());
         $this->assertSame(0, DB::table('accounting_accounts')->where('business_id', 3)->whereNotNull('account_id')->count());
         $this->assertSame([], $bmResult['conflicts']);
         $this->assertSame([], $otherResult['conflicts']);
@@ -162,11 +163,63 @@ class JournalAlignedCoaProvisionerTest extends TestCase
         $first = $service->provisionBusiness(2);
         $second = $service->provisionBusiness(2);
 
-        $this->assertSame(70, DB::table('accounting_accounts')->where('business_id', 2)->count());
+        $this->assertSame(71, DB::table('accounting_accounts')->where('business_id', 2)->count());
         $this->assertSame(0, DB::table('accounting_accounts')->where('business_id', 2)->where('gl_code', '1-10103')->whereNotNull('account_id')->count());
         $this->assertContains('operational_account_name_not_unique', array_column($first['mapping_skips'], 'reason'));
         $this->assertSame(0, $second['created']);
         $this->assertSame([], $second['conflicts']);
+    }
+
+    public function test_legacy_cash_bank_mapping_migration_uses_account_number_and_preserves_classifications(): void
+    {
+        DB::table('business')->insert([
+            ['id' => 2, 'name' => 'CV BM TRANSPORT', 'owner_id' => 1],
+            ['id' => 3, 'name' => 'Business Lain', 'owner_id' => 2],
+        ]);
+        $this->insertOperationalAccounts(2, [
+            [7, 'Mandiri BMT'], [8, 'Cash'], [9, 'Mandiri - 9641'], [10, 'Mandiri PT'],
+            [11, 'Giro'], [12, 'Petty Cash Pool'], [14, 'Employee Receivables'],
+            [15, 'Accumulated Depreciation - Vehicles'], [16, 'Accumulated Depreciation - Machinery & Equipment'],
+            [17, 'Account Receivable'], [18, 'Trade Payable'], [19, 'Purchase Discounts'],
+            [20, 'Employee Receivables (Expenses)'], [21, 'Employee Benefit Expense'], [25, 'Giro', '0965'],
+        ]);
+        Schema::create('accounting_general_ledger_cash_bank_mappings', function (Blueprint $table) {
+            $table->bigIncrements('id');
+            $table->unsignedInteger('business_id');
+            $table->unsignedInteger('accounting_account_id');
+            $table->string('classification', 20);
+            $table->unsignedInteger('created_by')->nullable();
+            $table->unsignedInteger('updated_by')->nullable();
+            $table->timestamps();
+            $table->unique(['business_id', 'accounting_account_id']);
+        });
+
+        $migrationPath = base_path('Modules/Accounting/Database/Migrations/2026_11_04_000001_seed_cv_bm_legacy_cash_bank_mappings.php');
+        $migration = require $migrationPath;
+        $migration->up();
+        $cashAccount = DB::table('accounting_accounts')->where('business_id', 2)->where('gl_code', '1-10001')->first();
+        DB::table('accounting_general_ledger_cash_bank_mappings')
+            ->where('business_id', 2)->where('accounting_account_id', $cashAccount->id)
+            ->update(['classification' => 'excluded']);
+        $migration->up();
+
+        $accounts = DB::table('accounting_accounts')->where('business_id', 2)->get()->keyBy('gl_code');
+        $classificationFor = function (string $glCode) use ($accounts) {
+            return DB::table('accounting_general_ledger_cash_bank_mappings')
+                ->where('business_id', 2)->where('accounting_account_id', $accounts[$glCode]->id)->value('classification');
+        };
+
+        $this->assertSame('excluded', $classificationFor('1-10001'));
+        $this->assertSame('bank', $classificationFor('1-10004'));
+        $this->assertSame('cash', $classificationFor('1-10005'));
+        $this->assertSame('bank', $classificationFor('1-10006'));
+        $this->assertSame('bank', $classificationFor('1-10007'));
+        $this->assertSame('bank', $classificationFor('1-10008'));
+        $this->assertSame('excluded', $classificationFor('1-10100'));
+        $this->assertSame(25, (int) $accounts['1-10008']->account_id);
+        $this->assertSame(0, DB::table('accounting_accounts')->where('business_id', 2)->where('account_id', 11)->count());
+        $this->assertFalse(DB::table('accounting_accounts')->where('business_id', 3)->where('gl_code', '1-10008')->exists());
+        $this->assertSame(6, DB::table('accounting_general_ledger_cash_bank_mappings')->where('business_id', 2)->whereIn('classification', ['cash', 'bank'])->count());
     }
 
     public function test_conflicting_existing_account_type_is_reported_without_overwriting_it(): void
@@ -257,11 +310,13 @@ class JournalAlignedCoaProvisionerTest extends TestCase
 
     private function insertOperationalAccounts(int $businessId, array $accounts): void
     {
-        foreach ($accounts as [$id, $name]) {
+        foreach ($accounts as $account) {
+            [$id, $name] = $account;
             DB::table('accounts')->insert([
                 'id' => $id,
                 'business_id' => $businessId,
                 'name' => $name,
+                'account_number' => $account[2] ?? null,
             ]);
         }
     }

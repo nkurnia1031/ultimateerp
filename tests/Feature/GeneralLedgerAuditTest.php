@@ -67,6 +67,35 @@ class GeneralLedgerAuditTest extends TestCase
         $this->assertSame(10.0, $report['summary']['source_vat_in']);
     }
 
+    public function test_explicit_non_cash_crosswalk_is_excluded_instead_of_reported_as_unmapped(): void
+    {
+        DB::table('accounts')->insert([
+            'id' => 11, 'business_id' => 1, 'name' => 'Employee Receivables', 'deleted_at' => null,
+        ]);
+        DB::table('accounting_accounts')->insert([
+            'id' => 6, 'name' => 'Employee Receivables', 'gl_code' => '1-10103', 'business_id' => 1,
+            'account_primary_type' => 'asset', 'account_id' => 11,
+        ]);
+        DB::table('accounting_general_ledger_cash_bank_mappings')->insert([
+            'id' => 2, 'business_id' => 1, 'accounting_account_id' => 6, 'classification' => 'excluded',
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        DB::table('account_transactions')->insert([
+            'id' => 6, 'account_id' => 11, 'type' => 'debit', 'sub_type' => 'deposit', 'amount' => 900,
+            'reff_no' => 'NON-CASH-1', 'operation_date' => '2022-01-09 10:00:00', 'created_by' => 1,
+            'transaction_id' => null, 'transaction_payment_id' => null, 'transfer_transaction_id' => null,
+            'note' => 'Bukan rekening kas/bank', 'deleted_at' => null,
+        ]);
+
+        $report = app(GeneralLedgerAuditService::class)->report(1, '2022-01-01', '2022-01-31');
+        $row = collect($report['rows']->items())->firstWhere('source_record_id', 6);
+
+        $this->assertSame('excluded_non_cash', $row['status']);
+        $this->assertFalse($row['in_cashflow']);
+        $this->assertSame(2, $report['summary']['exception_count']);
+        $this->assertSame(1, $report['summary']['status_counts']['excluded_non_cash']);
+    }
+
     public function test_service_flags_ambiguous_fallbacks_and_postings_without_operational_sources(): void
     {
         DB::table('account_transactions')->insert([

@@ -158,6 +158,101 @@ class ReconciliationFindingInboxTest extends TestCase
         $this->assertSame(0, $summary['open_count']);
     }
 
+    public function test_bank_loan_classification_findings_are_business_scoped_and_idempotent(): void
+    {
+        $installments = [
+            ['number' => '3006', 'date' => '2022-06-30', 'label' => 'Angsuran Mestika ke-7', 'has_liability_line' => true],
+            ['number' => '3008', 'date' => '2022-08-31', 'label' => 'Angsuran Mestika ke-8', 'has_liability_line' => true],
+            ['number' => '3031', 'date' => '2022-09-30', 'label' => 'Angsuran Mestika ke-9', 'has_liability_line' => true],
+            ['number' => '3077', 'date' => '2022-11-30', 'label' => 'Angsuran Mestika ke-10', 'has_liability_line' => false],
+        ];
+
+        foreach ($installments as $index => $installment) {
+            $lines = [[
+                'account_no' => '8-80005', 'account_name' => 'Bank Loan', 'description' => $installment['label'],
+                'debit' => 100000000, 'credit' => 0,
+            ]];
+            if ($installment['has_liability_line']) {
+                $lines[] = ['account_no' => '2-20400', 'account_name' => 'Bank Loans', 'description' => 'Bank Loans', 'debit' => 100000000, 'credit' => 0];
+            }
+            $lines[] = ['account_no' => '1-10004', 'account_name' => 'MANDIRI - BMT', 'description' => 'Pembayaran', 'debit' => 0, 'credit' => 100000000];
+            DB::table('accounting_journal_import_rows')->insert([
+                'id' => 50 + $index,
+                'journal_import_id' => 50,
+                'journal_mapping_id' => null,
+                'business_id' => 2,
+                'source_type' => 'Journal Entry',
+                'source_number' => $installment['number'],
+                'source_key' => 'Journal Entry|'.$installment['number'].'|'.$installment['date'],
+                'entry_data' => json_encode([
+                    'source_type' => 'Journal Entry', 'source_number' => $installment['number'],
+                    'date' => $installment['date'], 'description' => $installment['label'], 'lines' => $lines,
+                ]),
+            ]);
+        }
+
+        $decemberLines = [];
+        for ($number = 11; $number <= 19; $number++) {
+            $decemberLines[] = [
+                'account_no' => '8-80005', 'account_name' => 'Bank Loan', 'description' => 'Angsuran Mestika ke-'.$number,
+                'debit' => 100000000, 'credit' => 0,
+            ];
+            $decemberLines[] = [
+                'account_no' => '1-10004', 'account_name' => 'MANDIRI - BMT', 'description' => 'Pembayaran angsuran '.$number,
+                'debit' => 0, 'credit' => 100000000,
+            ];
+        }
+        DB::table('accounting_journal_import_rows')->insert([
+            'id' => 60,
+            'journal_import_id' => 50,
+            'journal_mapping_id' => null,
+            'business_id' => 2,
+            'source_type' => 'Journal Entry',
+            'source_number' => '3103',
+            'source_key' => 'Journal Entry|3103|2022-12-31',
+            'entry_data' => json_encode([
+                'source_type' => 'Journal Entry', 'source_number' => '3103', 'date' => '2022-12-31',
+                'description' => 'Angsuran Bank Mestika', 'lines' => $decemberLines,
+            ]),
+        ]);
+        DB::table('accounting_journal_import_rows')->insert([
+            'id' => 61,
+            'journal_import_id' => 50,
+            'journal_mapping_id' => null,
+            'business_id' => 3,
+            'source_type' => 'Journal Entry',
+            'source_number' => 'OTHER-TENANT',
+            'source_key' => 'Journal Entry|OTHER-TENANT|2022-12-31',
+            'entry_data' => json_encode(['date' => '2022-12-31', 'lines' => [[
+                'account_no' => '8-80005', 'account_name' => 'Bank Loan', 'debit' => 100000000, 'credit' => 0,
+            ]]]),
+        ]);
+
+        $service = app(LegacyReconciliationFindingSnapshotService::class);
+        $first = $service->persistLoanClassificationFromJournalImport(2, 50, str_repeat('a', 64));
+        $second = $service->persistLoanClassificationFromJournalImport(2, 50, str_repeat('a', 64));
+
+        $findings = DB::table('accounting_legacy_reconciliation_findings')
+            ->where('business_id', 2)->where('type', 'loan_classification')->get();
+        $withRelatedLiability = $findings->filter(function ($finding): bool {
+            $evidence = json_decode($finding->evidence, true) ?: [];
+            return ! empty($evidence['related_bank_loans_lines']);
+        });
+
+        $this->assertSame(13, $first);
+        $this->assertSame(13, $second);
+        $this->assertCount(13, $findings);
+        $this->assertCount(3, $withRelatedLiability);
+        $this->assertSame(1300000000.0, (float) $findings->sum('actual_amount'));
+        $this->assertSame(0.0, (float) $findings->sum('variance'));
+        $this->assertSame(13, $service->summary(2)['open_count']);
+        $this->assertSame('Klasifikasi pinjaman', $service->typeLabel('loan_classification'));
+        $this->assertSame('Pokok/bunga belum terkonfirmasi', $service->componentLabel('principal_interest_unconfirmed'));
+        $this->assertSame(0, DB::table('accounting_legacy_reconciliation_findings')->where('business_id', 3)->count());
+        $this->assertSame(1, DB::table('accounting_legacy_reconciliation_audits')
+            ->where('business_id', 2)->where('scope_key', 'legacy-loan-classification')->count());
+    }
+
     public function test_comparable_annual_audit_resolves_cleared_findings_and_reopens_returning_variances(): void
     {
         $service = app(LegacyReconciliationFindingSnapshotService::class);
@@ -253,6 +348,23 @@ class ReconciliationFindingInboxTest extends TestCase
             'source_number' => 'TENANT-TWO-SECRET',
             'description' => 'Tenant lain',
         ]));
+        DB::table('accounting_legacy_reconciliation_findings')->insert($this->findingRow([
+            'year' => 2022,
+            'scope_key' => 'legacy-loan-classification',
+            'type' => 'loan_classification',
+            'component' => 'principal_interest_unconfirmed',
+            'finding_key' => hash('sha256', 'loan-classification-test'),
+            'source_identity' => hash('sha256', 'loan-source-test'),
+            'source_type' => 'Journal Entry',
+            'source_number' => '3006',
+            'source_date' => '2022-06-30',
+            'account_no' => '8-80005',
+            'account_name' => 'Bank Loan',
+            'description' => 'Pokok/bunga belum terkonfirmasi',
+            'expected_amount' => null,
+            'actual_amount' => 100000000,
+            'variance' => 0,
+        ]));
 
         $user = Mockery::mock(User::class)->makePartial();
         $user->forceFill(['id' => 987654, 'business_id' => 1, 'username' => 'reconciliation-test']);
@@ -321,6 +433,24 @@ class ReconciliationFindingInboxTest extends TestCase
         ], $detailsByComponent);
         $this->assertSame($detailsByComponent['Basis'][2], $summaryByComponent['Basis']['net']);
         $this->assertSame($detailsByComponent['VAT Out'][2], $summaryByComponent['VAT Out']['net']);
+
+        $loanResponse = $this->actingAs($user)->withSession([
+            'user' => ['business_id' => 1],
+            'business' => ['currency_precision' => 2, 'currency_symbol_placement' => 'before'],
+            'currency' => [
+                'code' => 'IDR', 'symbol' => 'Rp', 'symbol_placement' => 'before',
+                'decimal_separator' => '.', 'thousand_separator' => ',',
+            ],
+        ])->withoutMiddleware([
+            \App\Http\Middleware\SetSessionData::class,
+            \App\Http\Middleware\Language::class,
+            \App\Http\Middleware\Timezone::class,
+            \App\Http\Middleware\AdminSidebarMenu::class,
+        ])->get(route('accounting.reconciliation.findings.data', [
+            'year' => 2022, 'type' => 'loan_classification', 'status' => 'open',
+        ]));
+        $loanResponse->assertOk()->assertJsonPath('filtered_count', 1);
+        $this->assertStringContainsString('Pokok/bunga belum terkonfirmasi', $loanResponse->json('rows_html'));
     }
 
     public function test_expense_vat_correction_requires_preview_confirms_idempotently_and_resolves_only_the_cleared_finding(): void

@@ -75,6 +75,7 @@ class JournalAlignedCoaProvisioner
                         $businessId,
                         $entry['operational_name'],
                         $entry['code'],
+                        $entry['operational_account_number'] ?? null,
                         $result
                     );
                 }
@@ -116,7 +117,8 @@ class JournalAlignedCoaProvisioner
     }
 
     /**
-     * The journal-derived account catalog contains 70 distinct codes.
+     * The journal-derived account catalog contains 70 distinct codes, plus the
+     * BM-specific operational Giro 0965 account.
      *
      * @return array
      */
@@ -128,6 +130,7 @@ class JournalAlignedCoaProvisioner
             $this->entry('1-10005', 'Petty Cash Pool', true, 'Petty Cash Pool'),
             $this->entry('1-10006', 'MANDIRI - 9641', true, 'Mandiri - 9641'),
             $this->entry('1-10007', 'Mandiri PT', true, 'Mandiri PT'),
+            $this->entry('1-10008', 'Giro 0965', true, 'Giro', '0965'),
             $this->entry('1-10100', 'Account Receivable', false, 'Account Receivable'),
             $this->entry('1-10103', 'Employee Receivables', false, 'Employee Receivables'),
             $this->entry('1-10200', 'Inventory'),
@@ -196,13 +199,14 @@ class JournalAlignedCoaProvisioner
         ];
     }
 
-    private function entry($code, $name, $business2Only = false, $operationalName = null)
+    private function entry($code, $name, $business2Only = false, $operationalName = null, $operationalAccountNumber = null)
     {
         return [
             'code' => $code,
             'name' => $name,
             'business_2_only' => $business2Only,
             'operational_name' => $operationalName,
+            'operational_account_number' => $operationalAccountNumber,
             'primary_type' => JournalAccountTypeResolver::fromGlCode($code),
         ];
     }
@@ -224,7 +228,7 @@ class JournalAlignedCoaProvisioner
         return true;
     }
 
-    private function findOperationalAccountId($businessId, $name, $code, array &$result)
+    private function findOperationalAccountId($businessId, $name, $code, $accountNumber, array &$result)
     {
         if (! $this->tableExists('accounts')
             || ! $this->hasColumn('accounts', 'business_id')
@@ -234,13 +238,28 @@ class JournalAlignedCoaProvisioner
             return null;
         }
 
+        if ($accountNumber !== null && ! $this->hasColumn('accounts', 'account_number')) {
+            $this->addMappingSkip($result, $code, 'operational_account_number_column_unavailable');
+
+            return null;
+        }
+
+        $columns = ['id', 'name'];
+        if ($accountNumber !== null) {
+            $columns[] = 'account_number';
+        }
         $matches = DB::table('accounts')
             ->where('business_id', $businessId)
-            ->get(['id', 'name'])
+            ->get($columns)
             ->filter(function ($account) use ($name) {
                 return $this->sameName($account->name, $name);
-            })
-            ->values();
+            });
+        if ($accountNumber !== null) {
+            $matches = $matches->filter(function ($account) use ($accountNumber) {
+                return trim((string) ($account->account_number ?? '')) === trim((string) $accountNumber);
+            });
+        }
+        $matches = $matches->values();
 
         if ($matches->count() !== 1) {
             $reason = $matches->isEmpty()

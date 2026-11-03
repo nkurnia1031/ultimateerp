@@ -40,11 +40,11 @@
                 @if(auth()->user()->can('superadmin') || auth()->user()->can('accounting.manage_accounts'))
                     @if(in_array($finding->type, ['transaction', 'cash_bank'], true))
                         <button type="button" class="btn btn-xs btn-info js-review-finding-source" data-finding-id="{{ $finding->id }}">Tinjau sumber</button><br>
-                    @elseif(in_array($finding->type, ['unbalanced_journal', 'account_balance', 'control'], true))
+                    @elseif(in_array($finding->type, ['unbalanced_journal', 'account_balance', 'control', 'loan_classification'], true))
                         <a class="btn btn-xs btn-default" href="{{ route('journal-entry.index', ['search' => $finding->source_number ?: $finding->account_no]) }}">Buka jurnal</a><br>
                     @endif
                 @endif
-                @if($canPostJournals ?? false)
+                @if(($canPostJournals ?? false) && $finding->type !== 'loan_classification')
                     @if(abs((float) $finding->variance) >= $roundingThreshold)
                         <button type="button" class="btn btn-xs btn-primary js-post-finding-adjustment" data-finding-id="{{ $finding->id }}" data-variance="{{ $finding->variance }}" data-action="adjustment">Jurnal penyesuaian</button><br>
                     @else

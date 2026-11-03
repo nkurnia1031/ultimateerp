@@ -98,10 +98,10 @@ class GeneralLedgerAuditService
     private function buildAudit(int $businessId, string $startDate, string $endDate, array $filters): array
     {
         $mappedAccounts = $this->cashBankMappingService->mappedAccounts($businessId)->keyBy('id');
-        $accountCrosswalk = $this->accountCrosswalk($businessId, $mappedAccounts);
+        $accountCrosswalk = $this->accountCrosswalk($businessId);
         $selectedMainAccountId = empty($filters['account_id']) ? null : (int) $filters['account_id'];
         if ($selectedMainAccountId !== null) {
-            $selectedGlIds = array_column($accountCrosswalk[$selectedMainAccountId] ?? [], 'id');
+            $selectedGlIds = array_column($this->includedCashBankCrosswalk($accountCrosswalk[$selectedMainAccountId] ?? []), 'id');
             $mappedAccounts = $mappedAccounts->only($selectedGlIds);
         }
         $postingGroups = $this->loadPostingGroups($businessId, $startDate, $endDate, $mappedAccounts);
@@ -445,7 +445,7 @@ class GeneralLedgerAuditService
         return $categories[$transactionType] ?? ($transactionType !== '' ? ucfirst(str_replace('_', ' ', $transactionType)) : 'Movement Rekening');
     }
 
-    private function accountCrosswalk(int $businessId, $mappedAccounts): array
+    private function accountCrosswalk(int $businessId): array
     {
         if (! Schema::hasTable('accounting_general_ledger_cash_bank_mappings')
             || ! Schema::hasColumn('accounting_accounts', 'account_id')) {
@@ -457,7 +457,7 @@ class GeneralLedgerAuditService
                 $join->on('cbm.accounting_account_id', '=', 'aa.id')->on('cbm.business_id', '=', 'aa.business_id');
             })
             ->where('aa.business_id', $businessId)
-            ->whereIn('cbm.classification', ['cash', 'bank'])
+            ->whereIn('cbm.classification', ['cash', 'bank', 'excluded'])
             ->whereNotNull('aa.account_id')
             ->get(['aa.id', 'aa.account_id', 'aa.name', 'aa.gl_code', 'aa.account_primary_type', 'cbm.classification']);
         $byMain = [];
@@ -471,14 +471,14 @@ class GeneralLedgerAuditService
             ];
         }
 
-        foreach ($byMain as $id => &$accounts) {
-            $accounts = array_values(array_filter($accounts, function ($account) use ($mappedAccounts) {
-                return $mappedAccounts->has($account['id']);
-            }));
-        }
-        unset($accounts);
-
         return $byMain;
+    }
+
+    private function includedCashBankCrosswalk(array $accounts): array
+    {
+        return array_values(array_filter($accounts, function (array $account): bool {
+            return in_array($account['classification'] ?? null, ['cash', 'bank'], true);
+        }));
     }
 
     private function balanceMappingScope($mappedAccounts, array $accountCrosswalk, ?int $selectedMainAccountId): array
@@ -490,7 +490,7 @@ class GeneralLedgerAuditService
             : [$selectedMainAccountId => ($accountCrosswalk[$selectedMainAccountId] ?? [])];
 
         foreach ($selectedCrosswalk as $mainAccountId => $accounts) {
-            foreach ($accounts as $account) {
+            foreach ($this->includedCashBankCrosswalk($accounts) as $account) {
                 $crosswalkByGl[(int) $account['id']][] = (int) $mainAccountId;
             }
         }
@@ -692,7 +692,11 @@ class GeneralLedgerAuditService
     {
         $accountMatches = $accountCrosswalk[(int) ($source['account_id'] ?? 0)] ?? [];
         $accountMappingAmbiguous = count($accountMatches) > 1;
-        $glAccountIds = $accountMappingAmbiguous ? [] : array_column($accountMatches, 'id');
+        $explicitNonCashMapping = ! $accountMappingAmbiguous
+            && count($accountMatches) === 1
+            && ($accountMatches[0]['classification'] ?? null) === 'excluded';
+        $cashBankMatches = $this->includedCashBankCrosswalk($accountMatches);
+        $glAccountIds = $accountMappingAmbiguous ? [] : array_column($cashBankMatches, 'id');
         $sourceSignedAmount = $this->sourceSignedAmount($source);
         $candidate = $this->findPostingCandidates($source, $indexes, $transactionSourceCounts, $glAccountIds, $groups);
         $candidateKeys = $candidate['keys'];
@@ -737,6 +741,9 @@ class GeneralLedgerAuditService
         } elseif ($accountMappingAmbiguous) {
             $row['status'] = 'ambiguous_account_mapping';
             $row['reason'] = 'Akun pembayaran mempunyai lebih dari satu mapping Kas/Bank Accounting.';
+        } elseif ($explicitNonCashMapping) {
+            $row['status'] = 'excluded_non_cash';
+            $row['reason'] = 'Crosswalk operasional yang eksplisit menuju CoA non-Kas/Bank; tidak dihitung sebagai movement kas/bank.';
         } elseif ($glAccountIds === []) {
             $row['status'] = 'unmapped_account';
             $row['reason'] = 'Akun pembayaran belum memiliki mapping Kas/Bank Accounting yang eksplisit dan unik.';
@@ -1099,6 +1106,7 @@ class GeneralLedgerAuditService
         $glAccountIds = $mappedAccounts->keys()->map(fn ($id) => (int) $id)->all();
         if ($selectedMainAccountId !== null) {
             $crosswalk = $accountCrosswalk[$selectedMainAccountId] ?? [];
+            $crosswalk = $this->includedCashBankCrosswalk($crosswalk);
             $glAccountIds = count($crosswalk) === 1 ? array_column($crosswalk, 'id') : [];
         }
         $gl = 0.0;
@@ -1118,12 +1126,14 @@ class GeneralLedgerAuditService
 
         $mainAccountIds = [];
         foreach ($accountCrosswalk as $mainId => $crosswalk) {
+            $crosswalk = $this->includedCashBankCrosswalk($crosswalk);
             if (count($crosswalk) === 1) {
                 $mainAccountIds[] = (int) $mainId;
             }
         }
         if ($selectedMainAccountId !== null) {
-            $mainAccountIds = isset($accountCrosswalk[$selectedMainAccountId]) && count($accountCrosswalk[$selectedMainAccountId]) === 1
+            $selectedCrosswalk = $this->includedCashBankCrosswalk($accountCrosswalk[$selectedMainAccountId] ?? []);
+            $mainAccountIds = count($selectedCrosswalk) === 1
                 ? [$selectedMainAccountId]
                 : [];
         }

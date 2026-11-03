@@ -2,21 +2,24 @@
 
 ## Decision
 
-Provision the 70-code Journal catalog for existing and future businesses so Journal imports have a consistent CoA target. Keep the four BM-specific bank codes (1-10004, 1-10005, 1-10006, and 1-10007) and the legacy 8-80005 Bank Loan expense account scoped to business #2. Code 1-10001 Cash is shared; other businesses use the generic name Cash and cash equivalents for it. Other businesses map their own cash and bank accounts.
+Provision the 70-code Journal catalog for existing and future businesses so Journal imports have a consistent CoA target. Keep the BM-specific payment codes (1-10004, 1-10005, 1-10006, 1-10007, and the operationally derived 1-10008 Giro 0965) and the legacy 8-80005 Bank Loan expense account scoped to business #2. Code 1-10001 Cash is shared; other businesses use the generic name Cash and cash equivalents for it. Other businesses map their own cash and bank accounts.
 
 Classify codes by the Journal workbook: 1 asset, 2 liability, 3 equity, 4 income, and 5, 6, and 8 expense. In particular, 5-xxxxx is cost of sales/expense, including in Journal import fallback classification.
 
-Reuse an existing account only when its GL code, explicit operational crosswalk, or exact unique name identifies it and its primary type is compatible. Set an operational-account crosswalk only inside CV BM TRANSPORT and only for one exact name with no competing CoA link. Leave missing or ambiguous links for manual mapping. Do not fuzzy-match names, change account names, or overwrite conflicting codes/types.
+Reuse an existing account only when its GL code, explicit operational crosswalk, or exact unique name identifies it and its primary type is compatible. Set an operational-account crosswalk only inside CV BM TRANSPORT and only for one exact name with no competing CoA link; when names are duplicated, an exact account number may disambiguate the source. `Giro` account #25 is identified by the exact account number `0965` and receives the BM-only CoA code 1-10008; the other operational account named `Giro` remains unmapped. Do not fuzzy-match names, change account names, or overwrite conflicting codes/types.
+
+Cash/bank classification is an explicit property of a CoA account and is separate from the operational account type and crosswalk. Seed business #2's cash/bank classifications from the Journal and operational evidence, and preserve any classification already chosen by a user. Mark existing exact crosswalks to receivable, payable, depreciation, and expense CoA accounts as excluded from the consolidated cash/bank audit. Never infer cash/bank membership from the legacy `account_type` value alone.
 
 Provisioning creates account definitions and safe crosswalks only. It does not post journals or change operational transactions. Keep migration rollback forward-only because provisioned accounts may acquire postings after deployment.
 
-Keep 8-80005 Bank Loan as an expense for business #2 to preserve compatibility with the legacy Journal source. Its installment descriptions may include loan principal; audit that classification separately and do not reclassify historical postings in this migration.
+Keep 8-80005 Bank Loan as an expense for business #2 to preserve compatibility with the legacy Journal source. Its installment descriptions may include loan principal; audit that classification separately and do not reclassify historical postings in this migration. If no repayment schedule or bank statement is available, persist each evidenced installment as an open, unconfirmed classification finding without treating it as a numeric variance or posting an adjustment.
 
 ## Consequences
 
 - Existing businesses receive the shared catalog from an idempotent data migration.
 - New businesses receive it through the Eloquent business-created path once Accounting tables exist.
-- Business #2 keeps its imported account codes and safe operational links; other businesses do not receive BM-specific bank names or mappings.
+- Business #2 keeps its imported account codes and safe operational links; other businesses do not receive BM-specific bank names or mappings. The extra 1-10008 mapping is selected by the exact operational account number.
+- The business #2 cash/bank audit excludes movements explicitly crosswalked to non-cash CoA accounts instead of reporting them as unmapped cash/bank sources.
 - Conflicts and ambiguous operational names are skipped and logged for review rather than guessed.
 - The migration can be retried safely and can be deployed without writing financial journal entries.
 
