@@ -20,6 +20,7 @@
 
 <!-- app css -->
 <link rel="stylesheet" href="{{ asset('css/app.css?v=' . $asset_v) }}">
+<link rel="stylesheet" href="{{ asset('css/reconciliation-findings-nav.css?v=' . $asset_v) }}">
 
 @if (isset($pos_layout) && $pos_layout)
     <style type="text/css">

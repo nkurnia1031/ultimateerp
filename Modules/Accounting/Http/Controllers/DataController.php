@@ -48,6 +48,38 @@ class DataController extends Controller
                 }
             );
         }
+
+        $user = auth()->user();
+        $canViewReconciliationFindings = $user->can('accounting.view_reports')
+            && ($is_accounting_enabled || $user->can('superadmin'));
+
+        if ($canViewReconciliationFindings) {
+            $openFindingCount = app(\Modules\Accounting\Services\LegacyReconciliationFindingSnapshotService::class)
+                ->openCount((int) $business_id);
+            $badge = $openFindingCount > 0
+                ? '<span class="reconciliation-findings-sidebar-badge" aria-hidden="true">'.number_format($openFindingCount).'</span>'
+                : '';
+            $linkTitle = '<span class="reconciliation-findings-sidebar-label">Temuan Rekonsiliasi</span>'.$badge;
+            $linkAriaLabel = $openFindingCount > 0
+                ? 'Temuan Rekonsiliasi, '.number_format($openFindingCount).' temuan terbuka'
+                : 'Temuan Rekonsiliasi';
+
+            Menu::modify(
+                'admin-sidebar-menu',
+                function ($menu) use ($linkTitle, $linkAriaLabel, $openFindingCount) {
+                    $menu->url(
+                        route('accounting.reconciliation.findings'),
+                        $linkTitle,
+                        [
+                            'icon' => 'fas fa-exclamation-circle',
+                            'active' => request()->routeIs('accounting.reconciliation.findings*'),
+                            'class' => 'reconciliation-findings-sidebar-link'.($openFindingCount > 0 ? ' has-open-findings' : ''),
+                            'aria-label' => $linkAriaLabel,
+                        ]
+                    )->order(51);
+                }
+            );
+        }
     }
 
     /**
