@@ -1264,7 +1264,6 @@ class JournalEntryController extends Controller
                 ->where('p.business_id', $business_id)
                 ->where('p.is_inactive', 0)
                 ->where('p.enable_stock', 1)
-                ->whereNull('p.deleted_at')
                 ->whereNull('v.deleted_at')
                 ->first(['p.unit_id', 'p.sub_unit_ids']);
             if (! $product) {
