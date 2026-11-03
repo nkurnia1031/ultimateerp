@@ -35,7 +35,26 @@ class ReconciliationFindingInboxTest extends TestCase
         });
         Schema::create('transactions', function (Blueprint $table) {
             $table->increments('id');
-            $table->decimal('final_total', 22, 4);
+            $table->unsignedInteger('business_id')->default(0);
+            $table->string('type')->default('');
+            $table->string('status')->default('final');
+            $table->string('ref_no')->nullable();
+            $table->string('invoice_no')->nullable();
+            $table->dateTime('transaction_date')->nullable();
+            $table->decimal('total_before_tax', 22, 4)->default(0);
+            $table->unsignedInteger('tax_id')->nullable();
+            $table->decimal('tax_amount', 22, 4)->default(0);
+            $table->decimal('final_total', 22, 4)->default(0);
+            $table->dateTime('deleted_at')->nullable();
+            $table->dateTime('updated_at')->nullable();
+        });
+        Schema::create('tax_rates', function (Blueprint $table) {
+            $table->increments('id');
+            $table->unsignedInteger('business_id');
+            $table->string('name');
+            $table->decimal('amount', 8, 4);
+            $table->boolean('is_tax_group')->default(false);
+            $table->dateTime('deleted_at')->nullable();
         });
         Schema::create('accounting_accounts_transactions', function (Blueprint $table) {
             $table->increments('id');
@@ -262,6 +281,154 @@ class ReconciliationFindingInboxTest extends TestCase
         ], $detailsByComponent);
         $this->assertSame($detailsByComponent['Basis'][2], $summaryByComponent['Basis']['net']);
         $this->assertSame($detailsByComponent['VAT Out'][2], $summaryByComponent['VAT Out']['net']);
+    }
+
+    public function test_expense_vat_correction_requires_preview_confirms_idempotently_and_resolves_only_the_cleared_finding(): void
+    {
+        DB::table('tax_rates')->insert([
+            'id' => 7, 'business_id' => 1, 'name' => 'PPN 10%', 'amount' => 10, 'is_tax_group' => false,
+        ]);
+        DB::table('transactions')->insert([
+            'id' => 101, 'business_id' => 1, 'type' => 'expense', 'status' => 'final',
+            'ref_no' => 'EXP-2023-1', 'transaction_date' => '2023-01-02 09:00:00',
+            'total_before_tax' => 1000, 'tax_id' => null, 'tax_amount' => 0, 'final_total' => 1000,
+        ]);
+        $findingId = $this->insertActionableExpenseVatFinding();
+        $user = $this->accountingManagerUser();
+
+        $preview = $this->actingAs($user)->withSession(['user' => ['business_id' => 1]])
+            ->withHeaders(['Accept' => 'application/json'])
+            ->post(route('accounting.reconciliation.findings.correctionPreview', ['findingId' => $findingId]));
+
+        $preview->assertOk()->assertJsonPath('supported', true)
+            ->assertJsonPath('proposal.before.tax_amount', 0)
+            ->assertJsonPath('proposal.after.tax_amount', 100)
+            ->assertJsonPath('proposal.after.final_total', 1100);
+        $fingerprint = $preview->json('proposal.fingerprint');
+        $this->assertSame(0.0, (float) DB::table('transactions')->where('id', 101)->value('tax_amount'));
+
+        $confirm = $this->withHeaders(['Accept' => 'application/json'])->post(
+            route('accounting.reconciliation.findings.correctionConfirm', ['findingId' => $findingId]),
+            ['fingerprint' => $fingerprint]
+        );
+
+        $confirm->assertOk()->assertJsonPath('status', 'resolved');
+        $this->assertSame(7, (int) DB::table('transactions')->where('id', 101)->value('tax_id'));
+        $this->assertSame(100.0, (float) DB::table('transactions')->where('id', 101)->value('tax_amount'));
+        $this->assertSame(1100.0, (float) DB::table('transactions')->where('id', 101)->value('final_total'));
+        $this->assertSame('resolved', DB::table('accounting_legacy_reconciliation_findings')->where('id', $findingId)->value('status'));
+        $this->assertFalse((bool) DB::table('accounting_legacy_reconciliation_findings')->where('id', $findingId)->value('is_current'));
+        $this->assertSame(67.89, (float) DB::table('accounting_accounts_transactions')->where('id', 1)->value('amount'));
+
+        $retry = $this->withHeaders(['Accept' => 'application/json'])->post(
+            route('accounting.reconciliation.findings.correctionConfirm', ['findingId' => $findingId]),
+            ['fingerprint' => $fingerprint]
+        );
+        $retry->assertOk()->assertJsonPath('status', 'resolved')->assertJsonPath('idempotent', true);
+        $history = json_decode(DB::table('accounting_legacy_reconciliation_findings')->where('id', $findingId)->value('resolution_history'), true);
+        $this->assertCount(1, $history);
+        $this->assertSame('operational_tax_corrected', $history[0]['action']);
+        $this->assertSame(987654, (int) $history[0]['actor_id']);
+        $this->assertSame(0.0, (float) $history[0]['before']['tax_amount']);
+        $this->assertSame(100.0, (float) $history[0]['after']['tax_amount']);
+    }
+
+    public function test_expense_vat_correction_rejects_ambiguous_sources_and_accept_requires_a_reason(): void
+    {
+        DB::table('tax_rates')->insert([
+            'id' => 7, 'business_id' => 1, 'name' => 'PPN 10%', 'amount' => 10, 'is_tax_group' => false,
+        ]);
+        DB::table('transactions')->insert([
+            ['id' => 101, 'business_id' => 1, 'type' => 'expense', 'status' => 'final', 'ref_no' => 'EXP-2023-1', 'transaction_date' => '2023-01-02 09:00:00', 'total_before_tax' => 1000, 'tax_id' => null, 'tax_amount' => 0, 'final_total' => 1000],
+            ['id' => 102, 'business_id' => 1, 'type' => 'expense', 'status' => 'final', 'ref_no' => 'EXP-2023-1', 'transaction_date' => '2023-01-02 10:00:00', 'total_before_tax' => 1000, 'tax_id' => null, 'tax_amount' => 0, 'final_total' => 1000],
+        ]);
+        $findingId = $this->insertActionableExpenseVatFinding();
+        $user = $this->accountingManagerUser();
+
+        $preview = $this->actingAs($user)->withSession(['user' => ['business_id' => 1]])
+            ->withHeaders(['Accept' => 'application/json'])
+            ->post(route('accounting.reconciliation.findings.correctionPreview', ['findingId' => $findingId]));
+        $preview->assertOk()->assertJsonPath('supported', false);
+        $this->assertStringContainsString('unik', strtolower($preview->json('reason')));
+
+        $missingReason = $this->withHeaders(['Accept' => 'application/json'])->post(
+            route('accounting.reconciliation.findings.accept', ['findingId' => $findingId]),
+            ['reason' => '   ']
+        );
+        $missingReason->assertStatus(422)->assertJsonValidationErrors('reason');
+
+        $accepted = $this->withHeaders(['Accept' => 'application/json'])->post(
+            route('accounting.reconciliation.findings.accept', ['findingId' => $findingId]),
+            ['reason' => 'Diperiksa dan selisih sesuai dokumen pendukung.']
+        );
+        $accepted->assertOk()->assertJsonPath('status', 'accepted');
+        $this->assertSame('accepted', DB::table('accounting_legacy_reconciliation_findings')->where('id', $findingId)->value('status'));
+        $this->assertSame(0, app(LegacyReconciliationFindingSnapshotService::class)->summary(1)['open_count']);
+        $history = json_decode(DB::table('accounting_legacy_reconciliation_findings')->where('id', $findingId)->value('resolution_history'), true);
+        $this->assertSame('accepted', $history[0]['action']);
+        $this->assertSame(987654, (int) $history[0]['actor_id']);
+        $this->assertSame('Diperiksa dan selisih sesuai dokumen pendukung.', $history[0]['reason']);
+        $this->assertNotEmpty($history[0]['at']);
+    }
+
+    public function test_finding_actions_enforce_active_business_and_accounting_management_permission(): void
+    {
+        $findingId = (int) DB::table('accounting_legacy_reconciliation_findings')->insertGetId($this->findingRow([
+            'business_id' => 2, 'finding_key' => hash('sha256', 'other-business-finding'),
+        ]));
+        $manager = $this->accountingManagerUser();
+
+        $crossBusiness = $this->actingAs($manager)->withSession(['user' => ['business_id' => 1]])
+            ->withHeaders(['Accept' => 'application/json'])
+            ->post(route('accounting.reconciliation.findings.accept', ['findingId' => $findingId]), [
+                'reason' => 'Sumber sah.',
+            ]);
+        $crossBusiness->assertNotFound();
+
+        $reader = Mockery::mock(User::class)->makePartial();
+        $reader->forceFill(['id' => 987655, 'business_id' => 1, 'username' => 'reports-only']);
+        $reader->shouldReceive('can')->andReturnUsing(fn (string $permission) => $permission === 'accounting.view_reports');
+        $forbidden = $this->actingAs($reader)->withSession(['user' => ['business_id' => 1]])
+            ->withHeaders(['Accept' => 'application/json'])
+            ->post(route('accounting.reconciliation.findings.accept', ['findingId' => $findingId]), [
+                'reason' => 'Sumber sah.',
+            ]);
+        $forbidden->assertForbidden();
+        $this->assertSame('open', DB::table('accounting_legacy_reconciliation_findings')->where('id', $findingId)->value('status'));
+    }
+
+    private function insertActionableExpenseVatFinding(): int
+    {
+        $evidence = [
+            'date' => '2023-01-02', 'source_type' => 'Expense', 'source_number' => 'EXP-2023-1',
+            'match_status' => 'matched', 'operational_source_count' => 1, 'has_operational_source' => true,
+            'operational_identity' => 'Expense|EXP-2023-1|2023-01-02',
+            'operational_base' => 1000, 'operational_vat_in' => 0, 'operational_vat_out' => 0,
+            'operational_total' => 1000, 'journal_base' => 1000, 'journal_vat_in' => 100,
+            'journal_vat_out' => 0, 'journal_other_tax' => 0, 'journal_total' => 1100,
+        ];
+        DB::table('accounting_legacy_reconciliation_findings')->insert($this->findingRow([
+            'type' => 'transaction', 'component' => 'vat_in', 'finding_key' => hash('sha256', 'actionable-vat'),
+            'source_type' => 'Expense', 'source_number' => 'EXP-2023-1', 'source_date' => '2023-01-02',
+            'expected_amount' => 0, 'actual_amount' => 100, 'variance' => 100,
+            'evidence' => json_encode($evidence),
+        ]));
+
+        return (int) DB::table('accounting_legacy_reconciliation_findings')->where('finding_key', hash('sha256', 'actionable-vat'))->value('id');
+    }
+
+    private function accountingManagerUser(): User
+    {
+        $user = Mockery::mock(User::class)->makePartial();
+        $user->forceFill(['id' => 987654, 'business_id' => 1, 'username' => 'reconciliation-test']);
+        $user->shouldReceive('can')->andReturnUsing(fn (string $permission) => in_array($permission, [
+            'accounting.view_reports', 'accounting.manage_accounts', 'expense.edit',
+        ], true));
+        $this->app->instance(\App\Utils\ModuleUtil::class, Mockery::mock(\App\Utils\ModuleUtil::class, function ($mock): void {
+            $mock->shouldReceive('hasThePermissionInSubscription')->andReturn(true);
+        }));
+
+        return $user;
     }
 
     private function renderedTableRows(string $html): array

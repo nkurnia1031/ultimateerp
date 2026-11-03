@@ -5,6 +5,7 @@ namespace Modules\Accounting\Http\Controllers;
 use App\Utils\ModuleUtil;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
+use Modules\Accounting\Services\ReconciliationFindingActionService;
 use Modules\Accounting\Services\LegacyReconciliationFindingSnapshotService;
 
 class ReconciliationFindingController extends Controller
@@ -37,6 +38,47 @@ class ReconciliationFindingController extends Controller
         ]);
     }
 
+    public function correctionPreview(Request $request, ModuleUtil $moduleUtil, ReconciliationFindingActionService $actions, int $findingId)
+    {
+        $businessId = $this->authorizeMutation($request, $moduleUtil);
+        $result = $actions->previewOperationalTaxCorrection($businessId, $findingId);
+        $result['currency_symbol'] = (string) ($request->session()->get('currency')['symbol'] ?? '');
+        $result['can_confirm'] = $request->user()->can('superadmin') || $request->user()->can('expense.edit');
+        $result['journal_url'] = \Illuminate\Support\Facades\Route::has('journal-entry.create')
+            ? route('journal-entry.create')
+            : null;
+
+        return response()->json($result);
+    }
+
+    public function correctionConfirm(Request $request, ModuleUtil $moduleUtil, ReconciliationFindingActionService $actions, int $findingId)
+    {
+        $businessId = $this->authorizeMutation($request, $moduleUtil, 'expense.edit');
+        $validated = $request->validate([
+            'fingerprint' => ['required', 'string', 'size:64', 'regex:/^[a-f0-9]{64}$/'],
+        ]);
+        $result = $actions->confirmOperationalTaxCorrection(
+            $businessId,
+            $findingId,
+            (int) $request->user()->id,
+            $validated['fingerprint']
+        );
+
+        return response()->json($result);
+    }
+
+    public function accept(Request $request, ModuleUtil $moduleUtil, ReconciliationFindingActionService $actions, int $findingId)
+    {
+        $businessId = $this->authorizeMutation($request, $moduleUtil);
+        $request->merge(['reason' => trim((string) $request->input('reason', ''))]);
+        $validated = $request->validate([
+            'reason' => ['required', 'string', 'min:1', 'max:2000'],
+        ]);
+        $result = $actions->accept($businessId, $findingId, (int) $request->user()->id, $validated['reason']);
+
+        return response()->json($result);
+    }
+
     private function authorizeReports(Request $request, ModuleUtil $moduleUtil): int
     {
         $businessId = (int) $request->session()->get('user.business_id');
@@ -44,6 +86,21 @@ class ReconciliationFindingController extends Controller
         if ($businessId < 1 || ! $user || ! ($user->can('superadmin')
             || $moduleUtil->hasThePermissionInSubscription($businessId, 'accounting_module'))
             || ! $user->can('accounting.view_reports')) {
+            abort(403, 'Unauthorized action.');
+        }
+
+        return $businessId;
+    }
+
+    private function authorizeMutation(Request $request, ModuleUtil $moduleUtil, ?string $sourcePermission = null): int
+    {
+        $businessId = $this->authorizeReports($request, $moduleUtil);
+        $user = $request->user();
+        $isSuperadmin = $user && $user->can('superadmin');
+        if (! $isSuperadmin && ! $user->can('accounting.manage_accounts')) {
+            abort(403, 'Unauthorized action.');
+        }
+        if ($sourcePermission !== null && ! $isSuperadmin && ! $user->can($sourcePermission)) {
             abort(403, 'Unauthorized action.');
         }
 

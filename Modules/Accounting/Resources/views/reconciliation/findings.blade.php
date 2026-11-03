@@ -7,11 +7,14 @@
 
 <section class="content-header">
     <h1>Temuan rekonsiliasi <small>Audit legacy per business</small></h1>
-    <p class="text-muted">Selisih dari audit terakhir. Jurnal legacy dan transaksi operasional tidak diubah dari halaman ini.</p>
+    <p class="text-muted">Selisih dari audit terakhir. Koreksi operasional hanya ditawarkan setelah sumber dan nilai pajak terverifikasi; Jurnal legacy tetap menjadi bukti pembanding.</p>
 </section>
 
 <section id="reconciliation_findings_page" class="content"
-    data-data-url="{{ route('accounting.reconciliation.findings.data') }}">
+    data-data-url="{{ route('accounting.reconciliation.findings.data') }}"
+    data-preview-url-template="{{ route('accounting.reconciliation.findings.correctionPreview', ['findingId' => 999999999999]) }}"
+    data-confirm-url-template="{{ route('accounting.reconciliation.findings.correctionConfirm', ['findingId' => 999999999999]) }}"
+    data-accept-url-template="{{ route('accounting.reconciliation.findings.accept', ['findingId' => 999999999999]) }}">
     <div class="row">
         <div class="col-md-4 col-sm-6">
             <div class="info-box"><span class="info-box-icon bg-yellow"><i class="fa fa-exclamation-triangle"></i></span>
@@ -61,13 +64,51 @@
         </div>
         <div id="finding_results" class="box-body table-responsive" aria-busy="false">
             <table class="table table-bordered table-striped">
-                <thead><tr><th>Tanggal / Tahun</th><th>Temuan</th><th>Sumber</th><th>Akun</th><th class="text-right">Nilai pembanding</th><th class="text-right">Nilai aktual</th><th class="text-right">Selisih</th><th>Status / Audit</th></tr></thead>
+                <thead><tr><th>Tanggal / Tahun</th><th>Temuan</th><th>Sumber</th><th>Akun</th><th class="text-right">Nilai pembanding</th><th class="text-right">Nilai aktual</th><th class="text-right">Selisih</th><th>Status / Audit</th><th>Aksi</th></tr></thead>
                 <tbody id="finding_rows">@include('accounting::reconciliation.partials.rows')</tbody>
             </table>
             <div id="finding_pagination">@include('accounting::reconciliation.partials.pagination')</div>
         </div>
     </div>
 </section>
+
+<div class="modal fade" id="reconciliation_finding_action_modal" tabindex="-1" role="dialog" aria-labelledby="finding_action_title" aria-hidden="true">
+    <div class="modal-dialog" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <button type="button" class="close" data-dismiss="modal" aria-label="Tutup"><span aria-hidden="true">&times;</span></button>
+                <h4 class="modal-title" id="finding_action_title">Tinjau selisih</h4>
+            </div>
+            <div class="modal-body">
+                <div id="finding_action_status" class="alert alert-info" role="status" aria-live="polite">Memuat bukti…</div>
+                <div id="finding_action_proposal" class="hidden">
+                    <p id="finding_action_source"></p>
+                    <div class="table-responsive">
+                        <table class="table table-bordered">
+                            <thead><tr><th>Komponen</th><th>Sebelum</th><th>Usulan</th></tr></thead>
+                            <tbody id="finding_action_values"></tbody>
+                        </table>
+                    </div>
+                    <p id="finding_action_journal" class="text-muted"></p>
+                </div>
+                <div id="finding_action_fallback" class="hidden">
+                    <p id="finding_action_reason"></p>
+                    <a id="finding_action_editor_link" class="btn btn-default hidden" target="_blank" rel="noopener">Buka transaksi sumber</a>
+                </div>
+                <div id="finding_accept_reason_wrap" class="hidden">
+                    <label for="finding_accept_reason">Alasan menerima selisih <span class="text-danger">(wajib)</span></label>
+                    <textarea id="finding_accept_reason" class="form-control" rows="3" maxlength="2000" aria-describedby="finding_accept_help"></textarea>
+                    <p id="finding_accept_help" class="help-block">Alasan, pengguna, dan waktu akan tersimpan di histori temuan.</p>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-default" data-dismiss="modal">Batal</button>
+                <button type="button" id="finding_action_confirm" class="btn btn-primary hidden">Konfirmasi koreksi pajak</button>
+                <button type="button" id="finding_action_accept" class="btn btn-warning hidden">Terima selisih</button>
+            </div>
+        </div>
+    </div>
+</div>
 @stop
 
 @section('javascript')

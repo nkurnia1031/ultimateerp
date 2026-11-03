@@ -56,6 +56,9 @@ Route::middleware('web', 'SetSessionData', 'auth', 'language', 'timezone', 'Admi
     Route::get('reports', [\Modules\Accounting\Http\Controllers\ReportController::class, 'index']);
     Route::get('reports/reconciliation-findings/data', [\Modules\Accounting\Http\Controllers\ReconciliationFindingController::class, 'data'])->name('accounting.reconciliation.findings.data');
     Route::get('reports/reconciliation-findings', [\Modules\Accounting\Http\Controllers\ReconciliationFindingController::class, 'index'])->name('accounting.reconciliation.findings');
+    Route::post('reports/reconciliation-findings/{findingId}/operational-tax/preview', [\Modules\Accounting\Http\Controllers\ReconciliationFindingController::class, 'correctionPreview'])->whereNumber('findingId')->name('accounting.reconciliation.findings.correctionPreview');
+    Route::post('reports/reconciliation-findings/{findingId}/operational-tax/confirm', [\Modules\Accounting\Http\Controllers\ReconciliationFindingController::class, 'correctionConfirm'])->whereNumber('findingId')->name('accounting.reconciliation.findings.correctionConfirm');
+    Route::post('reports/reconciliation-findings/{findingId}/accept', [\Modules\Accounting\Http\Controllers\ReconciliationFindingController::class, 'accept'])->whereNumber('findingId')->name('accounting.reconciliation.findings.accept');
     Route::get('reports/general-ledger/export', [\Modules\Accounting\Http\Controllers\ReportController::class, 'exportGeneralLedger'])->name('accounting.generalLedger.export');
     Route::get('reports/general-ledger/audit/export', [\Modules\Accounting\Http\Controllers\ReportController::class, 'exportGeneralLedgerAudit'])->name('accounting.generalLedger.audit.export');
     Route::get('reports/general-ledger/audit', [\Modules\Accounting\Http\Controllers\ReportController::class, 'generalLedgerAudit'])->name('accounting.generalLedger.audit');
