@@ -657,6 +657,98 @@ class JournalImportQueueService
         });
     }
 
+    public function reviewDiscrepancies(int $importId, int $businessId, int $userId, array $rowIds, ?string $reason): array
+    {
+        $rowIds = array_values(array_unique(array_filter(array_map('intval', $rowIds))));
+        $reason = trim((string) $reason);
+        if ($rowIds === [] || count($rowIds) > 100) {
+            throw ValidationException::withMessages([
+                'row_ids' => 'Pilih 1 sampai 100 selisih pada halaman aktif.',
+            ]);
+        }
+
+        return DB::transaction(function () use ($importId, $businessId, $userId, $rowIds, $reason) {
+            $rows = DB::table('accounting_journal_import_rows')
+                ->where('journal_import_id', $importId)
+                ->where('business_id', $businessId)
+                ->whereIn('id', $rowIds)
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get();
+
+            if ($rows->count() !== count($rowIds)) {
+                throw ValidationException::withMessages([
+                    'row_ids' => 'Sebagian baris tidak ditemukan pada batch dan business aktif.',
+                ]);
+            }
+
+            $unexplainedCount = 0;
+            foreach ($rows as $row) {
+                if (! in_array($row->reconciliation_status, ['mismatch', 'auto_approved'], true)) {
+                    throw ValidationException::withMessages([
+                        'row_ids' => 'Semua baris terpilih harus memiliki selisih yang masih perlu ditinjau.',
+                    ]);
+                }
+                if (! in_array($row->processing_status, ['pending', 'failed'], true)) {
+                    throw ValidationException::withMessages([
+                        'row_ids' => 'Baris yang sudah masuk antrean atau selesai tidak dapat ditinjau ulang.',
+                    ]);
+                }
+                if ($row->reconciliation_status === 'auto_approved' && (bool) $row->is_reviewed) {
+                    throw ValidationException::withMessages([
+                        'row_ids' => 'Selisih yang sudah ditinjau tidak dapat dipilih kembali.',
+                    ]);
+                }
+                if ($row->reconciliation_status === 'mismatch') {
+                    $unexplainedCount++;
+                }
+            }
+
+            if ($unexplainedCount > 0 && (mb_strlen($reason) < 5 || mb_strlen($reason) > 1000)) {
+                throw ValidationException::withMessages([
+                    'reason' => 'Alasan wajib diisi 5 sampai 1000 karakter untuk selisih yang belum terjelaskan.',
+                ]);
+            }
+
+            $reviewedAt = now();
+            foreach ($rows as $row) {
+                $changes = [
+                    'is_reviewed' => 1,
+                    'reviewed_by' => $userId,
+                    'reviewed_at' => $reviewedAt,
+                    'updated_at' => $reviewedAt,
+                ];
+                if ($row->reconciliation_status === 'mismatch') {
+                    $changes += [
+                        'reconciliation_status' => 'approved',
+                        'difference_approved_by' => $userId,
+                        'difference_approved_at' => $reviewedAt,
+                        'difference_approval_reason' => $reason,
+                    ];
+                }
+                DB::table('accounting_journal_import_rows')
+                    ->where('id', $row->id)
+                    ->where('journal_import_id', $importId)
+                    ->where('business_id', $businessId)
+                    ->update($changes);
+            }
+
+            $updatedRows = DB::table('accounting_journal_import_rows')
+                ->where('journal_import_id', $importId)
+                ->where('business_id', $businessId)
+                ->whereIn('id', $rowIds)
+                ->orderBy('entry_index')
+                ->get()
+                ->all();
+
+            return [
+                'rows' => $updatedRows,
+                'reviewed_rows' => count($updatedRows),
+                'approved_rows' => $unexplainedCount,
+            ];
+        });
+    }
+
     public function clearReconciliation(int $rowId, int $businessId): void
     {
         DB::table('accounting_journal_import_rows')

@@ -606,6 +606,21 @@
     function renderDraftRow(row) {
         draftRowsById[String(row.id)] = row;
         var tr = $('<tr>').attr('data-row-id', row.id).data('draft-row', row);
+        var selectableDifference = ['mismatch', 'auto_approved'].indexOf(row.reconciliation_status) !== -1
+            && ['pending', 'failed'].indexOf(row.processing_status) !== -1
+            && (row.reconciliation_status !== 'auto_approved' || !row.is_reviewed);
+        var selectTitle = selectableDifference
+            ? 'Pilih untuk meninjau selisih ini.'
+            : (row.reconciliation_status === 'approved' || (row.reconciliation_status === 'auto_approved' && row.is_reviewed)
+                ? 'Selisih sudah ditinjau.'
+                : (['queued', 'running', 'completed'].indexOf(row.processing_status) !== -1
+                    ? 'Baris sedang diproses atau sudah selesai.'
+                    : 'Tidak ada selisih yang perlu ditinjau.'));
+        var pick = $('<input type="checkbox" class="journal-draft-difference-select">')
+            .prop('disabled', !selectableDifference)
+            .attr('aria-label', 'Pilih selisih pada baris ' + (row.source_number || row.id))
+            .attr('title', selectTitle);
+        tr.append($('<td class="text-center">').append(pick));
         var dateNumber = $('<strong>').text(row.source_type + ' #' + (row.source_number || '—'));
         var date = $('<small class="text-muted" style="display:block">').text(row.date || 'Tanggal kosong');
         tr.append($('<td>').append(dateNumber).append(date));
@@ -762,6 +777,43 @@
         $('#journal_import_draft_next').prop('disabled', draftPage >= draftLastPage);
     }
 
+    function selectedDifferenceRowIds() {
+        return $('#journal_import_draft_table .journal-draft-difference-select:checked').map(function () {
+            return Number($(this).closest('tr').data('row-id'));
+        }).get().filter(function (id) {
+            return id > 0;
+        });
+    }
+
+    function updateBulkDifferenceReviewControls() {
+        var eligible = $('#journal_import_draft_table .journal-draft-difference-select:not(:disabled)');
+        var selected = $('#journal_import_draft_table .journal-draft-difference-select:checked');
+        var selectedIds = selectedDifferenceRowIds();
+        var hasUnexplained = selectedIds.some(function (id) {
+            var row = draftRowsById[String(id)];
+            return row && row.reconciliation_status === 'mismatch';
+        });
+        var allSelected = eligible.length > 0 && selected.length === eligible.length;
+        var someSelected = selected.length > 0 && !allSelected;
+
+        $('#journal_import_select_page_differences, #journal_import_select_all_differences_header')
+            .prop('disabled', eligible.length === 0)
+            .prop('checked', allSelected)
+            .prop('indeterminate', someSelected);
+        $('#journal_import_review_selected_differences')
+            .prop('disabled', selectedIds.length === 0)
+            .text(selectedIds.length ? 'Tinjau ' + selectedIds.length.toLocaleString() + ' selisih terpilih' : 'Tinjau selisih terpilih');
+        $('#journal_import_bulk_review_reason_wrap').toggle(hasUnexplained);
+        if (!hasUnexplained) {
+            $('#journal_import_bulk_review_reason').val('');
+        }
+
+        var status = selectedIds.length
+            ? selectedIds.length.toLocaleString() + ' selisih dipilih pada halaman ini.'
+            : (eligible.length ? 'Belum ada selisih dipilih.' : 'Tidak ada selisih yang dapat dipilih pada halaman ini.');
+        $('#journal_import_bulk_review_status').removeClass('text-danger').text(status);
+    }
+
     function updateDraftRowsInline(rows) {
         var removed = 0;
         rows.forEach(function (row) {
@@ -781,10 +833,11 @@
         if (removed) draftTotal = Math.max(0, draftTotal - removed);
         if (!$('#journal_import_draft_table tbody tr').length) {
             $('#journal_import_draft_table tbody').append(
-                $('<tr>').append($('<td colspan="9" class="text-center text-muted">').text(noDraftRowsMessage()))
+                $('<tr>').append($('<td colspan="10" class="text-center text-muted">').text(noDraftRowsMessage()))
             );
         }
         updateDraftPaginationDisplay();
+        updateBulkDifferenceReviewControls();
     }
 
     function loadDraftRows(pageNumber) {
@@ -804,8 +857,13 @@
         var requestNumber = ++draftRequestNumber;
         $('#journal_import_draft_status').text('Memuat baris...');
         $('#journal_import_draft_table tbody').empty().append(
-            $('<tr>').append($('<td colspan="9" class="text-center text-muted">').text('Memuat draft...'))
+            $('<tr>').append($('<td colspan="10" class="text-center text-muted">').text('Memuat draft...'))
         );
+        $('#journal_import_select_page_differences, #journal_import_select_all_differences_header').prop('checked', false).prop('indeterminate', false);
+        $('#journal_import_bulk_review_reason').val('');
+        $('#journal_import_bulk_review_reason_wrap').hide();
+        $('#journal_import_review_selected_differences').prop('disabled', true);
+        $('#journal_import_bulk_review_status').removeClass('text-danger').text('Memuat baris...');
 
         var requestData = {
             type: draftType,
@@ -830,7 +888,7 @@
             if (requestNumber !== draftRequestNumber) return;
             var tbody = $('#journal_import_draft_table tbody').empty();
             if (!response.success || !response.rows.length) {
-                tbody.append($('<tr>').append($('<td colspan="9" class="text-center text-muted">').text(noDraftRowsMessage())));
+                tbody.append($('<tr>').append($('<td colspan="10" class="text-center text-muted">').text(noDraftRowsMessage())));
             } else {
                 response.rows.forEach(function (row) {
                     tbody.append(renderDraftRow(row));
@@ -847,13 +905,15 @@
             $('#journal_import_draft_previous').prop('disabled', response.page <= 1);
             $('#journal_import_draft_next').prop('disabled', response.page >= draftLastPage);
             $('#journal_import_draft_status').text('Draft tersimpan otomatis.');
+            updateBulkDifferenceReviewControls();
         }).fail(function (xhr) {
             if (requestNumber !== draftRequestNumber) return;
             var message = xhr.responseJSON && xhr.responseJSON.msg ? xhr.responseJSON.msg : 'Gagal memuat baris draft.';
             $('#journal_import_draft_status').text(message).addClass('text-danger');
             $('#journal_import_draft_table tbody').empty().append(
-                $('<tr>').append($('<td colspan="9" class="text-center text-danger">').text(message))
+                $('<tr>').append($('<td colspan="10" class="text-center text-danger">').text(message))
             );
+            updateBulkDifferenceReviewControls();
         });
     }
 
@@ -1550,6 +1610,66 @@
             var message = xhr.responseJSON && xhr.responseJSON.msg ? xhr.responseJSON.msg : 'Konfirmasi grup sumber gagal.';
             $('#journal_import_source_groups_error').removeClass('hide').text(message);
             button.prop('disabled', false).text('Konfirmasi grup unik');
+        });
+    });
+
+    $(document).on('change', '#journal_import_select_page_differences, #journal_import_select_all_differences_header', function () {
+        var checked = $(this).is(':checked');
+        $('#journal_import_draft_table .journal-draft-difference-select:not(:disabled)').prop('checked', checked);
+        updateBulkDifferenceReviewControls();
+    });
+
+    $(document).on('change', '#journal_import_draft_table .journal-draft-difference-select', function () {
+        updateBulkDifferenceReviewControls();
+    });
+
+    $(document).on('click', '#journal_import_review_selected_differences', function () {
+        var button = $(this);
+        var draft = $('#journal_import_draft');
+        var rowIds = selectedDifferenceRowIds();
+        if (!rowIds.length) return;
+
+        var hasUnexplained = rowIds.some(function (id) {
+            var row = draftRowsById[String(id)];
+            return row && row.reconciliation_status === 'mismatch';
+        });
+        var reason = String($('#journal_import_bulk_review_reason').val() || '').trim();
+        if (hasUnexplained && reason.length < 5) {
+            $('#journal_import_bulk_review_status').addClass('text-danger').text('Isi alasan minimal 5 karakter untuk selisih yang belum terjelaskan.');
+            $('#journal_import_bulk_review_reason').trigger('focus');
+            return;
+        }
+
+        var payload = { row_ids: rowIds };
+        if (hasUnexplained) payload.reason = reason;
+        button.prop('disabled', true).text('Menyimpan review...');
+        $('#journal_import_bulk_review_status').removeClass('text-danger').text('Memvalidasi dan menyimpan pilihan secara atomik...');
+
+        $.ajax({
+            method: 'PATCH',
+            url: draft.data('bulk-review-url'),
+            contentType: 'application/json',
+            dataType: 'json',
+            headers: { 'X-CSRF-TOKEN': draft.data('csrf-token') },
+            data: JSON.stringify(payload)
+        }).done(function (response) {
+            updateDraftRowsInline(response.rows || []);
+            $('#journal_import_bulk_review_reason').val('');
+            $('#journal_import_bulk_review_status').removeClass('text-danger').text(response.msg || 'Review selisih tersimpan.');
+            if (window.toastr) toastr.success(response.msg || 'Review selisih tersimpan.');
+        }).fail(function (xhr) {
+            var response = xhr.responseJSON || {};
+            var validationErrors = response.errors || {};
+            var message = response.msg
+                || (validationErrors.reason && validationErrors.reason[0])
+                || (validationErrors.row_ids && validationErrors.row_ids[0])
+                || 'Review selisih gagal disimpan.';
+            $('#journal_import_bulk_review_status').addClass('text-danger').text(message);
+            if (window.toastr) toastr.error(message);
+        }).always(function () {
+            var remainingSelected = selectedDifferenceRowIds();
+            button.prop('disabled', remainingSelected.length === 0)
+                .text(remainingSelected.length ? 'Tinjau ' + remainingSelected.length.toLocaleString() + ' selisih terpilih' : 'Tinjau selisih terpilih');
         });
     });
 

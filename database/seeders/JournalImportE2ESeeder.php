@@ -23,6 +23,7 @@ class JournalImportE2ESeeder extends Seeder
                 $this->ensurePermissions($userId);
                 $this->seedGeneralLedgerFixture($businessId, $userId, $now);
                 $this->seedReconciliationFixture($businessId);
+                $this->seedJournalImportReviewFixture($businessId, $userId, $now);
 
                 return;
             }
@@ -94,7 +95,101 @@ class JournalImportE2ESeeder extends Seeder
             $this->ensurePermissions($userId);
             $this->seedGeneralLedgerFixture($businessId, $userId, $now);
             $this->seedReconciliationFixture($businessId);
+            $this->seedJournalImportReviewFixture($businessId, $userId, $now);
         });
+    }
+
+    private function seedJournalImportReviewFixture(int $businessId, int $userId, $now): void
+    {
+        $fileName = 'journal-import-bulk-review-fixture.xlsx';
+        $batch = DB::table('accounting_journal_imports')
+            ->where('business_id', $businessId)
+            ->where('file_name', $fileName)
+            ->first();
+        $summary = [
+            'source_date_range' => '2025-01-01 — 2025-01-01',
+            'unbalanced_count' => 0,
+            'duplicate_count' => 0,
+            'existing_count' => 0,
+            'journal_entry_count' => 0,
+            'non_journal_count' => 3,
+            'missing_accounts' => [],
+        ];
+        $batchValues = [
+            'file_name' => $fileName,
+            'source_date_range' => '2025-01-01 — 2025-01-01',
+            'total_entries' => 3,
+            'imported_entries' => 0,
+            'skipped_entries' => 0,
+            'unbalanced_entries' => 0,
+            'duplicate_entries' => 0,
+            'missing_accounts' => 0,
+            'unsupported_entries' => 0,
+            'processed_entries' => 0,
+            'last_message' => null,
+            'error_message' => null,
+            'file_path' => null,
+            'analysis_path' => null,
+            'import_options' => '{}',
+            'status' => 'analyzed',
+            'summary' => json_encode($summary, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            'created_by' => $userId,
+            'reverted_by' => null,
+            'reverted_at' => null,
+            'updated_at' => $now,
+        ];
+
+        if ($batch) {
+            $batchId = (int) $batch->id;
+            DB::table('accounting_journal_imports')->where('id', $batchId)->update($batchValues);
+        } else {
+            $batchId = (int) DB::table('accounting_journal_imports')->insertGetId($batchValues + [
+                'business_id' => $businessId,
+                'created_at' => $now,
+            ]);
+        }
+        DB::table('accounting_journal_import_rows')->where('journal_import_id', $batchId)->delete();
+
+        $entries = [
+            ['number' => 'CI-BULK-EXPLAINED', 'reconciliation' => 'auto_approved'],
+            ['number' => 'CI-BULK-UNEXPLAINED', 'reconciliation' => 'mismatch'],
+            ['number' => 'CI-BULK-NO-DIFFERENCE', 'reconciliation' => 'not_checked'],
+        ];
+        foreach ($entries as $index => $fixture) {
+            $entry = [
+                'source_type' => 'Expense',
+                'source_number' => $fixture['number'],
+                'source_key' => 'Expense|'.$fixture['number'].'|2025-01-01',
+                'source_link_status' => 'unmatched',
+                'date' => '2025-01-01',
+                'description' => 'Journal Import bulk review fixture '.$fixture['number'],
+                'debit_total' => 100,
+                'credit_total' => 100,
+                'lines' => [],
+            ];
+            DB::table('accounting_journal_import_rows')->insert([
+                'journal_import_id' => $batchId,
+                'business_id' => $businessId,
+                'entry_index' => $index + 1,
+                'source_type' => 'Expense',
+                'source_number' => $fixture['number'],
+                'source_key' => $entry['source_key'],
+                'source_action' => 'create',
+                'source_record_type' => null,
+                'source_record_id' => null,
+                'draft_data' => '{}',
+                'entry_data' => json_encode($entry, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                'is_reviewed' => 0,
+                'processing_status' => 'pending',
+                'processing_attempts' => 0,
+                'reconciliation_status' => $fixture['reconciliation'],
+                'journal_total' => 100,
+                'business_total' => $fixture['reconciliation'] === 'not_checked' ? 100 : 99,
+                'difference_amount' => $fixture['reconciliation'] === 'not_checked' ? 0 : 1,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+        }
     }
 
     private function seedReconciliationFixture(int $businessId): void

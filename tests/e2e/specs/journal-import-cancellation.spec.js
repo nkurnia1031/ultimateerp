@@ -27,7 +27,6 @@ test('a queued Journal Import can stop, resume, and post once', async ({ page })
     ).trim();
     const fileName = path.basename(fixturePath);
     let queueWorker;
-    page.on('dialog', (dialog) => dialog.accept());
 
     try {
         await page.goto('/login');
@@ -51,13 +50,27 @@ test('a queued Journal Import can stop, resume, and post once', async ({ page })
         // The server renders the row before the Accounting JavaScript finishes loading.
         // Wait for the control to become active after its delegated handler is registered.
         await expect(terminateButton).toBeEnabled();
+        const stopRequestPromise = page.waitForRequest(
+            (request) =>
+                request.method() === 'POST' &&
+                request.url().endsWith(`/accounting/journal-entry/import/${importId}/terminate`),
+            { timeout: 30_000 },
+        );
         const stopResponsePromise = page.waitForResponse(
             (response) =>
                 response.request().method() === 'POST' &&
                 response.url().endsWith(`/accounting/journal-entry/import/${importId}/terminate`),
             { timeout: 30_000 },
         );
-        await terminateButton.click();
+        const stopDialogPromise = page.waitForEvent('dialog', { timeout: 15_000 });
+        const stopClickPromise = terminateButton.click();
+        const stopDialog = await stopDialogPromise;
+        expect(stopDialog.type()).toBe('confirm');
+        expect(stopDialog.message()).toContain('Hentikan import');
+        await stopDialog.accept();
+        await stopClickPromise;
+        const stopRequest = await stopRequestPromise;
+        expect(stopRequest.method()).toBe('POST');
         const stopResponse = await stopResponsePromise;
         expect(stopResponse.ok()).toBeTruthy();
         await expect.poll(async () => (await batchStatus(page, importId)).status).toBe('cancelled');
@@ -82,13 +95,27 @@ test('a queued Journal Import can stop, resume, and post once', async ({ page })
         await expect(page.locator('#journal_import_form input[name="import_id"]')).toHaveValue(importId);
         const csrfToken = await page.locator('#journal_import_form input[name="_token"]').inputValue();
 
+        const startRequestPromise = page.waitForRequest(
+            (request) =>
+                request.method() === 'POST' &&
+                request.url().endsWith('/accounting/journal-entry/import/start'),
+            { timeout: 30_000 },
+        );
         const startResponsePromise = page.waitForResponse(
             (response) =>
                 response.request().method() === 'POST' &&
                 response.url().endsWith('/accounting/journal-entry/import/start'),
             { timeout: 30_000 },
         );
-        await page.getByRole('button', { name: 'Proses Baris Valid' }).click();
+        const startDialogPromise = page.waitForEvent('dialog', { timeout: 15_000 });
+        const startClickPromise = page.getByRole('button', { name: 'Proses Baris Valid' }).click();
+        const startDialog = await startDialogPromise;
+        expect(startDialog.type()).toBe('confirm');
+        expect(startDialog.message()).toContain('Proses baris Journal Entry');
+        await startDialog.accept();
+        await startClickPromise;
+        const startRequest = await startRequestPromise;
+        expect(startRequest.method()).toBe('POST');
         const startResponse = await startResponsePromise;
         expect(startResponse.ok()).toBeTruthy();
         await expect.poll(async () => (await batchStatus(page, importId)).status, {

@@ -176,6 +176,7 @@
                 data-cohort-mappings-apply-url="{{ url('accounting/journal-entry/import/'.$batch->id.'/cohort-mappings/apply') }}"
                 data-review-groups-url="{{ url('accounting/journal-entry/import/'.$batch->id.'/review-groups') }}"
                 data-review-group-resolve-url="{{ url('accounting/journal-entry/import/'.$batch->id.'/review-groups/resolve') }}"
+                data-bulk-review-url="{{ url('accounting/journal-entry/import/'.$batch->id.'/draft-rows/approve-differences') }}"
                 data-options-url="{{ url('accounting/journal-entry/import/'.$batch->id.'/draft-options') }}"
                 data-csrf-token="{{ csrf_token() }}"
                 data-default-type="{{ $activeDraftType }}">
@@ -267,10 +268,30 @@
                         </div>
                     </div>
                 </div>
+                <div class="row" style="margin: 8px 0;">
+                        <div class="col-sm-6">
+                            <label for="journal_import_select_page_differences" style="font-weight:normal;">
+                                <input type="checkbox" id="journal_import_select_page_differences" disabled>
+                                Pilih semua selisih yang tampil di halaman ini
+                            </label>
+                            <button type="button" class="btn btn-warning btn-sm" id="journal_import_review_selected_differences" disabled style="margin-left:8px;">Tinjau selisih terpilih</button>
+                        </div>
+                        <div class="col-sm-6 text-right">
+                            <span id="journal_import_bulk_review_status" class="text-muted" aria-live="polite">Belum ada selisih dipilih.</span>
+                        </div>
+                        <div class="col-sm-12" id="journal_import_bulk_review_reason_wrap" style="display:none; margin-top:8px;">
+                            <label for="journal_import_bulk_review_reason">Alasan wajib untuk selisih yang belum terjelaskan</label>
+                            <textarea id="journal_import_bulk_review_reason" class="form-control" rows="2" maxlength="1000" placeholder="Jelaskan dasar persetujuan selisih yang belum terjelaskan"></textarea>
+                        </div>
+                </div>
                 <div class="table-responsive" role="region" aria-label="Baris transaksi Journal import" tabindex="0" style="margin-top: 10px;">
                     <table class="table table-bordered table-striped" id="journal_import_draft_table">
                         <thead>
                             <tr>
+                                <th class="text-center">
+                                    <span class="sr-only">Pilih</span>
+                                    <input type="checkbox" id="journal_import_select_all_differences_header" aria-label="Pilih semua selisih pada halaman ini" disabled>
+                                </th>
                                 <th>Nomor / tanggal</th>
                                 <th>Deskripsi</th>
                                 <th>Status proses / selisih</th>
@@ -283,7 +304,7 @@
                             </tr>
                         </thead>
                         <tbody>
-                            <tr><td colspan="9" class="text-center text-muted">Memuat draft...</td></tr>
+                            <tr><td colspan="10" class="text-center text-muted">Memuat draft...</td></tr>
                         </tbody>
                     </table>
                 </div>

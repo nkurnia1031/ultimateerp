@@ -1102,15 +1102,16 @@ class JournalEntryController extends Controller
         $validated = $request->validate([
             'row_ids' => 'required|array|min:1|max:100',
             'row_ids.*' => 'required|integer|min:1|distinct',
-            'reason' => 'required|string|min:5|max:1000',
+            'reason' => 'nullable|string|max:1000',
         ]);
-        $rows = $this->journalImportQueueService->approveDiscrepancies(
+        $reviewResult = $this->journalImportQueueService->reviewDiscrepancies(
             (int) $batch->id,
             $business_id,
             (int) $request->session()->get('user.id'),
             $validated['row_ids'],
-            $validated['reason']
+            $validated['reason'] ?? null
         );
+        $rows = $reviewResult['rows'];
 
         $importOptions = ! empty($batch->import_options) ? json_decode($batch->import_options, true) : [];
         $importOptions = is_array($importOptions) ? $importOptions : [];
@@ -1133,7 +1134,9 @@ class JournalEntryController extends Controller
                 fn ($row) => $this->journalImportDraftRowResponse($row, $importOptions, $sourceComponentsById),
                 $rows
             ),
-            'msg' => count($rows).' selisih disetujui dan ditandai ditinjau.',
+            'reviewed_rows' => $reviewResult['reviewed_rows'],
+            'approved_rows' => $reviewResult['approved_rows'],
+            'msg' => $reviewResult['reviewed_rows'].' selisih ditinjau; '.$reviewResult['approved_rows'].' selisih tak terjelaskan disetujui dengan alasan.',
         ]);
     }
 

@@ -212,6 +212,136 @@ class JournalImportDraftRowsTest extends TestCase
         $this->assertArrayNotHasKey('details', $draft, 'Direction inference must not fabricate product lines or quantities.');
     }
 
+    public function test_bulk_review_marks_explained_differences_reviewed_without_a_reason(): void
+    {
+        $this->insertDifferenceRow(30, 'auto_approved');
+
+        $response = $this->requestBulkDifferenceReview(['row_ids' => [30]]);
+
+        $response->assertOk()
+            ->assertJsonPath('reviewed_rows', 1)
+            ->assertJsonPath('approved_rows', 0)
+            ->assertJsonPath('rows.0.reconciliation_status', 'auto_approved');
+        $this->assertSame(1, (int) DB::table('accounting_journal_import_rows')->where('id', 30)->value('is_reviewed'));
+        $this->assertSame(55, (int) DB::table('accounting_journal_import_rows')->where('id', 30)->value('reviewed_by'));
+        $this->assertNull(DB::table('accounting_journal_import_rows')->where('id', 30)->value('difference_approval_reason'));
+    }
+
+    public function test_draft_search_and_problem_filters_combine_without_losing_pagination(): void
+    {
+        $this->insertDifferenceRow(30, 'auto_approved');
+        $this->insertDifferenceRow(31, 'mismatch', 'failed');
+        $this->insertDifferenceRow(32, 'auto_approved');
+        $this->insertDifferenceRow(33, 'mismatch');
+        foreach ([30, 31, 32, 33] as $id) {
+            DB::table('accounting_journal_import_rows')->where('id', $id)->update([
+                'source_number' => 'FILTER-SEARCH-'.$id,
+                'entry_data' => json_encode([
+                    'source_type' => 'Expense',
+                    'source_number' => 'FILTER-SEARCH-'.$id,
+                    'description' => 'FILTER-SEARCH fixture',
+                    'debit_total' => 100,
+                    'credit_total' => 100,
+                    'lines' => [],
+                ]),
+                'is_reviewed' => in_array($id, [32, 33], true) ? 1 : 0,
+                'processing_error' => $id === 31 ? 'ERR-SEARCH-MISSING-ACCOUNT' : null,
+            ]);
+        }
+
+        $errors = $this->requestDraftRows([
+            'type' => 'Expense',
+            'processing_filter' => 'all',
+            'status_filter' => 'errors',
+            'review_filter' => 'unreviewed',
+            'search' => 'ERR-SEARCH-MISSING-ACCOUNT',
+        ]);
+        $errors->assertOk()->assertJsonPath('total', 1);
+        $this->assertSame([31], array_column($errors->json('rows'), 'id'));
+
+        $firstDifferencePage = $this->requestDraftRows([
+            'type' => 'Expense',
+            'processing_filter' => 'all',
+            'status_filter' => 'differences',
+            'review_filter' => 'reviewed',
+            'search' => 'FILTER-SEARCH',
+            'per_page' => 1,
+        ]);
+        $firstDifferencePage->assertOk()->assertJsonPath('total', 2)->assertJsonPath('last_page', 2);
+        $this->assertSame([32], array_column($firstDifferencePage->json('rows'), 'id'));
+
+        $secondDifferencePage = $this->requestDraftRows([
+            'type' => 'Expense',
+            'processing_filter' => 'all',
+            'status_filter' => 'differences',
+            'review_filter' => 'reviewed',
+            'search' => 'FILTER-SEARCH',
+            'per_page' => 1,
+            'page' => 2,
+        ]);
+        $secondDifferencePage->assertOk()->assertJsonPath('total', 2)->assertJsonPath('last_page', 2);
+        $this->assertSame([33], array_column($secondDifferencePage->json('rows'), 'id'));
+    }
+
+    public function test_mixed_bulk_review_requires_reason_only_for_unexplained_differences_and_updates_atomically(): void
+    {
+        $this->insertDifferenceRow(30, 'auto_approved');
+        $this->insertDifferenceRow(31, 'mismatch');
+
+        $missingReason = $this->requestBulkDifferenceReview(['row_ids' => [30, 31]]);
+        $missingReason->assertUnprocessable();
+        $this->assertSame('auto_approved', DB::table('accounting_journal_import_rows')->where('id', 30)->value('reconciliation_status'));
+        $this->assertSame(0, (int) DB::table('accounting_journal_import_rows')->where('id', 30)->value('is_reviewed'));
+        $this->assertSame('mismatch', DB::table('accounting_journal_import_rows')->where('id', 31)->value('reconciliation_status'));
+        $this->assertSame(0, (int) DB::table('accounting_journal_import_rows')->where('id', 31)->value('is_reviewed'));
+
+        $response = $this->requestBulkDifferenceReview([
+            'row_ids' => [30, 31],
+            'reason' => 'Selisih sudah diperiksa bersama sumber jurnal.',
+        ]);
+
+        $response->assertOk()
+            ->assertJsonPath('reviewed_rows', 2)
+            ->assertJsonPath('approved_rows', 1);
+        $this->assertSame('auto_approved', DB::table('accounting_journal_import_rows')->where('id', 30)->value('reconciliation_status'));
+        $this->assertNull(DB::table('accounting_journal_import_rows')->where('id', 30)->value('difference_approval_reason'));
+        $this->assertSame('approved', DB::table('accounting_journal_import_rows')->where('id', 31)->value('reconciliation_status'));
+        $this->assertSame('Selisih sudah diperiksa bersama sumber jurnal.', DB::table('accounting_journal_import_rows')->where('id', 31)->value('difference_approval_reason'));
+        $this->assertSame(55, (int) DB::table('accounting_journal_import_rows')->where('id', 31)->value('difference_approved_by'));
+    }
+
+    public function test_bulk_difference_review_rejects_ineligible_rows_without_partial_updates(): void
+    {
+        $this->insertDifferenceRow(30, 'mismatch');
+        $this->insertDifferenceRow(31, 'mismatch', 'queued');
+
+        $this->requestBulkDifferenceReview([
+            'row_ids' => [30, 31],
+            'reason' => 'Selisih diperiksa pada daftar.',
+        ])->assertUnprocessable();
+
+        $this->assertSame('mismatch', DB::table('accounting_journal_import_rows')->where('id', 30)->value('reconciliation_status'));
+        $this->assertSame(0, (int) DB::table('accounting_journal_import_rows')->where('id', 30)->value('is_reviewed'));
+
+        DB::table('accounting_journal_import_rows')->where('id', 31)->delete();
+        $this->insertDifferenceRow(31, 'mismatch', 'pending', 8);
+        $this->requestBulkDifferenceReview([
+            'row_ids' => [30, 31],
+            'reason' => 'Selisih diperiksa pada daftar.',
+        ])->assertUnprocessable();
+        $this->assertSame('mismatch', DB::table('accounting_journal_import_rows')->where('id', 30)->value('reconciliation_status'));
+        $this->assertSame(0, (int) DB::table('accounting_journal_import_rows')->where('id', 30)->value('is_reviewed'));
+    }
+
+    public function test_bulk_difference_review_requires_journal_import_permission(): void
+    {
+        $this->insertDifferenceRow(30, 'auto_approved');
+
+        $this->requestBulkDifferenceReview(['row_ids' => [30]], false)->assertForbidden();
+
+        $this->assertSame(0, (int) DB::table('accounting_journal_import_rows')->where('id', 30)->value('is_reviewed'));
+    }
+
     private function requestDraftRows(array $query)
     {
         $user = Mockery::mock(User::class)->makePartial();
@@ -274,6 +404,51 @@ class JournalImportDraftRowsTest extends TestCase
             \App\Http\Middleware\AdminSidebarMenu::class,
         ])->actingAs($user)->withSession(['user' => ['business_id' => 7]])
             ->postJson('/accounting/journal-entry/import/5/review-groups/resolve', $payload);
+    }
+
+    private function requestBulkDifferenceReview(array $payload, bool $canAddJournal = true)
+    {
+        $user = Mockery::mock(User::class)->makePartial();
+        $user->id = 55;
+        $user->shouldReceive('can')->with('superadmin')->andReturn(false);
+        $user->shouldReceive('can')->with('accounting.add_journal')->andReturn($canAddJournal);
+
+        return $this->withoutMiddleware([
+            \App\Http\Middleware\SetSessionData::class,
+            \App\Http\Middleware\Language::class,
+            \App\Http\Middleware\Timezone::class,
+            \App\Http\Middleware\AdminSidebarMenu::class,
+        ])->actingAs($user)->withSession(['user' => ['id' => 55, 'business_id' => 7]])
+            ->patchJson('/accounting/journal-entry/import/5/draft-rows/approve-differences', $payload);
+    }
+
+    private function insertDifferenceRow(int $id, string $reconciliationStatus, string $processingStatus = 'pending', int $businessId = 7): void
+    {
+        DB::table('accounting_journal_import_rows')->insert([
+            'id' => $id,
+            'journal_import_id' => 5,
+            'business_id' => $businessId,
+            'entry_index' => $id,
+            'source_type' => 'Expense',
+            'source_number' => 'EXP-'.$id,
+            'source_action' => 'link',
+            'entry_data' => json_encode([
+                'source_type' => 'Expense',
+                'source_number' => 'EXP-'.$id,
+                'date' => '2025-01-01',
+                'description' => 'Biaya uji selisih',
+                'debit_total' => 100,
+                'credit_total' => 100,
+                'lines' => [],
+            ]),
+            'draft_data' => '{}',
+            'is_reviewed' => 0,
+            'processing_status' => $processingStatus,
+            'reconciliation_status' => $reconciliationStatus,
+            'journal_total' => 100,
+            'business_total' => 99,
+            'difference_amount' => 1,
+        ]);
     }
 
     private function insertIncompleteExpenseRow(int $id, string $number, string $status, string $message, int $businessId = 7): void
@@ -393,6 +568,8 @@ class JournalImportDraftRowsTest extends TestCase
             $table->longText('entry_data');
             $table->longText('draft_data')->nullable();
             $table->boolean('is_reviewed')->default(false);
+            $table->unsignedInteger('reviewed_by')->nullable();
+            $table->dateTime('reviewed_at')->nullable();
             $table->unsignedInteger('processing_attempts')->default(0);
             $table->string('processing_status')->default('pending');
             $table->text('processing_message')->nullable();
