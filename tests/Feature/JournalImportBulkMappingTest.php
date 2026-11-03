@@ -176,7 +176,7 @@ class JournalImportBulkMappingTest extends TestCase
         $this->assertSame('payment_account_id', $cashGroup['field']);
         $this->assertSame(2, $cashGroup['row_count']);
         $this->assertSame(250, $cashGroup['journal_total']);
-        $this->assertSame([101, 102], array_column($cashGroup['options'], 'id'));
+        $this->assertEqualsCanonicalizing([101, 102], array_column($cashGroup['options'], 'id'));
         $this->assertCount(2, $groups);
         $this->assertNotContains(103, array_column($cashGroup['options'], 'id'));
         $this->assertNotContains(801, array_column($cashGroup['options'], 'id'));
@@ -201,7 +201,45 @@ class JournalImportBulkMappingTest extends TestCase
         $this->assertCount(2, $groups);
         $this->assertEqualsCanonicalizing(['payment_account_id', 'transfer_account_id'], $groups->pluck('field')->all());
         $this->assertSame([[30], [30]], $groups->pluck('row_ids')->all());
-        $this->assertSame([101, 102], array_column($groups->first()['options'], 'id'));
+        $this->assertEqualsCanonicalizing([101, 102], array_column($groups->first()['options'], 'id'));
+    }
+
+    public function test_public_apply_saves_both_transfer_accounts_once_and_rejects_the_same_account(): void
+    {
+        $this->insertTypedRow(
+            31,
+            'Bank Transfer',
+            'TRF-MAP',
+            'pending',
+            [],
+            7,
+            $this->journalLines(500, '1-10001', 'Kas GL', '1-10002', 'Bank GL')
+        );
+        $groups = collect($this->request('get', '/accounting/journal-entry/import/5/cohort-mappings/preview?source_type=Bank%20Transfer')->json('groups'));
+        $paymentGroup = $groups->firstWhere('field', 'payment_account_id');
+        $transferGroup = $groups->firstWhere('field', 'transfer_account_id');
+
+        $sameAccount = $this->request('post', '/accounting/journal-entry/import/5/cohort-mappings/apply', [
+            'mappings' => [
+                ['cohort_key' => $paymentGroup['cohort_key'], 'fingerprint' => $paymentGroup['fingerprint'], 'field' => 'payment_account_id', 'value' => '101'],
+                ['cohort_key' => $transferGroup['cohort_key'], 'fingerprint' => $transferGroup['fingerprint'], 'field' => 'transfer_account_id', 'value' => '101'],
+            ],
+        ]);
+        $sameAccount->assertUnprocessable();
+        $this->assertSame('{}', DB::table('accounting_journal_import_rows')->where('id', 31)->value('draft_data'));
+
+        $response = $this->request('post', '/accounting/journal-entry/import/5/cohort-mappings/apply', [
+            'mappings' => [
+                ['cohort_key' => $paymentGroup['cohort_key'], 'fingerprint' => $paymentGroup['fingerprint'], 'field' => 'payment_account_id', 'value' => '101'],
+                ['cohort_key' => $transferGroup['cohort_key'], 'fingerprint' => $transferGroup['fingerprint'], 'field' => 'transfer_account_id', 'value' => '102'],
+            ],
+        ]);
+
+        $response->assertOk()->assertJsonPath('mapped_rows', 1);
+        $draft = json_decode((string) DB::table('accounting_journal_import_rows')->where('id', 31)->value('draft_data'), true);
+        $this->assertSame(101, $draft['payment_account_id']);
+        $this->assertSame(102, $draft['transfer_account_id']);
+        Bus::assertDispatched(ProcessJournalImportJob::class);
     }
 
     public function test_public_preview_maps_only_unique_exact_invoice_references(): void
@@ -236,16 +274,82 @@ class JournalImportBulkMappingTest extends TestCase
         $this->insertTypedRow(41, 'Receive Payment', 'INV-AMBIG', 'pending');
         $this->insertTypedRow(42, 'Receive Payment', 'INV-CLOS', 'pending');
         $this->insertTypedRow(43, 'Receive Payment', 'INV-FOREIGN', 'pending');
+        $this->insertTypedRow(44, 'Purchase Invoice', 'PIN-UNIQUE', 'pending');
+        $this->insertTypedRow(45, 'Purchase Payment', 'PIN-UNIQUE', 'pending');
 
-        $response = $this->request('get', '/accounting/journal-entry/import/5/cohort-mappings/preview?source_type=Receive%20Payment');
+        $response = $this->request('get', '/accounting/journal-entry/import/5/cohort-mappings/preview');
 
         $response->assertOk();
         $groups = $response->json('groups');
-        $this->assertCount(1, $groups);
-        $this->assertSame([40], $groups[0]['row_ids']);
-        $this->assertSame('invoice_reference', $groups[0]['field']);
-        $this->assertSame('transaction:301', $groups[0]['suggested_value']);
-        $this->assertSame(['transaction:301'], array_column($groups[0]['options'], 'id'));
+        $this->assertCount(2, $groups);
+        $receivePayment = collect($groups)->firstWhere('source_type', 'Receive Payment');
+        $purchasePayment = collect($groups)->firstWhere('source_type', 'Purchase Payment');
+        $this->assertSame([40], $receivePayment['row_ids']);
+        $this->assertSame('invoice_reference', $receivePayment['field']);
+        $this->assertSame('transaction:301', $receivePayment['suggested_value']);
+        $this->assertSame(['transaction:301'], array_column($receivePayment['options'], 'id'));
+        $this->assertSame([45], $purchasePayment['row_ids']);
+        $this->assertSame('draft:44', $purchasePayment['suggested_value']);
+    }
+
+    public function test_public_apply_uses_the_filtered_source_type_when_preview_has_more_than_fifty_other_cohorts(): void
+    {
+        Schema::create('contacts', function (Blueprint $table) {
+            $table->bigIncrements('id');
+            $table->unsignedInteger('business_id');
+            $table->string('name')->nullable();
+            $table->string('supplier_business_name')->nullable();
+            $table->dateTime('deleted_at')->nullable();
+        });
+        Schema::create('transactions', function (Blueprint $table) {
+            $table->bigIncrements('id');
+            $table->unsignedInteger('business_id');
+            $table->string('type');
+            $table->string('status');
+            $table->string('invoice_no')->nullable();
+            $table->string('ref_no')->nullable();
+            $table->dateTime('transaction_date')->nullable();
+            $table->decimal('final_total', 22, 4)->default(0);
+            $table->unsignedBigInteger('contact_id')->nullable();
+        });
+
+        for ($index = 0; $index < 51; $index++) {
+            $accountNumber = '5-'.str_pad((string) (50000 + $index), 5, '0', STR_PAD_LEFT);
+            $this->insertTypedRow(
+                100 + $index,
+                'Expense',
+                'EXP-CONTEXT-'.$index,
+                'pending',
+                [],
+                7,
+                $this->journalLines(100, $accountNumber, 'Expense '.$index, '1-10001', 'Kas GL')
+            );
+        }
+        $this->insertTypedRow(900, 'Purchase Invoice', 'PIN-LATE', 'pending');
+        $this->insertTypedRow(901, 'Purchase Payment', 'PIN-LATE', 'pending');
+
+        $preview = $this->request(
+            'get',
+            '/accounting/journal-entry/import/5/cohort-mappings/preview?source_type=Purchase%20Payment'
+        );
+        $preview->assertOk();
+        $group = $preview->json('groups.0');
+        $this->assertSame('draft:900', $group['suggested_value']);
+
+        $response = $this->request('post', '/accounting/journal-entry/import/5/cohort-mappings/apply', [
+            'source_type' => 'Purchase Payment',
+            'mappings' => [[
+                'cohort_key' => $group['cohort_key'],
+                'fingerprint' => $group['fingerprint'],
+                'field' => $group['field'],
+                'value' => 'draft:900',
+            ]],
+        ]);
+
+        $response->assertOk()->assertJsonPath('mapped_rows', 1);
+        $draft = json_decode((string) DB::table('accounting_journal_import_rows')->where('id', 901)->value('draft_data'), true);
+        $this->assertSame('draft:900', $draft['invoice_reference']);
+        Bus::assertDispatched(ProcessJournalImportJob::class);
     }
 
     public function test_public_apply_saves_bank_and_invoice_mappings_then_starts_standard_retry(): void

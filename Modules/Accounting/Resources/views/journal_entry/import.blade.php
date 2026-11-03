@@ -226,7 +226,7 @@
                             Tinjau grup sumber split
                         </button>
                         <button type="button" class="btn btn-primary btn-sm" id="journal_import_preview_cohort_mappings" style="display:none;">
-                            Mapping kategori Expense massal
+                            Mapping berulang massal
                         </button>
                         <span id="journal_import_cohort_mappings_status" class="text-muted" aria-live="polite"></span>
                         <span id="journal_import_source_groups_status" class="text-muted" aria-live="polite"></span>
@@ -421,24 +421,24 @@
                     <div class="modal-content">
                         <div class="modal-header">
                             <button type="button" class="close" data-dismiss="modal" aria-label="Tutup"><span aria-hidden="true">&times;</span></button>
-                            <h4 class="modal-title" id="journal_import_cohort_mappings_title">Mapping kategori Expense massal</h4>
+                            <h4 class="modal-title" id="journal_import_cohort_mappings_title">Mapping berulang massal</h4>
                         </div>
                         <div class="modal-body">
                             <p id="journal_import_cohort_mappings_summary" class="text-muted"></p>
                             <div class="table-responsive">
                                 <table class="table table-bordered table-striped" id="journal_import_cohort_mappings_table">
                                     <thead>
-                                        <tr><th>Akun Journal</th><th>Lokasi</th><th class="text-right">Baris</th><th class="text-right">Total akun</th><th class="text-right">Total Journal</th><th>Kategori Expense</th></tr>
+                                        <tr><th>Jenis</th><th>Konteks Journal</th><th>Field</th><th class="text-right">Baris</th><th class="text-right">Total komponen</th><th class="text-right">Total Journal</th><th>Nilai mapping</th></tr>
                                     </thead>
                                     <tbody></tbody>
                                 </table>
                             </div>
-                            <p class="help-block">Kategori yang namanya sama dengan akun Journal ditandai sebagai saran. Pilih atau pastikan kategori untuk setiap kelompok. Kontak Expense tetap kosong bila tidak tersedia; lokasi menggunakan lokasi aktif default business.</p>
+                            <p class="help-block">Expense dikelompokkan menurut akun Journal dan lokasi. Bank dikelompokkan menurut jenis transaksi dan susunan akun Journal; pilih akun kas/bank yang benar, termasuk kedua akun untuk transfer. Pembayaran hanya menyarankan invoice dengan nomor referensi yang cocok persis dan unik. Kandidat invoice ganda atau yang hanya mirip tetap perlu ditinjau per baris.</p>
                             <div id="journal_import_cohort_mappings_error" class="alert alert-danger hide" role="alert"></div>
                         </div>
                         <div class="modal-footer">
                             <button type="button" class="btn btn-default" data-dismiss="modal">Batal</button>
-                            <button type="button" class="btn btn-primary" id="journal_import_apply_cohort_mappings" disabled>Terapkan mapping dan proses baris valid</button>
+                            <button type="button" class="btn btn-primary" id="journal_import_apply_cohort_mappings" disabled>Terapkan mapping dan proses ulang</button>
                         </div>
                     </div>
                 </div>

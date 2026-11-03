@@ -476,6 +476,9 @@ class JournalEntryController extends Controller
 
     public function previewCohortMappings(Request $request, $id)
     {
+        $validated = $request->validate([
+            'source_type' => 'nullable|in:Expense,Bank Deposit,Bank Transfer,Bank Withdrawal,Receive Payment,Purchase Payment',
+        ]);
         $businessId = (int) $request->session()->get('user.business_id');
         $this->authorizeJournalImportDraftAccess($businessId);
         $batch = DB::table('accounting_journal_imports')
@@ -490,7 +493,11 @@ class JournalEntryController extends Controller
         }
 
         $preview = app(\Modules\Accounting\Services\JournalImportBulkMappingService::class)
-            ->previewExpenseCategories($batch, $businessId);
+            ->previewCohorts($batch, $businessId, $validated['source_type'] ?? null);
+        foreach ($preview['groups'] as &$group) {
+            unset($group['_members']);
+        }
+        unset($group);
 
         return response()->json(['success' => 1] + $preview);
     }
@@ -508,14 +515,16 @@ class JournalEntryController extends Controller
         }
 
         $validated = $request->validate([
+            'source_type' => 'nullable|in:Expense,Bank Deposit,Bank Transfer,Bank Withdrawal,Receive Payment,Purchase Payment',
             'mappings' => ['required', 'array', 'min:1', 'max:50'],
             'mappings.*.cohort_key' => ['required', 'string', 'regex:/^[a-f0-9]{64}$/'],
             'mappings.*.fingerprint' => ['required', 'string', 'regex:/^[a-f0-9]{64}$/'],
-            'mappings.*.expense_category_id' => ['required', 'integer', 'min:1'],
+            'mappings.*.field' => ['required', 'string', 'in:expense_category_mappings,payment_account_id,transfer_account_id,invoice_reference'],
+            'mappings.*.value' => ['required', 'string', 'max:64'],
         ]);
 
         $mappedRows = app(\Modules\Accounting\Services\JournalImportBulkMappingService::class)
-            ->applyExpenseCategoryMappings($batch, $businessId, $validated['mappings']);
+            ->applyCohortMappings($batch, $businessId, $validated['mappings'], $validated['source_type'] ?? null);
 
         // Reuse the normal batch preparation path so eligible rows are retried
         // with the same account mappings and bounded worker chunks as a manual run.
@@ -534,7 +543,7 @@ class JournalEntryController extends Controller
         return response()->json(array_merge($startData, [
             'success' => 1,
             'mapped_rows' => $mappedRows,
-            'msg' => $mappedRows.' baris Expense diperbarui. Import batch dimulai kembali melalui antrean standar.',
+            'msg' => $mappedRows.' baris transaksi diperbarui. Import batch dimulai kembali melalui antrean standar.',
         ]));
     }
 
