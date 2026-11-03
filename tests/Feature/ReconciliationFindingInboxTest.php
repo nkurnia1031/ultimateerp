@@ -285,6 +285,7 @@ class ReconciliationFindingInboxTest extends TestCase
 
     public function test_expense_vat_correction_requires_preview_confirms_idempotently_and_resolves_only_the_cleared_finding(): void
     {
+        $this->withoutReconciliationPageBootstrapMiddleware();
         DB::table('tax_rates')->insert([
             'id' => 7, 'business_id' => 1, 'name' => 'PPN 10%', 'amount' => 10, 'is_tax_group' => false,
         ]);
@@ -335,6 +336,7 @@ class ReconciliationFindingInboxTest extends TestCase
 
     public function test_expense_vat_correction_rejects_ambiguous_sources_and_accept_requires_a_reason(): void
     {
+        $this->withoutReconciliationPageBootstrapMiddleware();
         DB::table('tax_rates')->insert([
             'id' => 7, 'business_id' => 1, 'name' => 'PPN 10%', 'amount' => 10, 'is_tax_group' => false,
         ]);
@@ -373,6 +375,7 @@ class ReconciliationFindingInboxTest extends TestCase
 
     public function test_finding_actions_enforce_active_business_and_accounting_management_permission(): void
     {
+        $this->withoutReconciliationPageBootstrapMiddleware();
         $findingId = (int) DB::table('accounting_legacy_reconciliation_findings')->insertGetId($this->findingRow([
             'business_id' => 2, 'finding_key' => hash('sha256', 'other-business-finding'),
         ]));
@@ -429,6 +432,16 @@ class ReconciliationFindingInboxTest extends TestCase
         }));
 
         return $user;
+    }
+
+    private function withoutReconciliationPageBootstrapMiddleware(): void
+    {
+        $this->withoutMiddleware([
+            \App\Http\Middleware\SetSessionData::class,
+            \App\Http\Middleware\Language::class,
+            \App\Http\Middleware\Timezone::class,
+            \App\Http\Middleware\AdminSidebarMenu::class,
+        ]);
     }
 
     private function renderedTableRows(string $html): array
