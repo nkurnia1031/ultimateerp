@@ -467,17 +467,18 @@ class LegacyAnnualAuditCommandTest extends TestCase
             2023,
             $this->reportDirectory
         );
+        $annualReport = json_decode((string) file_get_contents($report['reports'][2023]['json']), true);
 
-        $row = collect($report['reports'][0]['transaction_reconciliation'])->firstWhere('source_number', 'PAY-LINKED');
+        $row = collect($annualReport['transaction_reconciliation'])->firstWhere('source_number', 'PAY-LINKED');
         $this->assertSame('matched', $row['match_status']);
         $this->assertSame('Penerimaan Pembayaran', $row['label']);
         $this->assertSame('linked_operational_source_type', $row['label_source']);
         $this->assertSame(100.0, $row['operational_total']);
         $this->assertSame(1, $row['operational_source_count']);
         $this->assertSame(1, $row['linked_operational_source_count']);
-        $this->assertSame(2, $report['reports'][0]['summary']['linked_operational_source_rows']);
+        $this->assertSame(2, $annualReport['summary']['linked_operational_source_rows']);
         $this->assertCount(2, $row['operational_sources']);
-        $conflict = collect($report['reports'][0]['transaction_reconciliation'])->firstWhere('source_number', 'PAY-CONFLICT');
+        $conflict = collect($annualReport['transaction_reconciliation'])->firstWhere('source_number', 'PAY-CONFLICT');
         $this->assertSame('conflict', $conflict['match_status']);
         $this->assertSame(100.0, $conflict['operational_total']);
         $this->assertStringContainsString('total', (string) $conflict['match_reason']);

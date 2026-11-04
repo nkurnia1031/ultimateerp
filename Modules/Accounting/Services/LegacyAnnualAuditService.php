@@ -551,7 +551,7 @@ class LegacyAnnualAuditService
     private function transactionLabel(array $entry, ?array $document, string $status): array
     {
         $description = trim((string) ($entry['description'] ?? ''));
-        if ($document !== null && in_array($status, ['matched', 'operational_only'], true) && ($document['status'] ?? '') === 'matched') {
+        if ($document !== null && in_array($status, ['matched', 'amount_mismatch', 'operational_only'], true) && ($document['status'] ?? '') === 'matched') {
             $categoryNames = [];
             $category = trim((string) ($document['category_name'] ?? ''));
             if ($category !== '') {
