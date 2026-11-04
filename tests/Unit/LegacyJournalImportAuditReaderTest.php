@@ -77,6 +77,8 @@ class LegacyJournalImportAuditReaderTest extends TestCase
                 'source_action' => 'create',
                 'entry_data' => json_encode($entry),
                 'processing_status' => 'completed',
+                'processing_error' => null,
+                'journal_total' => null,
             ],
             [
                 'business_id' => 987654,
@@ -87,6 +89,8 @@ class LegacyJournalImportAuditReaderTest extends TestCase
                 'source_action' => 'create',
                 'entry_data' => json_encode($entry),
                 'processing_status' => 'completed',
+                'processing_error' => null,
+                'journal_total' => null,
             ],
         ]);
 
