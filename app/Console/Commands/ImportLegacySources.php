@@ -10,6 +10,7 @@ use Modules\Accounting\Services\JournalImportDraftService;
 use Modules\Accounting\Services\LegacyImportRunService;
 use Modules\Accounting\Services\LegacyImportSourceCatalog;
 use Modules\Accounting\Services\LegacyJournalEntryMerger;
+use Modules\Accounting\Services\LegacyJournalImportAuditReader;
 use Modules\Accounting\Services\LegacyOperationalDraftEnricher;
 use Modules\Accounting\Services\LegacyOperationalEvidenceReader;
 use Modules\Accounting\Services\LegacyOperationalOnlyProcessor;
@@ -48,6 +49,7 @@ class ImportLegacySources extends Command
         JournalImportExpenseService $expenseService,
         LegacyAnnualAuditService $annualAuditService,
         LegacyJournalImportSourceLinkAuditReader $sourceLinkAuditReader,
+        LegacyJournalImportAuditReader $journalImportAuditReader,
         LegacyReconciliationFindingSnapshotService $findingSnapshots
     ): int {
         $businessId = $this->positiveOption('business-id');
@@ -384,12 +386,20 @@ class ImportLegacySources extends Command
                 $businessId,
                 (int) $importId
             );
+            $journalEntriesForAudit = (array) ($auditAnalysis['_annual_audit_data']['journal_entries'] ?? []);
+            $journalImportRows = $journalImportAuditReader->read(
+                $businessId,
+                (int) $importId,
+                $this->missingAccountLinesBySourceKey($journalEntriesForAudit)
+            );
             $annualAudit = $annualAuditService->generate(
                 (array) ($auditAnalysis['_annual_audit_data']['journal_entries'] ?? []),
                 $auditedEvidence,
                 $auditInventory,
                 $businessId,
-                $year
+                $year,
+                null,
+                $journalImportRows
             );
             $this->persistAnnualFindings($findingSnapshots, $businessId, $year, $annualAudit);
             $loanFindingCount = $findingSnapshots->persistLoanClassificationFromJournalImport(
@@ -507,6 +517,7 @@ class ImportLegacySources extends Command
 
         sort($dates);
         ksort($types);
+        $auditEntries = $this->attachMissingAccountDetails($allMerged['entries'], array_values($missingAccounts));
         $summary = [
             'entries' => $entries,
             'total_entries' => count($entries),
@@ -539,7 +550,7 @@ class ImportLegacySources extends Command
             '_operational_evidence_data' => $operationalEvidence,
             '_standalone_draft_data' => $standaloneDraftData,
             '_annual_audit_data' => [
-                'journal_entries' => $allMerged['entries'],
+                'journal_entries' => $auditEntries,
                 'journal_duplicate_count' => $allMerged['duplicate_count'],
                 'journal_conflict_count' => $allMerged['conflict_count'],
                 'operational_evidence' => $allOperationalEvidence,
@@ -547,6 +558,50 @@ class ImportLegacySources extends Command
         ];
 
         return $summary;
+    }
+
+    private function attachMissingAccountDetails(array $entries, array $missingAccounts): array
+    {
+        $missingKeys = array_fill_keys(array_filter(array_map(
+            fn (array $account): string => trim((string) ($account['key'] ?? '')),
+            $missingAccounts
+        )), true);
+
+        foreach ($entries as &$entry) {
+            $unmapped = [];
+            foreach ((array) ($entry['lines'] ?? []) as $line) {
+                if (! is_array($line)) {
+                    continue;
+                }
+                $key = md5(strtolower(trim((string) ($line['account_no'] ?? '')).'|'.trim((string) ($line['account_name'] ?? ''))));
+                if (! isset($missingKeys[$key])) {
+                    continue;
+                }
+                $unmapped[$key] = [
+                    'account_no' => $line['account_no'] ?? '',
+                    'account_name' => $line['account_name'] ?? '',
+                    'description' => $line['description'] ?? '',
+                ];
+            }
+            $entry['missing_account_lines'] = array_values($unmapped);
+            $entry['has_missing_accounts'] = $unmapped !== [];
+        }
+        unset($entry);
+
+        return $entries;
+    }
+
+    private function missingAccountLinesBySourceKey(array $journalEntries): array
+    {
+        $unmappedBySourceKey = [];
+        foreach ($journalEntries as $entry) {
+            if (! is_array($entry) || empty($entry['source_key']) || empty($entry['missing_account_lines'])) {
+                continue;
+            }
+            $unmappedBySourceKey[(string) $entry['source_key']] = $entry['missing_account_lines'];
+        }
+
+        return $unmappedBySourceKey;
     }
 
     private function syncBatchAnalysis(int $importId, int $businessId, array $analysis): void

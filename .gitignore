@@ -36,3 +36,10 @@ graphify-out/cost.json
 graphify-out/cache/
 graphify-out/20??-??-??/
 graphify-out/.*.tmp
+
+# Legacy source exports contain business and financial records; keep them local.
+/import-legacy/
+/journal-imports/
+/journal_*.xlsx
+/public/journal_*.xlsx
+/public/~$journal_*.xlsx

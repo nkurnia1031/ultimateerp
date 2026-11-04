@@ -11,6 +11,7 @@ use Modules\Accounting\Services\LegacyOperationalDraftEnricher;
 use Modules\Accounting\Services\LegacyOperationalEvidenceReader;
 use Modules\Accounting\Services\LegacyJournalImportSourceLinkAuditReader;
 use Modules\Accounting\Services\LegacyAnnualAuditService;
+use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use Tests\TestCase;
@@ -482,6 +483,73 @@ class LegacyAnnualAuditCommandTest extends TestCase
         $this->assertSame('conflict', $conflict['match_status']);
         $this->assertSame(100.0, $conflict['operational_total']);
         $this->assertStringContainsString('total', (string) $conflict['match_reason']);
+    }
+
+    public function test_annual_report_includes_journal_import_errors_and_unmapped_accounts(): void
+    {
+        $entry = $this->expenseEntry('EXP-FAILED', '2023-03-02', 150);
+        $entry['missing_account_lines'] = [[
+            'account_no' => '5-80001',
+            'account_name' => 'Office Expense',
+            'description' => 'Biaya kantor',
+        ]];
+        $entry['has_missing_accounts'] = true;
+        $journalImportRows = [[
+            'id' => 901,
+            'year' => 2023,
+            'date' => '2023-03-02',
+            'source_type' => 'Expense',
+            'source_number' => 'EXP-FAILED',
+            'source_key' => $entry['source_key'],
+            'processing_status' => 'failed',
+            'processing_error' => 'Akun 5-80001 belum dipetakan.',
+            'processing_message' => null,
+            'source_action' => 'create',
+            'journal_mapping_id' => null,
+            'reconciliation_status' => 'not_checked',
+            'journal_total' => 150,
+            'business_total' => null,
+            'difference_amount' => null,
+            'missing_account_lines' => $entry['missing_account_lines'],
+        ]];
+        $evidence = [
+            'documents' => [],
+            'document_count' => 0,
+            'source_record_count' => 0,
+            'duplicate_source_count' => 0,
+            'conflict_count' => 0,
+            'file_summaries' => [],
+        ];
+
+        $result = app(LegacyAnnualAuditService::class)->generate(
+            [$entry],
+            $evidence,
+            ['root' => $this->sourceDirectory, 'files' => []],
+            987654,
+            2023,
+            $this->reportDirectory,
+            $journalImportRows
+        );
+        $jsonPath = $result['reports'][2023]['json'];
+        $xlsxPath = $result['reports'][2023]['xlsx'];
+        $report = json_decode((string) file_get_contents($jsonPath), true);
+        $transaction = $report['transaction_reconciliation'][0];
+
+        $this->assertSame(2, $report['schema_version']);
+        $this->assertSame(1, $report['summary']['journal_import_failed_rows']);
+        $this->assertSame(['failed' => 1], $report['summary']['journal_import_status_counts']);
+        $this->assertSame(1, $report['summary']['journal_import_unmapped_account_rows']);
+        $this->assertSame('failed', $transaction['journal_import_status']);
+        $this->assertSame('Akun 5-80001 belum dipetakan.', $transaction['journal_import_errors'][0]);
+        $this->assertSame('5-80001', $transaction['unmapped_journal_accounts'][0]['account_no']);
+
+        $workbook = IOFactory::load($xlsxPath);
+        $importSheet = $workbook->getSheetByName('Status Import Journal');
+        $this->assertNotNull($importSheet);
+        $sheetRows = $importSheet->toArray();
+        $this->assertSame('failed', $sheetRows[1][5]);
+        $this->assertStringContainsString('belum dipetakan', $sheetRows[1][8]);
+        $workbook->disconnectWorksheets();
     }
 
     private function saleEntry(string $number, string $date, float $base, float $tax): array

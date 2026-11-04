@@ -54,7 +54,8 @@ class LegacyAnnualAuditService
         array $inventory,
         int $businessId,
         ?int $year = null,
-        ?string $outputDirectory = null
+        ?string $outputDirectory = null,
+        array $journalImportRows = []
     ): array {
         $root = (string) ($inventory['root'] ?? '');
         $controls = $this->controlReader->read((array) ($inventory['files'] ?? []), $root);
@@ -73,6 +74,16 @@ class LegacyAnnualAuditService
         }
 
         $ledger = $this->buildJournalLedger($journalEntries, $years);
+        $importRowsBySourceKey = [];
+        foreach ($journalImportRows as $importRow) {
+            if (! is_array($importRow)) {
+                continue;
+            }
+            $sourceKey = trim((string) ($importRow['source_key'] ?? ''));
+            if ($sourceKey !== '') {
+                $importRowsBySourceKey[$sourceKey][] = $importRow;
+            }
+        }
         $controlComparisons = $this->compareControls(
             $controls,
             $ledger['account_balances'],
@@ -85,17 +96,36 @@ class LegacyAnnualAuditService
 
         $requestedYears = $year === null ? $years : [$year];
         $reports = [];
+        $unassignedImportRows = array_values(array_filter($journalImportRows, fn (array $row): bool =>
+            (int) ($row['year'] ?? 0) < 1
+        ));
         foreach ($requestedYears as $reportYear) {
-            $annualTransactions = $this->buildTransactionsForYear($journalEntries, $operationalEvidence, (int) $reportYear);
+            $annualTransactions = $this->buildTransactionsForYear(
+                $journalEntries,
+                $operationalEvidence,
+                (int) $reportYear,
+                $importRowsBySourceKey
+            );
+            $annualImportRows = array_values(array_filter($journalImportRows, fn (array $row): bool =>
+                (int) ($row['year'] ?? 0) === (int) $reportYear
+            ));
             $annualAccounts = array_values($ledger['account_balances'][$reportYear] ?? []);
             $annualControls = array_values(array_filter(
                 $controlComparisons,
                 fn (array $row): bool => (int) $row['year'] === (int) $reportYear
             ));
             $annualCoverage = $this->coverageForYear($inventory, $reportYear);
-            $summary = $this->annualSummary($annualTransactions, $annualAccounts, $annualControls, $annualCoverage, $controls['errors']);
+            $summary = $this->annualSummary(
+                $annualTransactions,
+                $annualAccounts,
+                $annualControls,
+                $annualCoverage,
+                $controls['errors'],
+                $annualImportRows,
+                count($unassignedImportRows)
+            );
             $report = [
-                'schema_version' => 1,
+                'schema_version' => 2,
                 'business_id' => $businessId,
                 'year' => (int) $reportYear,
                 'generated_at' => now()->toIso8601String(),
@@ -104,6 +134,8 @@ class LegacyAnnualAuditService
                 'summary' => $summary,
                 'account_balances' => $annualAccounts,
                 'transaction_reconciliation' => $annualTransactions,
+                'journal_import_rows' => $annualImportRows,
+                'journal_import_unassigned_rows' => $unassignedImportRows,
                 'control_comparison' => $annualControls,
                 'coverage' => $annualCoverage,
                 'control_errors' => $controls['errors'],
@@ -258,7 +290,7 @@ class LegacyAnnualAuditService
         ];
     }
 
-    private function buildTransactionsForYear(array $entries, array $operationalEvidence, int $year): array
+    private function buildTransactionsForYear(array $entries, array $operationalEvidence, int $year, array $importRowsBySourceKey = []): array
     {
         $documents = (array) ($operationalEvidence['documents'] ?? []);
         $journalIdentities = [];
@@ -276,7 +308,14 @@ class LegacyAnnualAuditService
                 $journalIdentities[$identity] = true;
             }
             $document = $identity !== null ? ($documents[$identity] ?? null) : null;
-            $transactions[] = $this->transactionRow($entry, $document, $identity, $year);
+            $sourceKey = trim((string) ($entry['source_key'] ?? ''));
+            $transactions[] = $this->transactionRow(
+                $entry,
+                $document,
+                $identity,
+                $year,
+                $importRowsBySourceKey[$sourceKey] ?? []
+            );
         }
 
         foreach ($documents as $identity => $document) {
@@ -300,7 +339,7 @@ class LegacyAnnualAuditService
         return $transactions;
     }
 
-    private function transactionRow(array $entry, ?array $document, ?string $identity, int $year): array
+    private function transactionRow(array $entry, ?array $document, ?string $identity, int $year, array $journalImportRows = []): array
     {
         $sourceType = trim((string) ($entry['source_type'] ?? ''));
         $sourceNumber = trim((string) ($entry['source_number'] ?? ''));
@@ -377,6 +416,18 @@ class LegacyAnnualAuditService
             'linked_operational_source_count' => (int) ($document['linked_source_count'] ?? 0),
             'has_operational_source' => $document !== null,
             'operational_identity' => $identity,
+            'source_key' => (string) ($entry['source_key'] ?? ''),
+            'journal_import_status' => $this->journalImportStatus($journalImportRows),
+            'journal_import_errors' => array_values(array_unique(array_filter(array_map(
+                fn (array $row): string => trim((string) ($row['processing_error'] ?? $row['processing_message'] ?? '')),
+                $journalImportRows
+            )))),
+            'journal_import_row_ids' => array_values(array_filter(array_map(
+                fn (array $row): int => (int) ($row['id'] ?? 0),
+                $journalImportRows
+            ))),
+            'unmapped_journal_accounts' => (array) ($entry['missing_account_lines'] ?? []),
+            'has_unmapped_journal_accounts' => ! empty($entry['missing_account_lines']),
         ];
     }
 
@@ -731,7 +782,15 @@ class LegacyAnnualAuditService
         return round((float) $balance * $sign, 2);
     }
 
-    private function annualSummary(array $transactions, array $accounts, array $controls, array $coverage, array $controlErrors): array
+    private function annualSummary(
+        array $transactions,
+        array $accounts,
+        array $controls,
+        array $coverage,
+        array $controlErrors,
+        array $journalImportRows = [],
+        int $unassignedImportRowCount = 0
+    ): array
     {
         $count = function (array $statuses, array $allowed): int {
             return count(array_filter($statuses, fn ($status) => in_array($status, $allowed, true)));
@@ -750,6 +809,13 @@ class LegacyAnnualAuditService
         }));
         $journalEntries = count(array_filter($transactions, fn (array $row): bool => $row['match_status'] !== 'operational_only'
             && $row['match_status'] !== 'operational_conflict'));
+        $unmappedAccountEntries = count(array_filter(
+            $transactions,
+            fn (array $row): bool => ! empty($row['has_unmapped_journal_accounts'])
+        ));
+        $importStatusCounts = $journalImportRows === []
+            ? []
+            : array_count_values(array_column($journalImportRows, 'processing_status'));
 
         return [
             'journal_entries' => $journalEntries,
@@ -779,7 +845,34 @@ class LegacyAnnualAuditService
             'balance_incomplete_accounts' => count(array_filter($accounts, fn (array $row): bool => empty($row['balance_is_complete']))),
             'source_type_counts' => array_count_values(array_column($transactions, 'source_type')),
             'missing_source_classes' => $coverage['missing_source_classes'] ?? [],
+            'journal_import_rows' => count($journalImportRows),
+            'journal_import_unassigned_rows' => $unassignedImportRowCount,
+            'journal_import_status_counts' => $importStatusCounts,
+            'journal_import_failed_rows' => (int) ($importStatusCounts['failed'] ?? 0),
+            'journal_import_unfinished_rows' => array_sum(array_intersect_key(
+                $importStatusCounts,
+                array_flip(['pending', 'queued', 'processing'])
+            )),
+            'journal_import_unmapped_account_rows' => count(array_filter(
+                $journalImportRows,
+                fn (array $row): bool => ! empty($row['missing_account_lines'])
+            )),
+            'unmapped_journal_account_entries' => $unmappedAccountEntries,
         ];
+    }
+
+    private function journalImportStatus(array $journalImportRows): ?string
+    {
+        if ($journalImportRows === []) {
+            return null;
+        }
+
+        $statuses = array_values(array_unique(array_filter(array_map(
+            fn (array $row): string => trim((string) ($row['processing_status'] ?? '')),
+            $journalImportRows
+        ))));
+
+        return count($statuses) === 1 ? $statuses[0] : ($statuses === [] ? null : 'multiple');
     }
 
     private function coveredYears(array $entries, array $evidence, array $inventory, array $controls): array
@@ -1012,6 +1105,7 @@ class LegacyAnnualAuditService
             'Selisih Basis', 'Selisih VAT In', 'Selisih VAT Out', 'Selisih Total', 'Status Match',
             'Alasan', 'Resolusi Konflik Journal', 'Komponen Akun Journal', 'File/Baris Journal', 'File/Baris Operasional',
             'Debit Journal', 'Kredit Journal', 'Selisih Debit/Kredit', 'Jumlah Sumber Operasional Tertaut',
+            'Source Key', 'Status Import Journal', 'Error Import Journal', 'Akun Journal Belum Terpetakan',
         ], array_map(fn (array $row) => [
             $row['year'], $row['date'], $row['source_type'], $row['source_number'], $row['description'],
             $row['label'], $row['label_source'], $row['journal_base'], $row['journal_vat_in'],
@@ -1024,7 +1118,37 @@ class LegacyAnnualAuditService
             $this->jsonCell($row['operational_sources'] ?? []), $row['journal_debit'] ?? null,
             $row['journal_credit'] ?? null, $row['journal_balance_variance'] ?? null,
             $row['linked_operational_source_count'] ?? 0,
+            $row['source_key'] ?? '',
+            $row['journal_import_status'] ?? '',
+            $this->jsonCell($row['journal_import_errors'] ?? []),
+            $this->jsonCell($row['unmapped_journal_accounts'] ?? []),
         ], (array) $report['transaction_reconciliation']));
+
+        if ((array) ($report['journal_import_rows'] ?? []) !== []) {
+            $this->writeTable($workbook->createSheet()->setTitle('Status Import Journal'), [
+                'Tahun', 'Tanggal', 'Jenis', 'Nomor', 'Source Key', 'Status Proses', 'Aksi Sumber',
+                'Journal Mapping ID', 'Error', 'Akun Belum Terpetakan', 'Status Rekonsiliasi',
+                'Total Journal', 'Total Operasional', 'Selisih',
+            ], array_map(fn (array $row) => [
+                $row['year'], $row['date'], $row['source_type'], $row['source_number'], $row['source_key'],
+                $row['processing_status'], $row['source_action'], $row['journal_mapping_id'],
+                $row['processing_error'] ?? $row['processing_message'] ?? '',
+                $this->jsonCell($row['missing_account_lines'] ?? []), $row['reconciliation_status'],
+                $row['journal_total'], $row['business_total'], $row['difference_amount'],
+            ], (array) $report['journal_import_rows']));
+        }
+
+        if ((array) ($report['journal_import_unassigned_rows'] ?? []) !== []) {
+            $this->writeTable($workbook->createSheet()->setTitle('Import Journal Tanpa Tahun'), [
+                'Tanggal Sumber', 'Jenis', 'Nomor', 'Source Key', 'Status Proses', 'Error',
+                'Akun Belum Terpetakan', 'Aksi Sumber', 'Journal Mapping ID',
+            ], array_map(fn (array $row) => [
+                $row['date'], $row['source_type'], $row['source_number'], $row['source_key'],
+                $row['processing_status'], $row['processing_error'] ?? $row['processing_message'] ?? '',
+                $this->jsonCell($row['missing_account_lines'] ?? []), $row['source_action'],
+                $row['journal_mapping_id'],
+            ], (array) $report['journal_import_unassigned_rows']));
+        }
 
         $this->writeTable($workbook->createSheet()->setTitle('Kontrol Saldo'), [
             'Tahun', 'Jenis Kontrol', 'File', 'Sheet', 'Nomor Akun', 'Nama Akun',
