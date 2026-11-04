@@ -539,7 +539,7 @@ class ImportLegacySources extends Command
             '_operational_evidence_data' => $operationalEvidence,
             '_standalone_draft_data' => $standaloneDraftData,
             '_annual_audit_data' => [
-                'journal_entries' => $entries,
+                'journal_entries' => $allMerged['entries'],
                 'journal_duplicate_count' => $allMerged['duplicate_count'],
                 'journal_conflict_count' => $allMerged['conflict_count'],
                 'operational_evidence' => $allOperationalEvidence,
