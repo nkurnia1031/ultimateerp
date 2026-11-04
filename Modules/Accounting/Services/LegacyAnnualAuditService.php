@@ -851,7 +851,7 @@ class LegacyAnnualAuditService
             'journal_import_failed_rows' => (int) ($importStatusCounts['failed'] ?? 0),
             'journal_import_unfinished_rows' => array_sum(array_intersect_key(
                 $importStatusCounts,
-                array_flip(['pending', 'queued', 'processing'])
+                array_flip(['pending', 'queued', 'processing', 'running'])
             )),
             'journal_import_unmapped_account_rows' => count(array_filter(
                 $journalImportRows,

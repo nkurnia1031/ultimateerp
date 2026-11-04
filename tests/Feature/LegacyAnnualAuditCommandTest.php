@@ -512,6 +512,17 @@ class LegacyAnnualAuditCommandTest extends TestCase
             'difference_amount' => null,
             'missing_account_lines' => $entry['missing_account_lines'],
         ]];
+        $journalImportRows[] = array_merge($journalImportRows[0], [
+            'id' => 902,
+            'date' => '2023-03-03',
+            'source_number' => 'EXP-RUNNING',
+            'source_key' => 'Expense|EXP-RUNNING|2023-03-03',
+            'processing_status' => 'running',
+            'processing_error' => null,
+            'processing_message' => 'Sedang diproses.',
+            'journal_total' => 75,
+            'missing_account_lines' => [],
+        ]);
         $evidence = [
             'documents' => [],
             'document_count' => 0,
@@ -537,7 +548,8 @@ class LegacyAnnualAuditCommandTest extends TestCase
 
         $this->assertSame(2, $report['schema_version']);
         $this->assertSame(1, $report['summary']['journal_import_failed_rows']);
-        $this->assertSame(['failed' => 1], $report['summary']['journal_import_status_counts']);
+        $this->assertSame(['failed' => 1, 'running' => 1], $report['summary']['journal_import_status_counts']);
+        $this->assertSame(1, $report['summary']['journal_import_unfinished_rows']);
         $this->assertSame(1, $report['summary']['journal_import_unmapped_account_rows']);
         $this->assertSame('failed', $transaction['journal_import_status']);
         $this->assertSame('Akun 5-80001 belum dipetakan.', $transaction['journal_import_errors'][0]);
