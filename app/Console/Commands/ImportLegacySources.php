@@ -17,6 +17,7 @@ use Modules\Accounting\Services\LegacyAttachmentImporter;
 use Modules\Accounting\Services\JournalImportInvoiceService;
 use Modules\Accounting\Services\JournalImportExpenseService;
 use Modules\Accounting\Services\LegacyAnnualAuditService;
+use Modules\Accounting\Services\LegacyJournalImportSourceLinkAuditReader;
 use Modules\Accounting\Services\LegacyReconciliationFindingSnapshotService;
 
 class ImportLegacySources extends Command
@@ -46,6 +47,7 @@ class ImportLegacySources extends Command
         JournalImportInvoiceService $invoiceService,
         JournalImportExpenseService $expenseService,
         LegacyAnnualAuditService $annualAuditService,
+        LegacyJournalImportSourceLinkAuditReader $sourceLinkAuditReader,
         LegacyReconciliationFindingSnapshotService $findingSnapshots
     ): int {
         $businessId = $this->positiveOption('business-id');
@@ -192,6 +194,7 @@ class ImportLegacySources extends Command
 
         $this->line('Legacy run ID: '.$runId);
         $annualAudit = null;
+        $auditAnalysis = null;
 
         try {
             $run = $runService->findRun($runId, $businessId);
@@ -202,24 +205,11 @@ class ImportLegacySources extends Command
                 ->first();
 
             $journalAlreadyImported = $batch !== null && (string) $batch->status === 'imported';
-            if ($journalAlreadyImported) {
-                $annualAudit = [
-                    'output_directory' => storage_path('app/legacy-import-reports/business-'.$businessId),
-                    'reports' => [],
-                    'message' => 'Audit tahunan sudah dibuat pada proses sebelumnya dan dipertahankan.',
-                ];
-            }
 
             if ($batch === null || $this->batchNeedsPreparation($batch, $businessId)) {
                 $analysis = $this->analyzeJournalSources($auditInventory, $businessId, $year, $journalController, $merger, $draftService, $evidenceReader, $enricher);
+                $auditAnalysis = $analysis;
                 $this->printAnalysis($analysis);
-                $annualAudit = $annualAuditService->generate(
-                    $analysis['_annual_audit_data']['journal_entries'] ?? [],
-                    $analysis['_annual_audit_data']['operational_evidence'] ?? [],
-                    $auditInventory,
-                    $businessId,
-                    $year
-                );
 
                 $matchedEvidenceIdentities = [];
                 foreach ($analysis['entries'] as $entry) {
@@ -241,6 +231,18 @@ class ImportLegacySources extends Command
                 );
 
                 if ($analysis['entries'] === []) {
+                    $auditedEvidence = $sourceLinkAuditReader->mergeIntoEvidence(
+                        (array) ($analysis['_annual_audit_data']['operational_evidence'] ?? []),
+                        $businessId,
+                        $importId === null ? null : (int) $importId
+                    );
+                    $annualAudit = $annualAuditService->generate(
+                        (array) ($analysis['_annual_audit_data']['journal_entries'] ?? []),
+                        $auditedEvidence,
+                        $auditInventory,
+                        $businessId,
+                        $year
+                    );
                     $operationalOnly = $operationalOnlyProcessor->process(
                         $runId,
                         $businessId,
@@ -295,7 +297,7 @@ class ImportLegacySources extends Command
                 $runService->syncJournalCrosswalks($runId, $businessId, $importId);
             }
 
-            if ($annualAudit === null) {
+            if ($auditAnalysis === null) {
                 $auditAnalysis = $this->analyzeJournalSources(
                     $auditInventory,
                     $businessId,
@@ -305,13 +307,6 @@ class ImportLegacySources extends Command
                     $draftService,
                     $evidenceReader,
                     $enricher
-                );
-                $annualAudit = $annualAuditService->generate(
-                    $auditAnalysis['_annual_audit_data']['journal_entries'] ?? [],
-                    $auditAnalysis['_annual_audit_data']['operational_evidence'] ?? [],
-                    $auditInventory,
-                    $businessId,
-                    $year
                 );
             }
 
@@ -383,6 +378,19 @@ class ImportLegacySources extends Command
                 $message .= ' Sebagian lampiran belum dapat ditautkan atau diunduh; rincian tersimpan pada laporan lampiran.';
             }
             $runService->updateRun($runId, $businessId, $runStatus, $message, $summary, $finished);
+
+            $auditedEvidence = $sourceLinkAuditReader->mergeIntoEvidence(
+                (array) ($auditAnalysis['_annual_audit_data']['operational_evidence'] ?? []),
+                $businessId,
+                (int) $importId
+            );
+            $annualAudit = $annualAuditService->generate(
+                (array) ($auditAnalysis['_annual_audit_data']['journal_entries'] ?? []),
+                $auditedEvidence,
+                $auditInventory,
+                $businessId,
+                $year
+            );
             $this->persistAnnualFindings($findingSnapshots, $businessId, $year, $annualAudit);
             $loanFindingCount = $findingSnapshots->persistLoanClassificationFromJournalImport(
                 $businessId,
@@ -531,7 +539,7 @@ class ImportLegacySources extends Command
             '_operational_evidence_data' => $operationalEvidence,
             '_standalone_draft_data' => $standaloneDraftData,
             '_annual_audit_data' => [
-                'journal_entries' => $allMerged['entries'],
+                'journal_entries' => $entries,
                 'journal_duplicate_count' => $allMerged['duplicate_count'],
                 'journal_conflict_count' => $allMerged['conflict_count'],
                 'operational_evidence' => $allOperationalEvidence,

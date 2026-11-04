@@ -9,6 +9,8 @@ use Modules\Accounting\Http\Controllers\JournalEntryController;
 use Modules\Accounting\Services\JournalImportDraftService;
 use Modules\Accounting\Services\LegacyOperationalDraftEnricher;
 use Modules\Accounting\Services\LegacyOperationalEvidenceReader;
+use Modules\Accounting\Services\LegacyJournalImportSourceLinkAuditReader;
+use Modules\Accounting\Services\LegacyAnnualAuditService;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use Tests\TestCase;
@@ -190,7 +192,7 @@ class LegacyAnnualAuditCommandTest extends TestCase
             '--year' => 2023,
             '--source-dir' => $this->sourceDirectory,
         ])->expectsOutputToContain('Laporan rekonsiliasi tahunan:')
-            ->expectsOutputToContain('2023: 3 Journal; 2 sumber operasional cocok')
+            ->expectsOutputToContain('2023: 3 Journal; 1 sumber operasional cocok')
             ->assertExitCode(0);
 
         $this->assertSame($tablesBefore, $this->tableNames());
@@ -204,8 +206,9 @@ class LegacyAnnualAuditCommandTest extends TestCase
         $report = json_decode((string) file_get_contents($jsonPath), true);
         $this->assertSame(2023, $report['year']);
         $this->assertSame(3, $report['summary']['journal_entries']);
-        $this->assertSame(2, $report['summary']['operational_matches']);
+        $this->assertSame(1, $report['summary']['operational_matches']);
         $this->assertSame(1, $report['summary']['missing_operational_source']);
+        $this->assertSame(1, $report['summary']['amount_mismatches']);
         $this->assertSame(3, $report['summary']['journal_duplicate_sources']);
 
         $sale = collect($report['transaction_reconciliation'])->firstWhere('source_number', 'INV-2023');
@@ -218,6 +221,7 @@ class LegacyAnnualAuditCommandTest extends TestCase
         $this->assertSame(-1.0, $sale['base_variance']);
         $this->assertSame(1.0, $sale['vat_out_variance']);
         $this->assertSame(0.0, $sale['total_variance']);
+        $this->assertSame('amount_mismatch', $sale['match_status']);
         $expense = collect($report['transaction_reconciliation'])->firstWhere('source_number', 'EXP-VATIN');
         $this->assertSame('Operasional', $expense['label']);
         $this->assertSame('operational_category', $expense['label_source']);
@@ -296,6 +300,187 @@ class LegacyAnnualAuditCommandTest extends TestCase
         }
         $this->assertSame(9, $report['summary']['missing_operational_source']);
         $this->assertSame(0, $report['summary']['unsupported_source_types']);
+    }
+
+    public function test_annual_audit_uses_completed_persisted_journal_source_links_without_double_counting_workbook_sources(): void
+    {
+        Schema::create('accounting_journal_import_rows', function ($table) {
+            $table->increments('id');
+            $table->unsignedInteger('business_id');
+            $table->unsignedInteger('journal_import_id');
+            $table->string('source_type');
+            $table->string('source_number')->nullable();
+            $table->unsignedInteger('entry_index')->default(0);
+            $table->longText('entry_data');
+            $table->string('processing_status');
+        });
+        Schema::create('accounting_journal_import_source_links', function ($table) {
+            $table->increments('id');
+            $table->unsignedInteger('business_id');
+            $table->unsignedInteger('journal_import_id');
+            $table->unsignedInteger('journal_import_row_id');
+            $table->string('journal_source_type');
+            $table->string('source_record_type');
+            $table->unsignedInteger('source_record_id');
+            $table->string('source_reference')->nullable();
+            $table->date('source_date')->nullable();
+            $table->decimal('base_amount', 22, 4)->nullable();
+            $table->decimal('tax_amount', 22, 4)->nullable();
+            $table->decimal('total_amount', 22, 4)->nullable();
+            $table->string('link_method')->default('single');
+        });
+        Schema::create('transactions', function ($table) {
+            $table->increments('id');
+            $table->unsignedInteger('business_id');
+            $table->string('type');
+            $table->timestamp('deleted_at')->nullable();
+        });
+        Schema::create('transaction_payments', function ($table) {
+            $table->increments('id');
+            $table->unsignedInteger('transaction_id');
+            $table->timestamp('deleted_at')->nullable();
+        });
+
+        $entry = $this->sourceTypeEntry('Receive Payment', 'PAY-LINKED');
+        DB::table('transactions')->insert([
+            'id' => 91,
+            'business_id' => 987654,
+            'type' => 'sell',
+            'deleted_at' => null,
+        ]);
+        DB::table('transaction_payments')->insert([
+            'id' => 701,
+            'transaction_id' => 91,
+            'deleted_at' => null,
+        ]);
+        DB::table('transactions')->insert([
+            'id' => 92,
+            'business_id' => 987654,
+            'type' => 'purchase',
+            'deleted_at' => null,
+        ]);
+        DB::table('transaction_payments')->insert([
+            'id' => 702,
+            'transaction_id' => 92,
+            'deleted_at' => null,
+        ]);
+        $rowId = DB::table('accounting_journal_import_rows')->insertGetId([
+            'business_id' => 987654,
+            'journal_import_id' => 51,
+            'source_type' => $entry['source_type'],
+            'source_number' => $entry['source_number'],
+            'entry_index' => 0,
+            'entry_data' => json_encode($entry),
+            'processing_status' => 'completed',
+        ]);
+        $conflictEntry = $this->sourceTypeEntry('Purchase Payment', 'PAY-CONFLICT');
+        $conflictRowId = DB::table('accounting_journal_import_rows')->insertGetId([
+            'business_id' => 987654,
+            'journal_import_id' => 51,
+            'source_type' => $conflictEntry['source_type'],
+            'source_number' => $conflictEntry['source_number'],
+            'entry_index' => 1,
+            'entry_data' => json_encode($conflictEntry),
+            'processing_status' => 'completed',
+        ]);
+        DB::table('accounting_journal_import_source_links')->insert([
+            [
+                'business_id' => 987654,
+                'journal_import_id' => 51,
+                'journal_import_row_id' => $rowId,
+                'journal_source_type' => 'Receive Payment',
+                'source_record_type' => \App\TransactionPayment::class,
+                'source_record_id' => 701,
+                'source_reference' => 'PAY-LINKED',
+                'source_date' => '2023-02-01',
+                'base_amount' => null,
+                'tax_amount' => null,
+                'total_amount' => 100,
+                'link_method' => 'single',
+            ],
+            [
+                'business_id' => 987654,
+                'journal_import_id' => 51,
+                'journal_import_row_id' => $conflictRowId,
+                'journal_source_type' => 'Purchase Payment',
+                'source_record_type' => \App\TransactionPayment::class,
+                'source_record_id' => 702,
+                'source_reference' => 'PAY-CONFLICT',
+                'source_date' => '2023-02-01',
+                'base_amount' => null,
+                'tax_amount' => null,
+                'total_amount' => 101,
+                'link_method' => 'single',
+            ],
+        ]);
+
+        $workbookEvidence = [
+            'documents' => [
+                'Receive Payment|PAY-LINKED|2023-02-01' => [
+                    'source_type' => 'Receive Payment',
+                    'source_number' => 'PAY-LINKED',
+                    'date' => '2023-02-01',
+                    'status' => 'matched',
+                    'source_count' => 1,
+                    'base' => null,
+                    'tax' => null,
+                    'total' => 100,
+                    'category_name' => '',
+                    'description' => '',
+                    'lines' => [],
+                    'expense_lines' => [],
+                    'provenance' => [[
+                        'path' => 'PEMBAYARAN/receive-payment.xlsx',
+                        'row' => 2,
+                        'source_identity' => 'fixture-payment',
+                    ]],
+                ],
+                'Purchase Payment|PAY-CONFLICT|2023-02-01' => [
+                    'source_type' => 'Purchase Payment',
+                    'source_number' => 'PAY-CONFLICT',
+                    'date' => '2023-02-01',
+                    'status' => 'matched',
+                    'source_count' => 1,
+                    'base' => null,
+                    'tax' => null,
+                    'total' => 100,
+                    'category_name' => '',
+                    'description' => '',
+                    'lines' => [],
+                    'expense_lines' => [],
+                    'provenance' => [],
+                ],
+            ],
+            'document_count' => 1,
+            'source_record_count' => 1,
+            'duplicate_source_count' => 0,
+            'conflict_count' => 0,
+            'file_summaries' => [],
+        ];
+        $evidence = app(LegacyJournalImportSourceLinkAuditReader::class)
+            ->mergeIntoEvidence($workbookEvidence, 987654, 51);
+        $report = app(LegacyAnnualAuditService::class)->generate(
+            [$entry, $conflictEntry],
+            $evidence,
+            ['root' => $this->sourceDirectory, 'files' => []],
+            987654,
+            2023,
+            $this->reportDirectory
+        );
+
+        $row = collect($report['reports'][0]['transaction_reconciliation'])->firstWhere('source_number', 'PAY-LINKED');
+        $this->assertSame('matched', $row['match_status']);
+        $this->assertSame('Penerimaan Pembayaran', $row['label']);
+        $this->assertSame('linked_operational_source_type', $row['label_source']);
+        $this->assertSame(100.0, $row['operational_total']);
+        $this->assertSame(1, $row['operational_source_count']);
+        $this->assertSame(1, $row['linked_operational_source_count']);
+        $this->assertSame(2, $report['reports'][0]['summary']['linked_operational_source_rows']);
+        $this->assertCount(2, $row['operational_sources']);
+        $conflict = collect($report['reports'][0]['transaction_reconciliation'])->firstWhere('source_number', 'PAY-CONFLICT');
+        $this->assertSame('conflict', $conflict['match_status']);
+        $this->assertSame(100.0, $conflict['operational_total']);
+        $this->assertStringContainsString('total', (string) $conflict['match_reason']);
     }
 
     private function saleEntry(string $number, string $date, float $base, float $tax): array

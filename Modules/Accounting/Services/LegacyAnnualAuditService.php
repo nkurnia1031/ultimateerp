@@ -322,10 +322,21 @@ class LegacyAnnualAuditService
             $status = 'journal_conflict_resolved';
         } elseif (! empty($entry['source_identity_conflict'])) {
             $status = 'journal_conflict';
-        } elseif ($status === 'matched' && $document !== null
-            && abs((float) ($journal['total'] ?? 0) - (float) ($operational['total'] ?? 0)) > 0.01
-            && is_numeric($operational['total'] ?? null)) {
-            $status = 'amount_mismatch';
+        } elseif ($status === 'matched' && $document !== null) {
+            // Equal gross totals must not hide a basis/VAT difference that cancels out.
+            $componentPairs = [
+                [$journal['base'] ?? null, $operational['base'] ?? null],
+                [$journal['vat_in'] ?? null, $operational['vat_in'] ?? null],
+                [$journal['vat_out'] ?? null, $operational['vat_out'] ?? null],
+                [$journal['total'] ?? null, $operational['total'] ?? null],
+            ];
+            foreach ($componentPairs as [$journalAmount, $operationalAmount]) {
+                if (is_numeric($journalAmount) && is_numeric($operationalAmount)
+                    && abs((float) $journalAmount - (float) $operationalAmount) > 0.01) {
+                    $status = 'amount_mismatch';
+                    break;
+                }
+            }
         }
 
         $label = $this->transactionLabel($entry, $document, $status);
@@ -363,6 +374,7 @@ class LegacyAnnualAuditService
             'journal_sources' => $this->provenance((array) ($entry['legacy_sources'] ?? [])),
             'operational_sources' => $this->provenance((array) ($document['provenance'] ?? [])),
             'operational_source_count' => (int) ($document['source_count'] ?? 0),
+            'linked_operational_source_count' => (int) ($document['linked_source_count'] ?? 0),
             'has_operational_source' => $document !== null,
             'operational_identity' => $identity,
         ];
@@ -404,6 +416,7 @@ class LegacyAnnualAuditService
             'journal_sources' => [],
             'operational_sources' => $this->provenance((array) ($document['provenance'] ?? [])),
             'operational_source_count' => (int) ($document['source_count'] ?? 1),
+            'linked_operational_source_count' => (int) ($document['linked_source_count'] ?? 0),
             'has_operational_source' => true,
             'operational_identity' => $identity,
         ];
@@ -559,6 +572,24 @@ class LegacyAnnualAuditService
             }
             if (($entry['source_type'] ?? '') === 'Sales Invoice') {
                 return ['label' => 'Pendapatan Usaha', 'source' => 'matched_operational_source_type'];
+            }
+            if (! empty($document['source_linked'])) {
+                $linkedTypeLabels = [
+                    'Purchase Invoice' => 'Pembelian',
+                    'Receive Payment' => 'Penerimaan Pembayaran',
+                    'Purchase Payment' => 'Pembayaran Pembelian',
+                    'Bank Deposit' => 'Setoran Bank',
+                    'Bank Transfer' => 'Transfer Bank',
+                    'Bank Withdrawal' => 'Penarikan Bank',
+                    'Stock Adjustment' => 'Penyesuaian Stok',
+                    'Stock In/Out' => 'Mutasi Stok',
+                    'Opening Balance' => 'Saldo Awal',
+                    'Reversal' => 'Pembalikan',
+                ];
+                $linkedType = (string) ($document['linked_source_type'] ?? $entry['source_type'] ?? '');
+                if (isset($linkedTypeLabels[$linkedType])) {
+                    return ['label' => $linkedTypeLabels[$linkedType], 'source' => 'linked_operational_source_type'];
+                }
             }
         }
 
@@ -738,6 +769,7 @@ class LegacyAnnualAuditService
                 fn (array $row): int => max(0, (int) ($row['operational_source_count'] ?? 0) - 1),
                 $transactions
             )),
+            'linked_operational_source_rows' => array_sum(array_column($transactions, 'linked_operational_source_count')),
             'accounts' => count($accounts),
             'opening_variances' => $openingVariances,
             'control_rows' => count($controls),
@@ -979,7 +1011,7 @@ class LegacyAnnualAuditService
             'Basis Operasional', 'VAT In Operasional', 'VAT Out Operasional', 'Total Operasional',
             'Selisih Basis', 'Selisih VAT In', 'Selisih VAT Out', 'Selisih Total', 'Status Match',
             'Alasan', 'Resolusi Konflik Journal', 'Komponen Akun Journal', 'File/Baris Journal', 'File/Baris Operasional',
-            'Debit Journal', 'Kredit Journal', 'Selisih Debit/Kredit',
+            'Debit Journal', 'Kredit Journal', 'Selisih Debit/Kredit', 'Jumlah Sumber Operasional Tertaut',
         ], array_map(fn (array $row) => [
             $row['year'], $row['date'], $row['source_type'], $row['source_number'], $row['description'],
             $row['label'], $row['label_source'], $row['journal_base'], $row['journal_vat_in'],
@@ -991,6 +1023,7 @@ class LegacyAnnualAuditService
             $this->jsonCell($row['journal_components'] ?? []), $this->jsonCell($row['journal_sources'] ?? []),
             $this->jsonCell($row['operational_sources'] ?? []), $row['journal_debit'] ?? null,
             $row['journal_credit'] ?? null, $row['journal_balance_variance'] ?? null,
+            $row['linked_operational_source_count'] ?? 0,
         ], (array) $report['transaction_reconciliation']));
 
         $this->writeTable($workbook->createSheet()->setTitle('Kontrol Saldo'), [
