@@ -11,6 +11,7 @@
             <th>@lang('purchase.purchase_status')</th>
             <th>@lang('purchase.payment_status')</th>
             <th>Total sebelum pajak</th>
+            <th>Total pajak</th>
             <th>@lang('purchase.grand_total')</th>
             @php
                 $custom_labels = json_decode(session('business.custom_labels'), true);
@@ -33,6 +34,7 @@
             <td class="footer_status_count"></td>
             <td class="footer_payment_status_count"></td>
             <td class="footer_purchase_subtotal_before_tax"></td>
+            <td class="footer_purchase_tax"></td>
             <td class="footer_purchase_total"></td>
             <td class="text-left"><small>@lang('report.purchase_due') - <span class="footer_total_due"></span><br>
                     @lang('lang_v1.purchase_return') - <span class="footer_total_purchase_return_due"></span>

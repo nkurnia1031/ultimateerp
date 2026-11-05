@@ -5231,6 +5231,7 @@ class TransactionUtil extends Util
                 'transactions.status',
                 'transactions.payment_status',
                 'transactions.total_before_tax',
+                'transactions.tax_amount',
                 'transactions.final_total',
                 'BS.name as location_name',
                 'transactions.pay_term_number',

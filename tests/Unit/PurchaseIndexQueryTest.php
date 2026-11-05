@@ -45,6 +45,7 @@ class PurchaseIndexQueryTest extends TestCase
             $table->string('status')->nullable();
             $table->string('payment_status')->nullable();
             $table->decimal('total_before_tax', 22, 4)->nullable();
+            $table->decimal('tax_amount', 22, 4)->default(0);
             $table->decimal('final_total', 22, 4)->nullable();
             $table->integer('pay_term_number')->nullable();
             $table->string('pay_term_type')->nullable();
@@ -83,6 +84,7 @@ class PurchaseIndexQueryTest extends TestCase
             'type' => 'purchase',
             'transaction_date' => '2026-10-20 00:00:00',
             'total_before_tax' => 250,
+            'tax_amount' => 0,
             'final_total' => 275,
         ]);
     }
@@ -95,7 +97,7 @@ class PurchaseIndexQueryTest extends TestCase
         parent::tearDown();
     }
 
-    public function test_purchase_index_query_returns_the_transaction_before_tax_total(): void
+    public function test_purchase_index_query_includes_amounts_needed_for_the_purchase_summary(): void
     {
         $purchase = (new TransactionUtil())
             ->getListPurchases(1)
@@ -104,6 +106,7 @@ class PurchaseIndexQueryTest extends TestCase
             ->first();
 
         $this->assertSame(250.0, (float) $purchase->total_before_tax);
+        $this->assertSame(0.0, (float) $purchase->tax_amount);
         $this->assertNotSame((float) $purchase->final_total, (float) $purchase->total_before_tax);
     }
 

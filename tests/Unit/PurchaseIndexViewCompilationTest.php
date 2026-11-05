@@ -14,7 +14,7 @@ class PurchaseIndexViewCompilationTest extends TestCase
         $root = dirname(__DIR__, 2).'/resources/views/purchase/partials/';
         $compiler = $this->compiler();
 
-        foreach (['purchase_table.blade.php', 'products.blade.php'] as $view) {
+        foreach (['purchase_table.blade.php', 'products.blade.php', 'show_details.blade.php'] as $view) {
             $compiledView = $compiler->compileString(file_get_contents($root.$view));
 
             try {

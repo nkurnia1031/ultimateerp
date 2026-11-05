@@ -8,6 +8,7 @@ use App\BusinessLocation;
 use App\Contact;
 use App\CustomerGroup;
 use App\Product;
+use App\Presenters\PurchaseFinancialSummaryPresenter;
 use App\Presenters\PurchaseIndexProductPresenter;
 use App\PurchaseLine;
 use App\TaxRate;
@@ -131,6 +132,21 @@ class PurchaseController extends Controller
                 $purchases->where('transactions.created_by', request()->session()->get('user.id'));
             }
             $productPresenter = app(PurchaseIndexProductPresenter::class);
+            $financialSummaryPresenter = app(PurchaseFinancialSummaryPresenter::class);
+            $purchaseAmountsCache = [];
+            $purchaseAmountsForRow = function ($row) use ($financialSummaryPresenter, &$purchaseAmountsCache) {
+                if (! isset($purchaseAmountsCache[$row->id])) {
+                    $transactionTaxes = (float) ($row->tax_amount ?? 0) != 0.0
+                        ? [__('purchase.purchase_tax') => $row->tax_amount]
+                        : [];
+                    $purchaseAmountsCache[$row->id] = $financialSummaryPresenter->summarize(
+                        $row->purchase_lines ?? [],
+                        $transactionTaxes
+                    );
+                }
+
+                return $purchaseAmountsCache[$row->id];
+            };
 
             return Datatables::of($purchases)
                 ->addColumn('action', function ($row) {
@@ -241,10 +257,25 @@ class PurchaseController extends Controller
                         ->groupBy('transactions.id') // penting biar nggak duplikat row
                         ->orderByRaw("GROUP_CONCAT(tags.name ORDER BY tags.name ASC SEPARATOR ', ') {$order}");
                 })
-                ->editColumn(
-                    'total_before_tax',
-                    '<span class="total_before_tax" data-orig-value="{{$total_before_tax}}">@format_currency($total_before_tax)</span>'
-                )
+                ->editColumn('total_before_tax', function ($row) use ($purchaseAmountsForRow) {
+                    $amount = $purchaseAmountsForRow($row)['total_before_tax'];
+
+                    return '<span class="total_before_tax" data-orig-value="'.$amount.'">'
+                        .$this->transactionUtil->num_f($amount, true).'</span>';
+                })
+                ->addColumn('total_tax', function ($row) use ($purchaseAmountsForRow) {
+                    $amount = $purchaseAmountsForRow($row)['total_tax'];
+
+                    return '<span class="total_purchase_tax" data-orig-value="'.$amount.'">'
+                        .$this->transactionUtil->num_f($amount, true).'</span>';
+                })
+                ->orderColumn('total_before_tax', function ($query, $order) {
+                    $direction = strtolower((string) $order) === 'desc' ? 'DESC' : 'ASC';
+                    $query->orderByRaw(
+                        '(SELECT COALESCE(SUM(purchase_lines.quantity * purchase_lines.purchase_price), 0) '
+                        .'FROM purchase_lines WHERE purchase_lines.transaction_id = transactions.id) '.$direction
+                    );
+                })
                 ->editColumn(
                     'final_total',
                     '<span class="final_total" data-orig-value="{{$final_total}}">@format_currency($final_total)</span>'
@@ -284,7 +315,7 @@ class PurchaseController extends Controller
                         }
                     },
                 ])
-                ->rawColumns(['total_before_tax', 'final_total', 'action', 'payment_due', 'tags', 'products', 'payment_status', 'status', 'ref_no', 'name'])
+                ->rawColumns(['total_before_tax', 'total_tax', 'final_total', 'action', 'payment_due', 'tags', 'products', 'payment_status', 'status', 'ref_no', 'name'])
                 ->make(true);
         }
 
@@ -566,6 +597,11 @@ class PurchaseController extends Controller
                 $purchase_taxes[$purchase->tax->name] = $purchase->tax_amount;
             }
         }
+        $purchase_taxes = app(PurchaseFinancialSummaryPresenter::class)->summarize(
+            $purchase->purchase_lines,
+            $purchase_taxes,
+            $taxes->all()
+        )['taxes'];
 
         //Purchase orders
         $purchase_order_nos = '';
@@ -1494,6 +1530,11 @@ class PurchaseController extends Controller
                     $purchase_taxes[$purchase->tax->name] = $purchase->tax_amount;
                 }
             }
+            $purchase_taxes = app(PurchaseFinancialSummaryPresenter::class)->summarize(
+                $purchase->purchase_lines,
+                $purchase_taxes,
+                $taxes->all()
+            )['taxes'];
 
 
             foreach ($purchase->purchase_lines as $key => $value) {
