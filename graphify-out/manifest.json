@@ -1410,9 +1410,9 @@
     "semantic_hash": "34f27bfe161100880a4ad7cde5cf3181"
   },
   "Modules/Accounting/Routes/web.php": {
-    "mtime": 1794030207.4398985,
-    "seen": 1794030613.3292422,
-    "ast_hash": "62c5b09d3891c4fdce8e66c60e049bfb",
+    "mtime": 1794032838.9588642,
+    "seen": 1794033100.0422566,
+    "ast_hash": "3f890a222865e111143f2e8b7e223f9d",
     "semantic_hash": ""
   },
   "Modules/Accounting/Services/ActivityService.php": {

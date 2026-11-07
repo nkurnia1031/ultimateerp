@@ -263,13 +263,26 @@ class AccountingCanonicalLedgerCutoverTest extends TestCase
         $this->get('/accounting/chart_of_account')
             ->assertRedirect(action([\Modules\Accounting\Http\Controllers\CoaController::class, 'index']));
         $this->get('/accounting/chart_of_account/123/show')
-            ->assertRedirect(route('accounting.ledger', ['id' => 123]));
+            ->assertRedirect(action([\Modules\Accounting\Http\Controllers\CoaController::class, 'index']));
+        $this->get('/accounting/chart_of_account/123/edit')
+            ->assertRedirect(action([\Modules\Accounting\Http\Controllers\CoaController::class, 'index']));
         $this->get('/accounting/chart-of-accounts/123')
             ->assertRedirect(route('accounting.ledger', ['id' => 123]));
         $this->get('/accounting/reconcile')
             ->assertRedirect(route('accounting.reconciliation.findings'));
         $this->get('/accounting/transfers')
             ->assertRedirect(action([\Modules\Accounting\Http\Controllers\TransferController::class, 'index']));
+        $this->get('/report/accounting/ledger?start_date=2023-01-01&end_date=2023-12-31')
+            ->assertRedirect(route('accounting.generalLedger', [
+                'start_date' => '2023-01-01',
+                'end_date' => '2023-12-31',
+            ]));
+        $this->get('/report/accounting/balance_sheet?as_of=2023-12-31')
+            ->assertRedirect(route('accounting.balanceSheet', ['as_of' => '2023-12-31']));
+        $this->get('/report/accounting/cash_flow?year=2023')
+            ->assertRedirect('/accounting/reports?year=2023');
+        $this->get('/report/accounting')
+            ->assertRedirect('/accounting/reports');
 
         $this->get('/accounting/journal_entry/123/reverse')->assertStatus(410);
         $this->get('/accounting/journal_entry/123/destroy')->assertStatus(410);

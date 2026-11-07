@@ -11,6 +11,32 @@
 |
 */
 
+// Keep legacy report links working while sending users to reports backed by
+// the canonical accounting ledger. Reports that no longer have a canonical
+// equivalent return to the Accounting reports index instead of querying the
+// retired journal tables.
+Route::middleware('SetSessionData', 'auth', 'language', 'timezone', 'AdminSidebarMenu')
+    ->prefix('report/accounting')
+    ->group(function () {
+        Route::get('/', fn () => redirect('/accounting/reports'));
+
+        Route::get('{legacyReport}', function ($legacyReport) {
+            $routeName = [
+                'ledger' => 'accounting.generalLedger',
+                'trial_balance' => 'accounting.trialBalance',
+                'balance_sheet' => 'accounting.balanceSheet',
+                'accounts_receivable_ageing_summary' => 'accounting.account_receivable_ageing_report',
+                'accounts_receivable_ageing_detail' => 'accounting.account_receivable_ageing_details',
+                'accounts_payable_ageing_summary' => 'accounting.account_payable_ageing_report',
+                'accounts_payable_ageing_detail' => 'accounting.account_payable_ageing_details',
+            ][$legacyReport] ?? null;
+
+            return $routeName
+                ? redirect()->route($routeName, request()->query())
+                : redirect('/accounting/reports'.(request()->getQueryString() ? '?'.request()->getQueryString() : ''));
+        })->where('legacyReport', 'ledger|trial_balance|balance_sheet|cash_flow|profit_and_loss|journal|budget_overview|accounts_receivable_ageing_summary|accounts_receivable_ageing_detail|accounts_payable_ageing_summary|accounts_payable_ageing_detail');
+    });
+
 Route::middleware('web', 'SetSessionData', 'auth', 'language', 'timezone', 'AdminSidebarMenu')->prefix('accounting')->group(function () {
     Route::get('dashboard', [\Modules\Accounting\Http\Controllers\AccountingController::class, 'dashboard']);
 
@@ -82,9 +108,9 @@ Route::middleware('web', 'SetSessionData', 'auth', 'language', 'timezone', 'Admi
 
     Route::get('chart_of_account/create', fn () => redirect()->action([\Modules\Accounting\Http\Controllers\CoaController::class, 'create']))
         ->name('chart-of-accounts.legacyCreateRedirect');
-    Route::get('chart_of_account/{id}/show', fn ($id) => redirect()->route('accounting.ledger', array_merge(request()->query(), ['id' => $id])))->whereNumber('id')
+    Route::get('chart_of_account/{id}/show', fn () => redirect()->action([\Modules\Accounting\Http\Controllers\CoaController::class, 'index']))->whereNumber('id')
         ->name('chart-of-accounts.legacyShowRedirect');
-    Route::get('chart_of_account/{id}/edit', fn ($id) => redirect()->action([\Modules\Accounting\Http\Controllers\CoaController::class, 'edit'], [$id]))->whereNumber('id')
+    Route::get('chart_of_account/{id}/edit', fn () => redirect()->action([\Modules\Accounting\Http\Controllers\CoaController::class, 'index']))->whereNumber('id')
         ->name('chart-of-accounts.legacyEditRedirect');
     Route::get('chart_of_account/{id}/destroy', fn () => abort(410))->whereNumber('id')
         ->name('chart-of-accounts.legacyDestroy');
