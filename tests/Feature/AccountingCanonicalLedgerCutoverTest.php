@@ -97,7 +97,12 @@ class AccountingCanonicalLedgerCutoverTest extends TestCase
 
         $user = $this->superadminUser();
 
-        $response = $this->withoutMiddleware()
+        $this->withoutAccountingPageMiddleware();
+        $this->app['view']->getFinder()->replaceNamespace('accounting', [
+            base_path('tests/Fixtures/views/accounting'),
+        ]);
+
+        $response = $this
             ->actingAs($user)
             ->withSession([
                 'user' => ['business_id' => 1],
@@ -127,7 +132,7 @@ class AccountingCanonicalLedgerCutoverTest extends TestCase
             ['id' => 2, 'name' => 'Akun Business 2', 'gl_code' => '1002', 'business_id' => 2, 'account_primary_type' => 'asset', 'status' => 'active', 'description' => 'Tidak boleh bocor'],
         ]);
 
-        $response = $this->withoutMiddleware()
+        $response = $this->withoutAccountingPageMiddleware()
             ->actingAs($this->superadminUser())
             ->withSession(['user' => ['business_id' => 1]])
             ->get(route('accounting.chartOfAccounts.export'));
@@ -167,7 +172,7 @@ class AccountingCanonicalLedgerCutoverTest extends TestCase
         $accountingUtil->shouldReceive('getAccountingSettings')->once()->with(1)->andReturn([]);
         $this->app->instance(AccountingUtil::class, $accountingUtil);
 
-        $response = $this->withoutMiddleware()
+        $response = $this->withoutAccountingPageMiddleware()
             ->actingAs($this->superadminUser())
             ->withSession(['user' => ['business_id' => 1, 'id' => 5]])
             ->post(route('journal-entry.store'), [
@@ -219,7 +224,7 @@ class AccountingCanonicalLedgerCutoverTest extends TestCase
             'description' => 'Biaya legacy',
         ];
 
-        $response = $this->withoutMiddleware()
+        $response = $this->withoutAccountingPageMiddleware()
             ->actingAs($user)
             ->withSession(['user' => ['business_id' => 1, 'id' => 5]])
             ->withHeaders(['X-Requested-With' => 'XMLHttpRequest'])
@@ -286,5 +291,15 @@ class AccountingCanonicalLedgerCutoverTest extends TestCase
         });
 
         return $user;
+    }
+
+    private function withoutAccountingPageMiddleware(): self
+    {
+        return $this->withoutMiddleware([
+            \App\Http\Middleware\AdminSidebarMenu::class,
+            \App\Http\Middleware\Language::class,
+            \App\Http\Middleware\SetSessionData::class,
+            \App\Http\Middleware\Timezone::class,
+        ]);
     }
 }
