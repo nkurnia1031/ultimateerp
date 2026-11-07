@@ -7,10 +7,19 @@ use Illuminate\Support\Facades\Schema;
 use Mockery;
 use Modules\Accounting\Http\Controllers\JournalEntryController;
 use Modules\Accounting\Services\JournalImportDraftService;
+use Modules\Accounting\Services\JournalTaxReconciliationService;
+use Modules\Accounting\Services\GeneralLedgerBackfillService;
+use Modules\Accounting\Services\LegacyAttachmentImporter;
+use Modules\Accounting\Services\LegacyImportRunService;
+use Modules\Accounting\Services\LegacyImportSourceCatalog;
+use Modules\Accounting\Services\LegacyJournalEntryMerger;
+use Modules\Accounting\Services\LegacyJournalImportAuditReader;
 use Modules\Accounting\Services\LegacyOperationalDraftEnricher;
 use Modules\Accounting\Services\LegacyOperationalEvidenceReader;
+use Modules\Accounting\Services\LegacyOperationalOnlyProcessor;
 use Modules\Accounting\Services\LegacyJournalImportSourceLinkAuditReader;
 use Modules\Accounting\Services\LegacyAnnualAuditService;
+use Modules\Accounting\Services\LegacyReconciliationFindingSnapshotService;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
@@ -245,6 +254,171 @@ class LegacyAnnualAuditCommandTest extends TestCase
         } finally {
             $workbook->disconnectWorksheets();
         }
+    }
+
+    public function test_public_resume_rechecks_the_existing_imported_batch_without_replacing_it(): void
+    {
+        foreach ([
+            'accounting_legacy_import_runs',
+            'accounting_legacy_import_sources',
+            'accounting_legacy_import_attachments',
+            'accounting_legacy_reconciliation_audits',
+            'accounting_legacy_reconciliation_findings',
+        ] as $table) {
+            Schema::create($table, function ($schema) {
+                $schema->increments('id');
+            });
+        }
+        Schema::create('accounting_legacy_import_crosswalks', function ($table) {
+            $table->increments('id');
+            $table->unsignedInteger('legacy_record_id')->nullable();
+        });
+        Schema::create('media', function ($table) {
+            $table->string('storage_location')->nullable();
+            $table->unsignedBigInteger('legacy_source_attachment_id')->nullable();
+        });
+        Schema::create('accounting_journal_imports', function ($table) {
+            $table->increments('id');
+            $table->unsignedInteger('business_id');
+            $table->string('status');
+            $table->unsignedInteger('total_entries')->default(0);
+            $table->text('summary')->nullable();
+        });
+        Schema::create('accounting_journal_import_rows', function ($table) {
+            $table->increments('id');
+            $table->unsignedInteger('business_id');
+            $table->unsignedInteger('journal_import_id');
+            $table->longText('entry_data')->nullable();
+        });
+        DB::table('accounting_journal_imports')->insert([
+            'id' => 4,
+            'business_id' => 987654,
+            'status' => 'imported',
+            'total_entries' => 1,
+            'summary' => '{}',
+        ]);
+        DB::table('accounting_journal_import_rows')->insert([
+            'id' => 1,
+            'business_id' => 987654,
+            'journal_import_id' => 4,
+            'entry_data' => json_encode(['legacy_evidence_identity' => 'Sales Invoice|INV-2023|2023-01-02']),
+        ]);
+
+        $inventory = app(LegacyImportSourceCatalog::class)->scan($this->sourceDirectory);
+        $manifest = [
+            'year' => null,
+            'files' => array_map(function (array $file): array {
+                return [
+                    'path' => $file['path'],
+                    'sha256' => $file['sha256'],
+                    'classification' => $file['classification'],
+                ];
+            }, $inventory['files']),
+        ];
+        $run = (object) [
+            'id' => 11,
+            'manifest_sha256' => hash('sha256', json_encode($manifest, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)),
+            'year_filter' => null,
+            'journal_import_id' => 4,
+            'summary' => '{}',
+        ];
+
+        $runService = Mockery::mock(LegacyImportRunService::class);
+        $runService->shouldReceive('findRun')->twice()->with(11, 987654)->andReturn($run);
+        $runService->shouldReceive('syncJournalCrosswalks')->once()->with(11, 987654, 4)->andReturn(3);
+        $runService->shouldReceive('syncLegacyRecordIds')->once()->with(11, 987654, Mockery::type('array'));
+        $runService->shouldReceive('updateRun')->zeroOrMoreTimes();
+        $this->app->instance(LegacyImportRunService::class, $runService);
+
+        $merger = Mockery::mock(LegacyJournalEntryMerger::class);
+        $merger->shouldReceive('merge')->once()->andReturn([
+            'entries' => [$this->saleEntry('INV-2023', '2023-01-02', 200, 22)],
+            'duplicate_count' => 0,
+            'conflict_count' => 0,
+            'excluded_by_year' => 0,
+        ]);
+        $this->app->instance(LegacyJournalEntryMerger::class, $merger);
+
+        $operationalOnly = Mockery::mock(LegacyOperationalOnlyProcessor::class);
+        $operationalOnly->shouldReceive('process')->once()->andReturn([
+            'created' => 0,
+            'linked_existing' => 0,
+            'review' => 0,
+        ]);
+        $this->app->instance(LegacyOperationalOnlyProcessor::class, $operationalOnly);
+
+        $tax = Mockery::mock(JournalTaxReconciliationService::class);
+        $tax->shouldReceive('reconcileImport')
+            ->once()
+            ->with(4, 987654, true, Mockery::on(fn ($callback) => is_callable($callback)))
+            ->andReturn(['reconciled' => 1, 'review' => 0, 'not_applicable' => 0]);
+        $this->app->instance(JournalTaxReconciliationService::class, $tax);
+
+        $ledger = Mockery::mock(GeneralLedgerBackfillService::class);
+        $ledger->shouldReceive('run')
+            ->once()
+            ->with(987654, true, true, 4, Mockery::on(fn ($callback) => is_callable($callback)))
+            ->andReturn([
+                'journal_linked_sources' => 1,
+                'removed_duplicate_app_postings' => 1,
+                'replaced_operational_postings' => 2,
+                'actionable_review_sources' => 0,
+            ]);
+        $this->app->instance(GeneralLedgerBackfillService::class, $ledger);
+
+        $attachments = Mockery::mock(LegacyAttachmentImporter::class);
+        $attachments->shouldReceive('import')->once()->andReturn([
+            'linked' => 0,
+            'review' => 0,
+            'failed' => 0,
+            'rejected' => 0,
+            'collision_groups' => 0,
+            'collision_attachments' => 0,
+        ]);
+        $this->app->instance(LegacyAttachmentImporter::class, $attachments);
+
+        $sourceAudit = Mockery::mock(LegacyJournalImportSourceLinkAuditReader::class);
+        $sourceAudit->shouldReceive('mergeIntoEvidence')->once()->andReturn([
+            'documents' => [],
+            'document_count' => 0,
+            'source_record_count' => 0,
+            'duplicate_source_count' => 0,
+            'conflict_count' => 0,
+            'file_summaries' => [],
+        ]);
+        $this->app->instance(LegacyJournalImportSourceLinkAuditReader::class, $sourceAudit);
+
+        $journalAudit = Mockery::mock(LegacyJournalImportAuditReader::class);
+        $journalAudit->shouldReceive('read')->once()->andReturn([]);
+        $this->app->instance(LegacyJournalImportAuditReader::class, $journalAudit);
+
+        $annualAudit = Mockery::mock(LegacyAnnualAuditService::class);
+        $annualAudit->shouldReceive('generate')->once()->andReturn([
+            'output_directory' => $this->reportDirectory,
+            'reports' => [],
+            'control_errors' => [],
+            'message' => 'Audit fixture.',
+        ]);
+        $this->app->instance(LegacyAnnualAuditService::class, $annualAudit);
+
+        $findingSnapshots = Mockery::mock(LegacyReconciliationFindingSnapshotService::class);
+        $findingSnapshots->shouldReceive('persistReports')->once()->andReturn([]);
+        $findingSnapshots->shouldReceive('persistFromDirectory')->once()->andReturn([]);
+        $findingSnapshots->shouldReceive('persistLoanClassificationFromJournalImport')->once()->with(987654, 4, $run->manifest_sha256)->andReturn(0);
+        $this->app->instance(LegacyReconciliationFindingSnapshotService::class, $findingSnapshots);
+
+        $this->artisan('accounting:import-legacy', [
+            '--business-id' => 987654,
+            '--user-id' => 987654,
+            '--source-dir' => $this->sourceDirectory,
+            '--resume-run' => 11,
+            '--apply' => true,
+        ])->expectsOutputToContain('Batch Journal #4 sudah imported')
+            ->expectsOutputToContain('Recheck GL selesai: 1 sumber memakai Journal')
+            ->assertExitCode(0);
+
+        $this->assertSame(1, DB::table('accounting_journal_imports')->where('business_id', 987654)->count());
+        $this->assertSame('imported', DB::table('accounting_journal_imports')->where('id', 4)->value('status'));
     }
 
     public function test_annual_audit_checks_supported_non_invoice_source_types_and_keeps_journal_entries_gl_only(): void

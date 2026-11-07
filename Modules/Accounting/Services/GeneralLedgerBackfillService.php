@@ -26,6 +26,16 @@ class GeneralLedgerBackfillService
 
     private $reviewQueueBuffer = [];
 
+    private bool $legacyRecheckMode = false;
+
+    private ?int $legacyRecheckJournalImportId = null;
+
+    private int $legacyRecheckProcessed = 0;
+
+    private $legacyRecheckProgressCallback = null;
+
+    private array $legacyJournalPairCache = [];
+
     private const REVIEW_QUEUE_TABLE = 'accounting_general_ledger_backfill_reviews';
 
     public function __construct(JournalImportAccountComponentService $accountComponentService)
@@ -33,9 +43,14 @@ class GeneralLedgerBackfillService
         $this->accountComponentService = $accountComponentService;
     }
 
-    public function run(int $businessId, bool $apply = false): array
+    public function run(int $businessId, bool $apply = false, bool $legacyRecheck = false, ?int $journalImportId = null, ?callable $progressCallback = null): array
     {
         $this->reviewQueueBuffer = [];
+        $this->legacyRecheckMode = $legacyRecheck && $apply;
+        $this->legacyRecheckJournalImportId = $journalImportId;
+        $this->legacyRecheckProcessed = 0;
+        $this->legacyRecheckProgressCallback = $progressCallback;
+        $this->legacyJournalPairCache = [];
 
         $business = DB::table('business')->where('id', $businessId)->first(['id', 'name']);
         if (! $business) {
@@ -49,6 +64,10 @@ class GeneralLedgerBackfillService
 
         if ($apply && ! Schema::hasTable(self::REVIEW_QUEUE_TABLE)) {
             return ['error' => 'Migrasi antrean review backfill belum tersedia. Jalankan migration aplikasi terlebih dahulu.'];
+        }
+
+        if ($legacyRecheck && ! $apply) {
+            return ['error' => 'Recheck legacy hanya boleh berjalan dalam mode apply setelah preview/konfirmasi coordinator.'];
         }
 
         $this->loadBusinessContext($businessId);
@@ -73,19 +92,30 @@ class GeneralLedgerBackfillService
             'credit_total' => 0.0,
             'date_start' => null,
             'date_end' => null,
+            'journal_linked_sources' => 0,
+            'removed_duplicate_app_postings' => 0,
+            'replaced_operational_postings' => 0,
+            'journal_pattern_groups' => 0,
         ];
         $summary['account_mapping_audit'] = $this->auditMainAccountMappings($businessId);
 
+        if ($this->legacyRecheckMode) {
+            $summary['removed_duplicate_app_postings'] = $this->removeProvenJournalDuplicates($businessId, $journalImportId);
+        }
+
         foreach ($this->transactionCandidates($businessId) as $candidate) {
             $this->processCandidate($candidate, $businessId, $apply, $summary);
+            $this->reportLegacyRecheckProgress($summary, 'transaksi_operasional');
         }
 
         foreach ($this->paymentCandidates($businessId) as $candidate) {
             $this->processCandidate($candidate, $businessId, $apply, $summary);
+            $this->reportLegacyRecheckProgress($summary, 'pembayaran_operasional');
         }
 
         foreach ($this->bankTransferCandidates($businessId) as $candidate) {
             $this->processCandidate($candidate, $businessId, $apply, $summary);
+            $this->reportLegacyRecheckProgress($summary, 'mutasi_rekening');
         }
 
         foreach ($this->unpairedMainAccountMovements($businessId) as $reason => $count) {
@@ -109,6 +139,11 @@ class GeneralLedgerBackfillService
             ? '—'
             : $summary['date_start'].' — '.$summary['date_end'];
         unset($summary['date_start'], $summary['date_end']);
+
+        $this->legacyRecheckMode = false;
+        $this->legacyRecheckJournalImportId = null;
+        $this->legacyRecheckProgressCallback = null;
+        $this->legacyJournalPairCache = [];
 
         return $summary;
     }
@@ -567,6 +602,457 @@ class GeneralLedgerBackfillService
         ];
     }
 
+    private function reportLegacyRecheckProgress(array $summary, string $phase): void
+    {
+        if (! $this->legacyRecheckMode || ! $this->legacyRecheckProgressCallback) {
+            return;
+        }
+
+        $this->legacyRecheckProcessed++;
+        if ($this->legacyRecheckProcessed % 100 === 0) {
+            $summary['actionable_review_sources'] = count($summary['review_source_keys'] ?? []);
+            ($this->legacyRecheckProgressCallback)($phase, $this->legacyRecheckProcessed, $summary);
+        }
+    }
+
+    private function journalSourceLinkState(int $businessId, string $sourceType, int $sourceId): string
+    {
+        $links = DB::table('accounting_acc_trans_mappings')
+            ->where('business_id', $businessId)
+            ->where('source_record_type', $sourceType)
+            ->where('source_record_id', $sourceId)
+            ->where('type', 'journal_entry')
+            ->get(['source_link_status']);
+        if ($links->isEmpty()) {
+            return 'none';
+        }
+
+        return $links->count() === 1 && (string) $links->first()->source_link_status === 'matched'
+            ? 'matched'
+            : 'ambiguous';
+    }
+
+    private function removeProvenJournalDuplicates(int $businessId, ?int $journalImportId): int
+    {
+        if ($journalImportId === null || ! Schema::hasTable('accounting_journal_import_rows')) {
+            return 0;
+        }
+
+        $removed = 0;
+        $sourceRows = DB::table('accounting_journal_import_rows')
+            ->select('source_record_type', 'source_record_id')
+            ->selectRaw('MIN(journal_mapping_id) as journal_mapping_id')
+            ->where('business_id', $businessId)
+            ->where('journal_import_id', $journalImportId)
+            ->whereIn('source_action', ['link', 'create', 'update'])
+            ->whereNotNull('source_record_type')
+            ->whereNotNull('source_record_id')
+            ->whereNotNull('journal_mapping_id')
+            ->groupBy('source_record_type', 'source_record_id')
+            ->havingRaw('COUNT(DISTINCT journal_mapping_id) = 1')
+            ->orderBy('source_record_type')
+            ->orderBy('source_record_id')
+            ->cursor();
+
+        foreach ($sourceRows as $sourceRow) {
+            $source = [
+                'type' => (string) $sourceRow->source_record_type,
+                'id' => (int) $sourceRow->source_record_id,
+            ];
+            $mappingId = (int) $sourceRow->journal_mapping_id;
+            $mapping = DB::table('accounting_acc_trans_mappings')
+                ->where('business_id', $businessId)
+                ->where('id', $mappingId)
+                ->where('type', 'journal_entry')
+                ->where('source_record_type', $source['type'])
+                ->where('source_record_id', $source['id'])
+                ->where('source_link_status', 'matched')
+                ->first(['id', 'source_tax_snapshot']);
+            if (! $mapping) {
+                continue;
+            }
+
+            $journalTotals = DB::table('accounting_accounts_transactions')
+                ->where('acc_trans_mapping_id', $mappingId)
+                ->where('sub_type', 'journal_entry')
+                ->selectRaw("SUM(CASE WHEN type = 'debit' THEN amount ELSE 0 END) as debit_total")
+                ->selectRaw("SUM(CASE WHEN type = 'credit' THEN amount ELSE 0 END) as credit_total")
+                ->first();
+            if (abs((float) ($journalTotals->debit_total ?? 0) - (float) ($journalTotals->credit_total ?? 0)) > 0.01
+                || (float) ($journalTotals->debit_total ?? 0) <= 0) {
+                continue;
+            }
+
+            $amounts = [$this->linkedSourceAmount($businessId, $source['type'], $source['id'])];
+            $taxSnapshot = json_decode((string) ($mapping->source_tax_snapshot ?? ''), true);
+            if ($source['type'] === Transaction::class && is_array($taxSnapshot)) {
+                $amounts[] = isset($taxSnapshot['transaction_before']['final_total'])
+                    ? round((float) $taxSnapshot['transaction_before']['final_total'], 4)
+                    : null;
+            }
+            $amounts = array_values(array_unique(array_filter($amounts, fn ($amount) => $amount !== null && $amount > 0)));
+            if ($amounts === []) {
+                continue;
+            }
+            $removedForSource = $this->removeAutomaticRowsForLinkedSource($businessId, $source['type'], $source['id'], $amounts);
+            if ($removedForSource > 0) {
+                $removed++;
+            }
+        }
+
+        return $removed;
+    }
+
+    private function linkedSourceAmount(int $businessId, string $sourceType, int $sourceId): ?float
+    {
+        if ($sourceType === Transaction::class) {
+            $transaction = DB::table('transactions')
+                ->where('business_id', $businessId)
+                ->where('id', $sourceId)
+                ->first(['final_total']);
+
+            return $transaction ? round((float) $transaction->final_total, 4) : null;
+        }
+
+        if ($sourceType === TransactionPayment::class) {
+            $payment = DB::table('transaction_payments as payment')
+                ->join('transactions as transaction', 'transaction.id', '=', 'payment.transaction_id')
+                ->where('transaction.business_id', $businessId)
+                ->where('payment.business_id', $businessId)
+                ->where('payment.id', $sourceId)
+                ->first(['payment.amount']);
+
+            return $payment ? round(abs((float) $payment->amount), 4) : null;
+        }
+
+        return null;
+    }
+
+    private function removeAutomaticRowsForLinkedSource(int $businessId, string $sourceType, int $sourceId, array $expectedAmounts): int
+    {
+        $rows = DB::table('accounting_accounts_transactions')
+            ->whereNull('acc_trans_mapping_id')
+            ->whereIn('map_type', ['payment_account', 'deposit_to']);
+        if ($sourceType === Transaction::class) {
+            $transaction = DB::table('transactions')->where('business_id', $businessId)->where('id', $sourceId)->first(['type']);
+            if (! $transaction) {
+                return 0;
+            }
+            $rows->where('transaction_id', $sourceId)->whereNull('transaction_payment_id')->where('sub_type', $transaction->type);
+        } elseif ($sourceType === TransactionPayment::class) {
+            $payment = DB::table('transaction_payments as payment')
+                ->join('transactions as transaction', 'transaction.id', '=', 'payment.transaction_id')
+                ->where('transaction.business_id', $businessId)
+                ->where('payment.business_id', $businessId)
+                ->where('payment.id', $sourceId)
+                ->first(['transaction.type']);
+            if (! $payment) {
+                return 0;
+            }
+            $rows->where('transaction_payment_id', $sourceId)->where('sub_type', $payment->type.'_payment');
+        } else {
+            return 0;
+        }
+
+        $automaticRows = $rows->get(['id', 'amount', 'type']);
+        if ($automaticRows->isNotEmpty()) {
+            $debit = round((float) $automaticRows->where('type', 'debit')->sum('amount'), 4);
+            $credit = round((float) $automaticRows->where('type', 'credit')->sum('amount'), 4);
+            if (! $this->totalsMatchAnySourceAmount($debit, $credit, $expectedAmounts)) {
+                $automaticRows = collect();
+            }
+        }
+
+        $removed = 0;
+        if ($automaticRows->isNotEmpty()) {
+            DB::table('accounting_accounts_transactions')->whereIn('id', $automaticRows->pluck('id'))->delete();
+            $removed++;
+        }
+
+        $backfillMappings = DB::table('accounting_acc_trans_mappings')
+            ->where('business_id', $businessId)
+            ->where('source_record_type', $sourceType)
+            ->where('source_record_id', $sourceId)
+            ->where('type', 'general_ledger_backfill')
+            ->pluck('id');
+        foreach ($backfillMappings as $mappingId) {
+            $lines = DB::table('accounting_accounts_transactions')
+                ->where('acc_trans_mapping_id', $mappingId)
+                ->get(['id', 'amount', 'type', 'transaction_id', 'transaction_payment_id']);
+            $isExactSource = $sourceType === Transaction::class
+                ? $lines->every(fn ($line) => (int) $line->transaction_id === $sourceId && $line->transaction_payment_id === null)
+                : $lines->every(fn ($line) => (int) $line->transaction_payment_id === $sourceId);
+            if ($lines->isEmpty() || ! $isExactSource) {
+                continue;
+            }
+            $debit = round((float) $lines->where('type', 'debit')->sum('amount'), 4);
+            $credit = round((float) $lines->where('type', 'credit')->sum('amount'), 4);
+            if (! $this->totalsMatchAnySourceAmount($debit, $credit, $expectedAmounts)) {
+                continue;
+            }
+            DB::table('accounting_accounts_transactions')->whereIn('id', $lines->pluck('id'))->delete();
+            DB::table('accounting_acc_trans_mappings')->where('business_id', $businessId)->where('id', $mappingId)->delete();
+            $removed++;
+        }
+
+        return $removed;
+    }
+
+    private function totalsMatchAnySourceAmount(float $debit, float $credit, array $amounts): bool
+    {
+        foreach ($amounts as $amount) {
+            if (abs($debit - (float) $amount) <= 0.01 && abs($credit - (float) $amount) <= 0.01) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function journalPatternPair(int $businessId, object $transaction): array
+    {
+        $type = (string) ($transaction->type ?? '');
+        $sourceType = ['sell' => 'Sales Invoice', 'purchase' => 'Purchase Invoice', 'expense' => 'Expense'][$type] ?? '';
+        if ($sourceType === '' || $this->legacyRecheckJournalImportId === null) {
+            return ['reason' => 'pola_journal_tidak_ditemukan'];
+        }
+        $cacheKey = implode(':', [
+            $businessId,
+            $type,
+            (int) ($transaction->location_id ?? 0),
+            (int) ($transaction->expense_category_id ?? 0),
+        ]);
+        if (array_key_exists($cacheKey, $this->legacyJournalPairCache)) {
+            return $this->legacyJournalPairCache[$cacheKey];
+        }
+
+        $samples = DB::table('accounting_journal_import_rows as import_row')
+            ->join('accounting_acc_trans_mappings as mapping', 'mapping.id', '=', 'import_row.journal_mapping_id')
+            ->join('transactions as sample', 'sample.id', '=', 'import_row.source_record_id')
+            ->where('import_row.business_id', $businessId)
+            ->where('import_row.journal_import_id', $this->legacyRecheckJournalImportId)
+            ->where('import_row.source_type', $sourceType)
+            ->whereIn('import_row.source_action', ['link', 'create', 'update'])
+            ->where('import_row.source_record_type', Transaction::class)
+            ->where('mapping.business_id', $businessId)
+            ->where('mapping.type', 'journal_entry')
+            ->whereColumn('mapping.source_record_type', 'import_row.source_record_type')
+            ->whereColumn('mapping.source_record_id', 'import_row.source_record_id')
+            ->where('mapping.source_link_status', 'matched')
+            ->where('sample.business_id', $businessId)
+            ->where('sample.type', $type)
+            ->where('sample.location_id', $transaction->location_id)
+            ->where('sample.expense_category_id', $transaction->expense_category_id)
+            ->when(Schema::hasColumn('transactions', 'deleted_at'), fn ($query) => $query->whereNull('sample.deleted_at'))
+            ->select('mapping.id as mapping_id', 'import_row.source_record_id')
+            ->distinct()
+            ->orderBy('mapping.id')
+            ->get();
+
+        $pairCounts = [];
+        foreach ($samples as $sample) {
+            $pair = $this->uniqueNonTaxJournalPair($businessId, (int) $sample->mapping_id);
+            if ($pair === null) {
+                continue;
+            }
+            $key = $pair['payment_account']->id.':'.$pair['deposit_to']->id;
+            $pairCounts[$key]['pair'] = $pair;
+            $pairCounts[$key]['count'] = ($pairCounts[$key]['count'] ?? 0) + 1;
+            foreach ($pair['vat_accounts'] ?? [] as $direction => $account) {
+                $accountId = (int) $account->id;
+                $pairCounts[$key]['vat_counts'][$direction][$accountId] = ($pairCounts[$key]['vat_counts'][$direction][$accountId] ?? 0) + 1;
+            }
+        }
+
+        if ($pairCounts === []) {
+            return $this->legacyJournalPairCache[$cacheKey] = ['reason' => 'pola_journal_tidak_ditemukan'];
+        }
+        usort($pairCounts, fn ($left, $right) => $right['count'] <=> $left['count']);
+        if (isset($pairCounts[1]) && $pairCounts[0]['count'] === $pairCounts[1]['count']) {
+            return $this->legacyJournalPairCache[$cacheKey] = ['reason' => 'pola_journal_ambigu'];
+        }
+
+        $pair = $pairCounts[0]['pair'];
+        $pair['vat_accounts'] = [];
+        foreach ($pairCounts[0]['vat_counts'] ?? [] as $direction => $counts) {
+            arsort($counts);
+            $accountIds = array_keys($counts);
+            if (isset($counts[$accountIds[1] ?? -1]) && $counts[$accountIds[0]] === $counts[$accountIds[1]]) {
+                continue;
+            }
+            $account = collect($this->accountingAccountsCache[$businessId] ?? [])->firstWhere('id', (int) $accountIds[0]);
+            if ($account) {
+                $pair['vat_accounts'][$direction] = $account;
+            }
+        }
+
+        return $this->legacyJournalPairCache[$cacheKey] = ['pair' => $pair];
+    }
+
+    private function journalPaymentCounterpart(int $businessId, object $payment, int $expectedPaymentAccountId): array
+    {
+        $type = (string) ($payment->transaction_type ?? '');
+        $sourceType = $type === 'sell' ? 'Receive Payment' : ($type === 'purchase' ? 'Purchase Payment' : '');
+        if ($sourceType === '' || $this->legacyRecheckJournalImportId === null) {
+            return ['reason' => 'pola_journal_pembayaran_tidak_ditemukan'];
+        }
+        $cacheKey = implode(':', ['payment', $businessId, $type, (int) ($payment->location_id ?? 0), $expectedPaymentAccountId]);
+        if (array_key_exists($cacheKey, $this->legacyJournalPairCache)) {
+            return $this->legacyJournalPairCache[$cacheKey];
+        }
+
+        $samples = DB::table('accounting_journal_import_rows as import_row')
+            ->join('accounting_acc_trans_mappings as mapping', 'mapping.id', '=', 'import_row.journal_mapping_id')
+            ->join('transaction_payments as sample_payment', 'sample_payment.id', '=', 'import_row.source_record_id')
+            ->join('transactions as sample', 'sample.id', '=', 'sample_payment.transaction_id')
+            ->where('import_row.business_id', $businessId)
+            ->where('import_row.journal_import_id', $this->legacyRecheckJournalImportId)
+            ->where('import_row.source_type', $sourceType)
+            ->whereIn('import_row.source_action', ['link', 'create', 'update'])
+            ->where('import_row.source_record_type', TransactionPayment::class)
+            ->where('mapping.business_id', $businessId)
+            ->where('mapping.type', 'journal_entry')
+            ->whereColumn('mapping.source_record_type', 'import_row.source_record_type')
+            ->whereColumn('mapping.source_record_id', 'import_row.source_record_id')
+            ->where('mapping.source_link_status', 'matched')
+            ->where('sample_payment.business_id', $businessId)
+            ->where('sample.business_id', $businessId)
+            ->where('sample.type', $type)
+            ->where('sample.location_id', $payment->location_id)
+            ->select('mapping.id as mapping_id')
+            ->distinct()
+            ->orderBy('mapping.id')
+            ->get();
+
+        $counterparts = [];
+        foreach ($samples as $sample) {
+            $pair = $this->uniqueNonTaxJournalPair($businessId, (int) $sample->mapping_id);
+            if ($pair === null) {
+                continue;
+            }
+            $cashSide = $type === 'sell' ? $pair['deposit_to'] : $pair['payment_account'];
+            if ((int) $cashSide->id !== $expectedPaymentAccountId) {
+                continue;
+            }
+            $counterpart = $type === 'sell' ? $pair['payment_account'] : $pair['deposit_to'];
+            $counterparts[(int) $counterpart->id] = ($counterparts[(int) $counterpart->id] ?? 0) + 1;
+        }
+        if ($counterparts === []) {
+            return $this->legacyJournalPairCache[$cacheKey] = ['reason' => 'pola_journal_pembayaran_tidak_ditemukan'];
+        }
+        arsort($counterparts);
+        $ids = array_keys($counterparts);
+        if (isset($counterparts[$ids[1] ?? -1]) && $counterparts[$ids[0]] === $counterparts[$ids[1]]) {
+            return $this->legacyJournalPairCache[$cacheKey] = ['reason' => 'pola_journal_pembayaran_ambigu'];
+        }
+        $account = collect($this->accountingAccountsCache[$businessId] ?? [])->firstWhere('id', $ids[0]);
+
+        return $this->legacyJournalPairCache[$cacheKey] = ($account ? ['account' => $account] : ['reason' => 'akun_coa_tidak_aktif']);
+    }
+
+    private function uniqueNonTaxJournalPair(int $businessId, int $mappingId): ?array
+    {
+        $lines = DB::table('accounting_accounts_transactions as line')
+            ->join('accounting_accounts as account', function ($join) use ($businessId) {
+                $join->on('account.id', '=', 'line.accounting_account_id')
+                    ->where('account.business_id', '=', $businessId);
+            })
+            ->where('line.acc_trans_mapping_id', $mappingId)
+            ->where('line.sub_type', 'journal_entry')
+            ->get([
+                'line.accounting_account_id',
+                'line.amount',
+                'line.type',
+                'account.gl_code as account_no',
+                'account.name as account_name',
+            ]);
+        if ($lines->isEmpty()) {
+            return null;
+        }
+        $debitTotal = round((float) $lines->where('type', 'debit')->sum('amount'), 4);
+        $creditTotal = round((float) $lines->where('type', 'credit')->sum('amount'), 4);
+        if ($debitTotal <= 0 || abs($debitTotal - $creditTotal) > 0.01) {
+            return null;
+        }
+
+        $idsByKey = [];
+        $entry = ['lines' => []];
+        foreach ($lines as $line) {
+            $normalized = [
+                'account_no' => (string) $line->account_no,
+                'account_name' => (string) $line->account_name,
+                'type' => (string) $line->type,
+                'amount' => (float) $line->amount,
+            ];
+            $key = $this->accountComponentService->accountKey($normalized);
+            $idsByKey[$key][(int) $line->accounting_account_id] = true;
+            $entry['lines'][] = $normalized;
+        }
+        $components = $this->accountComponentService->groupJournalLines($entry, $businessId);
+        $debits = [];
+        $credits = [];
+        $vatAccounts = ['input' => [], 'output' => []];
+        foreach ($components as $component) {
+            if (! empty($component['is_tax'])) {
+                if (! empty($component['tax_direction_conflict'])) {
+                    return null;
+                }
+                $direction = (string) ($component['tax_direction'] ?? '');
+                if (in_array($direction, ['input', 'output'], true)) {
+                    $componentAccountIds = array_keys($idsByKey[$component['account_key']] ?? []);
+                    if (count($componentAccountIds) !== 1) {
+                        return null;
+                    }
+                    $vatAccounts[$direction][(int) $componentAccountIds[0]] = true;
+                }
+                continue;
+            }
+            $componentAccountIds = array_keys($idsByKey[$component['account_key']] ?? []);
+            if (count($componentAccountIds) !== 1) {
+                return null;
+            }
+            $accountId = (int) $componentAccountIds[0];
+            if ((float) $component['debit'] > 0 && (float) $component['credit'] === 0.0) {
+                $debits[$accountId] = true;
+            } elseif ((float) $component['credit'] > 0 && (float) $component['debit'] === 0.0) {
+                $credits[$accountId] = true;
+            } elseif ((float) $component['debit'] > 0 || (float) $component['credit'] > 0) {
+                return null;
+            }
+        }
+        if (count($debits) !== 1 || count($credits) !== 1) {
+            return null;
+        }
+        $debitId = (int) array_key_first($debits);
+        $creditId = (int) array_key_first($credits);
+        if ($debitId === $creditId) {
+            return null;
+        }
+        $accounts = collect($this->accountingAccountsCache[$businessId] ?? []);
+        $debit = $accounts->firstWhere('id', $debitId);
+        $credit = $accounts->firstWhere('id', $creditId);
+        if (! $debit || ! $credit) {
+            return null;
+        }
+
+        $vatAccountsByDirection = [];
+        foreach ($vatAccounts as $direction => $accountIds) {
+            if (count($accountIds) !== 1) {
+                continue;
+            }
+            $account = $accounts->firstWhere('id', (int) array_key_first($accountIds));
+            if ($account) {
+                $vatAccountsByDirection[$direction] = $account;
+            }
+        }
+
+        return [
+            'payment_account' => $credit,
+            'deposit_to' => $debit,
+            'vat_accounts' => $vatAccountsByDirection,
+        ];
+    }
+
     private function transactionCandidates(int $businessId, ?int $sourceId = null): \Generator
     {
         $query = DB::table('transactions')
@@ -585,6 +1071,21 @@ class GeneralLedgerBackfillService
                 continue;
             }
 
+            if ($this->legacyRecheckMode) {
+                $journalLinkState = $this->journalSourceLinkState($businessId, Transaction::class, (int) $transaction->id);
+                if ($journalLinkState === 'matched') {
+                    yield [
+                        'journal_linked_source' => true,
+                        'review_source' => $this->transactionSkipCandidate($transaction, 'source_journal_authoritative', $businessId)['review_source'],
+                    ];
+                    continue;
+                }
+                if ($journalLinkState === 'ambiguous') {
+                    yield $this->transactionSkipCandidate($transaction, 'journal_source_link_ambiguous', $businessId);
+                    continue;
+                }
+            }
+
             $type = (string) $transaction->type;
             $locationMap = $this->locationMap($businessId, (int) ($transaction->location_id ?? 0));
             $mappingKey = $type === 'sell' ? 'sale' : ($type === 'purchase' ? 'purchases' : 'expense');
@@ -594,7 +1095,14 @@ class GeneralLedgerBackfillService
             $accountMap = $locationMap[$mappingKey] ?? [];
             $pair = $this->resolveAccountingPair($businessId, $accountMap);
             $autoMap = null;
-            if (! empty($pair['reason']) && in_array($type, ['sell', 'purchase'], true)) {
+            $journalPattern = false;
+            if (! empty($pair['reason']) && $this->legacyRecheckMode) {
+                $pattern = $this->journalPatternPair($businessId, $transaction);
+                if (empty($pattern['reason'])) {
+                    $pair = $pattern['pair'];
+                    $journalPattern = true;
+                }
+            } elseif (! empty($pair['reason']) && in_array($type, ['sell', 'purchase'], true)) {
                 $autoMap = $this->inferTransactionPair($businessId, $type);
                 if (empty($autoMap['reason'])) {
                     $pair = $autoMap['pair'];
@@ -606,7 +1114,10 @@ class GeneralLedgerBackfillService
                 }
             }
             if (! empty($pair['reason'])) {
-                yield $this->transactionSkipCandidate($transaction, (string) $pair['reason'], $businessId);
+                $reason = $this->legacyRecheckMode && ! empty($accountMap)
+                    ? 'mapping_lokasi_tidak_valid_dan_pola_journal_ambigu'
+                    : (string) $pair['reason'];
+                yield $this->transactionSkipCandidate($transaction, $reason, $businessId);
                 continue;
             }
 
@@ -625,7 +1136,11 @@ class GeneralLedgerBackfillService
                     $lines[] = $this->line((int) $pair['payment_account']->id, 'credit', $base);
                 }
                 if ($tax > 0) {
-                    $vat = $this->resolveVatAccount($businessId, 'output');
+                    $vat = $this->resolveLegacyVatAccount(
+                        $businessId,
+                        'output',
+                        $this->legacyVatPatternAccount($businessId, $transaction, $pair, 'output')
+                    );
                     if (! empty($vat['reason'])) {
                         yield $this->transactionSkipCandidate($transaction, (string) $vat['reason'], $businessId);
                         continue;
@@ -637,7 +1152,11 @@ class GeneralLedgerBackfillService
                     $lines[] = $this->line((int) $pair['deposit_to']->id, 'debit', $base);
                 }
                 if ($tax > 0) {
-                    $vat = $this->resolveVatAccount($businessId, 'input');
+                    $vat = $this->resolveLegacyVatAccount(
+                        $businessId,
+                        'input',
+                        $this->legacyVatPatternAccount($businessId, $transaction, $pair, 'input')
+                    );
                     if (! empty($vat['reason'])) {
                         yield $this->transactionSkipCandidate($transaction, (string) $vat['reason'], $businessId);
                         continue;
@@ -650,7 +1169,11 @@ class GeneralLedgerBackfillService
                     $lines[] = $this->line((int) $pair['deposit_to']->id, 'debit', $base);
                 }
                 if ($tax > 0) {
-                    $vat = $this->resolveVatAccount($businessId, 'input');
+                    $vat = $this->resolveLegacyVatAccount(
+                        $businessId,
+                        'input',
+                        $this->legacyVatPatternAccount($businessId, $transaction, $pair, 'input')
+                    );
                     if (! empty($vat['reason'])) {
                         yield $this->transactionSkipCandidate($transaction, (string) $vat['reason'], $businessId);
                         continue;
@@ -676,10 +1199,12 @@ class GeneralLedgerBackfillService
                 (int) ($transaction->created_by ?? 1),
                 (string) ($transaction->invoice_no ?: $transaction->ref_no ?: strtoupper($type).'-'.$transaction->id),
                 $autoMap === null
-                    ? 'Backfill dari transaksi '.$type.' #'.$transaction->id.' dengan mapping lokasi saat ini.'
+                    ? ($journalPattern
+                        ? 'Recheck legacy dari transaksi '.$type.' #'.$transaction->id.' memakai pola Journal unik untuk lokasi dan kategori ini.'
+                        : 'Backfill dari transaksi '.$type.' #'.$transaction->id.' dengan mapping lokasi saat ini.')
                     : 'Backfill dari transaksi '.$type.' #'.$transaction->id.' dengan pemetaan CoA terdekat otomatis.',
                 $lines,
-                $autoMap === null,
+                $autoMap === null && ! $journalPattern,
                 (int) $transaction->id,
                 null,
                 $autoMap['account_links'] ?? [],
@@ -689,7 +1214,7 @@ class GeneralLedgerBackfillService
                     (int) ($transaction->location_id ?? 0),
                     $mappingKey,
                     $pair,
-                    $autoMap === null ? 'location' : 'automatic_nearest',
+                    $journalPattern ? 'journal_pattern' : ($autoMap === null ? 'location' : 'automatic_nearest'),
                     $autoMap['payment_account_score'] ?? null,
                     $autoMap['deposit_to_score'] ?? null,
                     $autoMap['payment_account_method'] ?? null,
@@ -697,6 +1222,7 @@ class GeneralLedgerBackfillService
                 )
             );
             $candidate['uses_auto_map'] = $autoMap !== null;
+            $candidate['uses_journal_pattern'] = $journalPattern;
             $candidate['source_amount'] = $total;
             $candidate['source_tax_amount'] = $tax;
             yield $candidate;
@@ -751,13 +1277,27 @@ class GeneralLedgerBackfillService
                 yield $this->paymentSkipCandidate($payment, 'transaksi_bukan_posting', $businessId);
                 continue;
             }
+            if ($this->legacyRecheckMode) {
+                $journalLinkState = $this->journalSourceLinkState($businessId, TransactionPayment::class, (int) $payment->payment_id);
+                if ($journalLinkState === 'matched') {
+                    yield [
+                        'journal_linked_source' => true,
+                        'review_source' => $this->paymentSkipCandidate($payment, 'source_journal_authoritative', $businessId)['review_source'],
+                    ];
+                    continue;
+                }
+                if ($journalLinkState === 'ambiguous') {
+                    yield $this->paymentSkipCandidate($payment, 'journal_source_link_ambiguous', $businessId);
+                    continue;
+                }
+            }
             $mainAccountId = (int) ($payment->payment_account_id ?? 0);
             if ($mainAccountId < 1) {
                 yield $this->paymentSkipCandidate($payment, 'akun_pembayaran_operasional_kosong', $businessId);
                 continue;
             }
 
-            $sourceAccount = $this->mainAccountMapping($businessId, $mainAccountId);
+            $sourceAccount = $this->mainAccountMapping($businessId, $mainAccountId, ! $this->legacyRecheckMode);
             if (! empty($sourceAccount['reason'])) {
                 yield $this->paymentSkipCandidate($payment, (string) $sourceAccount['reason'], $businessId);
                 continue;
@@ -773,9 +1313,18 @@ class GeneralLedgerBackfillService
                 ? collect($this->accountingAccountsCache[$businessId] ?? [])->firstWhere('id', $counterpartId)
                 : null;
             $autoMap = null;
+            $journalPattern = false;
             if (! $counterpart) {
-                $autoMap = $this->inferOperationalRoleAccount($businessId, $type === 'sell' ? 'receivable' : 'payable');
-                $counterpart = $autoMap['account'] ?? null;
+                if ($this->legacyRecheckMode) {
+                    $pattern = $this->journalPaymentCounterpart($businessId, $payment);
+                    if (empty($pattern['reason'])) {
+                        $counterpart = $pattern['account'];
+                        $journalPattern = true;
+                    }
+                } else {
+                    $autoMap = $this->inferOperationalRoleAccount($businessId, $type === 'sell' ? 'receivable' : 'payable');
+                    $counterpart = $autoMap['account'] ?? null;
+                }
             }
             if (! $counterpart) {
                 yield $this->paymentSkipCandidate($payment, (string) ($autoMap['reason'] ?? ($counterpartId < 1
@@ -813,6 +1362,8 @@ class GeneralLedgerBackfillService
             $mappingNote = 'Akun kas/bank dari transaction_payments.account_id; akun lawan dari mapping lokasi saat ini.';
             if ($autoMap !== null) {
                 $mappingNote = 'Akun lawan '.$autoMap['source_name'].' dipetakan otomatis ke CoA terdekat.';
+            } elseif ($journalPattern) {
+                $mappingNote = 'Recheck legacy memakai akun lawan dari pola Journal pembayaran yang unik untuk lokasi dan jenis transaksi ini.';
             }
             if (! empty($sourceAccount['automatic_nearest'])) {
                 $mappingNote .= ' Akun operasional '.$sourceAccount['source_name'].' dipetakan ke CoA terdekat dengan skor '.number_format((float) $sourceAccount['score'], 4, '.', '').'.';
@@ -837,7 +1388,7 @@ class GeneralLedgerBackfillService
                     (int) ($payment->location_id ?? 0),
                     $mapType,
                     $pair,
-                    $usesAutoMap ? 'automatic_nearest' : 'location',
+                    $journalPattern ? 'journal_pattern' : ($usesAutoMap ? 'automatic_nearest' : 'location'),
                     $paymentScore,
                     $depositScore,
                     $type === 'sell'
@@ -849,6 +1400,7 @@ class GeneralLedgerBackfillService
                 )
             );
             $candidate['uses_auto_map'] = $usesAutoMap;
+            $candidate['uses_journal_pattern'] = $journalPattern;
             $candidate['source_amount'] = (float) $payment->payment_amount;
             $candidate['source_tax_amount'] = 0.0;
             yield $candidate;
@@ -898,8 +1450,8 @@ class GeneralLedgerBackfillService
                 continue;
             }
 
-            $sourceAccount = $this->mainAccountMapping($businessId, (int) $transfer->source_account_id);
-            $counterpartAccount = $this->mainAccountMapping($businessId, (int) $transfer->counterpart_account_id);
+            $sourceAccount = $this->mainAccountMapping($businessId, (int) $transfer->source_account_id, ! $this->legacyRecheckMode);
+            $counterpartAccount = $this->mainAccountMapping($businessId, (int) $transfer->counterpart_account_id, ! $this->legacyRecheckMode);
             if (! empty($sourceAccount['reason']) || ! empty($counterpartAccount['reason'])) {
                 yield $this->transferSkipCandidate(
                     $transfer,
@@ -1264,12 +1816,23 @@ class GeneralLedgerBackfillService
 
     private function reviewSourceAlreadyLinked(array $source): bool
     {
-        if (DB::table('accounting_acc_trans_mappings')
+        if ($this->legacyRecheckMode && (string) ($source['skip_reason'] ?? '') === 'journal_source_link_ambiguous') {
+            return false;
+        }
+
+        $mappingQuery = DB::table('accounting_acc_trans_mappings')
             ->where('business_id', (int) $source['business_id'])
             ->where('source_record_type', (string) $source['source_record_type'])
-            ->where('source_record_id', (int) $source['source_record_id'])
-            ->exists()) {
+            ->where('source_record_id', (int) $source['source_record_id']);
+        if ($this->legacyRecheckMode) {
+            $mappingQuery->where('type', '<>', 'general_ledger_backfill');
+        }
+        if ($mappingQuery->exists()) {
             return true;
+        }
+
+        if ($this->legacyRecheckMode) {
+            return false;
         }
 
         $context = $source['source_context'] ?? [];
@@ -1413,7 +1976,7 @@ class GeneralLedgerBackfillService
         });
     }
 
-    private function resolveExistingReviewSource(array $candidate, ?int $actorId = null): void
+    private function resolveExistingReviewSource(array $candidate, ?int $actorId = null, string $reason = 'source_already_linked'): void
     {
         if (! Schema::hasTable(self::REVIEW_QUEUE_TABLE)) {
             return;
@@ -1424,7 +1987,7 @@ class GeneralLedgerBackfillService
             'source_record_type' => (string) $candidate['source_record_type'],
             'source_record_id' => (int) $candidate['source_record_id'],
         ];
-        DB::transaction(function () use ($identity, $actorId) {
+        DB::transaction(function () use ($identity, $actorId, $reason) {
             $review = DB::table(self::REVIEW_QUEUE_TABLE)
                 ->where($identity)
                 ->lockForUpdate()
@@ -1437,7 +2000,7 @@ class GeneralLedgerBackfillService
             $auditLog[] = [
                 'event' => 'resolved',
                 'at' => now()->toIso8601String(),
-                'reason' => 'source_already_linked',
+                'reason' => $reason,
                 'by' => $actorId ?? 'accounting:backfill-general-ledger --apply',
             ];
             DB::table(self::REVIEW_QUEUE_TABLE)->where($identity)->update([
@@ -1520,6 +2083,14 @@ class GeneralLedgerBackfillService
     private function processCandidate(array $candidate, int $businessId, bool $apply, array &$summary): void
     {
         $summary['candidate_groups']++;
+        if (! empty($candidate['journal_linked_source'])) {
+            $summary['journal_linked_sources'] = ($summary['journal_linked_sources'] ?? 0) + 1;
+            $summary['already_linked']++;
+            if ($apply && is_array($candidate['review_source'] ?? null)) {
+                $this->resolveExistingReviewSource($candidate['review_source'], null, 'source_journal_authoritative');
+            }
+            return;
+        }
         if (! empty($candidate['skip_reason'])) {
             $reason = (string) $candidate['skip_reason'];
             $this->skip($summary, $reason);
@@ -1559,7 +2130,26 @@ class GeneralLedgerBackfillService
             return;
         }
 
-        if ($this->sourceAlreadyLinked($candidate) || $this->hasLegacyLedgerRows($candidate)) {
+        if ($this->sourceAlreadyLinked($candidate)) {
+            $summary['already_linked']++;
+            if ($apply) {
+                $this->resolveExistingReviewSource($candidate, isset($candidate['applied_by']) ? (int) $candidate['applied_by'] : null);
+            }
+            return;
+        }
+        if ($this->legacyRecheckMode && $this->hasNonReplaceableLegacyLedgerRows($candidate)) {
+            $this->skip($summary, 'gl_manual_atau_tidak_dikenali_dipertahankan');
+            $this->registerReviewSource($this->reviewSourceFromGroup($candidate, 'gl_manual_atau_tidak_dikenali_dipertahankan'), $apply, $summary);
+            return;
+        }
+        if ($this->legacyRecheckMode && $this->generatedPostingMatchesCandidate($candidate)) {
+            $summary['already_linked']++;
+            if ($apply) {
+                $this->resolveExistingReviewSource($candidate, null, 'source_posting_unchanged');
+            }
+            return;
+        }
+        if (! $this->legacyRecheckMode && $this->hasLegacyLedgerRows($candidate)) {
             $summary['already_linked']++;
             if ($apply) {
                 $this->resolveExistingReviewSource($candidate, isset($candidate['applied_by']) ? (int) $candidate['applied_by'] : null);
@@ -1605,6 +2195,9 @@ class GeneralLedgerBackfillService
                 $summary['auto_map_details'][$key]['groups']++;
             }
         }
+        if (! empty($candidate['uses_journal_pattern'])) {
+            $summary['journal_pattern_groups'] = ($summary['journal_pattern_groups'] ?? 0) + 1;
+        }
         if (! empty($candidate['requires_vat_account'])) {
             $summary['vat_split_groups'] = ($summary['vat_split_groups'] ?? 0) + 1;
         }
@@ -1620,6 +2213,10 @@ class GeneralLedgerBackfillService
         $applied = $this->applyGroup($candidate, $businessId);
         if ($applied) {
             $summary['applied_groups']++;
+            if ($this->legacyRecheckMode) {
+                $summary['replaced_operational_postings'] = ($summary['replaced_operational_postings'] ?? 0) + 1;
+                $this->resolveExistingReviewSource($candidate, null, 'source_posting_rechecked');
+            }
         } else {
             $summary['already_linked']++;
         }
@@ -1631,7 +2228,15 @@ class GeneralLedgerBackfillService
             if (! $this->lockSourceRecord($candidate)) {
                 return false;
             }
-            if ($this->sourceAlreadyLinked($candidate) || $this->hasLegacyLedgerRows($candidate)) {
+            if ($this->sourceAlreadyLinked($candidate)) {
+                return false;
+            }
+            if ($this->legacyRecheckMode) {
+                if ($this->hasNonReplaceableLegacyLedgerRows($candidate)) {
+                    return false;
+                }
+                $this->deleteReplaceableGeneratedRows($candidate);
+            } elseif ($this->hasLegacyLedgerRows($candidate)) {
                 return false;
             }
 
@@ -1711,11 +2316,15 @@ class GeneralLedgerBackfillService
 
     private function sourceAlreadyLinked(array $candidate): bool
     {
-        return DB::table('accounting_acc_trans_mappings')
+        $query = DB::table('accounting_acc_trans_mappings')
             ->where('business_id', $candidate['business_id'])
             ->where('source_record_type', $candidate['source_record_type'])
-            ->where('source_record_id', $candidate['source_record_id'])
-            ->exists();
+            ->where('source_record_id', $candidate['source_record_id']);
+        if ($this->legacyRecheckMode) {
+            $query->where('type', '<>', 'general_ledger_backfill');
+        }
+
+        return $query->exists();
     }
 
     private function hasLegacyLedgerRows(array $candidate): bool
@@ -1731,6 +2340,151 @@ class GeneralLedgerBackfillService
         }
 
         return $query->where('sub_type', $candidate['sub_type'])->exists();
+    }
+
+    private function hasNonReplaceableLegacyLedgerRows(array $candidate): bool
+    {
+        $query = DB::table('accounting_accounts_transactions as line')
+            ->leftJoin('accounting_acc_trans_mappings as mapping', 'mapping.id', '=', 'line.acc_trans_mapping_id');
+        if ($candidate['transaction_id'] !== null) {
+            $query->where('line.transaction_id', $candidate['transaction_id'])
+                ->whereNull('line.transaction_payment_id');
+        } elseif ($candidate['transaction_payment_id'] !== null) {
+            $query->where('line.transaction_payment_id', $candidate['transaction_payment_id']);
+        } else {
+            return $this->hasLegacyLedgerRows($candidate);
+        }
+
+        $rows = $query->where('line.sub_type', $candidate['sub_type'])
+            ->get([
+                'line.acc_trans_mapping_id',
+                'line.map_type',
+                'mapping.type as mapping_type',
+                'mapping.business_id as mapping_business_id',
+                'mapping.source_record_type as mapping_source_type',
+                'mapping.source_record_id as mapping_source_id',
+            ]);
+
+        foreach ($rows as $row) {
+            if ($row->acc_trans_mapping_id === null
+                && in_array((string) $row->map_type, ['payment_account', 'deposit_to'], true)) {
+                continue;
+            }
+            if ((string) ($row->mapping_type ?? '') === 'general_ledger_backfill'
+                && (int) ($row->mapping_business_id ?? 0) === (int) $candidate['business_id']
+                && (string) ($row->mapping_source_type ?? '') === (string) $candidate['source_record_type']
+                && (int) ($row->mapping_source_id ?? 0) === (int) $candidate['source_record_id']) {
+                continue;
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
+    private function deleteReplaceableGeneratedRows(array $candidate): void
+    {
+        $mappingIds = DB::table('accounting_acc_trans_mappings')
+            ->where('business_id', $candidate['business_id'])
+            ->where('source_record_type', $candidate['source_record_type'])
+            ->where('source_record_id', $candidate['source_record_id'])
+            ->where('type', 'general_ledger_backfill')
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+        if ($mappingIds !== []) {
+            DB::table('accounting_accounts_transactions')->whereIn('acc_trans_mapping_id', $mappingIds)->delete();
+            DB::table('accounting_acc_trans_mappings')
+                ->where('business_id', $candidate['business_id'])
+                ->whereIn('id', $mappingIds)
+                ->delete();
+        }
+
+        $query = DB::table('accounting_accounts_transactions')
+            ->whereNull('acc_trans_mapping_id')
+            ->where('sub_type', $candidate['sub_type'])
+            ->whereIn('map_type', ['payment_account', 'deposit_to']);
+        if ($candidate['transaction_id'] !== null) {
+            $query->where('transaction_id', $candidate['transaction_id'])
+                ->whereNull('transaction_payment_id');
+        } elseif ($candidate['transaction_payment_id'] !== null) {
+            $query->where('transaction_payment_id', $candidate['transaction_payment_id']);
+        }
+        $query->delete();
+    }
+
+    private function generatedPostingMatchesCandidate(array $candidate): bool
+    {
+        $mappings = DB::table('accounting_acc_trans_mappings')
+            ->where('business_id', (int) $candidate['business_id'])
+            ->where('source_record_type', (string) $candidate['source_record_type'])
+            ->where('source_record_id', (int) $candidate['source_record_id'])
+            ->where('type', 'general_ledger_backfill')
+            ->get(['id', 'ref_no', 'operation_date']);
+        if ($mappings->count() !== 1) {
+            return false;
+        }
+
+        $mapping = $mappings->first();
+        if ((string) $mapping->ref_no !== mb_substr((string) $candidate['ref_no'], 0, 100)
+            || substr((string) $mapping->operation_date, 0, 19) !== substr((string) $candidate['operation_date'], 0, 19)) {
+            return false;
+        }
+
+        if ($candidate['transaction_id'] !== null) {
+            $hasUnmappedAutomaticRows = DB::table('accounting_accounts_transactions')
+                ->where('transaction_id', (int) $candidate['transaction_id'])
+                ->whereNull('transaction_payment_id')
+                ->where('sub_type', (string) $candidate['sub_type'])
+                ->whereNull('acc_trans_mapping_id')
+                ->whereIn('map_type', ['payment_account', 'deposit_to'])
+                ->exists();
+            if ($hasUnmappedAutomaticRows) {
+                return false;
+            }
+        } elseif ($candidate['transaction_payment_id'] !== null) {
+            $hasUnmappedAutomaticRows = DB::table('accounting_accounts_transactions')
+                ->where('transaction_payment_id', (int) $candidate['transaction_payment_id'])
+                ->where('sub_type', (string) $candidate['sub_type'])
+                ->whereNull('acc_trans_mapping_id')
+                ->whereIn('map_type', ['payment_account', 'deposit_to'])
+                ->exists();
+            if ($hasUnmappedAutomaticRows) {
+                return false;
+            }
+        }
+
+        $actual = DB::table('accounting_accounts_transactions')
+            ->where('acc_trans_mapping_id', (int) $mapping->id)
+            ->get(['accounting_account_id', 'amount', 'type', 'sub_type', 'map_type', 'transaction_id', 'transaction_payment_id']);
+        if ($actual->count() !== count($candidate['lines'])) {
+            return false;
+        }
+
+        $actualLines = [];
+        foreach ($actual as $line) {
+            if ((string) $line->sub_type !== (string) $candidate['sub_type']
+                || (string) $line->map_type !== 'general_ledger_backfill'
+                || ($candidate['transaction_id'] === null
+                    ? $line->transaction_id !== null
+                    : (int) $line->transaction_id !== (int) $candidate['transaction_id'])
+                || ($candidate['transaction_payment_id'] === null
+                    ? $line->transaction_payment_id !== null
+                    : (int) $line->transaction_payment_id !== (int) $candidate['transaction_payment_id'])) {
+                return false;
+            }
+            $actualLines[] = sprintf('%d|%s|%.4f', (int) $line->accounting_account_id, (string) $line->type, (float) $line->amount);
+        }
+
+        $expectedLines = array_map(
+            fn (array $line) => sprintf('%d|%s|%.4f', (int) $line['accounting_account_id'], (string) $line['type'], (float) $line['amount']),
+            $candidate['lines']
+        );
+        sort($actualLines);
+        sort($expectedLines);
+
+        return $actualLines === $expectedLines;
     }
 
     private function group(
@@ -2274,6 +3028,32 @@ class GeneralLedgerBackfillService
         return ['expenses'];
     }
 
+    private function legacyVatPatternAccount(int $businessId, object $transaction, array $pair, string $direction): ?object
+    {
+        if (isset($pair['vat_accounts'][$direction])) {
+            return $pair['vat_accounts'][$direction];
+        }
+        if (! $this->legacyRecheckMode) {
+            return null;
+        }
+
+        $pattern = $this->journalPatternPair($businessId, $transaction);
+
+        return $pattern['pair']['vat_accounts'][$direction] ?? null;
+    }
+
+    private function resolveLegacyVatAccount(int $businessId, string $direction, ?object $journalPatternAccount): array
+    {
+        $mappedAccountId = (int) ($this->vatAccountMappingsCache[$businessId][$direction] ?? 0);
+        if ($mappedAccountId > 0 || $journalPatternAccount === null) {
+            return $this->resolveVatAccount($businessId, $direction);
+        }
+
+        $account = collect($this->accountingAccountsCache[$businessId] ?? [])->firstWhere('id', (int) $journalPatternAccount->id);
+
+        return $account ? ['account' => $account] : ['reason' => 'akun_vat_tidak_ditemukan'];
+    }
+
     private function resolveVatAccount(int $businessId, string $direction): array
     {
         $mappedAccountId = (int) ($this->vatAccountMappingsCache[$businessId][$direction] ?? 0);
@@ -2334,9 +3114,9 @@ class GeneralLedgerBackfillService
         return null;
     }
 
-    private function mainAccountMapping(int $businessId, int $accountId): array
+    private function mainAccountMapping(int $businessId, int $accountId, bool $allowNearest = true): array
     {
-        $cacheKey = $businessId.':'.$accountId;
+        $cacheKey = $businessId.':'.$accountId.':'.($allowNearest ? 'nearest' : 'strict');
         if (array_key_exists($cacheKey, $this->mainAccountCache)) {
             return $this->mainAccountCache[$cacheKey];
         }
@@ -2369,6 +3149,9 @@ class GeneralLedgerBackfillService
             return $this->mainAccountCache[$cacheKey] = ['reason' => 'nama_akun_utama_ambigu'];
         }
         if ($matches === []) {
+            if (! $allowNearest) {
+                return $this->mainAccountCache[$cacheKey] = ['reason' => 'akun_utama_belum_dimapping'];
+            }
             $nearest = $this->nearestAccountingAccount(
                 $businessId,
                 $mainAccountName,

@@ -20,23 +20,28 @@ class JournalTaxReconciliationService
      * Sales and purchase line taxes are only changed when their full calculated
      * tax matches the Journal amount; otherwise the source remains unchanged.
      */
-    public function reconcileImport(int $journalImportId, int $businessId): array
+    public function reconcileImport(int $journalImportId, int $businessId, bool $force = false, ?callable $progressCallback = null): array
     {
         $result = ['reconciled' => 0, 'review' => 0, 'not_applicable' => 0];
         $afterId = 0;
+        $processed = 0;
 
         do {
-            $chunk = $this->reconcileImportChunk($journalImportId, $businessId, $afterId);
+            $chunk = $this->reconcileImportChunk($journalImportId, $businessId, $afterId, 50, $force);
             foreach ($chunk['result'] as $status => $count) {
                 $result[$status] += $count;
             }
+            $processed += (int) $chunk['processed_rows'];
             $afterId = $chunk['last_id'];
+            if ($progressCallback && $chunk['processed_rows'] > 0) {
+                $progressCallback($processed, $result);
+            }
         } while ($chunk['has_more']);
 
         return $result;
     }
 
-    public function reconcileImportChunk(int $journalImportId, int $businessId, int $afterId, int $limit = 50): array
+    public function reconcileImportChunk(int $journalImportId, int $businessId, int $afterId, int $limit = 50, bool $force = false): array
     {
         $import = DB::table('accounting_journal_imports')
             ->where('id', $journalImportId)
@@ -74,8 +79,8 @@ class JournalTaxReconciliationService
                     ->where('business_id', $businessId)
                     ->where('journal_mapping_id', $mapping->id)
                     ->value('source_action');
-                $status = DB::transaction(function () use ($mapping, $businessId, $legacyAuthoritative, $sourceAction) {
-                    return $this->reconcileMapping($mapping, $businessId, $legacyAuthoritative, $sourceAction);
+                $status = DB::transaction(function () use ($mapping, $businessId, $legacyAuthoritative, $sourceAction, $force) {
+                    return $this->reconcileMapping($mapping, $businessId, $legacyAuthoritative, $sourceAction, $force);
                 });
             } catch (\Throwable $exception) {
                 Log::warning('Journal Import tax reconciliation failed for a mapping.', [
@@ -159,10 +164,11 @@ class JournalTaxReconciliationService
         return $restored;
     }
 
-    private function reconcileMapping(AccountingAccTransMapping $mapping, int $businessId, bool $legacyAuthoritative = false, ?string $sourceActionOverride = null): string
+    private function reconcileMapping(AccountingAccTransMapping $mapping, int $businessId, bool $legacyAuthoritative = false, ?string $sourceActionOverride = null, bool $force = false): string
     {
         if (in_array($mapping->tax_reconciliation_status, ['reconciled', 'review'], true)
-            && ! empty($mapping->source_tax_snapshot)) {
+            && ! empty($mapping->source_tax_snapshot)
+            && ! $force) {
             return $mapping->tax_reconciliation_status;
         }
 
@@ -575,6 +581,35 @@ class JournalTaxReconciliationService
         $mapping->journal_total_amount = $journalTotal;
         $mapping->recalculated_final_total = $recalculatedFinalTotal;
         if ($snapshot !== null) {
+            $previousSnapshot = json_decode((string) $mapping->source_tax_snapshot, true);
+            if (is_array($previousSnapshot)) {
+                $snapshot['transaction_before'] = $previousSnapshot['transaction_before']
+                    ?? $snapshot['transaction_before'];
+
+                $previousLines = [];
+                foreach ($previousSnapshot['lines'] ?? [] as $line) {
+                    if (isset($line['table'], $line['id'])) {
+                        $previousLines[$line['table'].':'.$line['id']] = $line;
+                    }
+                }
+                foreach ($snapshot['lines'] ?? [] as &$line) {
+                    $key = ($line['table'] ?? '').':'.($line['id'] ?? '');
+                    if (isset($previousLines[$key]['before'])) {
+                        $line['before'] = $previousLines[$key]['before'];
+                    }
+                }
+                unset($line);
+
+                foreach ($previousLines as $key => $line) {
+                    $exists = collect($snapshot['lines'] ?? [])->contains(function (array $current) use ($line) {
+                        return ($current['table'] ?? null) === ($line['table'] ?? null)
+                            && (int) ($current['id'] ?? 0) === (int) ($line['id'] ?? 0);
+                    });
+                    if (! $exists) {
+                        $snapshot['lines'][] = $line;
+                    }
+                }
+            }
             $mapping->source_tax_snapshot = json_encode($snapshot, JSON_UNESCAPED_UNICODE);
         }
         $mapping->save();

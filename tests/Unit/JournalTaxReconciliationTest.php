@@ -79,6 +79,42 @@ class JournalTaxReconciliationTest extends TestCase
         $this->assertSame($originalSnapshot, $retryMapping->source_tax_snapshot);
     }
 
+    public function test_forced_reconciliation_refreshes_tax_but_preserves_original_revert_snapshot(): void
+    {
+        $this->createTransaction(101, 'expense', 100, 5, 105);
+        $this->createJournalMapping(501, 101);
+        $this->createJournalLines(501, [
+            [10, 100, 'debit'],
+            [20, 10, 'debit'],
+            [40, 110, 'credit'],
+        ]);
+
+        $this->service->reconcileImport(50, 1);
+
+        DB::table('transactions')->where('id', 101)->update([
+            'tax_amount' => 1,
+            'final_total' => 101,
+        ]);
+
+        $result = $this->service->reconcileImport(50, 1, true);
+        $source = Transaction::find(101);
+        $mapping = DB::table('accounting_acc_trans_mappings')->where('id', 501)->first();
+        $snapshot = json_decode((string) $mapping->source_tax_snapshot, true);
+
+        $this->assertSame(1, $result['reconciled']);
+        $this->assertSame(10.0, (float) $source->tax_amount);
+        $this->assertSame(110.0, (float) $source->final_total);
+        $this->assertSame(5.0, (float) $snapshot['transaction_before']['tax_amount']);
+        $this->assertSame(105.0, (float) $snapshot['transaction_before']['final_total']);
+        $this->assertSame(10.0, (float) $snapshot['transaction_after']['tax_amount']);
+        $this->assertSame(110.0, (float) $snapshot['transaction_after']['final_total']);
+
+        $this->assertSame(1, $this->service->revertImport(50, 1));
+        $restored = Transaction::find(101);
+        $this->assertSame(5.0, (float) $restored->tax_amount);
+        $this->assertSame(105.0, (float) $restored->final_total);
+    }
+
     public function test_linked_expense_fills_missing_operational_tax_from_journal_and_can_be_reverted(): void
     {
         $this->createTransaction(106, 'expense', 100, 0, 100);

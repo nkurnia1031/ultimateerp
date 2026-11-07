@@ -20,6 +20,8 @@ use Modules\Accounting\Services\JournalImportExpenseService;
 use Modules\Accounting\Services\LegacyAnnualAuditService;
 use Modules\Accounting\Services\LegacyJournalImportSourceLinkAuditReader;
 use Modules\Accounting\Services\LegacyReconciliationFindingSnapshotService;
+use Modules\Accounting\Services\GeneralLedgerBackfillService;
+use Modules\Accounting\Services\JournalTaxReconciliationService;
 
 class ImportLegacySources extends Command
 {
@@ -50,7 +52,9 @@ class ImportLegacySources extends Command
         LegacyAnnualAuditService $annualAuditService,
         LegacyJournalImportSourceLinkAuditReader $sourceLinkAuditReader,
         LegacyJournalImportAuditReader $journalImportAuditReader,
-        LegacyReconciliationFindingSnapshotService $findingSnapshots
+        LegacyReconciliationFindingSnapshotService $findingSnapshots,
+        GeneralLedgerBackfillService $generalLedgerBackfill,
+        JournalTaxReconciliationService $journalTaxReconciliation
     ): int {
         $businessId = $this->positiveOption('business-id');
         $userId = $this->positiveOption('user-id');
@@ -261,14 +265,35 @@ class ImportLegacySources extends Command
                             .$counts['review'].' review).'
                         )
                     );
+                    $generalLedgerRecheck = $generalLedgerBackfill->run(
+                        $businessId,
+                        true,
+                        true,
+                        null,
+                        function (string $phase, int $processed, array $counts) use ($runService, $runId, $businessId) {
+                            $message = 'Recheck GL '.$phase.': '.$processed.' sumber; '
+                                .($counts['applied_groups'] ?? 0).' posting diperbarui, '
+                                .($counts['actionable_review_sources'] ?? 0).' antrean review.';
+                            $this->line($message);
+                            $runService->updateRun($runId, $businessId, 'rechecking', $message);
+                        }
+                    );
+                    if (! empty($generalLedgerRecheck['error'])) {
+                        throw new \RuntimeException((string) $generalLedgerRecheck['error']);
+                    }
                     $runService->syncLegacyRecordIds($runId, $businessId, $analysis['_operational_evidence_data']);
                     $attachments = $attachmentImporter->import($runId, $businessId, $sourceDirectory);
                     $summary = $this->summaryForStorage($analysis);
                     $summary['operational_only_processing'] = $operationalOnly;
+                    $summary['general_ledger_recheck'] = $generalLedgerRecheck;
                     $summary['legacy_attachments'] = $attachments;
-                    $runService->updateRun($runId, $businessId, 'review', 'Tidak ada entri Journal; transaksi operasional lengkap dibuat atau ditautkan dan sisanya masuk review tanpa posting GL.', $summary, true);
+                    $runMessage = 'Tidak ada entri Journal; transaksi dipetakan dari mapping lokasi yang valid. Baris yang ambigu atau tidak lengkap masuk antrean rekonsiliasi.';
+                    $runStatus = ($operationalOnly['review'] > 0 || ($generalLedgerRecheck['actionable_review_sources'] ?? 0) > 0) ? 'review' : 'completed';
+                    $runService->updateRun($runId, $businessId, $runStatus, $runMessage, $summary, true);
                     $this->persistAnnualFindings($findingSnapshots, $businessId, $year, $annualAudit);
-                    $this->comment('Tidak ada Journal entry. Transaksi operasional lengkap diproses tanpa GL; item yang belum aman tetap tersimpan untuk review.');
+                    $this->comment('Tidak ada Journal entry. Mapping operasional yang valid diposting ke GL; item yang belum aman tetap tersimpan untuk review.');
+                    $this->line('Recheck GL selesai: '.$generalLedgerRecheck['applied_groups'].' posting dibuat/diperbarui, '
+                        .$generalLedgerRecheck['actionable_review_sources'].' sumber menunggu review.');
                     $this->printAnnualAudit($annualAudit);
                     $this->printAttachmentSummary($attachments);
 
@@ -363,17 +388,53 @@ class ImportLegacySources extends Command
                     .$counts['review'].' review).'
                 )
             );
+            $taxReconciliation = $journalTaxReconciliation->reconcileImport(
+                (int) $importId,
+                $businessId,
+                true,
+                function (int $processed, array $counts) use ($runService, $runId, $businessId) {
+                    $message = 'Recheck pajak Journal: '.$processed.' mapping; '
+                        .$counts['reconciled'].' sesuai, '.$counts['review'].' perlu review.';
+                    $this->line($message);
+                    $runService->updateRun($runId, $businessId, 'rechecking', $message);
+                }
+            );
+            $generalLedgerRecheck = $generalLedgerBackfill->run(
+                $businessId,
+                true,
+                true,
+                (int) $importId,
+                function (string $phase, int $processed, array $counts) use ($runService, $runId, $businessId) {
+                    $message = 'Recheck GL '.$phase.': '.$processed.' sumber; '
+                        .($counts['applied_groups'] ?? 0).' posting diperbarui, '
+                        .($counts['actionable_review_sources'] ?? 0).' antrean review.';
+                    $this->line($message);
+                    $runService->updateRun($runId, $businessId, 'rechecking', $message);
+                }
+            );
+            if (! empty($generalLedgerRecheck['error'])) {
+                throw new \RuntimeException((string) $generalLedgerRecheck['error']);
+            }
+            $this->line('Recheck GL selesai: '
+                .$generalLedgerRecheck['journal_linked_sources'].' sumber memakai Journal, '
+                .$generalLedgerRecheck['removed_duplicate_app_postings'].' posting otomatis duplikat dihapus, '
+                .$generalLedgerRecheck['replaced_operational_postings'].' posting operasional diperbarui, '
+                .$generalLedgerRecheck['actionable_review_sources'].' sumber menunggu review.');
             $attachments = $attachmentImporter->import($runId, $businessId, $sourceDirectory);
             $summary['journal_import_id'] = $importId;
             $summary['journal_status'] = $batch->status ?? 'unknown';
             $summary['journal_crosswalks'] = $crosswalkCount;
             $summary['operational_only_processing'] = $operationalOnly;
+            $summary['tax_reconciliation_recheck'] = $taxReconciliation;
+            $summary['general_ledger_recheck'] = $generalLedgerRecheck;
             $summary['legacy_attachments'] = $attachments;
 
             [$runStatus, $message, $finished] = $this->runStatusForBatch((string) ($batch->status ?? 'failed'));
-            if ($operationalOnly['review'] > 0 || $operationalOnly['created'] > 0 || $operationalOnly['linked_existing'] > 0) {
+            if ($operationalOnly['review'] > 0
+                || ($taxReconciliation['review'] ?? 0) > 0
+                || ($generalLedgerRecheck['actionable_review_sources'] ?? 0) > 0) {
                 $runStatus = 'review';
-                $message .= ' Transaksi tanpa Journal ditautkan/dibuat bila aman; posting GL tidak dibuat dari sumber operasional saja.';
+                $message .= ' Sumber yang belum terpetakan atau pajaknya belum dapat dipastikan tersedia pada antrean review.';
             }
             if (($attachments['actionable'] ?? 0) > 0) {
                 $runStatus = 'review';

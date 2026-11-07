@@ -169,6 +169,284 @@ class GeneralLedgerBackfillCommandTest extends TestCase
         $this->assertSame(3, DB::table('accounting_acc_trans_mappings')->count());
     }
 
+    public function test_legacy_recheck_replaces_generated_rows_uses_unique_journal_pattern_and_keeps_manual_rows(): void
+    {
+        DB::table('business_locations')->insert([
+            'id' => 71,
+            'business_id' => 7,
+            'name' => 'Lokasi Legacy Tanpa Mapping',
+            'accounting_default_map' => json_encode([]),
+        ]);
+        Schema::create('accounting_journal_import_rows', function (Blueprint $table) {
+            $table->increments('id');
+            $table->unsignedInteger('business_id');
+            $table->unsignedInteger('journal_import_id');
+            $table->string('source_type');
+            $table->string('source_action');
+            $table->string('source_record_type');
+            $table->unsignedInteger('source_record_id');
+            $table->unsignedInteger('journal_mapping_id');
+        });
+        DB::table('transactions')->insert([
+            [
+                'id' => 905,
+                'business_id' => 7,
+                'location_id' => 71,
+                'type' => 'sell',
+                'status' => 'final',
+                'transaction_date' => '2023-05-01 10:00:00',
+                'total_before_tax' => 100,
+                'tax_amount' => 10,
+                'final_total' => 110,
+                'created_by' => 1,
+                'invoice_no' => 'INV-905',
+            ],
+            [
+                'id' => 906,
+                'business_id' => 7,
+                'location_id' => 71,
+                'type' => 'sell',
+                'status' => 'final',
+                'transaction_date' => '2023-05-02 10:00:00',
+                'total_before_tax' => 50,
+                'tax_amount' => 5,
+                'final_total' => 55,
+                'created_by' => 1,
+                'invoice_no' => 'INV-906',
+            ],
+            [
+                'id' => 907,
+                'business_id' => 7,
+                'location_id' => 71,
+                'type' => 'sell',
+                'status' => 'final',
+                'transaction_date' => '2023-05-03 10:00:00',
+                'total_before_tax' => 12,
+                'tax_amount' => 0,
+                'final_total' => 12,
+                'created_by' => 1,
+                'invoice_no' => 'INV-907',
+            ],
+        ]);
+        DB::table('accounting_acc_trans_mappings')->insert([
+            [
+                'id' => 700,
+                'business_id' => 7,
+                'ref_no' => 'INV-905',
+                'type' => 'journal_entry',
+                'created_by' => 1,
+                'operation_date' => '2023-05-01 10:00:00',
+                'note' => 'Journal legacy tertaut',
+                'source_record_type' => \App\Transaction::class,
+                'source_record_id' => 905,
+                'source_link_status' => 'matched',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+            [
+                'id' => 701,
+                'business_id' => 7,
+                'ref_no' => 'INV-907-A',
+                'type' => 'journal_entry',
+                'created_by' => 1,
+                'operation_date' => '2023-05-03 10:00:00',
+                'source_record_type' => \App\Transaction::class,
+                'source_record_id' => 907,
+                'source_link_status' => 'matched',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+            [
+                'id' => 702,
+                'business_id' => 7,
+                'ref_no' => 'INV-907-B',
+                'type' => 'journal_entry',
+                'created_by' => 1,
+                'operation_date' => '2023-05-03 10:00:00',
+                'source_record_type' => \App\Transaction::class,
+                'source_record_id' => 907,
+                'source_link_status' => 'matched',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+        ]);
+        DB::table('accounting_journal_import_rows')->insert([
+            'business_id' => 7,
+            'journal_import_id' => 900,
+            'source_type' => 'Sales Invoice',
+            'source_action' => 'link',
+            'source_record_type' => \App\Transaction::class,
+            'source_record_id' => 905,
+            'journal_mapping_id' => 700,
+        ]);
+        DB::table('accounting_accounts')->insert([
+            'id' => 115,
+            'business_id' => 7,
+            'name' => 'VAT Out Secondary',
+            'account_primary_type' => 'liability',
+            'status' => 'active',
+            'created_by' => 1,
+        ]);
+        DB::table('accounting_general_ledger_backfill_reviews')->insert([
+            [
+                'business_id' => 7,
+                'source_record_type' => \App\Transaction::class,
+                'source_record_id' => 905,
+                'operation_date' => '2023-05-01 10:00:00',
+                'source_reference' => 'INV-905',
+                'source_summary' => 'Transaksi sell #905',
+                'skip_reason' => 'mapping_lokasi_tidak_lengkap',
+                'status' => 'pending',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+            [
+                'business_id' => 7,
+                'source_record_type' => \App\Transaction::class,
+                'source_record_id' => 906,
+                'operation_date' => '2023-05-02 10:00:00',
+                'source_reference' => 'INV-906',
+                'source_summary' => 'Transaksi sell #906',
+                'skip_reason' => 'pola_journal_ambigu',
+                'status' => 'pending',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+        ]);
+        DB::table('accounting_accounts_transactions')->insert([
+            [
+                'accounting_account_id' => 101,
+                'acc_trans_mapping_id' => 700,
+                'transaction_id' => 905,
+                'amount' => 110,
+                'type' => 'debit',
+                'sub_type' => 'journal_entry',
+                'map_type' => 'journal_entry',
+                'created_by' => 1,
+                'operation_date' => '2023-05-01 10:00:00',
+            ],
+            [
+                'accounting_account_id' => 102,
+                'acc_trans_mapping_id' => 700,
+                'transaction_id' => 905,
+                'amount' => 100,
+                'type' => 'credit',
+                'sub_type' => 'journal_entry',
+                'map_type' => 'journal_entry',
+                'created_by' => 1,
+                'operation_date' => '2023-05-01 10:00:00',
+            ],
+            [
+                'accounting_account_id' => 103,
+                'acc_trans_mapping_id' => 700,
+                'transaction_id' => 905,
+                'amount' => 10,
+                'type' => 'credit',
+                'sub_type' => 'journal_entry',
+                'map_type' => 'journal_entry',
+                'created_by' => 1,
+                'operation_date' => '2023-05-01 10:00:00',
+            ],
+            [
+                'accounting_account_id' => 101,
+                'transaction_id' => 905,
+                'amount' => 110,
+                'type' => 'debit',
+                'sub_type' => 'sell',
+                'map_type' => 'payment_account',
+                'created_by' => 1,
+                'operation_date' => '2023-05-01 10:00:00',
+            ],
+            [
+                'accounting_account_id' => 102,
+                'transaction_id' => 905,
+                'amount' => 100,
+                'type' => 'credit',
+                'sub_type' => 'sell',
+                'map_type' => 'deposit_to',
+                'created_by' => 1,
+                'operation_date' => '2023-05-01 10:00:00',
+            ],
+            [
+                'accounting_account_id' => 103,
+                'transaction_id' => 905,
+                'amount' => 10,
+                'type' => 'credit',
+                'sub_type' => 'sell',
+                'map_type' => 'deposit_to',
+                'created_by' => 1,
+                'operation_date' => '2023-05-01 10:00:00',
+            ],
+            [
+                'accounting_account_id' => 110,
+                'transaction_id' => 905,
+                'amount' => 1,
+                'type' => 'debit',
+                'sub_type' => 'sell',
+                'map_type' => 'manual',
+                'created_by' => 1,
+                'operation_date' => '2023-05-01 10:00:00',
+            ],
+            [
+                'accounting_account_id' => 101,
+                'transaction_id' => 906,
+                'amount' => 55,
+                'type' => 'debit',
+                'sub_type' => 'sell',
+                'map_type' => 'payment_account',
+                'created_by' => 1,
+                'operation_date' => '2023-05-02 10:00:00',
+            ],
+            [
+                'accounting_account_id' => 102,
+                'transaction_id' => 906,
+                'amount' => 50,
+                'type' => 'credit',
+                'sub_type' => 'sell',
+                'map_type' => 'deposit_to',
+                'created_by' => 1,
+                'operation_date' => '2023-05-02 10:00:00',
+            ],
+            [
+                'accounting_account_id' => 103,
+                'transaction_id' => 906,
+                'amount' => 5,
+                'type' => 'credit',
+                'sub_type' => 'sell',
+                'map_type' => 'deposit_to',
+                'created_by' => 1,
+                'operation_date' => '2023-05-02 10:00:00',
+            ],
+        ]);
+
+        $service = app(\Modules\Accounting\Services\GeneralLedgerBackfillService::class);
+        $first = $service->run(7, true, true, 900);
+
+        $this->assertSame(1, $first['journal_linked_sources']);
+        $this->assertSame(1, $first['removed_duplicate_app_postings']);
+        $this->assertSame(1, $first['replaced_operational_postings']);
+        $this->assertSame(1, $first['journal_pattern_groups']);
+        $this->assertSame(1, $first['actionable_review_sources']);
+        $this->assertSame('resolved', DB::table('accounting_general_ledger_backfill_reviews')->where('source_record_id', 905)->value('status'));
+        $this->assertSame('pending', DB::table('accounting_general_ledger_backfill_reviews')->where('source_record_id', 907)->value('status'));
+        $this->assertSame('journal_source_link_ambiguous', DB::table('accounting_general_ledger_backfill_reviews')->where('source_record_id', 907)->value('skip_reason'));
+        $this->assertSame(1, DB::table('accounting_accounts_transactions')->where('transaction_id', 905)->where('map_type', 'manual')->count());
+        $this->assertSame(0, DB::table('accounting_accounts_transactions')->where('transaction_id', 905)->whereIn('map_type', ['payment_account', 'deposit_to'])->count());
+        $this->assertSame(0, DB::table('accounting_accounts_transactions')->where('transaction_id', 906)->whereNull('acc_trans_mapping_id')->count());
+        $this->assertSame(3, DB::table('accounting_accounts_transactions')->where('transaction_id', 906)->where('sub_type', 'sell')->count());
+        $this->assertSame(1, DB::table('accounting_accounts_transactions')->where('transaction_id', 906)->where('accounting_account_id', 103)->where('amount', 5)->count());
+        $this->assertSame('resolved', DB::table('accounting_general_ledger_backfill_reviews')->where('source_record_id', 906)->value('status'));
+        $mappingId = DB::table('accounting_acc_trans_mappings')->where('business_id', 7)->where('type', 'general_ledger_backfill')->where('source_record_id', 906)->value('id');
+
+        $second = $service->run(7, true, true, 900);
+
+        $this->assertSame(0, $second['replaced_operational_postings']);
+        $this->assertSame(2, $second['already_linked']);
+        $this->assertSame($mappingId, DB::table('accounting_acc_trans_mappings')->where('business_id', 7)->where('type', 'general_ledger_backfill')->where('source_record_id', 906)->value('id'));
+        $this->assertSame(1, DB::table('accounting_acc_trans_mappings')->where('business_id', 7)->where('type', 'general_ledger_backfill')->where('source_record_id', 906)->count());
+        $this->assertSame(1, DB::table('accounting_accounts_transactions')->where('transaction_id', 905)->where('map_type', 'manual')->count());
+    }
+
     public function test_dry_run_does_not_stage_actionable_skips_and_apply_stages_them_idempotently_per_business(): void
     {
         DB::table('transactions')->insert([
@@ -1045,6 +1323,7 @@ class GeneralLedgerBackfillCommandTest extends TestCase
             $table->string('source_link_status', 20)->nullable();
             $table->text('source_link_note')->nullable();
             $table->string('import_source_key')->nullable();
+            $table->text('source_tax_snapshot')->nullable();
             $table->timestamps();
         });
         Schema::create('accounting_general_ledger_backfill_reviews', function (Blueprint $table) {
