@@ -13,6 +13,7 @@ use DB;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
+use Illuminate\Validation\ValidationException;
 use Modules\Accounting\Entities\AccountingAccount;
 use Modules\Accounting\Entities\AccountingAccountsTransaction;
 use Yajra\DataTables\Facades\DataTables;
@@ -610,10 +611,32 @@ class TransactionController extends Controller
 
         try {
             if (request()->ajax()) {
+                $validated = $request->validate([
+                    'type' => ['required', 'in:sell,purchase,expense,sell_payment,purchase_payment'],
+                    'id' => ['required', 'integer', 'min:1'],
+                    'deposit_to' => ['required', 'integer', 'min:1'],
+                    'payment_account' => ['required', 'integer', 'min:1'],
+                    'description' => ['nullable', 'string', 'max:1000'],
+                ]);
+                $accountIds = array_values(array_unique([
+                    (int) $validated['deposit_to'],
+                    (int) $validated['payment_account'],
+                ]));
+                $businessAccountCount = AccountingAccount::where('business_id', $business_id)
+                    ->where('status', 'active')
+                    ->whereIn('id', $accountIds)
+                    ->count();
+
+                if (count($accountIds) !== 2 || $businessAccountCount !== 2) {
+                    throw ValidationException::withMessages([
+                        'accounts' => 'Pilih dua akun CoA berbeda milik business aktif.',
+                    ]);
+                }
+
                 DB::beginTransaction();
 
-                $type = $request->get('type');
-                $id = $request->get('id');
+                $type = $validated['type'];
+                $id = (int) $validated['id'];
                 $user_id = request()->session()->get('user.id');
 
                 $deposit_to = $request->get('deposit_to');
@@ -628,14 +651,16 @@ class TransactionController extends Controller
                     'msg' => __('lang_v1.updated_success'),
                 ];
             }
-        } catch (\Exception $e) {
-            print_r($e->getMessage());
-            exit;
-            DB::rollBack();
+        } catch (ValidationException $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            if (DB::transactionLevel() > 0) {
+                DB::rollBack();
+            }
 
             \Log::emergency('File:'.$e->getFile().'Line:'.$e->getLine().'Message:'.$e->getMessage());
 
-            $output = ['success' => false,
+            return ['success' => false,
                 'msg' => __('messages.something_went_wrong'),
             ];
         }

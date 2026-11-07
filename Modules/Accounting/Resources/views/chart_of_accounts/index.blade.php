@@ -34,6 +34,9 @@
             @component('components.widget', ['class' => 'box-solid'])
             @slot('tool')
                 <div class="box-tools">
+                    <a class="btn btn-success pull-right m-5" href="{{ route('accounting.chartOfAccounts.export') }}">
+                        <i class="fas fa-download"></i> Ekspor Excel
+                    </a>
                     <a class="btn btn-primary pull-right m-5 btn-modal" 
                     href="{{action([\Modules\Accounting\Http\Controllers\CoaController::class, 'create'])}}" 
                     data-href="{{action([\Modules\Accounting\Http\Controllers\CoaController::class, 'create'])}}" 

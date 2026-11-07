@@ -20,7 +20,8 @@
                     @endif
                     
                     @if(auth()->user()->can('accounting.view_journal'))
-                        <li @if(request()->segment(2) == 'journal-entry') class="active" @endif><a href="{{action([\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'index'])}}">@lang('accounting::lang.journal_entry')</a></li>
+                        <li @if(request()->segment(2) == 'reports' && request()->segment(3) == 'general-ledger') class="active" @endif><a href="{{ route('accounting.generalLedger') }}">Buku Besar</a></li>
+                        <li @if(request()->segment(2) == 'journal-entry' && request()->segment(3) != 'import') class="active" @endif><a href="{{ route('journal-entry.index') }}">Jurnal Manual</a></li>
                     @endif
 
                     @if(auth()->user()->can('accounting.view_journal') && (auth()->user()->can('superadmin') || app(\App\Utils\ModuleUtil::class)->hasThePermissionInSubscription(request()->session()->get('user.business_id'), 'accounting_module')))
@@ -30,7 +31,7 @@
                     @endif
 
                     @if(auth()->user()->can('accounting.add_journal'))
-                        <li @if(request()->segment(2) == 'journal-entry' && request()->segment(3) == 'import') class="active" @endif><a href="{{action([\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'import'])}}">Import Journal</a></li>
+                        <li @if(request()->segment(2) == 'journal-entry' && request()->segment(3) == 'import') class="active" @endif><a href="{{ route('journal-entry.import') }}">Impor Jurnal dari Workbook</a></li>
                     @endif
 
                     @if(auth()->user()->can('accounting.view_transfer'))

@@ -11,6 +11,5 @@
 |
 */
 
-if (!app()->routesAreCached()) {
-    require __DIR__ . '/Http/routes.php';
-}
+// Accounting routes are registered through RouteServiceProvider and Routes/web.php.
+// Do not load the retired duplicate route file from this bootstrap hook.

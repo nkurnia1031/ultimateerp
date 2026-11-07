@@ -1,6 +1,6 @@
 @extends('layouts.app')
 
-@section('title', __('accounting::lang.journal_entry'))
+@section('title', 'Jurnal Manual')
 
 @section('content')
 
@@ -8,7 +8,7 @@
 
 <!-- Content Header (Page header) -->
 <section class="content-header">
-    <h1>@lang( 'accounting::lang.journal_entry' ) - {{$journal->ref_no}}</h1>
+    <h1>Jurnal Manual - {{$journal->ref_no}}</h1>
 </section>
 <section class="content">
 

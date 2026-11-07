@@ -10,7 +10,9 @@ use Illuminate\Routing\Controller;
 use Modules\Accounting\Entities\AccountingAccount;
 use Modules\Accounting\Entities\AccountingAccountsTransaction;
 use Modules\Accounting\Entities\AccountingAccountType;
+use Modules\Accounting\Exports\AccountingAccountsExport;
 use Modules\Accounting\Utils\AccountingUtil;
+use Maatwebsite\Excel\Facades\Excel;
 use Yajra\DataTables\Facades\DataTables;
 use Illuminate\Support\Str;
 
@@ -96,6 +98,21 @@ class CoaController extends Controller
         }
 
         return view('accounting::chart_of_accounts.index')->with(compact('account_types'));
+    }
+
+    public function export()
+    {
+        $business_id = (int) request()->session()->get('user.business_id');
+
+        if (! (auth()->user()->can('superadmin') ||
+            $this->moduleUtil->hasThePermissionInSubscription($business_id, 'accounting_module')) ||
+            ! auth()->user()->can('accounting.manage_accounts')) {
+            abort(403, 'Unauthorized action.');
+        }
+
+        $file_name = 'chart-of-accounts-'.now()->format('Y-m-d').'.xlsx';
+
+        return Excel::download(new AccountingAccountsExport($business_id), $file_name);
     }
 
     /**
@@ -1250,16 +1267,6 @@ class CoaController extends Controller
         }
 
         return redirect()->back();
-    }
-
-    /**
-     * Show the specified resource.
-     *
-     * @param  int  $id
-     * @return Response
-     */
-    public function show($id)
-    {
     }
 
     /**

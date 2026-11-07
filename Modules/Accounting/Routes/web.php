@@ -18,7 +18,11 @@ Route::middleware('web', 'SetSessionData', 'auth', 'language', 'timezone', 'Admi
 
     Route::get('get-account-sub-types', [\Modules\Accounting\Http\Controllers\CoaController::class, 'getAccountSubTypes']);
     Route::get('get-account-details-types', [\Modules\Accounting\Http\Controllers\CoaController::class, 'getAccountDetailsType']);
-    Route::resource('chart-of-accounts', \Modules\Accounting\Http\Controllers\CoaController::class);
+    Route::get('chart-of-accounts/export', [\Modules\Accounting\Http\Controllers\CoaController::class, 'export'])
+        ->name('accounting.chartOfAccounts.export');
+    Route::resource('chart-of-accounts', \Modules\Accounting\Http\Controllers\CoaController::class)->except(['show']);
+    Route::get('chart-of-accounts/{id}', fn ($id) => redirect()->route('accounting.ledger', array_merge(request()->query(), ['id' => $id])))->whereNumber('id')
+        ->name('chart-of-accounts.show');
     Route::get('ledger/{id}', [\Modules\Accounting\Http\Controllers\CoaController::class, 'ledger'])->name('accounting.ledger');
     Route::get('activate-deactivate/{id}', [\Modules\Accounting\Http\Controllers\CoaController::class, 'activateDeactivate']);
     Route::get('create-default-accounts', [\Modules\Accounting\Http\Controllers\CoaController::class, 'createDefaultAccounts'])->name('accounting.create-default-accounts');
@@ -44,7 +48,82 @@ Route::middleware('web', 'SetSessionData', 'auth', 'language', 'timezone', 'Admi
     Route::post('journal-entry/import/process', [\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'processImport']);
     Route::post('journal-entry/import', [\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'storeImport']);
     Route::post('journal-entry/import/{id}/revert', [\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'revertImport']);
-    Route::resource('journal-entry', \Modules\Accounting\Http\Controllers\JournalEntryController::class);
+
+    Route::resource('journal-entry', \Modules\Accounting\Http\Controllers\JournalEntryController::class)->except(['show']);
+    Route::get('journal-entry/{id}', fn () => redirect()->route('journal-entry.index', request()->query()))
+        ->whereNumber('id')
+        ->name('journal-entry.show');
+
+    Route::get('journal_entry/import/{legacyPath?}', function ($legacyPath = null) {
+        $target = url('accounting/journal-entry/import'.($legacyPath ? '/'.$legacyPath : ''));
+        $query = request()->getQueryString();
+
+        return redirect()->to($target.($query ? '?'.$query : ''));
+    })->where('legacyPath', '.*')->name('journal-entry.legacyImportRedirect');
+    Route::get('journal_entry/get_journal_entries', fn () => redirect()->route('journal-entry.index', request()->query()))
+        ->name('journal-entry.legacyRowsRedirect');
+    Route::get('journal_entry/{id}/show', fn () => redirect()->route('journal-entry.index', request()->query()))
+        ->whereNumber('id')->name('journal-entry.legacyShowRedirect');
+    Route::get('journal_entry/{id}/reverse', fn () => abort(410))
+        ->whereNumber('id')->name('journal-entry.legacyReverse');
+    Route::get('journal_entry/{id}/destroy', fn () => abort(410))
+        ->whereNumber('id')->name('journal-entry.legacyDestroy');
+    Route::get('journal_entry/{legacyPath?}', function ($legacyPath = null) {
+        $target = url('accounting/journal-entry'.($legacyPath ? '/'.$legacyPath : ''));
+        $query = request()->getQueryString();
+
+        return redirect()->to($target.($query ? '?'.$query : ''));
+    })
+        ->where('legacyPath', '.*')
+        ->name('journal-entry.legacyUnderscoreRedirect');
+    Route::match(['post', 'put', 'patch', 'delete'], 'journal_entry/{legacyPath?}', fn () => abort(410))
+        ->where('legacyPath', '.*')
+        ->name('journal-entry.legacyUnderscoreMutation');
+
+    Route::get('chart_of_account/create', fn () => redirect()->action([\Modules\Accounting\Http\Controllers\CoaController::class, 'create']))
+        ->name('chart-of-accounts.legacyCreateRedirect');
+    Route::get('chart_of_account/{id}/show', fn ($id) => redirect()->route('accounting.ledger', array_merge(request()->query(), ['id' => $id])))->whereNumber('id')
+        ->name('chart-of-accounts.legacyShowRedirect');
+    Route::get('chart_of_account/{id}/edit', fn ($id) => redirect()->action([\Modules\Accounting\Http\Controllers\CoaController::class, 'edit'], [$id]))->whereNumber('id')
+        ->name('chart-of-accounts.legacyEditRedirect');
+    Route::get('chart_of_account/{id}/destroy', fn () => abort(410))->whereNumber('id')
+        ->name('chart-of-accounts.legacyDestroy');
+    Route::get('chart_of_account/export', fn () => abort(410))->name('chart-of-accounts.legacyExport');
+    Route::get('chart_of_account/get_chart_of_accounts', fn () => abort(410))->name('chart-of-accounts.legacyRows');
+    Route::get('chart_of_account', fn () => redirect()->action([\Modules\Accounting\Http\Controllers\CoaController::class, 'index']))
+        ->name('chart-of-accounts.legacyRedirect');
+    Route::match(['post', 'put', 'patch', 'delete'], 'chart_of_account/{legacyPath?}', fn () => abort(410))
+        ->where('legacyPath', '.*')
+        ->name('chart-of-accounts.legacyMutation');
+
+    Route::get('dashboard/get_totals', fn () => abort(410))->name('dashboard.legacyTotals');
+
+    Route::get('reconcile/{legacyPath?}', fn () => redirect()->route('accounting.reconciliation.findings'))
+        ->where('legacyPath', '.*')
+        ->name('reconciliation.legacyRedirect');
+    Route::match(['post', 'put', 'patch', 'delete'], 'reconcile/{legacyPath?}', fn () => abort(410))
+        ->where('legacyPath', '.*')
+        ->name('reconciliation.legacyMutation');
+
+    Route::get('transfers/{legacyPath?}', function ($legacyPath = null) {
+        if ($legacyPath === 'create') {
+            return redirect()->action([\Modules\Accounting\Http\Controllers\TransferController::class, 'create']);
+        }
+
+        return redirect()->action([\Modules\Accounting\Http\Controllers\TransferController::class, 'index']);
+    })->where('legacyPath', '.*')->name('transfer.legacyRedirect');
+    Route::match(['post', 'put', 'patch', 'delete'], 'transfers/{legacyPath?}', fn () => abort(410))
+        ->where('legacyPath', '.*')
+        ->name('transfer.legacyMutation');
+
+    Route::get('transactions/sales', fn () => redirect()->action([\Modules\Accounting\Http\Controllers\TransactionController::class, 'index']))
+        ->name('transactions.legacySalesRedirect');
+    Route::get('transactions/expenses', fn () => redirect()->action([\Modules\Accounting\Http\Controllers\TransactionController::class, 'index']))
+        ->name('transactions.legacyExpensesRedirect');
+    Route::get('transactions/purchases', fn () => redirect()->action([\Modules\Accounting\Http\Controllers\TransactionController::class, 'index']))
+        ->name('transactions.legacyPurchasesRedirect');
+    Route::post('transactions/map_to_chart_of_account', fn () => abort(410))
+        ->name('transactions.legacyMappingMutation');
 
     Route::get('settings', [\Modules\Accounting\Http\Controllers\SettingsController::class, 'index']);
     Route::get('reset-data', [\Modules\Accounting\Http\Controllers\SettingsController::class, 'resetData']);
@@ -93,7 +172,7 @@ Route::middleware('web', 'SetSessionData', 'auth', 'language', 'timezone', 'Admi
 
     Route::get('transactions', [\Modules\Accounting\Http\Controllers\TransactionController::class, 'index']);
     Route::get('transactions/map', [\Modules\Accounting\Http\Controllers\TransactionController::class, 'map']);
-    Route::post('transactions/save-map', [\Modules\Accounting\Http\Controllers\TransactionController::class, 'saveMap']);
+    Route::post('transactions/save-map', [\Modules\Accounting\Http\Controllers\TransactionController::class, 'saveMap'])->name('accounting.transactions.saveMap');
     Route::post('save-settings', [\Modules\Accounting\Http\Controllers\SettingsController::class, 'saveSettings']);
 
     Route::get('install', [\Modules\Accounting\Http\Controllers\InstallController::class, 'index']);

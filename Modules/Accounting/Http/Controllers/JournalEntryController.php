@@ -100,14 +100,6 @@ class JournalEntryController extends Controller
                                     </span>
                                 </button>
                                 <ul class="dropdown-menu dropdown-menu-right" role="menu">';
-                        if (auth()->user()->can('accounting.view_journal')) {
-                            // $html .= '<li>
-                            //         <a href="#" data-href="'.action([\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'show'], [$row->id]).'">
-                            //             <i class="fas fa-eye" aria-hidden="true"></i>'.__("messages.view").'
-                            //         </a>
-                            //         </li>';
-                        }
-
                         if (auth()->user()->can('accounting.edit_journal')) {
                             $html .= '<li>
                                     <a href="'.action([\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'edit'], [$row->id]).'">
@@ -2559,25 +2551,6 @@ class JournalEntryController extends Controller
         }
 
         return redirect()->route('journal-entry.index')->with('status', $output);
-    }
-
-    /**
-     * Show the specified resource.
-     *
-     * @param  int  $id
-     * @return Response
-     */
-    public function show($id)
-    {
-        $business_id = request()->session()->get('user.business_id');
-
-        if (! (auth()->user()->can('superadmin') ||
-            $this->moduleUtil->hasThePermissionInSubscription($business_id, 'accounting_module')) ||
-            ! (auth()->user()->can('accounting.view_journal'))) {
-            abort(403, 'Unauthorized action.');
-        }
-
-        return view('accounting::journal_entry.show');
     }
 
     /**

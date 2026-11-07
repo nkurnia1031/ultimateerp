@@ -1,13 +1,13 @@
 @extends('layouts.app')
 
-@section('title', 'Import Journal Entry')
+@section('title', 'Impor Jurnal dari Workbook')
 
 @section('content')
 
 @include('accounting::layouts.nav')
 
 <section class="content-header">
-    <h1>Import Journal Entry</h1>
+    <h1>Impor Jurnal dari Workbook</h1>
 </section>
 
 <section id="journal_import_page" class="content no-print" data-status-url-base="{{ url('accounting/journal-entry/import') }}" data-terminate-url-base="{{ url('accounting/journal-entry/import') }}" data-active-statuses="{{ implode(',', \Modules\Accounting\Entities\JournalImportBatchStatus::activeStatuses()) }}" data-waiting-statuses="{{ implode(',', \Modules\Accounting\Entities\JournalImportBatchStatus::waitingStatuses()) }}" data-queued-statuses="{{ implode(',', \Modules\Accounting\Entities\JournalImportBatchStatus::queuedStatuses()) }}">

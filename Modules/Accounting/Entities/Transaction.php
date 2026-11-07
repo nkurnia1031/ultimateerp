@@ -4,16 +4,10 @@ namespace Modules\Accounting\Entities;
 
 use App\Transaction as AppTransaction;
 use Illuminate\Support\Facades\DB;
-use Modules\Accounting\Entities\JournalEntry;
 
 class Transaction extends AppTransaction
 {
     protected $appends = ['days_passed', 'amount_due'];
-
-    public function journal_entry()
-    {
-        return $this->belongsTo(JournalEntry::class, 'journal_entry_id')->withDefault();
-    }
 
     public function scopeExpenses($query)
     {

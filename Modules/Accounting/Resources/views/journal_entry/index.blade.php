@@ -1,6 +1,6 @@
 @extends('layouts.app')
 
-@section('title', __('accounting::lang.journal_entry'))
+@section('title', 'Jurnal Manual')
 
 @section('content')
 
@@ -8,7 +8,7 @@
 
 <!-- Content Header (Page header) -->
 <section class="content-header">
-    <h1>@lang( 'accounting::lang.journal_entry' )</h1>
+    <h1>Jurnal Manual</h1>
 </section>
 <section class="content no-print">
 <div class="row">
@@ -31,10 +31,10 @@
                 <div class="box-tools">
                     <a class="btn btn-block btn-default" style="margin-bottom: 5px;"
                         href="{{action([\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'import'])}}">
-                        <i class="fas fa-file-import"></i> Import</a>
+                        <i class="fas fa-file-import"></i> Impor Jurnal dari Workbook</a>
                     <a class="btn btn-block btn-primary" 
                         href="{{action([\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'create'])}}">
-                        <i class="fas fa-plus"></i> @lang( 'messages.add' )</a>
+                        <i class="fas fa-plus"></i> Buat Jurnal Manual</a>
                 </div>
             @endslot
         @endcan
