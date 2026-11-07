@@ -351,6 +351,7 @@ class GeneralLedgerBackfillCommandTest extends TestCase
             ],
             [
                 'accounting_account_id' => 101,
+                'acc_trans_mapping_id' => null,
                 'transaction_id' => 905,
                 'amount' => 110,
                 'type' => 'debit',
@@ -361,6 +362,7 @@ class GeneralLedgerBackfillCommandTest extends TestCase
             ],
             [
                 'accounting_account_id' => 102,
+                'acc_trans_mapping_id' => null,
                 'transaction_id' => 905,
                 'amount' => 100,
                 'type' => 'credit',
@@ -371,6 +373,7 @@ class GeneralLedgerBackfillCommandTest extends TestCase
             ],
             [
                 'accounting_account_id' => 103,
+                'acc_trans_mapping_id' => null,
                 'transaction_id' => 905,
                 'amount' => 10,
                 'type' => 'credit',
@@ -381,6 +384,7 @@ class GeneralLedgerBackfillCommandTest extends TestCase
             ],
             [
                 'accounting_account_id' => 110,
+                'acc_trans_mapping_id' => null,
                 'transaction_id' => 905,
                 'amount' => 1,
                 'type' => 'debit',
@@ -391,6 +395,7 @@ class GeneralLedgerBackfillCommandTest extends TestCase
             ],
             [
                 'accounting_account_id' => 101,
+                'acc_trans_mapping_id' => null,
                 'transaction_id' => 906,
                 'amount' => 55,
                 'type' => 'debit',
@@ -401,6 +406,7 @@ class GeneralLedgerBackfillCommandTest extends TestCase
             ],
             [
                 'accounting_account_id' => 102,
+                'acc_trans_mapping_id' => null,
                 'transaction_id' => 906,
                 'amount' => 50,
                 'type' => 'credit',
@@ -411,6 +417,7 @@ class GeneralLedgerBackfillCommandTest extends TestCase
             ],
             [
                 'accounting_account_id' => 103,
+                'acc_trans_mapping_id' => null,
                 'transaction_id' => 906,
                 'amount' => 5,
                 'type' => 'credit',
