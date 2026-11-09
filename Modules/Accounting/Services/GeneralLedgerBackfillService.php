@@ -51,15 +51,15 @@ class GeneralLedgerBackfillService
         bool $legacyRecheck = false,
         ?int $journalImportId = null,
         ?callable $progressCallback = null,
-        ?array $resumeCheckpoint = null
+        ?GeneralLedgerBackfillCheckpoint $resumeCheckpoint = null
     ): array
     {
         $this->reviewQueueBuffer = [];
         $this->legacyRecheckMode = $legacyRecheck && $apply;
         $this->legacyRecheckJournalImportId = $journalImportId;
         $this->legacyRecheckPriorReviewCount = 0;
-        if ($legacyRecheck && $apply && is_array($resumeCheckpoint)) {
-            $this->legacyRecheckPriorReviewCount = max(0, (int) ($resumeCheckpoint['counts']['actionable_review_sources'] ?? 0));
+        if ($legacyRecheck && $apply && $resumeCheckpoint !== null) {
+            $this->legacyRecheckPriorReviewCount = $resumeCheckpoint->count('actionable_review_sources');
         }
         $this->legacyRecheckProgressCallback = $progressCallback;
         $this->legacyJournalPairCache = [];
@@ -109,19 +109,19 @@ class GeneralLedgerBackfillService
             'date_start' => null,
             'date_end' => null,
             'journal_linked_sources' => 0,
-            'removed_duplicate_app_postings' => max(0, (int) ($resumeCheckpoint['removed_duplicate_app_postings'] ?? 0)),
+            'removed_duplicate_app_postings' => $resumeCheckpoint?->removedDuplicateAppPostings() ?? 0,
             'replaced_operational_postings' => 0,
             'operational_evidence_groups' => 0,
             'journal_pattern_groups' => 0,
         ];
-        if ($this->legacyRecheckMode && is_array($resumeCheckpoint['counts'] ?? null)) {
+        if ($this->legacyRecheckMode && $resumeCheckpoint !== null) {
             foreach ([
                 'candidate_groups', 'planned_groups', 'applied_groups', 'already_linked',
                 'journal_linked_sources', 'removed_duplicate_app_postings', 'replaced_operational_postings',
                 'operational_evidence_groups', 'actionable_review_sources',
             ] as $key) {
-                if (array_key_exists($key, $resumeCheckpoint['counts'])) {
-                    $summary[$key] = max(0, (int) $resumeCheckpoint['counts'][$key]);
+                if ($resumeCheckpoint->hasCount($key)) {
+                    $summary[$key] = $resumeCheckpoint->count($key);
                 }
             }
         }
@@ -133,7 +133,7 @@ class GeneralLedgerBackfillService
             'gl_payments' => fn (?int $afterId) => $this->paymentCandidates($businessId, null, $afterId),
             'gl_transfers' => fn (?int $afterId) => $this->bankTransferCandidates($businessId, null, $afterId),
         ];
-        $resumePhase = (string) ($resumeCheckpoint['phase'] ?? ($this->legacyRecheckMode ? 'gl_duplicates' : 'gl_transactions'));
+        $resumePhase = $resumeCheckpoint?->phase() ?? ($this->legacyRecheckMode ? 'gl_duplicates' : 'gl_transactions');
         $phaseNames = array_keys($phases);
         $resumePhaseIndex = array_search($resumePhase, $phaseNames, true);
         if ($resumePhaseIndex === false) {
@@ -144,9 +144,9 @@ class GeneralLedgerBackfillService
             $duplicateResult = $this->removeProvenJournalDuplicates(
                 $businessId,
                 $journalImportId,
-                $duplicateCheckpoint === null ? null : (isset($duplicateCheckpoint['cursor']) ? (int) $duplicateCheckpoint['cursor'] : null),
-                (int) ($duplicateCheckpoint['processed'] ?? 0),
-                (int) ($duplicateCheckpoint['counts']['removed_duplicate_app_postings'] ?? 0),
+                $duplicateCheckpoint?->cursor(),
+                $duplicateCheckpoint?->processed() ?? 0,
+                $duplicateCheckpoint?->count('removed_duplicate_app_postings') ?? 0,
                 function (int $processed, int $total, ?int $cursor, int $removed, bool $completed) use ($summary) {
                     $phaseSummary = $summary;
                     $phaseSummary['removed_duplicate_app_postings'] = $removed;
@@ -154,8 +154,6 @@ class GeneralLedgerBackfillService
                 }
             );
             $summary['removed_duplicate_app_postings'] = $duplicateResult['removed'];
-        } elseif ($this->legacyRecheckMode && isset($resumeCheckpoint['removed_duplicate_app_postings'])) {
-            $summary['removed_duplicate_app_postings'] = max(0, (int) $resumeCheckpoint['removed_duplicate_app_postings']);
         }
         foreach ($phaseNames as $phaseIndex => $phase) {
             if ($phase === 'gl_duplicates') {
@@ -164,11 +162,11 @@ class GeneralLedgerBackfillService
             if ($phaseIndex < $resumePhaseIndex) {
                 continue;
             }
-            $afterId = $phaseIndex === $resumePhaseIndex && isset($resumeCheckpoint['cursor'])
-                ? max(0, (int) $resumeCheckpoint['cursor'])
+            $afterId = $phaseIndex === $resumePhaseIndex && $resumeCheckpoint?->cursor() !== null
+                ? $resumeCheckpoint->cursor()
                 : null;
             $phaseProcessed = $phaseIndex === $resumePhaseIndex
-                ? max(0, (int) ($resumeCheckpoint['processed'] ?? 0))
+                ? ($resumeCheckpoint?->processed() ?? 0)
                 : 0;
             $lastCursor = $afterId;
             foreach ($phases[$phase]($afterId) as $candidate) {

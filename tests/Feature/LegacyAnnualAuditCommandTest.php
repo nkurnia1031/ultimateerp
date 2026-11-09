@@ -377,9 +377,10 @@ class LegacyAnnualAuditCommandTest extends TestCase
                 true,
                 4,
                 Mockery::on(fn ($callback) => is_callable($callback)),
-                Mockery::on(fn ($checkpoint) => ($checkpoint['phase'] ?? null) === 'gl_duplicates'
-                    && ($checkpoint['cursor'] ?? null) === null
-                    && ($checkpoint['removed_duplicate_app_postings'] ?? null) === 0)
+                Mockery::on(fn ($checkpoint) => $checkpoint instanceof \Modules\Accounting\Services\GeneralLedgerBackfillCheckpoint
+                    && $checkpoint->phase() === 'gl_duplicates'
+                    && $checkpoint->cursor() === null
+                    && $checkpoint->removedDuplicateAppPostings() === 0)
             )
             ->andReturn([
                 'journal_linked_sources' => 1,

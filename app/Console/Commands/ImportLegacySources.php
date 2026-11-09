@@ -1118,7 +1118,7 @@ class ImportLegacySources extends Command
         return is_array($checkpoint) && ! empty($checkpoint['completed_at']);
     }
 
-    private function pendingGlCheckpoint(array $checkpoints): ?array
+    private function pendingGlCheckpoint(array $checkpoints): GeneralLedgerBackfillCheckpoint
     {
         $lastCompletedCounts = [];
         foreach (['gl_duplicates', 'gl_transactions', 'gl_payments', 'gl_transfers'] as $phase) {
@@ -1133,7 +1133,7 @@ class ImportLegacySources extends Command
                 }
                 $pending['removed_duplicate_app_postings'] = (int) ($checkpoints['gl_duplicates']['counts']['removed_duplicate_app_postings'] ?? 0);
 
-                return $pending;
+                return GeneralLedgerBackfillCheckpoint::fromArray($pending);
             }
 
             if (is_array($checkpoint['counts'] ?? null)) {
@@ -1141,13 +1141,13 @@ class ImportLegacySources extends Command
             }
         }
 
-        return [
+        return GeneralLedgerBackfillCheckpoint::fromArray([
             'phase' => 'recheck_complete',
             'cursor' => null,
             'processed' => (int) ($checkpoints['gl_transfers']['processed'] ?? 0),
             'counts' => $lastCompletedCounts,
             'removed_duplicate_app_postings' => (int) ($checkpoints['gl_duplicates']['counts']['removed_duplicate_app_postings'] ?? 0),
-        ];
+        ]);
     }
 
     private function checkpointSummary(array $counts): array
