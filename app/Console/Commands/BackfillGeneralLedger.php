@@ -39,6 +39,7 @@ class BackfillGeneralLedger extends Command
         $this->line('Applied groups: '.(int) $summary['applied_groups']);
         $this->line('Already linked: '.(int) $summary['already_linked']);
         $this->line('Groups using current location maps: '.(int) $summary['current_map_groups']);
+        $this->line('Groups using unique operational evidence: '.(int) ($summary['operational_evidence_groups'] ?? 0));
         $this->line('Auto-mapped groups: '.(int) ($summary['auto_mapped_groups'] ?? 0));
         $this->line('Groups with separated VAT: '.(int) ($summary['vat_split_groups'] ?? 0));
         $this->line('Ambiguous VAT accounts: '.(int) $summary['ambiguous_vat_accounts']);

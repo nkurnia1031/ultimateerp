@@ -639,6 +639,7 @@ class ImportLegacySources extends Command
             ];
             $this->line('Recheck GL selesai: '
                 .$generalLedgerRecheck['journal_linked_sources'].' sumber memakai Journal, '
+                .($generalLedgerRecheck['operational_evidence_groups'] ?? 0).' grup memakai bukti operasional unik, '
                 .$generalLedgerRecheck['removed_duplicate_app_postings'].' posting otomatis duplikat dihapus, '
                 .$generalLedgerRecheck['replaced_operational_postings'].' posting operasional diperbarui, '
                 .$generalLedgerRecheck['actionable_review_sources'].' sumber menunggu review.');
@@ -1154,7 +1155,7 @@ class ImportLegacySources extends Command
         $keys = [
             'candidate_groups', 'planned_groups', 'applied_groups', 'already_linked',
             'journal_linked_sources', 'removed_duplicate_app_postings', 'replaced_operational_postings',
-            'actionable_review_sources',
+            'operational_evidence_groups', 'actionable_review_sources',
         ];
         $summary = [];
         foreach ($keys as $key) {

@@ -502,6 +502,63 @@ class GeneralLedgerBackfillCommandTest extends TestCase
         $this->assertSame(1, DB::table('accounting_accounts_transactions')->where('transaction_id', 905)->where('map_type', 'manual')->count());
     }
 
+    public function test_legacy_recheck_uses_unique_operational_evidence_before_saved_location_maps(): void
+    {
+        DB::table('business_locations')->where('id', 70)->update([
+            'accounting_default_map' => json_encode([
+                'sale' => ['payment_account' => 108, 'deposit_to' => 104],
+                'purchases' => ['payment_account' => 104, 'deposit_to' => 108],
+                'expense_5' => ['payment_account' => 102, 'deposit_to' => 101],
+                'expense_6' => ['payment_account' => 101, 'deposit_to' => 102],
+            ]),
+        ]);
+        DB::table('expense_categories')->insert([
+            ['id' => 5, 'business_id' => 7, 'name' => 'Beban Umum'],
+            ['id' => 6, 'business_id' => 7, 'name' => 'Biaya Ambigu'],
+        ]);
+        DB::table('accounting_accounts')->insert([
+            ['id' => 113, 'business_id' => 7, 'name' => 'Sales', 'account_primary_type' => 'income', 'status' => 'active', 'created_by' => 1],
+            ['id' => 114, 'business_id' => 7, 'name' => 'Purchases', 'account_primary_type' => 'expenses', 'status' => 'active', 'created_by' => 1],
+            ['id' => 115, 'business_id' => 7, 'name' => 'Biaya Ambigu', 'account_primary_type' => 'expense', 'status' => 'active', 'created_by' => 1],
+            ['id' => 116, 'business_id' => 7, 'name' => 'Biaya Ambigu', 'account_primary_type' => 'expense', 'status' => 'active', 'created_by' => 1],
+        ]);
+        DB::table('categories')->insert([
+            ['id' => 30, 'business_id' => 7, 'name' => 'Sales', 'parent_id' => 0],
+            ['id' => 31, 'business_id' => 7, 'name' => 'Purchases', 'parent_id' => 0],
+        ]);
+        DB::table('products')->insert([
+            ['id' => 301, 'business_id' => 7, 'category_id' => 30],
+            ['id' => 302, 'business_id' => 7, 'category_id' => 31],
+        ]);
+        DB::table('transactions')->insert([
+            ['id' => 964, 'business_id' => 7, 'location_id' => 70, 'type' => 'expense', 'status' => 'final', 'expense_category_id' => 5, 'transaction_date' => '2023-08-02 10:00:00', 'final_total' => 100, 'total_before_tax' => 100, 'tax_amount' => 0, 'created_by' => 1, 'invoice_no' => 'EXP-964'],
+            ['id' => 965, 'business_id' => 7, 'location_id' => 70, 'type' => 'expense', 'status' => 'final', 'expense_category_id' => 6, 'transaction_date' => '2023-08-03 10:00:00', 'final_total' => 80, 'total_before_tax' => 80, 'tax_amount' => 0, 'created_by' => 1, 'invoice_no' => 'EXP-965'],
+            ['id' => 966, 'business_id' => 7, 'location_id' => 70, 'type' => 'sell', 'status' => 'final', 'transaction_date' => '2023-08-04 10:00:00', 'final_total' => 120, 'total_before_tax' => 120, 'tax_amount' => 0, 'created_by' => 1, 'invoice_no' => 'SALE-966'],
+            ['id' => 967, 'business_id' => 7, 'location_id' => 70, 'type' => 'purchase', 'status' => 'received', 'transaction_date' => '2023-08-05 10:00:00', 'final_total' => 130, 'total_before_tax' => 130, 'tax_amount' => 0, 'created_by' => 1, 'invoice_no' => 'PUR-967'],
+        ]);
+        DB::table('transaction_payments')->insert([
+            ['id' => 560, 'transaction_id' => 964, 'business_id' => 7, 'account_id' => 201, 'amount' => 100, 'paid_on' => '2023-08-02 10:00:00', 'created_by' => 1, 'is_return' => 0, 'is_advance' => 0],
+            ['id' => 561, 'transaction_id' => 965, 'business_id' => 7, 'account_id' => 201, 'amount' => 80, 'paid_on' => '2023-08-03 10:00:00', 'created_by' => 1, 'is_return' => 0, 'is_advance' => 0],
+        ]);
+        DB::table('transaction_sell_lines')->insert(['id' => 1, 'transaction_id' => 966, 'product_id' => 301]);
+        DB::table('purchase_lines')->insert(['id' => 1, 'transaction_id' => 967, 'product_id' => 302]);
+
+        $summary = app(\Modules\Accounting\Services\GeneralLedgerBackfillService::class)->run(7, true, true, 900);
+
+        $this->assertSame(3, $summary['operational_evidence_groups']);
+        $this->assertSame(1, $summary['current_map_groups']);
+        $this->assertSame(4, $summary['applied_groups']);
+        $this->assertSame(0, DB::table('accounting_accounts_transactions')->where('transaction_id', 964)->where('accounting_account_id', 102)->count());
+        $this->assertSame(1, DB::table('accounting_accounts_transactions')->where('transaction_id', 964)->where('accounting_account_id', 108)->where('type', 'debit')->where('amount', 100)->count());
+        $this->assertSame(1, DB::table('accounting_accounts_transactions')->where('transaction_id', 964)->where('accounting_account_id', 104)->where('type', 'credit')->where('amount', 100)->count());
+        $this->assertSame(1, DB::table('accounting_accounts_transactions')->where('transaction_id', 965)->where('accounting_account_id', 102)->where('type', 'debit')->where('amount', 80)->count());
+        $this->assertSame(1, DB::table('accounting_accounts_transactions')->where('transaction_id', 965)->where('accounting_account_id', 101)->where('type', 'credit')->where('amount', 80)->count());
+        $this->assertSame(1, DB::table('accounting_accounts_transactions')->where('transaction_id', 966)->where('accounting_account_id', 113)->where('type', 'credit')->where('amount', 120)->count());
+        $this->assertSame(1, DB::table('accounting_accounts_transactions')->where('transaction_id', 966)->where('accounting_account_id', 101)->where('type', 'debit')->where('amount', 120)->count());
+        $this->assertSame(1, DB::table('accounting_accounts_transactions')->where('transaction_id', 967)->where('accounting_account_id', 114)->where('type', 'debit')->where('amount', 130)->count());
+        $this->assertSame(1, DB::table('accounting_accounts_transactions')->where('transaction_id', 967)->where('accounting_account_id', 107)->where('type', 'credit')->where('amount', 130)->count());
+    }
+
     public function test_dry_run_does_not_stage_actionable_skips_and_apply_stages_them_idempotently_per_business(): void
     {
         DB::table('transactions')->insert([
@@ -1338,6 +1395,31 @@ class GeneralLedgerBackfillCommandTest extends TestCase
             $table->increments('id');
             $table->unsignedInteger('business_id');
             $table->string('name');
+            $table->softDeletes();
+        });
+        Schema::create('categories', function (Blueprint $table) {
+            $table->increments('id');
+            $table->unsignedInteger('business_id');
+            $table->string('name');
+            $table->unsignedInteger('parent_id')->nullable();
+            $table->softDeletes();
+        });
+        Schema::create('products', function (Blueprint $table) {
+            $table->increments('id');
+            $table->unsignedInteger('business_id');
+            $table->unsignedInteger('category_id')->nullable();
+            $table->softDeletes();
+        });
+        Schema::create('transaction_sell_lines', function (Blueprint $table) {
+            $table->increments('id');
+            $table->unsignedInteger('transaction_id');
+            $table->unsignedInteger('product_id');
+            $table->softDeletes();
+        });
+        Schema::create('purchase_lines', function (Blueprint $table) {
+            $table->increments('id');
+            $table->unsignedInteger('transaction_id');
+            $table->unsignedInteger('product_id');
             $table->softDeletes();
         });
         Schema::create('account_transactions', function (Blueprint $table) {

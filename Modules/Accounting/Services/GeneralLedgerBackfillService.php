@@ -111,13 +111,14 @@ class GeneralLedgerBackfillService
             'journal_linked_sources' => 0,
             'removed_duplicate_app_postings' => max(0, (int) ($resumeCheckpoint['removed_duplicate_app_postings'] ?? 0)),
             'replaced_operational_postings' => 0,
+            'operational_evidence_groups' => 0,
             'journal_pattern_groups' => 0,
         ];
         if ($this->legacyRecheckMode && is_array($resumeCheckpoint['counts'] ?? null)) {
             foreach ([
                 'candidate_groups', 'planned_groups', 'applied_groups', 'already_linked',
                 'journal_linked_sources', 'removed_duplicate_app_postings', 'replaced_operational_postings',
-                'actionable_review_sources',
+                'operational_evidence_groups', 'actionable_review_sources',
             ] as $key) {
                 if (array_key_exists($key, $resumeCheckpoint['counts'])) {
                     $summary[$key] = max(0, (int) $resumeCheckpoint['counts'][$key]);
@@ -547,6 +548,7 @@ class GeneralLedgerBackfillService
             'current_map_groups' => 0,
             'auto_map_details' => [],
             'auto_mapped_groups' => 0,
+            'operational_evidence_groups' => 0,
             'ambiguous_vat_accounts' => 0,
             'missing_vat_accounts' => 0,
             'skipped' => [],
@@ -766,6 +768,164 @@ class GeneralLedgerBackfillService
             ?? ($candidate['review_source']['source_record_id'] ?? null);
 
         return is_numeric($sourceId) && (int) $sourceId > 0 ? (int) $sourceId : null;
+    }
+
+    private function operationalProductCategoryEvidenceQuery(int $businessId)
+    {
+        if (! Schema::hasTable('products') || ! Schema::hasTable('categories')
+            || ! Schema::hasColumn('products', 'category_id')
+            || ! Schema::hasColumn('products', 'business_id')
+            || ! Schema::hasColumn('categories', 'business_id')) {
+            return null;
+        }
+
+        $sources = [];
+        foreach (['transaction_sell_lines' => 'sell', 'purchase_lines' => 'purchase'] as $lineTable => $transactionType) {
+            if (! Schema::hasTable($lineTable)
+                || ! Schema::hasColumn($lineTable, 'transaction_id')
+                || ! Schema::hasColumn($lineTable, 'product_id')) {
+                continue;
+            }
+
+            $source = DB::table($lineTable.' as source_line')
+                ->join('transactions as source_transaction', 'source_transaction.id', '=', 'source_line.transaction_id')
+                ->leftJoin('products as product', function ($join) use ($businessId) {
+                    $join->on('product.id', '=', 'source_line.product_id')
+                        ->where('product.business_id', '=', $businessId);
+                    if (Schema::hasColumn('products', 'deleted_at')) {
+                        $join->whereNull('product.deleted_at');
+                    }
+                })
+                ->leftJoin('categories as category', function ($join) use ($businessId) {
+                    $join->on('category.id', '=', 'product.category_id')
+                        ->where('category.business_id', '=', $businessId);
+                    if (Schema::hasColumn('categories', 'deleted_at')) {
+                        $join->whereNull('category.deleted_at');
+                    }
+                })
+                ->where('source_transaction.business_id', $businessId)
+                ->where('source_transaction.type', $transactionType)
+                ->whereIn('source_transaction.status', $transactionType === 'sell' ? ['final'] : ['received'])
+                ->select('source_line.transaction_id')
+                ->selectRaw('category.id as category_id, category.name as category_name');
+
+            if (Schema::hasColumn('transactions', 'deleted_at')) {
+                $source->whereNull('source_transaction.deleted_at');
+            }
+            if (Schema::hasColumn($lineTable, 'deleted_at')) {
+                $source->whereNull('source_line.deleted_at');
+            }
+
+            $sources[] = $source;
+        }
+
+        if ($sources === []) {
+            return null;
+        }
+
+        $lineEvidence = array_shift($sources);
+        foreach ($sources as $source) {
+            $lineEvidence->unionAll($source);
+        }
+
+        return DB::query()
+            ->fromSub($lineEvidence, 'operational_product_lines')
+            ->select('transaction_id')
+            ->selectRaw('COUNT(*) as operational_product_line_count')
+            ->selectRaw('COUNT(category_id) as operational_categorized_line_count')
+            ->selectRaw('COUNT(DISTINCT category_id) as operational_category_count')
+            ->selectRaw('MIN(category_name) as operational_category_name')
+            ->groupBy('transaction_id');
+    }
+
+    private function uniqueOperationalEvidencePair(int $businessId, object $transaction): array
+    {
+        $type = (string) ($transaction->type ?? '');
+        if ($type === 'expense') {
+            $evidence = $this->inferExpensePair($businessId, $transaction, true);
+            if (empty($evidence['reason'])) {
+                $evidence['operational_evidence'] = true;
+            }
+
+            return $evidence;
+        }
+
+        if (! in_array($type, ['sell', 'purchase'], true)) {
+            return ['reason' => 'bukti_operasional_tidak_tersedia'];
+        }
+
+        $lineCount = (int) ($transaction->operational_product_line_count ?? 0);
+        $categorizedLineCount = (int) ($transaction->operational_categorized_line_count ?? 0);
+        $categoryCount = (int) ($transaction->operational_category_count ?? 0);
+        $categoryName = trim((string) ($transaction->operational_category_name ?? ''));
+        if ($lineCount < 1 || $categorizedLineCount !== $lineCount || $categoryCount !== 1 || $categoryName === '') {
+            return ['reason' => 'kategori_produk_operasional_tidak_unik'];
+        }
+
+        $categoryAccount = $this->exactOperationalAccountByName(
+            $businessId,
+            $categoryName,
+            $type === 'sell' ? ['income'] : ['asset', 'expense', 'expenses']
+        );
+        if (! empty($categoryAccount['reason'])) {
+            return $categoryAccount;
+        }
+
+        $role = $type === 'sell' ? 'receivable' : 'payable';
+        $counterpart = $this->inferOperationalRoleAccount($businessId, $role, false);
+        if (! empty($counterpart['reason'])) {
+            return $counterpart;
+        }
+
+        $category = $categoryAccount['account'];
+        $pair = $type === 'sell'
+            ? ['payment_account' => $category, 'deposit_to' => $counterpart['account']]
+            : ['payment_account' => $counterpart['account'], 'deposit_to' => $category];
+        $roleAccountInfo = [
+            'score' => $counterpart['score'] ?? 1.0,
+            'method' => $counterpart['method'] ?? 'exact_name',
+        ];
+        $categoryInfo = [
+            'score' => $categoryAccount['score'] ?? 1.0,
+            'method' => $categoryAccount['method'] ?? 'exact_name',
+        ];
+
+        return [
+            'pair' => $pair,
+            'payment_account_score' => $type === 'sell' ? $categoryInfo['score'] : $roleAccountInfo['score'],
+            'payment_account_method' => $type === 'sell' ? $categoryInfo['method'] : $roleAccountInfo['method'],
+            'deposit_to_score' => $type === 'sell' ? $roleAccountInfo['score'] : $categoryInfo['score'],
+            'deposit_to_method' => $type === 'sell' ? $roleAccountInfo['method'] : $categoryInfo['method'],
+            'account_links' => ! empty($counterpart['crosswalk']) ? [$counterpart['crosswalk']] : [],
+            'operational_evidence' => true,
+        ];
+    }
+
+    private function exactOperationalAccountByName(int $businessId, string $sourceName, array $allowedTypes): array
+    {
+        $normalizedName = $this->normalizeExactAccountName($sourceName);
+        $allowedTypes = array_map('strtolower', $allowedTypes);
+        if (in_array('expense', $allowedTypes, true) || in_array('expenses', $allowedTypes, true)) {
+            $allowedTypes[] = 'expense';
+            $allowedTypes[] = 'expenses';
+        }
+        $allowedTypes = array_values(array_unique($allowedTypes));
+        $matches = array_values(array_filter(
+            $this->accountingAccountsCache[$businessId] ?? [],
+            fn ($account) => $this->normalizeExactAccountName((string) $account->name) === $normalizedName
+                && in_array(strtolower((string) ($account->account_primary_type ?? '')), $allowedTypes, true)
+        ));
+
+        if (count($matches) !== 1) {
+            return ['reason' => count($matches) > 1 ? 'akun_coa_bukti_operasional_ambigu' : 'akun_coa_bukti_operasional_tidak_ditemukan'];
+        }
+
+        return [
+            'account' => $matches[0],
+            'score' => 1.0,
+            'source_name' => $sourceName,
+            'method' => 'exact_name',
+        ];
     }
 
     private function journalSourceLinkState(int $businessId, string $sourceType, int $sourceId): string
@@ -1250,6 +1410,21 @@ class GeneralLedgerBackfillService
             ->when($afterId !== null, fn ($query) => $query->where('id', '>', $afterId))
             ->orderBy('id');
 
+        if ($this->legacyRecheckMode) {
+            $productCategoryEvidence = $this->operationalProductCategoryEvidenceQuery($businessId);
+            if ($productCategoryEvidence !== null) {
+                $query->leftJoinSub($productCategoryEvidence, 'operational_product_evidence', function ($join) {
+                    $join->on('operational_product_evidence.transaction_id', '=', 'transactions.id');
+                })->addSelect(
+                    'transactions.*',
+                    'operational_product_evidence.operational_product_line_count',
+                    'operational_product_evidence.operational_categorized_line_count',
+                    'operational_product_evidence.operational_category_count',
+                    'operational_product_evidence.operational_category_name'
+                );
+            }
+        }
+
         if (Schema::hasColumn('transactions', 'deleted_at')) {
             $query->whereNull('deleted_at');
         }
@@ -1282,9 +1457,22 @@ class GeneralLedgerBackfillService
                 $mappingKey = 'expense_'.$transaction->expense_category_id;
             }
             $accountMap = $locationMap[$mappingKey] ?? [];
-            $pair = $this->resolveAccountingPair($businessId, $accountMap);
+            $pair = null;
             $autoMap = null;
             $journalPattern = false;
+
+            if ($this->legacyRecheckMode) {
+                $operationalEvidence = $this->uniqueOperationalEvidencePair($businessId, $transaction);
+                if (empty($operationalEvidence['reason'])) {
+                    $pair = $operationalEvidence['pair'];
+                    $autoMap = $operationalEvidence;
+                }
+            }
+
+            if ($pair === null) {
+                $pair = $this->resolveAccountingPair($businessId, $accountMap);
+            }
+
             if (! empty($pair['reason']) && $this->legacyRecheckMode) {
                 $pattern = $this->journalPatternPair($businessId, $transaction);
                 if (empty($pattern['reason'])) {
@@ -1379,6 +1567,17 @@ class GeneralLedgerBackfillService
             }
 
             $date = (string) ($transaction->transaction_date ?? '');
+            $operationalEvidenceUsed = ! empty($autoMap['operational_evidence']);
+            $mappingSource = $operationalEvidenceUsed
+                ? 'operational_evidence'
+                : ($journalPattern ? 'journal_pattern' : ($autoMap === null ? 'location' : 'automatic_nearest'));
+            $mappingNote = $operationalEvidenceUsed
+                ? 'Backfill dari transaksi '.$type.' #'.$transaction->id.' memakai bukti kategori dan akun operasional yang unik.'
+                : ($autoMap === null
+                    ? ($journalPattern
+                        ? 'Recheck legacy dari transaksi '.$type.' #'.$transaction->id.' memakai pola Journal unik untuk lokasi dan kategori ini.'
+                        : 'Backfill dari transaksi '.$type.' #'.$transaction->id.' dengan mapping lokasi saat ini.')
+                    : 'Backfill dari transaksi '.$type.' #'.$transaction->id.' dengan pemetaan CoA terdekat otomatis.');
             $candidate = $this->group(
                 $businessId,
                 Transaction::class,
@@ -1387,11 +1586,7 @@ class GeneralLedgerBackfillService
                 $date,
                 (int) ($transaction->created_by ?? 1),
                 (string) ($transaction->invoice_no ?: $transaction->ref_no ?: strtoupper($type).'-'.$transaction->id),
-                $autoMap === null
-                    ? ($journalPattern
-                        ? 'Recheck legacy dari transaksi '.$type.' #'.$transaction->id.' memakai pola Journal unik untuk lokasi dan kategori ini.'
-                        : 'Backfill dari transaksi '.$type.' #'.$transaction->id.' dengan mapping lokasi saat ini.')
-                    : 'Backfill dari transaksi '.$type.' #'.$transaction->id.' dengan pemetaan CoA terdekat otomatis.',
+                $mappingNote,
                 $lines,
                 $autoMap === null && ! $journalPattern,
                 (int) $transaction->id,
@@ -1403,14 +1598,15 @@ class GeneralLedgerBackfillService
                     (int) ($transaction->location_id ?? 0),
                     $mappingKey,
                     $pair,
-                    $journalPattern ? 'journal_pattern' : ($autoMap === null ? 'location' : 'automatic_nearest'),
+                    $mappingSource,
                     $autoMap['payment_account_score'] ?? null,
                     $autoMap['deposit_to_score'] ?? null,
                     $autoMap['payment_account_method'] ?? null,
                     $autoMap['deposit_to_method'] ?? null
                 )
             );
-            $candidate['uses_auto_map'] = $autoMap !== null;
+            $candidate['uses_auto_map'] = $autoMap !== null && ! $operationalEvidenceUsed;
+            $candidate['uses_operational_evidence'] = $operationalEvidenceUsed;
             $candidate['uses_journal_pattern'] = $journalPattern;
             $candidate['source_amount'] = $total;
             $candidate['source_tax_amount'] = $tax;
@@ -2389,6 +2585,9 @@ class GeneralLedgerBackfillService
         if (! empty($candidate['uses_journal_pattern'])) {
             $summary['journal_pattern_groups'] = ($summary['journal_pattern_groups'] ?? 0) + 1;
         }
+        if (! empty($candidate['uses_operational_evidence'])) {
+            $summary['operational_evidence_groups'] = ($summary['operational_evidence_groups'] ?? 0) + 1;
+        }
         if (! empty($candidate['requires_vat_account'])) {
             $summary['vat_split_groups'] = ($summary['vat_split_groups'] ?? 0) + 1;
         }
@@ -2841,18 +3040,24 @@ class GeneralLedgerBackfillService
         return $query->get()->groupBy('transaction_id')->all();
     }
 
-    private function inferExpensePair(int $businessId, object $transaction): array
+    private function inferExpensePair(int $businessId, object $transaction, bool $requireUniqueEvidence = false): array
     {
         $category = $this->expenseCategoriesCache[$businessId][(int) ($transaction->expense_category_id ?? 0)] ?? null;
         if (! $category) {
             return ['reason' => 'kategori_biaya_tidak_ditemukan'];
         }
 
-        $expenseAccount = $this->nearestAccountingAccount(
-            $businessId,
-            (string) $category->name,
-            $this->accountTypesForExpenseCategory((string) $category->name)
-        );
+        $expenseAccount = $requireUniqueEvidence
+            ? $this->exactOperationalAccountByName(
+                $businessId,
+                (string) $category->name,
+                $this->accountTypesForExpenseCategory((string) $category->name)
+            )
+            : $this->nearestAccountingAccount(
+                $businessId,
+                (string) $category->name,
+                $this->accountTypesForExpenseCategory((string) $category->name)
+            );
         if (! empty($expenseAccount['reason'])) {
             return $expenseAccount;
         }
@@ -2877,7 +3082,7 @@ class GeneralLedgerBackfillService
                 return ['reason' => 'akun_pembayaran_operasional_kosong'];
             }
 
-            $resolved = $this->mainAccountMapping($businessId, $operationalAccountId);
+            $resolved = $this->mainAccountMapping($businessId, $operationalAccountId, ! $requireUniqueEvidence);
             if (! empty($resolved['reason'])) {
                 return $resolved;
             }
@@ -2886,7 +3091,7 @@ class GeneralLedgerBackfillService
                 'account' => $resolved['account'],
                 'score' => $resolved['score'] ?? 1.0,
                 'source_name' => $resolved['source_name'] ?? '',
-                    'method' => $resolved['method'] ?? (! empty($resolved['automatic_nearest']) ? 'nearest_name' : 'account_id'),
+                'method' => $resolved['method'] ?? (! empty($resolved['automatic_nearest']) ? 'nearest_name' : 'account_id'),
             ];
             if (! empty($resolved['crosswalk'])) {
                 $accountLinks[] = $resolved['crosswalk'];
@@ -2899,7 +3104,7 @@ class GeneralLedgerBackfillService
         }
 
         if ($paidTotal < $total - 0.0001) {
-            $payable = $this->inferOperationalRoleAccount($businessId, 'payable');
+            $payable = $this->inferOperationalRoleAccount($businessId, 'payable', ! $requireUniqueEvidence);
             if (! empty($payable['reason'])) {
                 return $payable;
             }
@@ -2929,20 +3134,23 @@ class GeneralLedgerBackfillService
             'payment_lines' => $paymentLines,
             'account_links' => array_values(array_unique($accountLinks, SORT_REGULAR)),
             'payment_source_names' => array_values(array_unique(array_filter(array_column($paymentAccounts, 'source_name')))),
+            'operational_evidence' => $requireUniqueEvidence,
         ];
     }
 
-    private function inferOperationalRoleAccount(int $businessId, string $role): array
+    private function inferOperationalRoleAccount(int $businessId, string $role, bool $allowNearest = true): array
     {
         $roles = [
             'receivable' => [
                 'operational_names' => ['Account Receivable', 'Accounts Receivable', 'Piutang Usaha'],
                 'coa_name' => 'Accounts Receivable',
+                'coa_names' => ['Accounts Receivable (A/R)', 'Accounts Receivable', 'Account Receivable', 'Piutang Usaha'],
                 'account_types' => ['asset'],
             ],
             'payable' => [
                 'operational_names' => ['Trade Payable', 'Account Payable', 'Accounts Payable', 'Utang Usaha', 'Hutang Usaha'],
                 'coa_name' => 'Trade Payable',
+                'coa_names' => ['Trade Payable', 'Account Payable', 'Accounts Payable', 'Utang Usaha', 'Hutang Usaha'],
                 'account_types' => ['liability'],
             ],
         ];
@@ -2951,17 +3159,22 @@ class GeneralLedgerBackfillService
         }
 
         $roleConfig = $roles[$role];
-        $aliases = array_map([$this, 'normalizeAccountName'], $roleConfig['operational_names']);
+        $aliases = array_map([$this, 'normalizeExactAccountName'], $roleConfig['operational_names']);
         $query = DB::table('accounts')->where('business_id', $businessId);
         if (Schema::hasColumn('accounts', 'deleted_at')) {
             $query->whereNull('deleted_at');
         }
+        $normalizeRoleName = $allowNearest ? 'normalizeAccountName' : 'normalizeExactAccountName';
         $operationalAccounts = $query->get(['id', 'name'])
-            ->filter(fn ($account) => in_array($this->normalizeAccountName((string) $account->name), $aliases, true))
+            ->filter(fn ($account) => in_array($this->{$normalizeRoleName}((string) $account->name), $aliases, true))
             ->values();
 
+        if (! $allowNearest && $operationalAccounts->count() > 1) {
+            return ['reason' => 'akun_peran_operasional_ambigu'];
+        }
+
         if ($operationalAccounts->count() === 1) {
-            $mapped = $this->mainAccountMapping($businessId, (int) $operationalAccounts[0]->id);
+            $mapped = $this->mainAccountMapping($businessId, (int) $operationalAccounts[0]->id, $allowNearest);
             if (! empty($mapped['reason'])) {
                 return $mapped;
             }
@@ -2973,6 +3186,30 @@ class GeneralLedgerBackfillService
                 'method' => $mapped['method'] ?? ($mapped['crosswalk'] === null ? 'account_id' : 'exact_name'),
                 'automatic_nearest' => ! empty($mapped['automatic_nearest']),
                 'crosswalk' => $mapped['crosswalk'] ?? null,
+            ];
+        }
+
+        if (! $allowNearest) {
+            $matches = [];
+            foreach ($roleConfig['coa_names'] as $coaName) {
+                $resolved = $this->exactOperationalAccountByName($businessId, $coaName, $roleConfig['account_types']);
+                if (empty($resolved['reason'])) {
+                    $matches[(int) $resolved['account']->id] = $resolved;
+                }
+            }
+
+            if (count($matches) !== 1) {
+                return ['reason' => count($matches) > 1 ? 'akun_coa_peran_operasional_ambigu' : 'akun_coa_peran_operasional_tidak_ditemukan'];
+            }
+
+            $resolved = array_values($matches)[0];
+
+            return [
+                'account' => $resolved['account'],
+                'score' => 1.0,
+                'source_name' => $resolved['source_name'],
+                'method' => 'exact_name',
+                'crosswalk' => null,
             ];
         }
 
@@ -3188,6 +3425,14 @@ class GeneralLedgerBackfillService
         ];
 
         return implode(' ', array_map(fn ($token) => $aliases[$token] ?? $token, $tokens));
+    }
+
+    private function normalizeExactAccountName(string $name): string
+    {
+        $name = mb_strtolower(str_replace('&', ' and ', trim($name)));
+        $name = preg_replace('/[^\pL\pN]+/u', ' ', $name) ?: '';
+
+        return trim(preg_replace('/\s+/u', ' ', $name) ?: '');
     }
 
     private function accountTypesForOperationalAccount(string $name): array
