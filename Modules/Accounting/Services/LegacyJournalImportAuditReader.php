@@ -7,6 +7,31 @@ use Illuminate\Support\Facades\Schema;
 
 class LegacyJournalImportAuditReader
 {
+    public function readEntries(int $businessId, ?int $importId): array
+    {
+        if ($businessId < 1 || $importId === null || $importId < 1
+            || ! Schema::hasTable('accounting_journal_import_rows')) {
+            return [];
+        }
+
+        $entries = [];
+        DB::table('accounting_journal_import_rows')
+            ->where('journal_import_id', $importId)
+            ->where('business_id', $businessId)
+            ->orderBy('id')
+            ->select('id', 'entry_data')
+            ->chunkById(500, function ($rows) use (&$entries) {
+                foreach ($rows as $row) {
+                    $entry = json_decode((string) ($row->entry_data ?? ''), true);
+                    if (is_array($entry)) {
+                        $entries[] = $entry;
+                    }
+                }
+            }, 'id');
+
+        return $entries;
+    }
+
     public function read(int $businessId, ?int $importId, array $unmappedBySourceKey = []): array
     {
         if ($businessId < 1 || $importId === null || $importId < 1

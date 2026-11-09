@@ -79,6 +79,35 @@ class JournalTaxReconciliationTest extends TestCase
         $this->assertSame($originalSnapshot, $retryMapping->source_tax_snapshot);
     }
 
+    public function test_resumed_reconciliation_reports_cumulative_progress_and_total(): void
+    {
+        $this->createTransaction(100, 'expense', 100, 5, 105);
+        $this->createJournalMapping(500, 100);
+        $this->createJournalLines(500, [
+            [10, 100, 'debit'],
+            [20, 10, 'debit'],
+            [40, 110, 'credit'],
+        ]);
+
+        $progress = null;
+        $result = $this->service->reconcileImport(
+            50,
+            1,
+            true,
+            function (int $processed, array $counts, ?int $cursor, int $total) use (&$progress): void {
+                $progress = compact('processed', 'counts', 'cursor', 'total');
+            },
+            500,
+            ['reconciled' => 1]
+        );
+
+        $this->assertSame(['reconciled' => 1, 'review' => 0, 'not_applicable' => 0], $result);
+        $this->assertSame(1, $progress['processed']);
+        $this->assertSame(1, $progress['total']);
+        $this->assertSame(500, $progress['cursor']);
+        $this->assertSame($result, $progress['counts']);
+    }
+
     public function test_forced_reconciliation_refreshes_tax_but_preserves_original_revert_snapshot(): void
     {
         $this->createTransaction(101, 'expense', 100, 5, 105);

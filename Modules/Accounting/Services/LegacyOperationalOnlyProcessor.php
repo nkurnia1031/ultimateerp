@@ -19,25 +19,50 @@ class LegacyOperationalOnlyProcessor
         JournalImportInvoiceService $invoiceService,
         JournalImportExpenseService $expenseService,
         ?LegacySourceReconciliationFindingService $sourceFindings = null,
-        ?callable $progressCallback = null
+        ?callable $progressCallback = null,
+        ?string $afterIdentity = null,
+        array $resumeCounts = [],
+        ?callable $checkpointCallback = null
     ): array {
         $journalEvidenceIdentities = array_fill_keys($journalEvidenceIdentities, true);
-        $counts = ['created' => 0, 'linked_existing' => 0, 'review' => 0, 'with_journal' => 0];
+        $counts = array_merge(
+            ['created' => 0, 'linked_existing' => 0, 'review' => 0, 'with_journal' => 0],
+            array_intersect_key($resumeCounts, array_flip(['created', 'linked_existing', 'review', 'with_journal']))
+        );
 
         $documents = (array) ($evidence['documents'] ?? []);
+        ksort($documents, SORT_STRING);
         $total = count($documents);
         $processed = 0;
+        if ($afterIdentity !== null) {
+            foreach (array_keys($documents) as $identity) {
+                if (strcmp((string) $identity, $afterIdentity) <= 0) {
+                    $processed++;
+                }
+            }
+        }
+        $lastIdentity = $afterIdentity;
         foreach ($documents as $identity => $document) {
+            if ($afterIdentity !== null && strcmp((string) $identity, $afterIdentity) <= 0) {
+                continue;
+            }
+            $lastIdentity = (string) $identity;
             if (isset($journalEvidenceIdentities[$identity])) {
                 $counts['with_journal']++;
                 $processed++;
                 if ($progressCallback && ($processed % 100 === 0 || $processed === $total)) {
                     $progressCallback($processed, $total, $counts);
                 }
+                if ($checkpointCallback && ($processed % 100 === 0 || $processed === $total)) {
+                    $checkpointCallback($lastIdentity, $processed, $total, $counts, false);
+                }
                 continue;
             }
             if (! is_array($document)) {
                 $processed++;
+                if ($checkpointCallback && ($processed % 100 === 0 || $processed === $total)) {
+                    $checkpointCallback($lastIdentity, $processed, $total, $counts, false);
+                }
                 continue;
             }
 
@@ -190,9 +215,15 @@ class LegacyOperationalOnlyProcessor
             if ($progressCallback && ($processed % 100 === 0 || $processed === $total)) {
                 $progressCallback($processed, $total, $counts);
             }
+            if ($checkpointCallback && ($processed % 100 === 0 || $processed === $total)) {
+                $checkpointCallback($lastIdentity, $processed, $total, $counts, false);
+            }
         }
 
         $runService->refreshSourceCounts($runId, $businessId);
+        if ($checkpointCallback) {
+            $checkpointCallback($lastIdentity, $total, $total, $counts, true);
+        }
 
         return $counts;
     }

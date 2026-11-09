@@ -303,6 +303,71 @@ class LegacyImportRunService
             ->update($values);
     }
 
+    public function recheckCheckpoints(int $runId, int $businessId): array
+    {
+        if (! DB::getSchemaBuilder()->hasTable('accounting_legacy_recheck_checkpoints')) {
+            return [];
+        }
+
+        $checkpoints = DB::table('accounting_legacy_recheck_checkpoints')
+            ->where('legacy_import_run_id', $runId)
+            ->where('business_id', $businessId)
+            ->get();
+        $result = [];
+        foreach ($checkpoints as $checkpoint) {
+            $counts = json_decode((string) ($checkpoint->counts ?? ''), true);
+            $result[(string) $checkpoint->phase] = [
+                'phase' => (string) $checkpoint->phase,
+                'cursor' => $checkpoint->cursor === null ? null : (string) $checkpoint->cursor,
+                'processed' => (int) $checkpoint->processed,
+                'total' => $checkpoint->total === null ? null : (int) $checkpoint->total,
+                'counts' => is_array($counts) ? $counts : [],
+                'completed_at' => $checkpoint->completed_at,
+            ];
+        }
+
+        return $result;
+    }
+
+    public function saveRecheckCheckpoint(
+        int $runId,
+        int $businessId,
+        string $phase,
+        ?string $cursor,
+        int $processed,
+        ?int $total = null,
+        array $counts = [],
+        bool $completed = false
+    ): void {
+        if (! DB::getSchemaBuilder()->hasTable('accounting_legacy_recheck_checkpoints')) {
+            throw new \RuntimeException('Tabel checkpoint recheck legacy belum tersedia. Jalankan migrasi Accounting terlebih dahulu.');
+        }
+
+        $now = now();
+        DB::table('accounting_legacy_recheck_checkpoints')->updateOrInsert(
+            ['legacy_import_run_id' => $runId, 'business_id' => $businessId, 'phase' => $phase],
+            [
+                'cursor' => $cursor,
+                'processed' => max(0, $processed),
+                'total' => $total === null ? null : max(0, $total),
+                'counts' => json_encode($counts, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                'completed_at' => $completed ? $now : null,
+                'updated_at' => $now,
+                'created_at' => $now,
+            ]
+        );
+    }
+
+    public function clearRecheckCheckpoint(int $runId, int $businessId): void
+    {
+        if (DB::getSchemaBuilder()->hasTable('accounting_legacy_recheck_checkpoints')) {
+            DB::table('accounting_legacy_recheck_checkpoints')
+                ->where('legacy_import_run_id', $runId)
+                ->where('business_id', $businessId)
+                ->delete();
+        }
+    }
+
     public function linkOperationalRecord(
         int $runId,
         int $businessId,

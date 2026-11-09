@@ -203,6 +203,7 @@ class ImportLegacySources extends Command
         $this->line('Legacy run ID: '.$runId);
         $annualAudit = null;
         $auditAnalysis = null;
+        $persistedOperationalEvidence = null;
 
         try {
             $run = $runService->findRun($runId, $businessId);
@@ -213,6 +214,17 @@ class ImportLegacySources extends Command
                 ->first();
 
             $journalAlreadyImported = $batch !== null && (string) $batch->status === 'imported';
+            $storedCheckpoints = $runService->recheckCheckpoints($runId, $businessId);
+            $canResumeRecheck = $resumeRunId !== null
+                && in_array((string) ($run->status ?? ''), ['rechecking', 'recoverable'], true)
+                && $storedCheckpoints !== [];
+            if (! $canResumeRecheck) {
+                $runService->clearRecheckCheckpoint($runId, $businessId);
+                $storedCheckpoints = [];
+            } else {
+                $pendingPhase = $this->pendingRecheckPhase($storedCheckpoints, $journalAlreadyImported);
+                $this->line('Melanjutkan checkpoint recheck legacy pada fase: '.$pendingPhase.'.');
+            }
 
             if ($batch === null || $this->batchNeedsPreparation($batch, $businessId)) {
                 $analysis = $this->analyzeJournalSources($auditInventory, $businessId, $year, $journalController, $merger, $draftService, $evidenceReader, $enricher);
@@ -251,39 +263,113 @@ class ImportLegacySources extends Command
                         $businessId,
                         $year
                     );
-                    $operationalOnly = $operationalOnlyProcessor->process(
-                        $runId,
-                        $businessId,
-                        $userId,
-                        $analysis['_operational_evidence_data'],
-                        [],
-                        $analysis['_standalone_draft_data'],
-                        $runService,
-                        $invoiceService,
-                        $expenseService,
-                        $sourceFindings,
-                        fn (int $processed, int $total, array $counts) => $this->line(
-                            'Sumber operasional tanpa Journal: '.$processed.' / '.$total
-                            .' (' .$counts['created'].' dibuat, '.$counts['linked_existing'].' ditautkan, '
-                            .$counts['review'].' review).'
-                        )
-                    );
-                    $generalLedgerRecheck = $generalLedgerBackfill->run(
-                        $businessId,
-                        true,
-                        true,
-                        null,
-                        function (string $phase, int $processed, array $counts) use ($runService, $runId, $businessId) {
-                            $message = 'Recheck GL '.$phase.': '.$processed.' sumber; '
-                                .($counts['applied_groups'] ?? 0).' posting diperbarui, '
-                                .($counts['actionable_review_sources'] ?? 0).' antrean review.';
-                            $this->line($message);
-                            $runService->updateRun($runId, $businessId, 'rechecking', $message);
+                    $operationCheckpoint = $storedCheckpoints['operational_only'] ?? null;
+                    if (! $this->checkpointIsComplete($operationCheckpoint)) {
+                        $runService->updateRun($runId, $businessId, 'rechecking', 'Memproses sumber operasional tanpa Journal.');
+                        if ($operationCheckpoint === null) {
+                            $runService->saveRecheckCheckpoint(
+                                $runId,
+                                $businessId,
+                                'operational_only',
+                                null,
+                                0,
+                                count((array) ($analysis['_operational_evidence_data']['documents'] ?? []))
+                            );
                         }
-                    );
+                        $operationalOnly = $operationalOnlyProcessor->process(
+                            $runId,
+                            $businessId,
+                            $userId,
+                            $analysis['_operational_evidence_data'],
+                            [],
+                            $analysis['_standalone_draft_data'],
+                            $runService,
+                            $invoiceService,
+                            $expenseService,
+                            $sourceFindings,
+                            function (int $processed, int $total, array $counts) use ($runService, $runId, $businessId) {
+                                $message = 'Sumber operasional tanpa Journal: '.$processed.' / '.$total
+                                    .' ('.$counts['created'].' dibuat, '.$counts['linked_existing'].' ditautkan, '
+                                    .$counts['review'].' review).';
+                                $this->line($message);
+                                $runService->updateRun($runId, $businessId, 'rechecking', $message);
+                            },
+                            $canResumeRecheck ? ($operationCheckpoint['cursor'] ?? null) : null,
+                            $canResumeRecheck ? (array) ($operationCheckpoint['counts'] ?? []) : [],
+                            function (?string $cursor, int $processed, int $total, array $counts, bool $completed) use ($runService, $runId, $businessId, &$storedCheckpoints) {
+                                $runService->saveRecheckCheckpoint($runId, $businessId, 'operational_only', $cursor, $processed, $total, $counts, $completed);
+                                $storedCheckpoints['operational_only'] = [
+                                    'phase' => 'operational_only', 'cursor' => $cursor, 'processed' => $processed,
+                                    'total' => $total, 'counts' => $counts, 'completed_at' => $completed ? now() : null,
+                                ];
+                            }
+                        );
+                        $runService->saveRecheckCheckpoint(
+                            $runId,
+                            $businessId,
+                            'operational_only',
+                            $storedCheckpoints['operational_only']['cursor'] ?? null,
+                            count((array) ($analysis['_operational_evidence_data']['documents'] ?? [])),
+                            count((array) ($analysis['_operational_evidence_data']['documents'] ?? [])),
+                            $operationalOnly,
+                            true
+                        );
+                        $storedCheckpoints['operational_only'] = [
+                            'phase' => 'operational_only', 'counts' => $operationalOnly, 'completed_at' => now(),
+                        ];
+                    } else {
+                        $operationalOnly = (array) ($operationCheckpoint['counts'] ?? []);
+                    }
+
+                    $completedCheckpoint = $storedCheckpoints['recheck_complete'] ?? null;
+                    if ($this->checkpointIsComplete($completedCheckpoint)) {
+                        $generalLedgerRecheck = (array) ($completedCheckpoint['counts'] ?? []);
+                    } else {
+                        $glCheckpoint = $this->pendingGlCheckpoint($storedCheckpoints);
+                        $generalLedgerRecheck = $generalLedgerBackfill->run(
+                            $businessId,
+                            true,
+                            true,
+                            null,
+                            function (string $phase, int $processed, array $counts) use ($runService, $runId, $businessId, &$storedCheckpoints) {
+                                $checkpoint = (array) ($counts['checkpoint'] ?? []);
+                                $progressTotal = $checkpoint['total'] ?? null;
+                                $message = 'Recheck GL '.$phase.': '.$processed
+                                    .($progressTotal === null ? ' sumber' : ' / '.$progressTotal.' sumber')
+                                    .'; '
+                                    .($counts['applied_groups'] ?? 0).' posting diperbarui, '
+                                    .($counts['actionable_review_sources'] ?? 0).' antrean review.';
+                                $this->line($message);
+                                $runService->updateRun($runId, $businessId, 'rechecking', $message);
+                                if (! empty($checkpoint['phase'])) {
+                                    $runService->saveRecheckCheckpoint(
+                                        $runId,
+                                        $businessId,
+                                        (string) $checkpoint['phase'],
+                                        isset($checkpoint['cursor']) ? (string) $checkpoint['cursor'] : null,
+                                        (int) ($checkpoint['processed'] ?? $processed),
+                                        isset($checkpoint['total']) ? (int) $checkpoint['total'] : null,
+                                        $this->checkpointSummary($counts),
+                                        (bool) ($checkpoint['completed'] ?? false)
+                                    );
+                                    $storedCheckpoints[(string) $checkpoint['phase']] = [
+                                        'phase' => (string) $checkpoint['phase'],
+                                        'cursor' => $checkpoint['cursor'] ?? null,
+                                        'processed' => (int) ($checkpoint['processed'] ?? $processed),
+                                        'total' => isset($checkpoint['total']) ? (int) $checkpoint['total'] : null,
+                                        'counts' => $this->checkpointSummary($counts),
+                                        'completed_at' => ! empty($checkpoint['completed']) ? now() : null,
+                                    ];
+                                }
+                            },
+                            $glCheckpoint
+                        );
+                    }
                     if (! empty($generalLedgerRecheck['error'])) {
                         throw new \RuntimeException((string) $generalLedgerRecheck['error']);
                     }
+                    $runService->saveRecheckCheckpoint($runId, $businessId, 'recheck_complete', null, 0, null, $generalLedgerRecheck, true);
+                    $storedCheckpoints['recheck_complete'] = ['phase' => 'recheck_complete', 'counts' => $generalLedgerRecheck, 'completed_at' => now()];
                     $runService->syncLegacyRecordIds($runId, $businessId, $analysis['_operational_evidence_data']);
                     $attachments = $attachmentImporter->import($runId, $businessId, $sourceDirectory);
                     $summary = $this->summaryForStorage($analysis);
@@ -328,16 +414,36 @@ class ImportLegacySources extends Command
             }
 
             if ($auditAnalysis === null) {
-                $auditAnalysis = $this->analyzeJournalSources(
-                    $auditInventory,
-                    $businessId,
-                    $year,
-                    $journalController,
-                    $merger,
-                    $draftService,
-                    $evidenceReader,
-                    $enricher
-                );
+                $hasPersistedJournalRows = $importId !== null
+                    && Schema::hasTable('accounting_journal_import_rows')
+                    && DB::table('accounting_journal_import_rows')
+                        ->where('journal_import_id', $importId)
+                        ->where('business_id', $businessId)
+                        ->exists();
+                if ($hasPersistedJournalRows) {
+                    $allOperationalEvidence = $evidenceReader->read($auditInventory['files'], (string) $auditInventory['root']);
+                    $persistedOperationalEvidence = $year === null
+                        ? $allOperationalEvidence
+                        : $evidenceReader->read($inventory['files'], (string) $inventory['root'], $year);
+                    $auditAnalysis = [
+                        '_annual_audit_data' => [
+                            'journal_entries' => $journalImportAuditReader->readEntries($businessId, $importId),
+                            'operational_evidence' => $allOperationalEvidence,
+                        ],
+                    ];
+                    $this->line('Journal workbook tidak dianalisis ulang; memakai entry tersimpan pada batch #'.$importId.'.');
+                } else {
+                    $auditAnalysis = $this->analyzeJournalSources(
+                        $auditInventory,
+                        $businessId,
+                        $year,
+                        $journalController,
+                        $merger,
+                        $draftService,
+                        $evidenceReader,
+                        $enricher
+                    );
+                }
             }
 
             if ($journalAlreadyImported) {
@@ -368,6 +474,7 @@ class ImportLegacySources extends Command
                 ? $this->summaryForStorage($analysis)
                 : (json_decode((string) ($run->summary ?? ''), true) ?: []);
             $operationalEvidence = $analysis['_operational_evidence_data']
+                ?? $persistedOperationalEvidence
                 ?? $evidenceReader->read($inventory['files'], (string) $inventory['root'], $year);
             $runService->syncLegacyRecordIds($runId, $businessId, $operationalEvidence);
             $journalEvidenceIdentities = $this->journalEvidenceIdentities($importId, $businessId);
@@ -375,50 +482,161 @@ class ImportLegacySources extends Command
             $operationalOnlyDocuments = array_diff_key((array) ($operationalEvidence['documents'] ?? []), $journalIdentitySet);
             $standaloneDrafts = $analysis['_standalone_draft_data']
                 ?? $enricher->prepareStandaloneDrafts($operationalOnlyDocuments, $businessId, $draftService);
-            $operationalOnly = $operationalOnlyProcessor->process(
-                $runId,
-                $businessId,
-                $userId,
-                $operationalEvidence,
-                $journalEvidenceIdentities,
-                $standaloneDrafts,
-                $runService,
-                $invoiceService,
-                $expenseService,
-                $sourceFindings,
-                fn (int $processed, int $total, array $counts) => $this->line(
-                    'Sumber operasional tanpa Journal: '.$processed.' / '.$total
-                    .' (' .$counts['created'].' dibuat, '.$counts['linked_existing'].' ditautkan, '
-                    .$counts['review'].' review).'
-                )
-            );
-            $taxReconciliation = $journalTaxReconciliation->reconcileImport(
-                (int) $importId,
-                $businessId,
-                true,
-                function (int $processed, array $counts) use ($runService, $runId, $businessId) {
-                    $message = 'Recheck pajak Journal: '.$processed.' mapping; '
-                        .$counts['reconciled'].' sesuai, '.$counts['review'].' perlu review.';
-                    $this->line($message);
-                    $runService->updateRun($runId, $businessId, 'rechecking', $message);
+
+            $operationCheckpoint = $storedCheckpoints['operational_only'] ?? null;
+            if (! $this->checkpointIsComplete($operationCheckpoint)) {
+                $runService->updateRun($runId, $businessId, 'rechecking', 'Memproses sumber operasional legacy.');
+                if ($operationCheckpoint === null) {
+                    $runService->saveRecheckCheckpoint(
+                        $runId,
+                        $businessId,
+                        'operational_only',
+                        null,
+                        0,
+                        count((array) ($operationalEvidence['documents'] ?? []))
+                    );
                 }
-            );
-            $generalLedgerRecheck = $generalLedgerBackfill->run(
-                $businessId,
-                true,
-                true,
-                (int) $importId,
-                function (string $phase, int $processed, array $counts) use ($runService, $runId, $businessId) {
-                    $message = 'Recheck GL '.$phase.': '.$processed.' sumber; '
-                        .($counts['applied_groups'] ?? 0).' posting diperbarui, '
-                        .($counts['actionable_review_sources'] ?? 0).' antrean review.';
-                    $this->line($message);
-                    $runService->updateRun($runId, $businessId, 'rechecking', $message);
+                $operationalOnly = $operationalOnlyProcessor->process(
+                    $runId,
+                    $businessId,
+                    $userId,
+                    $operationalEvidence,
+                    $journalEvidenceIdentities,
+                    $standaloneDrafts,
+                    $runService,
+                    $invoiceService,
+                    $expenseService,
+                    $sourceFindings,
+                    function (int $processed, int $total, array $counts) use ($runService, $runId, $businessId) {
+                        $message = 'Sumber operasional tanpa Journal: '.$processed.' / '.$total
+                            .' ('.$counts['created'].' dibuat, '.$counts['linked_existing'].' ditautkan, '
+                            .$counts['review'].' review).';
+                        $this->line($message);
+                        $runService->updateRun($runId, $businessId, 'rechecking', $message);
+                    },
+                    $canResumeRecheck ? ($operationCheckpoint['cursor'] ?? null) : null,
+                    $canResumeRecheck ? (array) ($operationCheckpoint['counts'] ?? []) : [],
+                    function (?string $cursor, int $processed, int $total, array $counts, bool $completed) use ($runService, $runId, $businessId, &$storedCheckpoints) {
+                        $runService->saveRecheckCheckpoint($runId, $businessId, 'operational_only', $cursor, $processed, $total, $counts, $completed);
+                        $storedCheckpoints['operational_only'] = [
+                            'phase' => 'operational_only', 'cursor' => $cursor, 'processed' => $processed,
+                            'total' => $total, 'counts' => $counts, 'completed_at' => $completed ? now() : null,
+                        ];
+                    }
+                );
+                $runService->saveRecheckCheckpoint(
+                    $runId,
+                    $businessId,
+                    'operational_only',
+                    $storedCheckpoints['operational_only']['cursor'] ?? null,
+                    (int) ($storedCheckpoints['operational_only']['processed'] ?? count((array) ($operationalEvidence['documents'] ?? []))),
+                    count((array) ($operationalEvidence['documents'] ?? [])),
+                    $operationalOnly,
+                    true
+                );
+                $storedCheckpoints['operational_only'] = array_merge(
+                    (array) ($storedCheckpoints['operational_only'] ?? []),
+                    ['phase' => 'operational_only', 'counts' => $operationalOnly, 'completed_at' => now()]
+                );
+            } else {
+                $operationalOnly = (array) ($operationCheckpoint['counts'] ?? []);
+            }
+
+            $taxCheckpoint = $storedCheckpoints['tax_reconciliation'] ?? null;
+            if ($this->checkpointIsComplete($taxCheckpoint)) {
+                $taxReconciliation = (array) ($taxCheckpoint['counts'] ?? []);
+            } else {
+                $runService->updateRun($runId, $businessId, 'rechecking', 'Merekonsiliasi pajak dari Journal.');
+                if ($taxCheckpoint === null) {
+                    $runService->saveRecheckCheckpoint($runId, $businessId, 'tax_reconciliation', null, 0);
                 }
-            );
+                $taxReconciliation = $journalTaxReconciliation->reconcileImport(
+                    (int) $importId,
+                    $businessId,
+                    true,
+                    function (int $processed, array $counts, ?int $cursor, int $total) use ($runService, $runId, $businessId, &$storedCheckpoints) {
+                        $message = 'Recheck pajak Journal: '.$processed.' / '.$total.' mapping; '
+                            .$counts['reconciled'].' sesuai, '.$counts['review'].' perlu review.';
+                        $this->line($message);
+                        $runService->updateRun($runId, $businessId, 'rechecking', $message);
+                        $runService->saveRecheckCheckpoint($runId, $businessId, 'tax_reconciliation', $cursor === null ? null : (string) $cursor, $processed, $total, $counts);
+                        $storedCheckpoints['tax_reconciliation'] = [
+                            'phase' => 'tax_reconciliation', 'cursor' => $cursor === null ? null : (string) $cursor,
+                            'processed' => $processed, 'total' => $total, 'counts' => $counts, 'completed_at' => null,
+                        ];
+                    },
+                    $canResumeRecheck ? (int) ($taxCheckpoint['cursor'] ?? 0) : 0,
+                    $canResumeRecheck ? (array) ($taxCheckpoint['counts'] ?? []) : []
+                );
+                $runService->saveRecheckCheckpoint(
+                    $runId,
+                    $businessId,
+                    'tax_reconciliation',
+                    $storedCheckpoints['tax_reconciliation']['cursor'] ?? null,
+                    (int) ($storedCheckpoints['tax_reconciliation']['processed'] ?? 0),
+                    isset($storedCheckpoints['tax_reconciliation']['total']) ? (int) $storedCheckpoints['tax_reconciliation']['total'] : null,
+                    $taxReconciliation,
+                    true
+                );
+                $storedCheckpoints['tax_reconciliation'] = [
+                    'phase' => 'tax_reconciliation', 'cursor' => $storedCheckpoints['tax_reconciliation']['cursor'] ?? null,
+                    'processed' => (int) ($storedCheckpoints['tax_reconciliation']['processed'] ?? 0),
+                    'total' => $storedCheckpoints['tax_reconciliation']['total'] ?? null,
+                    'counts' => $taxReconciliation, 'completed_at' => now(),
+                ];
+            }
+
+            $completedCheckpoint = $storedCheckpoints['recheck_complete'] ?? null;
+            if ($this->checkpointIsComplete($completedCheckpoint)) {
+                $generalLedgerRecheck = (array) ($completedCheckpoint['counts'] ?? []);
+            } else {
+                $glCheckpoint = $this->pendingGlCheckpoint($storedCheckpoints);
+                $generalLedgerRecheck = $generalLedgerBackfill->run(
+                    $businessId,
+                    true,
+                    true,
+                    (int) $importId,
+                    function (string $phase, int $processed, array $counts) use ($runService, $runId, $businessId, &$storedCheckpoints) {
+                        $checkpoint = (array) ($counts['checkpoint'] ?? []);
+                        $progressTotal = $checkpoint['total'] ?? null;
+                        $message = 'Recheck GL '.$phase.': '.$processed
+                            .($progressTotal === null ? ' sumber' : ' / '.$progressTotal.' sumber')
+                            .'; '
+                            .($counts['applied_groups'] ?? 0).' posting diperbarui, '
+                            .($counts['actionable_review_sources'] ?? 0).' antrean review.';
+                        $this->line($message);
+                        $runService->updateRun($runId, $businessId, 'rechecking', $message);
+                        if (! empty($checkpoint['phase'])) {
+                            $checkpointCounts = $this->checkpointSummary($counts);
+                            $runService->saveRecheckCheckpoint(
+                                $runId,
+                                $businessId,
+                                (string) $checkpoint['phase'],
+                                isset($checkpoint['cursor']) ? (string) $checkpoint['cursor'] : null,
+                                (int) ($checkpoint['processed'] ?? $processed),
+                                isset($checkpoint['total']) ? (int) $checkpoint['total'] : null,
+                                $checkpointCounts,
+                                (bool) ($checkpoint['completed'] ?? false)
+                            );
+                            $storedCheckpoints[(string) $checkpoint['phase']] = [
+                                'phase' => (string) $checkpoint['phase'], 'cursor' => $checkpoint['cursor'] ?? null,
+                                'processed' => (int) ($checkpoint['processed'] ?? $processed),
+                                'total' => isset($checkpoint['total']) ? (int) $checkpoint['total'] : null,
+                                'counts' => $checkpointCounts,
+                                'completed_at' => ! empty($checkpoint['completed']) ? now() : null,
+                            ];
+                        }
+                    },
+                    $glCheckpoint
+                );
+            }
             if (! empty($generalLedgerRecheck['error'])) {
                 throw new \RuntimeException((string) $generalLedgerRecheck['error']);
             }
+            $runService->saveRecheckCheckpoint($runId, $businessId, 'recheck_complete', null, 0, null, $generalLedgerRecheck, true);
+            $storedCheckpoints['recheck_complete'] = [
+                'phase' => 'recheck_complete', 'counts' => $generalLedgerRecheck, 'completed_at' => now(),
+            ];
             $this->line('Recheck GL selesai: '
                 .$generalLedgerRecheck['journal_linked_sources'].' sumber memakai Journal, '
                 .$generalLedgerRecheck['removed_duplicate_app_postings'].' posting otomatis duplikat dihapus, '
@@ -867,6 +1085,7 @@ class ImportLegacySources extends Command
     private function legacyTablesAreReady(): bool
     {
         return Schema::hasTable('accounting_legacy_import_runs')
+            && Schema::hasTable('accounting_legacy_recheck_checkpoints')
             && Schema::hasTable('accounting_legacy_import_sources')
             && Schema::hasTable('accounting_legacy_import_crosswalks')
             && Schema::hasColumn('accounting_legacy_import_crosswalks', 'legacy_record_id')
@@ -875,6 +1094,76 @@ class ImportLegacySources extends Command
             && Schema::hasTable('accounting_legacy_reconciliation_findings')
             && Schema::hasColumn('media', 'storage_location')
             && Schema::hasColumn('media', 'legacy_source_attachment_id');
+    }
+
+    private function pendingRecheckPhase(array $checkpoints, bool $hasJournal): string
+    {
+        $phases = ['operational_only'];
+        if ($hasJournal) {
+            $phases[] = 'tax_reconciliation';
+        }
+        $phases = array_merge($phases, ['gl_duplicates', 'gl_transactions', 'gl_payments', 'gl_transfers', 'recheck_complete']);
+        foreach ($phases as $phase) {
+            if (! $this->checkpointIsComplete($checkpoints[$phase] ?? null)) {
+                return $phase;
+            }
+        }
+
+        return 'recheck_complete';
+    }
+
+    private function checkpointIsComplete(?array $checkpoint): bool
+    {
+        return is_array($checkpoint) && ! empty($checkpoint['completed_at']);
+    }
+
+    private function pendingGlCheckpoint(array $checkpoints): ?array
+    {
+        $lastCompletedCounts = [];
+        foreach (['gl_duplicates', 'gl_transactions', 'gl_payments', 'gl_transfers'] as $phase) {
+            $checkpoint = $checkpoints[$phase] ?? null;
+            if (! $this->checkpointIsComplete($checkpoint)) {
+                $pending = array_merge(
+                    ['phase' => $phase, 'cursor' => null, 'processed' => 0],
+                    is_array($checkpoint) ? $checkpoint : []
+                );
+                if (empty($pending['counts']) && $lastCompletedCounts !== []) {
+                    $pending['counts'] = $lastCompletedCounts;
+                }
+                $pending['removed_duplicate_app_postings'] = (int) ($checkpoints['gl_duplicates']['counts']['removed_duplicate_app_postings'] ?? 0);
+
+                return $pending;
+            }
+
+            if (is_array($checkpoint['counts'] ?? null)) {
+                $lastCompletedCounts = $checkpoint['counts'];
+            }
+        }
+
+        return [
+            'phase' => 'recheck_complete',
+            'cursor' => null,
+            'processed' => (int) ($checkpoints['gl_transfers']['processed'] ?? 0),
+            'counts' => $lastCompletedCounts,
+            'removed_duplicate_app_postings' => (int) ($checkpoints['gl_duplicates']['counts']['removed_duplicate_app_postings'] ?? 0),
+        ];
+    }
+
+    private function checkpointSummary(array $counts): array
+    {
+        $keys = [
+            'candidate_groups', 'planned_groups', 'applied_groups', 'already_linked',
+            'journal_linked_sources', 'removed_duplicate_app_postings', 'replaced_operational_postings',
+            'actionable_review_sources',
+        ];
+        $summary = [];
+        foreach ($keys as $key) {
+            if (array_key_exists($key, $counts)) {
+                $summary[$key] = $counts[$key];
+            }
+        }
+
+        return $summary;
     }
 
     private function persistAnnualFindings(

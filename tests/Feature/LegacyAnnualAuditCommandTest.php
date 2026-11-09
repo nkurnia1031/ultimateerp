@@ -264,6 +264,7 @@ class LegacyAnnualAuditCommandTest extends TestCase
             'accounting_legacy_import_attachments',
             'accounting_legacy_reconciliation_audits',
             'accounting_legacy_reconciliation_findings',
+            'accounting_legacy_recheck_checkpoints',
         ] as $table) {
             Schema::create($table, function ($schema) {
                 $schema->increments('id');
@@ -321,43 +322,65 @@ class LegacyAnnualAuditCommandTest extends TestCase
             'year_filter' => null,
             'journal_import_id' => 4,
             'summary' => '{}',
+            'status' => 'rechecking',
         ];
 
         $runService = Mockery::mock(LegacyImportRunService::class);
         $runService->shouldReceive('findRun')->twice()->with(11, 987654)->andReturn($run);
+        $runService->shouldReceive('recheckCheckpoints')->once()->with(11, 987654)->andReturn([
+            'operational_only' => [
+                'phase' => 'operational_only', 'cursor' => 'fixture-op-99', 'processed' => 100,
+                'total' => 200, 'counts' => ['with_journal' => 100, 'created' => 0, 'linked_existing' => 0, 'review' => 0],
+                'completed_at' => '2026-11-09 10:00:00',
+            ],
+            'tax_reconciliation' => [
+                'phase' => 'tax_reconciliation', 'cursor' => '42', 'processed' => 3,
+                'total' => null, 'counts' => ['reconciled' => 2, 'review' => 1, 'not_applicable' => 0],
+                'completed_at' => null,
+            ],
+        ]);
+        $runService->shouldReceive('clearRecheckCheckpoint')->never();
+        $runService->shouldReceive('saveRecheckCheckpoint')->zeroOrMoreTimes();
         $runService->shouldReceive('syncJournalCrosswalks')->once()->with(11, 987654, 4)->andReturn(3);
         $runService->shouldReceive('syncLegacyRecordIds')->once()->with(11, 987654, Mockery::type('array'));
         $runService->shouldReceive('updateRun')->zeroOrMoreTimes();
         $this->app->instance(LegacyImportRunService::class, $runService);
 
         $merger = Mockery::mock(LegacyJournalEntryMerger::class);
-        $merger->shouldReceive('merge')->once()->andReturn([
-            'entries' => [$this->saleEntry('INV-2023', '2023-01-02', 200, 22)],
-            'duplicate_count' => 0,
-            'conflict_count' => 0,
-            'excluded_by_year' => 0,
-        ]);
+        $merger->shouldReceive('merge')->never();
         $this->app->instance(LegacyJournalEntryMerger::class, $merger);
 
         $operationalOnly = Mockery::mock(LegacyOperationalOnlyProcessor::class);
-        $operationalOnly->shouldReceive('process')->once()->andReturn([
-            'created' => 0,
-            'linked_existing' => 0,
-            'review' => 0,
-        ]);
+        $operationalOnly->shouldReceive('process')->never();
         $this->app->instance(LegacyOperationalOnlyProcessor::class, $operationalOnly);
 
         $tax = Mockery::mock(JournalTaxReconciliationService::class);
         $tax->shouldReceive('reconcileImport')
             ->once()
-            ->with(4, 987654, true, Mockery::on(fn ($callback) => is_callable($callback)))
-            ->andReturn(['reconciled' => 1, 'review' => 0, 'not_applicable' => 0]);
+            ->with(
+                4,
+                987654,
+                true,
+                Mockery::on(fn ($callback) => is_callable($callback)),
+                42,
+                ['reconciled' => 2, 'review' => 1, 'not_applicable' => 0]
+            )
+            ->andReturn(['reconciled' => 3, 'review' => 1, 'not_applicable' => 0]);
         $this->app->instance(JournalTaxReconciliationService::class, $tax);
 
         $ledger = Mockery::mock(GeneralLedgerBackfillService::class);
         $ledger->shouldReceive('run')
             ->once()
-            ->with(987654, true, true, 4, Mockery::on(fn ($callback) => is_callable($callback)))
+            ->with(
+                987654,
+                true,
+                true,
+                4,
+                Mockery::on(fn ($callback) => is_callable($callback)),
+                Mockery::on(fn ($checkpoint) => ($checkpoint['phase'] ?? null) === 'gl_duplicates'
+                    && ($checkpoint['cursor'] ?? null) === null
+                    && ($checkpoint['removed_duplicate_app_postings'] ?? null) === 0)
+            )
             ->andReturn([
                 'journal_linked_sources' => 1,
                 'removed_duplicate_app_postings' => 1,
@@ -389,6 +412,9 @@ class LegacyAnnualAuditCommandTest extends TestCase
         $this->app->instance(LegacyJournalImportSourceLinkAuditReader::class, $sourceAudit);
 
         $journalAudit = Mockery::mock(LegacyJournalImportAuditReader::class);
+        $journalAudit->shouldReceive('readEntries')->once()->with(987654, 4)->andReturn([
+            $this->saleEntry('INV-2023', '2023-01-02', 200, 22),
+        ]);
         $journalAudit->shouldReceive('read')->once()->andReturn([]);
         $this->app->instance(LegacyJournalImportAuditReader::class, $journalAudit);
 
@@ -414,6 +440,7 @@ class LegacyAnnualAuditCommandTest extends TestCase
             '--resume-run' => 11,
             '--apply' => true,
         ])->expectsOutputToContain('Batch Journal #4 sudah imported')
+            ->expectsOutputToContain('Journal workbook tidak dianalisis ulang')
             ->expectsOutputToContain('Recheck GL selesai: 1 sumber memakai Journal')
             ->assertExitCode(0);
 

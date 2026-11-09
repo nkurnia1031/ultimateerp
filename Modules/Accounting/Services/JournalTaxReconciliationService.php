@@ -20,11 +20,22 @@ class JournalTaxReconciliationService
      * Sales and purchase line taxes are only changed when their full calculated
      * tax matches the Journal amount; otherwise the source remains unchanged.
      */
-    public function reconcileImport(int $journalImportId, int $businessId, bool $force = false, ?callable $progressCallback = null): array
+    public function reconcileImport(
+        int $journalImportId,
+        int $businessId,
+        bool $force = false,
+        ?callable $progressCallback = null,
+        int $afterMappingId = 0,
+        array $resumeCounts = []
+    ): array
     {
-        $result = ['reconciled' => 0, 'review' => 0, 'not_applicable' => 0];
-        $afterId = 0;
-        $processed = 0;
+        $result = array_merge(
+            ['reconciled' => 0, 'review' => 0, 'not_applicable' => 0],
+            array_intersect_key($resumeCounts, array_flip(['reconciled', 'review', 'not_applicable']))
+        );
+        $afterId = max(0, $afterMappingId);
+        $processed = max(0, (int) array_sum($result));
+        $total = $this->importMappingsQuery($journalImportId, $businessId)->count();
 
         do {
             $chunk = $this->reconcileImportChunk($journalImportId, $businessId, $afterId, 50, $force);
@@ -34,9 +45,13 @@ class JournalTaxReconciliationService
             $processed += (int) $chunk['processed_rows'];
             $afterId = $chunk['last_id'];
             if ($progressCallback && $chunk['processed_rows'] > 0) {
-                $progressCallback($processed, $result);
+                $progressCallback($processed, $result, $afterId, $total);
             }
         } while ($chunk['has_more']);
+
+        if ($progressCallback) {
+            $progressCallback($processed, $result, $afterId > 0 ? $afterId : null, $total);
+        }
 
         return $result;
     }
@@ -50,17 +65,7 @@ class JournalTaxReconciliationService
         $options = json_decode((string) ($import->import_options ?? ''), true);
         $legacyAuthoritative = is_array($options) && ! empty($options['legacy_authoritative']);
 
-        $mappings = AccountingAccTransMapping::where('business_id', $businessId)
-            ->where(function ($query) use ($journalImportId) {
-                $query->where('journal_import_id', $journalImportId)
-                    ->orWhereIn('id', DB::table('accounting_journal_import_rows')
-                        ->select('journal_mapping_id')
-                        ->where('journal_import_id', $journalImportId)
-                        ->whereNotNull('journal_mapping_id'));
-            })
-            ->where('business_id', $businessId)
-            ->where('source_link_status', 'matched')
-            ->whereNotNull('source_record_id')
+        $mappings = $this->importMappingsQuery($journalImportId, $businessId)
             ->where('id', '>', $afterId)
             ->orderBy('id')
             ->limit($limit + 1)
@@ -104,6 +109,21 @@ class JournalTaxReconciliationService
             'last_id' => $lastId,
             'has_more' => $hasMore,
         ];
+    }
+
+    private function importMappingsQuery(int $journalImportId, int $businessId)
+    {
+        return AccountingAccTransMapping::where('business_id', $businessId)
+            ->where(function ($query) use ($journalImportId) {
+                $query->where('journal_import_id', $journalImportId)
+                    ->orWhereIn('id', DB::table('accounting_journal_import_rows')
+                        ->select('journal_mapping_id')
+                        ->where('journal_import_id', $journalImportId)
+                        ->where('business_id', $businessId)
+                        ->whereNotNull('journal_mapping_id'));
+            })
+            ->where('source_link_status', 'matched')
+            ->whereNotNull('source_record_id');
     }
 
     public function revertImport(int $journalImportId, int $businessId): int
@@ -249,6 +269,19 @@ class JournalTaxReconciliationService
             return $this->saveResult($mapping, 'review', 'Arah debit/kredit akun pajak berlawanan dengan jenis transaksi; sumber tidak diubah.', $journalTax, null, null, $journalTotal);
         }
         $journalTax = max(0, $journalTax);
+        $previousSnapshot = json_decode((string) ($mapping->source_tax_snapshot ?? ''), true);
+        $originalTransactionValues = is_array($previousSnapshot['transaction_before'] ?? null)
+            ? $previousSnapshot['transaction_before']
+            : $this->transactionTaxValues($source);
+        $originalLineValues = [];
+        foreach ((array) ($previousSnapshot['lines'] ?? []) as $lineSnapshot) {
+            if (is_array($lineSnapshot)
+                && ! empty($lineSnapshot['table'])
+                && ! empty($lineSnapshot['id'])
+                && is_array($lineSnapshot['before'] ?? null)) {
+                $originalLineValues[$lineSnapshot['table'].':'.(int) $lineSnapshot['id']] = $lineSnapshot['before'];
+            }
+        }
 
         if ($source->type === 'expense') {
             if ($taxableBase === null || $taxableBase <= 0) {
@@ -271,7 +304,7 @@ class JournalTaxReconciliationService
             }
 
             $snapshot = [
-                'transaction_before' => $this->transactionTaxValues($source),
+                'transaction_before' => $originalTransactionValues,
                 'transaction_after' => [
                     'tax_id' => (int) $taxRate->id,
                     'tax_amount' => $journalTax,
@@ -329,7 +362,7 @@ class JournalTaxReconciliationService
         }
 
         $snapshot = [
-            'transaction_before' => $this->transactionTaxValues($source),
+            'transaction_before' => $originalTransactionValues,
             'transaction_after' => [
                 'tax_id' => (int) $taxRate->id,
                 'tax_amount' => $journalTax,
@@ -343,7 +376,7 @@ class JournalTaxReconciliationService
             $snapshot['lines'][] = [
                 'table' => $lineUpdate['table'],
                 'id' => $lineUpdate['id'],
-                'before' => $lineUpdate['before'],
+                'before' => $originalLineValues[$lineUpdate['table'].':'.(int) $lineUpdate['id']] ?? $lineUpdate['before'],
                 'after' => $lineUpdate['values'],
             ];
             $lineQuery = DB::table($lineUpdate['table'])->where('id', $lineUpdate['id'])->where('transaction_id', $source->id);

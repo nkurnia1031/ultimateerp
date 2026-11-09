@@ -110,6 +110,58 @@ class LegacyImportRunServiceTest extends TestCase
         $this->assertSame(0, (int) DB::table('accounting_legacy_import_sources')->value('records_for_review'));
     }
 
+    public function test_recheck_checkpoint_resumes_each_phase_from_its_saved_cursor(): void
+    {
+        $service = new LegacyImportRunService();
+        $runId = DB::table('accounting_legacy_import_runs')->insertGetId([
+            'business_id' => 2,
+            'created_by' => 5,
+            'source_directory' => sys_get_temp_dir(),
+            'manifest_sha256' => hash('sha256', 'checkpoint fixture'),
+            'status' => 'rechecking',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $service->saveRecheckCheckpoint($runId, 2, 'operational_only', 'source-100', 100, 250, [
+            'created' => 12,
+            'linked_existing' => 40,
+            'review' => 8,
+            'with_journal' => 40,
+        ]);
+        $service->saveRecheckCheckpoint($runId, 2, 'operational_only', 'source-150', 150, 250, [
+            'created' => 16,
+            'linked_existing' => 60,
+            'review' => 12,
+            'with_journal' => 62,
+        ]);
+        $service->saveRecheckCheckpoint($runId, 2, 'tax_reconciliation', '42', 3, null, [
+            'reconciled' => 2,
+            'review' => 1,
+            'not_applicable' => 0,
+        ]);
+
+        $checkpoints = $service->recheckCheckpoints($runId, 2);
+
+        $this->assertCount(2, $checkpoints);
+        $this->assertSame('source-150', $checkpoints['operational_only']['cursor']);
+        $this->assertSame(16, $checkpoints['operational_only']['counts']['created']);
+        $this->assertNull($checkpoints['operational_only']['completed_at']);
+        $this->assertSame('42', $checkpoints['tax_reconciliation']['cursor']);
+        $this->assertSame(3, $checkpoints['tax_reconciliation']['processed']);
+        $this->assertSame([], $service->recheckCheckpoints($runId, 3));
+
+        $service->saveRecheckCheckpoint($runId, 2, 'operational_only', 'source-250', 250, 250, [
+            'created' => 22,
+            'linked_existing' => 90,
+            'review' => 13,
+            'with_journal' => 125,
+        ], true);
+
+        $this->assertNotEmpty($service->recheckCheckpoints($runId, 2)['operational_only']['completed_at']);
+        $this->assertSame(2, DB::table('accounting_legacy_recheck_checkpoints')->where('legacy_import_run_id', $runId)->count());
+    }
+
     private function createSchema(): void
     {
         Schema::create('accounting_legacy_import_runs', function (Blueprint $table) {
@@ -167,6 +219,20 @@ class LegacyImportRunServiceTest extends TestCase
             $table->text('reason')->nullable();
             $table->timestamps();
             $table->unique(['legacy_import_run_id', 'legacy_import_source_id', 'source_identity']);
+        });
+
+        Schema::create('accounting_legacy_recheck_checkpoints', function (Blueprint $table) {
+            $table->bigIncrements('id');
+            $table->unsignedBigInteger('legacy_import_run_id');
+            $table->unsignedInteger('business_id');
+            $table->string('phase', 40);
+            $table->string('cursor', 500)->nullable();
+            $table->unsignedBigInteger('processed')->default(0);
+            $table->unsignedBigInteger('total')->nullable();
+            $table->longText('counts')->nullable();
+            $table->dateTime('completed_at')->nullable();
+            $table->timestamps();
+            $table->unique(['legacy_import_run_id', 'business_id', 'phase']);
         });
 
         Schema::create('accounting_journal_import_rows', function (Blueprint $table) {
