@@ -39,6 +39,20 @@ class ReconciliationFindingInboxTest extends TestCase
             $table->text('accounting_settings')->nullable();
         });
         DB::table('business')->insert(['id' => 1, 'currency_precision' => 2, 'accounting_settings' => null]);
+        Schema::create('business_locations', function (Blueprint $table) {
+            $table->increments('id');
+            $table->unsignedInteger('business_id');
+            $table->string('name');
+            $table->boolean('is_active')->default(true);
+            $table->dateTime('deleted_at')->nullable();
+            $table->longText('accounting_default_map')->nullable();
+        });
+        Schema::create('expense_categories', function (Blueprint $table) {
+            $table->increments('id');
+            $table->unsignedInteger('business_id');
+            $table->string('name');
+            $table->dateTime('deleted_at')->nullable();
+        });
         Schema::create('accounting_journal_import_rows', function (Blueprint $table) {
             $table->bigIncrements('id');
             $table->unsignedBigInteger('journal_import_id');
@@ -467,6 +481,22 @@ class ReconciliationFindingInboxTest extends TestCase
     public function test_legacy_source_findings_group_by_document_and_link_idempotently_without_touching_journal_gl(): void
     {
         $this->withoutReconciliationPageBootstrapMiddleware();
+        DB::table('business_locations')->insert([
+            'id' => 1,
+            'business_id' => 1,
+            'name' => 'Lokasi Utama',
+            'is_active' => true,
+            'accounting_default_map' => json_encode([
+                'expense' => ['payment_account' => 10, 'deposit_to' => 11],
+                'expense_7' => ['payment_account' => 10, 'deposit_to' => 11],
+            ]),
+        ]);
+        DB::table('expense_categories')->insert(['id' => 7, 'business_id' => 1, 'name' => 'Operasional']);
+        DB::table('accounting_accounts')->insert([
+            ['id' => 10, 'business_id' => 1, 'name' => 'Kas Utama', 'status' => 'active'],
+            ['id' => 11, 'business_id' => 1, 'name' => 'Biaya Operasional', 'status' => 'active'],
+            ['id' => 12, 'business_id' => 2, 'name' => 'Tenant Rahasia', 'status' => 'active'],
+        ]);
         $identity = str_repeat('a', 64);
         $document = $this->legacySourceDocument($identity);
         $service = app(\Modules\Accounting\Services\LegacySourceReconciliationFindingService::class);
@@ -507,6 +537,10 @@ class ReconciliationFindingInboxTest extends TestCase
         ]));
         $sourceListResponse->assertOk()->assertJsonPath('filtered_count', 1)->assertJsonPath('open_count', 1);
         $this->assertStringContainsString('LEG-EXP-1', $sourceListResponse->json('rows_html'));
+        $this->assertStringContainsString('Mapping akun tersimpan', $sourceListResponse->json('rows_html'));
+        $this->assertStringContainsString('Kas Utama', $sourceListResponse->json('rows_html'));
+        $this->assertStringContainsString('Biaya Operasional', $sourceListResponse->json('rows_html'));
+        $this->assertStringNotContainsString('Tenant Rahasia', $sourceListResponse->json('rows_html'));
         $this->assertStringContainsString('Tautkan #101', $sourceListResponse->json('rows_html'));
 
         $payload = ['transaction_id' => 101, 'reason' => 'Nomor dan total sudah diperiksa terhadap sumber legacy.'];

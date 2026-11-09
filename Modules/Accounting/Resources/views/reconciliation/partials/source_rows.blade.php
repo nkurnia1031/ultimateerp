@@ -70,6 +70,25 @@
         </td>
         <td style="min-width:210px">
             @if($finding['status'] === 'open')
+                @if(!empty($finding['mapping_candidates']))
+                    <details class="small" style="margin-bottom:6px">
+                        <summary>Mapping akun tersimpan ({{ count($finding['mapping_candidates']) }})</summary>
+                        @foreach($finding['mapping_candidates'] as $mapping)
+                            <div style="white-space:normal;margin:5px 0">
+                                <strong>{{ $mapping['mapping_label'] }}</strong> · {{ $mapping['location_name'] }}<br>
+                                @if($mapping['payment_account'])
+                                    Pembayaran: {{ $mapping['payment_account']['name'] }}
+                                    @if($mapping['payment_account']['code']) ({{ $mapping['payment_account']['code'] }}) @endif<br>
+                                @endif
+                                @if($mapping['deposit_to'])
+                                    Akun transaksi: {{ $mapping['deposit_to']['name'] }}
+                                    @if($mapping['deposit_to']['code']) ({{ $mapping['deposit_to']['code'] }}) @endif
+                                @endif
+                            </div>
+                        @endforeach
+                        <small class="text-muted">Referensi mapping pada lokasi aktif; tindakan ini tidak mengubah mapping atau jurnal.</small>
+                    </details>
+                @endif
                 @if($canManageSources)
                     @forelse($finding['candidates'] as $candidate)
                         <button type="button" class="btn btn-xs btn-info js-source-finding-action"

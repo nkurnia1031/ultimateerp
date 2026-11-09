@@ -14,6 +14,10 @@ class LegacySourceReconciliationFindingService
 {
     private const TABLE = 'accounting_legacy_source_findings';
 
+    private array $mappingContextCache = [];
+
+    private array $expenseCategoryIndexCache = [];
+
     private const TYPE_MAP = [
         'Sales Invoice' => 'sell',
         'Purchase Invoice' => 'purchase',
@@ -373,8 +377,157 @@ class LegacySourceReconciliationFindingService
             'resolution_reason' => (string) ($row->resolution_reason ?? ''),
             'history' => $history,
             'candidates' => $this->candidateTransactions($businessId, $row),
+            'mapping_candidates' => $this->candidateMappings($businessId, (string) $row->source_type, $evidence),
             'create_url' => $this->createUrl((string) $row->source_type),
         ];
+    }
+
+    private function candidateMappings(int $businessId, string $sourceType, array $evidence): array
+    {
+        $context = $this->mappingContext($businessId);
+        if ($context === null) {
+            return [];
+        }
+
+        $mappingKeys = match ($sourceType) {
+            'Sales Invoice' => ['sale'],
+            'Purchase Invoice' => ['purchases'],
+            'Expense' => $this->expenseMappingKeys($businessId, $evidence),
+            default => [],
+        };
+        $candidates = [];
+        foreach ($mappingKeys as $mappingKey) {
+            $mapping = $context['map'][$mappingKey] ?? null;
+            if (! is_array($mapping)) {
+                continue;
+            }
+
+            $paymentAccount = $context['accounts'][(int) ($mapping['payment_account'] ?? 0)] ?? null;
+            $depositAccount = $context['accounts'][(int) ($mapping['deposit_to'] ?? 0)] ?? null;
+            if ($paymentAccount === null && $depositAccount === null) {
+                continue;
+            }
+
+            $candidates[] = [
+                'location_name' => $context['location_name'],
+                'mapping_key' => $mappingKey,
+                'mapping_label' => $this->mappingLabel($mappingKey),
+                'payment_account' => $paymentAccount,
+                'deposit_to' => $depositAccount,
+            ];
+        }
+
+        return $candidates;
+    }
+
+    private function mappingContext(int $businessId): ?array
+    {
+        if (array_key_exists($businessId, $this->mappingContextCache)) {
+            return $this->mappingContextCache[$businessId];
+        }
+
+        if (! Schema::hasTable('business_locations') || ! Schema::hasTable('accounting_accounts')) {
+            return $this->mappingContextCache[$businessId] = null;
+        }
+
+        $locationId = app(JournalImportDraftService::class)->defaultActiveLocationId($businessId);
+        if ($locationId === null) {
+            return $this->mappingContextCache[$businessId] = null;
+        }
+
+        $location = DB::table('business_locations')
+            ->where('business_id', $businessId)
+            ->where('id', $locationId)
+            ->first(['id', 'name', 'accounting_default_map']);
+        if (! $location) {
+            return $this->mappingContextCache[$businessId] = null;
+        }
+
+        $map = json_decode((string) ($location->accounting_default_map ?? '{}'), true);
+        $map = is_array($map) ? $map : [];
+        $accountIds = [];
+        foreach ($map as $pair) {
+            if (! is_array($pair)) {
+                continue;
+            }
+            foreach (['payment_account', 'deposit_to'] as $field) {
+                if (is_numeric($pair[$field] ?? null) && (int) $pair[$field] > 0) {
+                    $accountIds[] = (int) $pair[$field];
+                }
+            }
+        }
+
+        $accountQuery = DB::table('accounting_accounts')->where('business_id', $businessId);
+        if (Schema::hasColumn('accounting_accounts', 'status')) {
+            $accountQuery->where('status', 'active');
+        }
+        if (Schema::hasColumn('accounting_accounts', 'deleted_at')) {
+            $accountQuery->whereNull('deleted_at');
+        }
+        $accountColumns = ['id', 'name'];
+        if (Schema::hasColumn('accounting_accounts', 'gl_code')) {
+            $accountColumns[] = 'gl_code';
+        }
+        $accounts = $accountIds === [] ? collect() : $accountQuery->whereIn('id', array_values(array_unique($accountIds)))
+            ->get($accountColumns)
+            ->mapWithKeys(fn ($account) => [(int) $account->id => [
+                'id' => (int) $account->id,
+                'name' => (string) $account->name,
+                'code' => (string) ($account->gl_code ?? ''),
+            ]]);
+
+        return $this->mappingContextCache[$businessId] = [
+            'location_name' => (string) ($location->name ?: 'Lokasi #'.$locationId),
+            'map' => $map,
+            'accounts' => $accounts->all(),
+        ];
+    }
+
+    private function expenseMappingKeys(int $businessId, array $evidence): array
+    {
+        $keys = ['expense'];
+        $categoryNames = array_filter([
+            (string) ($evidence['category_name'] ?? ''),
+            ...array_map(fn ($line) => (string) (is_array($line) ? ($line['category_name'] ?? '') : ''), (array) ($evidence['expense_lines'] ?? [])),
+        ], fn ($name) => trim($name) !== '');
+        if ($categoryNames === [] || ! Schema::hasTable('expense_categories')) {
+            return $keys;
+        }
+
+        if (! array_key_exists($businessId, $this->expenseCategoryIndexCache)) {
+            $query = DB::table('expense_categories')->where('business_id', $businessId);
+            if (Schema::hasColumn('expense_categories', 'deleted_at')) {
+                $query->whereNull('deleted_at');
+            }
+            $this->expenseCategoryIndexCache[$businessId] = $query->get(['id', 'name'])
+                ->groupBy(fn ($category) => $this->normalizeMappingText((string) $category->name));
+        }
+
+        foreach (array_unique($categoryNames) as $categoryName) {
+            $matches = $this->expenseCategoryIndexCache[$businessId][$this->normalizeMappingText($categoryName)] ?? collect();
+            if ($matches->count() === 1) {
+                $keys[] = 'expense_'.(int) $matches->first()->id;
+            }
+        }
+
+        return array_values(array_unique($keys));
+    }
+
+    private function mappingLabel(string $mappingKey): string
+    {
+        return match ($mappingKey) {
+            'sale' => 'Penjualan',
+            'purchases' => 'Pembelian',
+            'expense' => 'Biaya umum',
+            default => str_starts_with($mappingKey, 'expense_') ? 'Biaya kategori #'.substr($mappingKey, 8) : $mappingKey,
+        };
+    }
+
+    private function normalizeMappingText(string $value): string
+    {
+        $value = iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $value) ?: $value;
+
+        return strtoupper(trim(preg_replace('/\s+/', ' ', $value)));
     }
 
     private function candidateTransactions(int $businessId, object $finding): array
