@@ -126,9 +126,9 @@
         <div id="source_finding_results" class="box-body table-responsive" aria-busy="false">
             <table class="table table-bordered table-striped">
                 <thead><tr><th>Tanggal / sumber</th><th>Jenis / nominal</th><th>Bukti</th><th>Alasan / status</th><th>Aksi</th></tr></thead>
-                <tbody id="source_finding_rows">@include('accounting::reconciliation.partials.source_rows')</tbody>
+                <tbody id="source_finding_rows">@include('accounting::reconciliation.partials.source_rows', ['rows' => $sourceRows, 'canManageSources' => $canManageSources])</tbody>
             </table>
-            <div id="source_finding_pagination">@include('accounting::reconciliation.partials.source_pagination')</div>
+            <div id="source_finding_pagination">@include('accounting::reconciliation.partials.source_pagination', ['rows' => $sourceRows])</div>
         </div>
     </div>
 </section>

@@ -509,6 +509,12 @@ class ReconciliationFindingInboxTest extends TestCase
         $this->assertStringContainsString('LEG-EXP-1', $sourceListResponse->json('rows_html'));
         $this->assertStringContainsString('Tautkan #101', $sourceListResponse->json('rows_html'));
 
+        $sourcePageResponse = $this->actingAs($user)->withSession($session)->get(route('accounting.reconciliation.findings', [
+            'source_status' => 'open',
+        ]));
+        $sourcePageResponse->assertOk();
+        $this->assertStringContainsString('LEG-EXP-1', $sourcePageResponse->getContent());
+
         $payload = ['transaction_id' => 101, 'reason' => 'Nomor dan total sudah diperiksa terhadap sumber legacy.'];
         $this->actingAs($user)->withSession($session)->postJson(
             route('accounting.reconciliation.findings.sourceLink', ['findingId' => $findingId]),
