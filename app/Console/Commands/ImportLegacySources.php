@@ -22,6 +22,7 @@ use Modules\Accounting\Services\LegacyAnnualAuditService;
 use Modules\Accounting\Services\LegacyJournalImportSourceLinkAuditReader;
 use Modules\Accounting\Services\LegacyReconciliationFindingSnapshotService;
 use Modules\Accounting\Services\GeneralLedgerBackfillService;
+use Modules\Accounting\Services\GeneralLedgerBackfillCheckpoint;
 use Modules\Accounting\Services\JournalTaxReconciliationService;
 
 class ImportLegacySources extends Command
