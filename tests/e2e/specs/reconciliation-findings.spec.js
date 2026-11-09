@@ -9,7 +9,9 @@ async function loginAsCiUser(page) {
 
 test('reconciliation findings inbox filters and searches stored anomalies', async ({ page }) => {
     await loginAsCiUser(page);
-    await page.goto('/accounting/reports/reconciliation-findings');
+    const response = await page.goto('/accounting/reports/reconciliation-findings');
+    expect(response).not.toBeNull();
+    expect(response.status()).toBe(200);
 
     await expect(page.getByRole('heading', { name: 'Temuan rekonsiliasi' })).toBeVisible();
     await expect(page.locator('#finding_open_count')).not.toHaveText('0');
