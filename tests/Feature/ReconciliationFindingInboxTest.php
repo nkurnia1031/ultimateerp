@@ -112,6 +112,7 @@ class ReconciliationFindingInboxTest extends TestCase
         });
         DB::table('transactions')->insert(['id' => 1, 'final_total' => 123.45]);
         DB::table('accounting_accounts_transactions')->insert(['id' => 1, 'amount' => 67.89]);
+        $this->createLegacySourceFindingTables();
     }
 
     public function test_persisting_the_same_annual_report_is_idempotent_and_keeps_offsets_visible(): void
@@ -461,6 +462,102 @@ class ReconciliationFindingInboxTest extends TestCase
         ]));
         $loanResponse->assertOk()->assertJsonPath('filtered_count', 1);
         $this->assertStringContainsString('Pokok/bunga belum terkonfirmasi', $loanResponse->json('rows_html'));
+    }
+
+    public function test_legacy_source_findings_group_by_document_and_link_idempotently_without_touching_journal_gl(): void
+    {
+        $this->withoutReconciliationPageBootstrapMiddleware();
+        $identity = str_repeat('a', 64);
+        $document = $this->legacySourceDocument($identity);
+        $service = app(\Modules\Accounting\Services\LegacySourceReconciliationFindingService::class);
+        $service->recordReview(1, 1, $document, 'operational_source_incomplete', 'Detail biaya perlu dilengkapi.');
+        $document['provenance'][] = [
+            'path' => 'mirror/expenses-2023.xlsx', 'row' => 27, 'source_identity' => $identity,
+        ];
+        $service->recordReview(1, 1, $document, 'operational_source_incomplete', 'Detail biaya perlu dilengkapi.');
+        $findingId = (int) DB::table('accounting_legacy_source_findings')->value('id');
+        $this->insertLegacySourceCrosswalk($identity, 10);
+        $this->insertLegacySourceCrosswalk($identity, 11);
+        DB::table('accounting_legacy_import_sources')->insert([
+            'id' => 10, 'legacy_import_run_id' => 1, 'business_id' => 1,
+            'classification' => 'expense_operational_source', 'status' => 'review',
+            'records_linked' => 0, 'records_for_review' => 1,
+        ]);
+        DB::table('accounting_legacy_import_sources')->insert([
+            'id' => 11, 'legacy_import_run_id' => 1, 'business_id' => 1,
+            'classification' => 'expense_detail_source', 'status' => 'review',
+            'records_linked' => 0, 'records_for_review' => 1,
+        ]);
+        DB::table('transactions')->insert([
+            'id' => 101, 'business_id' => 1, 'type' => 'expense', 'status' => 'final',
+            'ref_no' => 'LEG-EXP-1', 'transaction_date' => '2023-02-03 10:00:00',
+            'total_before_tax' => 1000, 'tax_amount' => 100, 'final_total' => 1100,
+        ]);
+        $journalRowsBefore = DB::table('accounting_journal_import_rows')->count();
+        $glRowsBefore = DB::table('accounting_accounts_transactions')->count();
+        $user = $this->accountingManagerUser();
+        $session = [
+            'user' => ['business_id' => 1],
+            'business' => ['currency_precision' => 2],
+            'currency' => ['symbol' => 'Rp', 'decimal_separator' => '.', 'thousand_separator' => ','],
+        ];
+
+        $sourceListResponse = $this->actingAs($user)->withSession($session)->getJson(route('accounting.reconciliation.findings.sourceData', [
+            'source_type' => 'Expense', 'source_status' => 'open', 'source_year' => 2023,
+        ]));
+        $sourceListResponse->assertOk()->assertJsonPath('filtered_count', 1)->assertJsonPath('open_count', 1);
+        $this->assertStringContainsString('LEG-EXP-1', $sourceListResponse->json('rows_html'));
+        $this->assertStringContainsString('Tautkan #101', $sourceListResponse->json('rows_html'));
+
+        $payload = ['transaction_id' => 101, 'reason' => 'Nomor dan total sudah diperiksa terhadap sumber legacy.'];
+        $this->actingAs($user)->withSession($session)->postJson(
+            route('accounting.reconciliation.findings.sourceLink', ['findingId' => $findingId]),
+            $payload
+        )->assertOk()->assertJsonPath('success', true)->assertJsonPath('idempotent', false);
+        $this->actingAs($user)->withSession($session)->postJson(
+            route('accounting.reconciliation.findings.sourceLink', ['findingId' => $findingId]),
+            $payload
+        )->assertOk()->assertJsonPath('idempotent', true);
+
+        $this->assertSame('resolved', DB::table('accounting_legacy_source_findings')->where('id', $findingId)->value('status'));
+        $this->assertSame(101, (int) DB::table('accounting_legacy_source_findings')->where('id', $findingId)->value('target_record_id'));
+        $this->assertSame(2, DB::table('accounting_legacy_import_crosswalks')->where('source_identity', $identity)->where('target_record_id', 101)->where('status', 'linked')->count());
+        $history = json_decode((string) DB::table('accounting_legacy_source_findings')->where('id', $findingId)->value('resolution_history'), true);
+        $this->assertSame(1, count(array_filter($history, fn (array $event) => ($event['action'] ?? '') === 'linked_existing_transaction')));
+        $this->assertSame($journalRowsBefore, DB::table('accounting_journal_import_rows')->count());
+        $this->assertSame($glRowsBefore, DB::table('accounting_accounts_transactions')->count());
+        $this->assertSame(1100.0, (float) DB::table('transactions')->where('id', 101)->value('final_total'));
+    }
+
+    public function test_legacy_source_findings_are_business_scoped_and_failed_retry_keeps_the_item_open(): void
+    {
+        $this->withoutReconciliationPageBootstrapMiddleware();
+        $identityOne = str_repeat('b', 64);
+        $identityTwo = str_repeat('c', 64);
+        $service = app(\Modules\Accounting\Services\LegacySourceReconciliationFindingService::class);
+        $service->recordReview(1, 1, $this->legacySourceDocument($identityOne), 'amount_conflict', 'Total berbeda.');
+        $service->recordReview(2, 2, $this->legacySourceDocument($identityTwo, 'TENANT-SECRET'), 'amount_conflict', 'Tenant lain.');
+        $foreignId = (int) DB::table('accounting_legacy_source_findings')->where('business_id', 2)->value('id');
+        $user = $this->accountingManagerUser();
+        $session = ['user' => ['business_id' => 1]];
+
+        $sourceListResponse = $this->actingAs($user)->withSession($session)->getJson(route('accounting.reconciliation.findings.sourceData', [
+            'source_status' => 'open',
+        ]));
+        $sourceListResponse->assertOk()->assertJsonPath('filtered_count', 1);
+        $this->assertStringNotContainsString('TENANT-SECRET', $sourceListResponse->json('rows_html'));
+
+        $this->actingAs($user)->withSession($session)->postJson(
+            route('accounting.reconciliation.findings.sourceLink', ['findingId' => $foreignId]),
+            ['transaction_id' => 101, 'reason' => 'Tautan lintas business ditolak.']
+        )->assertNotFound();
+
+        $ownId = (int) DB::table('accounting_legacy_source_findings')->where('business_id', 1)->value('id');
+        $this->actingAs($user)->withSession($session)->postJson(
+            route('accounting.reconciliation.findings.sourceRetry', ['findingId' => $ownId]),
+            ['reason' => 'Form transaksi belum menyimpan sumber.']
+        )->assertUnprocessable();
+        $this->assertSame('open', DB::table('accounting_legacy_source_findings')->where('id', $ownId)->value('status'));
     }
 
     public function test_expense_vat_correction_requires_preview_confirms_idempotently_and_resolves_only_the_cleared_finding(): void
@@ -891,6 +988,103 @@ class ReconciliationFindingInboxTest extends TestCase
         }));
 
         return $user;
+    }
+
+    private function legacySourceDocument(string $identity, string $number = 'LEG-EXP-1'): array
+    {
+        return [
+            'source_type' => 'Expense',
+            'source_number' => $number,
+            'date' => '2023-02-03',
+            'contact_name' => 'Supplier Fixture',
+            'description' => 'Biaya fixture legacy',
+            'category_name' => 'Operasional',
+            'total' => 1100,
+            'base' => 1000,
+            'tax' => 100,
+            'expense_lines' => [['category_name' => 'Operasional', 'description' => 'Biaya fixture', 'amount' => 1000]],
+            'provenance' => [[
+                'path' => 'expenses/expenses-2023.xlsx', 'sha256' => str_repeat('d', 64), 'row' => 12,
+                'source_identity' => $identity,
+            ]],
+        ];
+    }
+
+    private function insertLegacySourceCrosswalk(string $identity, int $sourceId): void
+    {
+        DB::table('accounting_legacy_import_crosswalks')->insert([
+            'legacy_import_run_id' => 1,
+            'legacy_import_source_id' => $sourceId,
+            'business_id' => 1,
+            'source_identity' => $identity,
+            'source_type' => 'Expense',
+            'source_number' => 'LEG-EXP-1',
+            'source_date' => '2023-02-03',
+            'journal_import_row_id' => null,
+            'target_record_type' => null,
+            'target_record_id' => null,
+            'status' => 'review',
+            'match_method' => 'operational_only',
+            'reason' => 'Detail biaya perlu dilengkapi.',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    private function createLegacySourceFindingTables(): void
+    {
+        Schema::create('accounting_legacy_source_findings', function (Blueprint $table) {
+            $table->bigIncrements('id');
+            $table->unsignedInteger('business_id');
+            $table->unsignedBigInteger('legacy_import_run_id');
+            $table->char('source_identity', 64);
+            $table->string('source_type', 100);
+            $table->string('source_number', 191)->nullable();
+            $table->date('source_date')->nullable();
+            $table->decimal('source_amount', 22, 4)->nullable();
+            $table->string('reason_code', 100);
+            $table->text('reason');
+            $table->longText('evidence')->nullable();
+            $table->string('status', 24)->default('open');
+            $table->string('target_record_type', 64)->nullable();
+            $table->unsignedBigInteger('target_record_id')->nullable();
+            $table->unsignedInteger('resolved_by')->nullable();
+            $table->dateTime('first_seen_at')->nullable();
+            $table->dateTime('last_seen_at')->nullable();
+            $table->dateTime('resolved_at')->nullable();
+            $table->text('resolution_reason')->nullable();
+            $table->longText('resolution_history')->nullable();
+            $table->timestamps();
+            $table->unique(['business_id', 'legacy_import_run_id', 'source_identity']);
+            $table->index(['business_id', 'status', 'source_date']);
+        });
+        Schema::create('accounting_legacy_import_sources', function (Blueprint $table) {
+            $table->bigIncrements('id');
+            $table->unsignedBigInteger('legacy_import_run_id');
+            $table->unsignedInteger('business_id');
+            $table->string('classification', 64);
+            $table->string('status', 32)->default('review');
+            $table->text('error_message')->nullable();
+            $table->unsignedInteger('records_linked')->default(0);
+            $table->unsignedInteger('records_for_review')->default(0);
+        });
+        Schema::create('accounting_legacy_import_crosswalks', function (Blueprint $table) {
+            $table->bigIncrements('id');
+            $table->unsignedBigInteger('legacy_import_run_id');
+            $table->unsignedBigInteger('legacy_import_source_id');
+            $table->unsignedInteger('business_id');
+            $table->char('source_identity', 64);
+            $table->string('source_type', 100)->nullable();
+            $table->string('source_number', 191)->nullable();
+            $table->date('source_date')->nullable();
+            $table->unsignedBigInteger('journal_import_row_id')->nullable();
+            $table->string('target_record_type', 64)->nullable();
+            $table->unsignedBigInteger('target_record_id')->nullable();
+            $table->string('status', 32)->default('review');
+            $table->string('match_method', 32)->nullable();
+            $table->text('reason')->nullable();
+            $table->timestamps();
+        });
     }
 
     private function withoutReconciliationPageBootstrapMiddleware(): void

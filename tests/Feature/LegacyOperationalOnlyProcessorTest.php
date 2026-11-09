@@ -11,6 +11,7 @@ use Modules\Accounting\Services\JournalImportExpenseService;
 use Modules\Accounting\Services\JournalImportInvoiceService;
 use Modules\Accounting\Services\LegacyImportRunService;
 use Modules\Accounting\Services\LegacyOperationalOnlyProcessor;
+use Modules\Accounting\Services\LegacySourceReconciliationFindingService;
 use Tests\TestCase;
 
 class LegacyOperationalOnlyProcessorTest extends TestCase
@@ -89,6 +90,7 @@ class LegacyOperationalOnlyProcessorTest extends TestCase
                 return Transaction::find($id);
             });
         $expenseService = Mockery::mock(JournalImportExpenseService::class);
+        $sourceFindings = new LegacySourceReconciliationFindingService();
 
         $processor = new LegacyOperationalOnlyProcessor();
         $first = $processor->process(
@@ -100,7 +102,8 @@ class LegacyOperationalOnlyProcessorTest extends TestCase
             $standaloneDrafts,
             $runService,
             $invoiceService,
-            $expenseService
+            $expenseService,
+            $sourceFindings
         );
 
         $this->assertSame(['created' => 1, 'linked_existing' => 0, 'review' => 1, 'with_journal' => 0], $first);
@@ -114,6 +117,11 @@ class LegacyOperationalOnlyProcessorTest extends TestCase
             ->where('status', 'review')
             ->whereNull('target_record_id')
             ->count());
+        $this->assertSame(2, DB::table('accounting_legacy_source_findings')->where('legacy_import_run_id', $runId)->count());
+        $this->assertSame(1, DB::table('accounting_legacy_source_findings')
+            ->where('legacy_import_run_id', $runId)->where('reason_code', 'journal_source_missing')->count());
+        $this->assertSame(1, DB::table('accounting_legacy_source_findings')
+            ->where('legacy_import_run_id', $runId)->where('reason_code', 'operational_source_incomplete')->count());
 
         $second = $processor->process(
             $runId,
@@ -124,12 +132,14 @@ class LegacyOperationalOnlyProcessorTest extends TestCase
             $standaloneDrafts,
             $runService,
             $invoiceService,
-            $expenseService
+            $expenseService,
+            $sourceFindings
         );
 
         $this->assertSame(['created' => 0, 'linked_existing' => 1, 'review' => 1, 'with_journal' => 0], $second);
         $this->assertSame(1, DB::table('transactions')->where('business_id', 2)->count());
         $this->assertSame(2, DB::table('accounting_legacy_import_crosswalks')->where('legacy_import_run_id', $runId)->count());
+        $this->assertSame(2, DB::table('accounting_legacy_source_findings')->where('legacy_import_run_id', $runId)->count());
     }
 
     private function document(string $number, string $identity): array
@@ -207,6 +217,31 @@ class LegacyOperationalOnlyProcessorTest extends TestCase
             $table->text('reason')->nullable();
             $table->timestamps();
             $table->unique(['legacy_import_run_id', 'legacy_import_source_id', 'source_identity']);
+        });
+
+        Schema::create('accounting_legacy_source_findings', function (Blueprint $table) {
+            $table->bigIncrements('id');
+            $table->unsignedInteger('business_id');
+            $table->unsignedBigInteger('legacy_import_run_id');
+            $table->char('source_identity', 64);
+            $table->string('source_type', 100);
+            $table->string('source_number', 191)->nullable();
+            $table->date('source_date')->nullable();
+            $table->decimal('source_amount', 22, 4)->nullable();
+            $table->string('reason_code', 100);
+            $table->text('reason');
+            $table->longText('evidence')->nullable();
+            $table->string('status', 24)->default('open');
+            $table->string('target_record_type', 64)->nullable();
+            $table->unsignedBigInteger('target_record_id')->nullable();
+            $table->unsignedInteger('resolved_by')->nullable();
+            $table->dateTime('first_seen_at')->nullable();
+            $table->dateTime('last_seen_at')->nullable();
+            $table->dateTime('resolved_at')->nullable();
+            $table->text('resolution_reason')->nullable();
+            $table->longText('resolution_history')->nullable();
+            $table->timestamps();
+            $table->unique(['business_id', 'legacy_import_run_id', 'source_identity']);
         });
 
         Schema::create('transactions', function (Blueprint $table) {

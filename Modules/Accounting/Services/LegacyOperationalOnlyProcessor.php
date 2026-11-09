@@ -18,6 +18,7 @@ class LegacyOperationalOnlyProcessor
         LegacyImportRunService $runService,
         JournalImportInvoiceService $invoiceService,
         JournalImportExpenseService $expenseService,
+        ?LegacySourceReconciliationFindingService $sourceFindings = null,
         ?callable $progressCallback = null
     ): array {
         $journalEvidenceIdentities = array_fill_keys($journalEvidenceIdentities, true);
@@ -49,7 +50,8 @@ class LegacyOperationalOnlyProcessor
                 $standaloneDrafts,
                 $runService,
                 $invoiceService,
-                $expenseService
+                $expenseService,
+                $sourceFindings
             ) {
                 DB::table('accounting_legacy_import_runs')
                     ->where('id', $runId)
@@ -71,20 +73,40 @@ class LegacyOperationalOnlyProcessor
                 if ($existingCrosswalk) {
                     $transaction = Transaction::where('business_id', $businessId)->find((int) $existingCrosswalk->target_record_id);
                     if ($transaction) {
+                        if (in_array((string) $existingCrosswalk->status, ['review', 'conflict', 'failed'], true)) {
+                            $this->recordFinding(
+                                $sourceFindings,
+                                $runId,
+                                $businessId,
+                                $document,
+                                in_array((string) $existingCrosswalk->match_method, ['existing_operational', 'created_without_journal'], true)
+                                    ? 'journal_source_missing'
+                                    : (string) ($existingCrosswalk->match_method ?: 'legacy_crosswalk_review'),
+                                (string) ($existingCrosswalk->reason ?: 'Sumber legacy masih berstatus review.'),
+                                (int) $transaction->id
+                            );
+                        } else {
+                            $this->resolveFinding($sourceFindings, $runId, $businessId, $document, (int) $transaction->id);
+                        }
+
                         return 'linked_existing';
                     }
                 }
 
                 $existing = $this->findExistingTransaction($businessId, $document);
                 if ($existing['count'] > 1) {
-                    $runService->linkOperationalRecord($runId, $businessId, $document, null, null, 'review', 'ambiguous_existing', 'Lebih dari satu transaksi operasional memiliki nomor dan tanggal sumber yang sama.');
+                    $reason = 'Lebih dari satu transaksi operasional memiliki nomor dan tanggal sumber yang sama.';
+                    $runService->linkOperationalRecord($runId, $businessId, $document, null, null, 'review', 'ambiguous_existing', $reason);
+                    $this->recordFinding($sourceFindings, $runId, $businessId, $document, 'ambiguous_existing', $reason);
 
                     return 'review';
                 }
                 if ($existing['count'] === 1) {
                     $transaction = $existing['transaction'];
                     if (! $this->amountsMatch($transaction, $document)) {
-                        $runService->linkOperationalRecord($runId, $businessId, $document, null, null, 'review', 'amount_conflict', 'Transaksi dengan nomor dan tanggal yang sama sudah ada, tetapi nominalnya berbeda.');
+                        $reason = 'Transaksi dengan nomor dan tanggal yang sama sudah ada, tetapi nominalnya berbeda.';
+                        $runService->linkOperationalRecord($runId, $businessId, $document, null, null, 'review', 'amount_conflict', $reason);
+                        $this->recordFinding($sourceFindings, $runId, $businessId, $document, 'amount_conflict', $reason);
 
                         return 'review';
                     }
@@ -97,6 +119,15 @@ class LegacyOperationalOnlyProcessor
                         'review',
                         'existing_operational',
                         'Transaksi operasional yang cocok sudah ada; sumber Journal tidak ditemukan sehingga GL belum diposting.'
+                    );
+                    $this->recordFinding(
+                        $sourceFindings,
+                        $runId,
+                        $businessId,
+                        $document,
+                        'journal_source_missing',
+                        'Transaksi operasional yang cocok sudah ada; sumber Journal tidak ditemukan sehingga GL belum diposting.',
+                        (int) $transaction->id
                     );
 
                     return 'linked_existing';
@@ -113,6 +144,14 @@ class LegacyOperationalOnlyProcessor
                         null,
                         $reviewStatus,
                         'operational_only',
+                        (string) ($draft['reason'] ?? 'Detail sumber belum cukup untuk membuat transaksi operasional.')
+                    );
+                    $this->recordFinding(
+                        $sourceFindings,
+                        $runId,
+                        $businessId,
+                        $document,
+                        (string) (($document['status'] ?? null) === 'conflict' ? 'source_evidence_conflict' : 'operational_source_incomplete'),
                         (string) ($draft['reason'] ?? 'Detail sumber belum cukup untuk membuat transaksi operasional.')
                     );
 
@@ -133,6 +172,15 @@ class LegacyOperationalOnlyProcessor
                     'created_without_journal',
                     'Transaksi operasional dibuat dari sumber lengkap. Sumber Journal tidak ditemukan, jadi GL belum diposting dan perlu ditinjau.'
                 );
+                $this->recordFinding(
+                    $sourceFindings,
+                    $runId,
+                    $businessId,
+                    $document,
+                    'journal_source_missing',
+                    'Transaksi operasional dibuat dari sumber lengkap. Sumber Journal tidak ditemukan, jadi GL belum diposting dan perlu ditinjau.',
+                    (int) $transaction->id
+                );
 
                 return 'created';
             });
@@ -147,6 +195,27 @@ class LegacyOperationalOnlyProcessor
         $runService->refreshSourceCounts($runId, $businessId);
 
         return $counts;
+    }
+
+    private function recordFinding(
+        ?LegacySourceReconciliationFindingService $service,
+        int $runId,
+        int $businessId,
+        array $document,
+        string $reasonCode,
+        string $reason,
+        ?int $targetId = null
+    ): void {
+        if ($service !== null) {
+            $service->recordReview($runId, $businessId, $document, $reasonCode, $reason, $targetId);
+        }
+    }
+
+    private function resolveFinding(?LegacySourceReconciliationFindingService $service, int $runId, int $businessId, array $document, ?int $targetId): void
+    {
+        if ($service !== null) {
+            $service->resolveFromRecheck($runId, $businessId, $document, $targetId);
+        }
     }
 
     private function findExistingTransaction(int $businessId, array $document): array

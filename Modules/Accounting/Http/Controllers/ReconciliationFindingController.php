@@ -9,10 +9,11 @@ use Modules\Accounting\Entities\AccountingAccount;
 use Modules\Accounting\Services\ReconciliationFindingActionService;
 use Modules\Accounting\Services\LegacyReconciliationFindingSnapshotService;
 use Modules\Accounting\Services\ReconciliationFindingJournalService;
+use Modules\Accounting\Services\LegacySourceReconciliationFindingService;
 
 class ReconciliationFindingController extends Controller
 {
-    public function index(Request $request, ModuleUtil $moduleUtil, LegacyReconciliationFindingSnapshotService $findings, ReconciliationFindingJournalService $journalActions)
+    public function index(Request $request, ModuleUtil $moduleUtil, LegacyReconciliationFindingSnapshotService $findings, ReconciliationFindingJournalService $journalActions, LegacySourceReconciliationFindingService $sourceFindings)
     {
         $businessId = $this->authorizeReports($request, $moduleUtil);
         $filters = $this->filters($request);
@@ -27,11 +28,19 @@ class ReconciliationFindingController extends Controller
         $canPostJournals = $request->user()->can('superadmin')
             || $request->user()->can('accounting.add_journal');
         $canManageRounding = $request->user()->can('superadmin') || $request->user()->can('accounting.manage_accounts');
+        $sourceFilters = $this->sourceFilters($request);
+        $sourceRows = $sourceFindings->paginate($businessId, $sourceFilters, (int) $request->input('source_page', 1));
+        $sourceSummary = $sourceFindings->summary($businessId, $sourceFilters);
+        $sourceYears = $sourceFindings->years($businessId);
+        $sourceReasons = $sourceFindings->reasons($businessId);
+        $sourceTypes = $sourceFindings->types($businessId);
+        $canManageSources = $request->user()->can('superadmin') || $request->user()->can('accounting.manage_accounts');
         $linkedJournals = $journalActions->linkedJournals($businessId, collect($rows->items())->pluck('id')->map(fn ($id): int => (int) $id)->all());
 
         return view('accounting::reconciliation.findings', compact(
             'rows', 'summary', 'years', 'filters', 'findings', 'roundingAccountId', 'accountOptions',
-            'currencyPrecision', 'canPostJournals', 'canManageRounding'
+            'currencyPrecision', 'canPostJournals', 'canManageRounding', 'sourceRows', 'sourceSummary',
+            'sourceFilters', 'sourceYears', 'sourceReasons', 'sourceTypes', 'sourceFindings', 'canManageSources'
         ));
     }
 
@@ -58,6 +67,59 @@ class ReconciliationFindingController extends Controller
             'open_count' => $summary['open_count'],
             'last_audited_at' => $summary['last_audited_at'],
         ]);
+    }
+
+    public function sourceData(Request $request, ModuleUtil $moduleUtil, LegacySourceReconciliationFindingService $sourceFindings)
+    {
+        $businessId = $this->authorizeReports($request, $moduleUtil);
+        $filters = $this->sourceFilters($request);
+        $rows = $sourceFindings->paginate($businessId, $filters, (int) $request->input('source_page', 1));
+        $summary = $sourceFindings->summary($businessId, $filters);
+
+        return response()->json([
+            'rows_html' => view('accounting::reconciliation.partials.source_rows', [
+                'rows' => $rows,
+                'canManageSources' => $request->user()->can('superadmin') || $request->user()->can('accounting.manage_accounts'),
+            ])->render(),
+            'pagination_html' => view('accounting::reconciliation.partials.source_pagination', compact('rows'))->render(),
+            'open_count' => $summary['open_count'],
+            'filtered_count' => $summary['filtered_count'],
+            'last_seen_at' => $summary['last_seen_at'],
+        ]);
+    }
+
+    public function linkSource(Request $request, ModuleUtil $moduleUtil, LegacySourceReconciliationFindingService $sourceFindings, int $findingId)
+    {
+        $businessId = $this->authorizeMutation($request, $moduleUtil);
+        $validated = $request->validate([
+            'transaction_id' => ['required', 'integer', 'min:1'],
+            'reason' => ['required', 'string', 'min:3', 'max:2000'],
+        ]);
+        $result = $sourceFindings->linkExisting(
+            $businessId,
+            $findingId,
+            (int) $validated['transaction_id'],
+            (int) $request->user()->id,
+            trim($validated['reason'])
+        );
+
+        return response()->json($result);
+    }
+
+    public function retrySource(Request $request, ModuleUtil $moduleUtil, LegacySourceReconciliationFindingService $sourceFindings, int $findingId)
+    {
+        $businessId = $this->authorizeMutation($request, $moduleUtil);
+        $validated = $request->validate([
+            'reason' => ['required', 'string', 'min:3', 'max:2000'],
+        ]);
+        $result = $sourceFindings->retry(
+            $businessId,
+            $findingId,
+            (int) $request->user()->id,
+            trim($validated['reason'])
+        );
+
+        return response()->json($result);
     }
 
     public function correctionPreview(Request $request, ModuleUtil $moduleUtil, ReconciliationFindingActionService $actions, int $findingId)
@@ -225,6 +287,26 @@ class ReconciliationFindingController extends Controller
             'type' => $validated['type'] ?? '',
             'status' => $validated['status'] ?? 'open',
             'search' => trim((string) ($validated['search'] ?? '')),
+        ];
+    }
+
+    private function sourceFilters(Request $request): array
+    {
+        $validated = $request->validate([
+            'source_year' => ['nullable', 'integer', 'min:1900', 'max:2200'],
+            'source_type' => ['nullable', 'in:Sales Invoice,Purchase Invoice,Expense'],
+            'source_status' => ['nullable', 'in:open,resolved,all'],
+            'source_reason' => ['nullable', 'string', 'max:100'],
+            'source_search' => ['nullable', 'string', 'max:120'],
+            'source_page' => ['nullable', 'integer', 'min:1'],
+        ]);
+
+        return [
+            'year' => $validated['source_year'] ?? '',
+            'source_type' => $validated['source_type'] ?? '',
+            'status' => $validated['source_status'] ?? 'open',
+            'reason' => $validated['source_reason'] ?? '',
+            'search' => trim((string) ($validated['source_search'] ?? '')),
         ];
     }
 }

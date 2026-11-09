@@ -18,6 +18,9 @@
     data-adjustment-preview-url-template="{{ route('accounting.reconciliation.findings.adjustmentPreview', ['findingId' => 999999999999]) }}"
     data-adjustment-confirm-url-template="{{ route('accounting.reconciliation.findings.adjustmentConfirm', ['findingId' => 999999999999]) }}"
     data-rounding-account-url="{{ route('accounting.reconciliation.findings.roundingAccount') }}"
+    data-source-data-url="{{ route('accounting.reconciliation.findings.sourceData') }}"
+    data-source-link-url-template="{{ route('accounting.reconciliation.findings.sourceLink', ['findingId' => 999999999999]) }}"
+    data-source-retry-url-template="{{ route('accounting.reconciliation.findings.sourceRetry', ['findingId' => 999999999999]) }}"
     data-currency-precision="{{ $currencyPrecision }}"
     data-rounding-account-id="{{ $roundingAccountId ?: '' }}">
     @if($canManageRounding)
@@ -99,6 +102,35 @@
             <div id="finding_pagination">@include('accounting::reconciliation.partials.pagination')</div>
         </div>
     </div>
+
+    <div class="box box-warning" id="legacy_source_findings_panel">
+        <div class="box-header with-border">
+            <h3 class="box-title"><i class="fa fa-link text-yellow"></i> Sumber operasional perlu ditinjau</h3>
+            <span class="label label-warning" id="source_finding_open_count">{{ number_format($sourceSummary['open_count']) }} terbuka</span>
+        </div>
+        <div class="box-body">
+            <p class="text-muted">Kelompok dokumen legacy yang belum dapat ditautkan atau dilengkapi secara aman. Tindakan di sini hanya memperbarui relasi sumber; jurnal dan GL tidak diubah. Temuan selesai tetap tersedia melalui filter status.</p>
+            <form id="legacy_source_findings_filter" method="get" action="{{ route('accounting.reconciliation.findings') }}">
+                <input type="hidden" name="source_page" value="1">
+                <div class="row">
+                    <div class="col-md-2 col-sm-6"><div class="form-group"><label for="source_filter_year">Tahun</label><select class="form-control" id="source_filter_year" name="source_year"><option value="">Semua tahun</option>@foreach($sourceYears as $year)<option value="{{ $year }}" @if((string) $sourceFilters['year'] === (string) $year) selected @endif>{{ $year }}</option>@endforeach</select></div></div>
+                    <div class="col-md-2 col-sm-6"><div class="form-group"><label for="source_filter_type">Jenis transaksi</label><select class="form-control" id="source_filter_type" name="source_type"><option value="">Semua jenis</option>@foreach($sourceTypes as $type)<option value="{{ $type }}" @if($sourceFilters['source_type'] === $type) selected @endif>{{ $type }}</option>@endforeach</select></div></div>
+                    <div class="col-md-2 col-sm-6"><div class="form-group"><label for="source_filter_status">Status</label><select class="form-control" id="source_filter_status" name="source_status"><option value="open" @if($sourceFilters['status'] === 'open') selected @endif>Terbuka</option><option value="resolved" @if($sourceFilters['status'] === 'resolved') selected @endif>Selesai</option><option value="all" @if($sourceFilters['status'] === 'all') selected @endif>Semua status</option></select></div></div>
+                    <div class="col-md-3 col-sm-6"><div class="form-group"><label for="source_filter_reason">Alasan</label><select class="form-control" id="source_filter_reason" name="source_reason"><option value="">Semua alasan</option>@foreach($sourceReasons as $reason)<option value="{{ $reason }}" @if($sourceFilters['reason'] === $reason) selected @endif>{{ str_replace('_', ' ', $reason) }}</option>@endforeach</select></div></div>
+                    <div class="col-md-2 col-sm-10"><div class="form-group"><label for="source_filter_search">Cari sumber</label><input class="form-control" id="source_filter_search" name="source_search" type="search" maxlength="120" value="{{ $sourceFilters['search'] }}" placeholder="Nomor atau alasan"></div></div>
+                    <div class="col-md-1 col-sm-2"><div class="form-group"><label>&nbsp;</label><button class="btn btn-warning btn-block" type="submit" aria-label="Cari temuan sumber"><i class="fa fa-search"></i></button></div></div>
+                </div>
+            </form>
+            <div id="source_finding_status_message" class="text-muted" role="status" aria-live="polite">{{ number_format($sourceSummary['filtered_count']) }} kelompok ditampilkan. Audit sumber terakhir: {{ $sourceSummary['last_seen_at'] ?: 'belum ada' }}.</div>
+        </div>
+        <div id="source_finding_results" class="box-body table-responsive" aria-busy="false">
+            <table class="table table-bordered table-striped">
+                <thead><tr><th>Tanggal / sumber</th><th>Jenis / nominal</th><th>Bukti</th><th>Alasan / status</th><th>Aksi</th></tr></thead>
+                <tbody id="source_finding_rows">@include('accounting::reconciliation.partials.source_rows')</tbody>
+            </table>
+            <div id="source_finding_pagination">@include('accounting::reconciliation.partials.source_pagination')</div>
+        </div>
+    </div>
 </section>
 
 <div class="modal fade" id="reconciliation_finding_action_modal" tabindex="-1" role="dialog" aria-labelledby="finding_action_title" aria-hidden="true">
@@ -175,8 +207,24 @@
         </div>
     </div>
 </div>
+
+<div class="modal fade" id="legacy_source_finding_action_modal" tabindex="-1" role="dialog" aria-labelledby="source_finding_action_title" aria-hidden="true">
+    <div class="modal-dialog" role="document">
+        <div class="modal-content">
+            <div class="modal-header"><button type="button" class="close" data-dismiss="modal" aria-label="Tutup"><span aria-hidden="true">&times;</span></button><h4 class="modal-title" id="source_finding_action_title">Tautkan sumber legacy</h4></div>
+            <div class="modal-body">
+                <div id="source_finding_action_status" class="alert alert-info" role="status" aria-live="polite">Pilih aksi untuk melanjutkan.</div>
+                <p id="source_finding_action_target"></p>
+                <label for="source_finding_action_reason">Alasan / catatan tindakan <span class="text-danger">(wajib)</span></label>
+                <textarea id="source_finding_action_reason" class="form-control" rows="3" maxlength="2000" placeholder="Jelaskan dasar penautan atau hasil pemeriksaan"></textarea>
+            </div>
+            <div class="modal-footer"><button type="button" class="btn btn-default" data-dismiss="modal">Batal</button><button type="button" id="source_finding_action_confirm" class="btn btn-primary">Konfirmasi</button></div>
+        </div>
+    </div>
+</div>
 @stop
 
 @section('javascript')
 <script type="text/javascript" src="{{ versioned_asset_url(Module::asset('accounting:js/reconciliation_findings.js'), $asset_v ?? null) }}"></script>
+<script type="text/javascript" src="{{ versioned_asset_url(Module::asset('accounting:js/reconciliation_source_findings.js'), $asset_v ?? null) }}"></script>
 @stop

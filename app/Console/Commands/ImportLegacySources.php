@@ -14,6 +14,7 @@ use Modules\Accounting\Services\LegacyJournalImportAuditReader;
 use Modules\Accounting\Services\LegacyOperationalDraftEnricher;
 use Modules\Accounting\Services\LegacyOperationalEvidenceReader;
 use Modules\Accounting\Services\LegacyOperationalOnlyProcessor;
+use Modules\Accounting\Services\LegacySourceReconciliationFindingService;
 use Modules\Accounting\Services\LegacyAttachmentImporter;
 use Modules\Accounting\Services\JournalImportInvoiceService;
 use Modules\Accounting\Services\JournalImportExpenseService;
@@ -46,6 +47,7 @@ class ImportLegacySources extends Command
         JournalImportDraftService $draftService,
         LegacyImportRunService $runService,
         LegacyOperationalOnlyProcessor $operationalOnlyProcessor,
+        LegacySourceReconciliationFindingService $sourceFindings,
         LegacyAttachmentImporter $attachmentImporter,
         JournalImportInvoiceService $invoiceService,
         JournalImportExpenseService $expenseService,
@@ -259,6 +261,7 @@ class ImportLegacySources extends Command
                         $runService,
                         $invoiceService,
                         $expenseService,
+                        $sourceFindings,
                         fn (int $processed, int $total, array $counts) => $this->line(
                             'Sumber operasional tanpa Journal: '.$processed.' / '.$total
                             .' (' .$counts['created'].' dibuat, '.$counts['linked_existing'].' ditautkan, '
@@ -382,6 +385,7 @@ class ImportLegacySources extends Command
                 $runService,
                 $invoiceService,
                 $expenseService,
+                $sourceFindings,
                 fn (int $processed, int $total, array $counts) => $this->line(
                     'Sumber operasional tanpa Journal: '.$processed.' / '.$total
                     .' (' .$counts['created'].' dibuat, '.$counts['linked_existing'].' ditautkan, '
