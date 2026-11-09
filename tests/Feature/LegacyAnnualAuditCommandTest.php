@@ -338,6 +338,16 @@ class LegacyAnnualAuditCommandTest extends TestCase
                 'total' => null, 'counts' => ['reconciled' => 2, 'review' => 1, 'not_applicable' => 0],
                 'completed_at' => null,
             ],
+            'gl_duplicates' => [
+                'phase' => 'gl_duplicates', 'cursor' => '500', 'processed' => 500,
+                'total' => 500, 'counts' => ['removed_duplicate_app_postings' => 7],
+                'completed_at' => '2026-11-09 10:00:00',
+            ],
+            'gl_transactions' => [
+                'phase' => 'gl_transactions', 'cursor' => '9876', 'processed' => 75,
+                'total' => 240, 'counts' => ['candidate_groups' => 240, 'removed_duplicate_app_postings' => 7],
+                'completed_at' => null,
+            ],
         ]);
         $runService->shouldReceive('clearRecheckCheckpoint')->never();
         $runService->shouldReceive('saveRecheckCheckpoint')->zeroOrMoreTimes();
@@ -378,9 +388,11 @@ class LegacyAnnualAuditCommandTest extends TestCase
                 4,
                 Mockery::on(fn ($callback) => is_callable($callback)),
                 Mockery::on(fn ($checkpoint) => $checkpoint instanceof \Modules\Accounting\Services\GeneralLedgerBackfillCheckpoint
-                    && $checkpoint->phase() === 'gl_duplicates'
-                    && $checkpoint->cursor() === null
-                    && $checkpoint->removedDuplicateAppPostings() === 0)
+                    && $checkpoint->phase() === 'gl_transactions'
+                    && $checkpoint->cursor() === 9876
+                    && $checkpoint->processed() === 75
+                    && $checkpoint->count('candidate_groups') === 240
+                    && $checkpoint->removedDuplicateAppPostings() === 7)
             )
             ->andReturn([
                 'journal_linked_sources' => 1,
