@@ -155,12 +155,8 @@ class LegacySourceReconciliationFindingService
 
     public function years(int $businessId): array
     {
-        $yearExpression = DB::connection()->getDriverName() === 'sqlite'
-            ? "strftime('%Y', source_date)"
-            : 'YEAR(source_date)';
-
         return DB::table(self::TABLE)->where('business_id', $businessId)->whereNotNull('source_date')
-            ->selectRaw($yearExpression.' as source_year')->distinct()->orderByDesc('source_year')->pluck('source_year')->map(fn ($year) => (int) $year)->all();
+            ->selectRaw('YEAR(source_date) as source_year')->distinct()->orderByDesc('source_year')->pluck('source_year')->map(fn ($year) => (int) $year)->all();
     }
 
     public function reasons(int $businessId): array
