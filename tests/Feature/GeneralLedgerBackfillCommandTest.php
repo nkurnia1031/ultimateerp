@@ -533,8 +533,8 @@ class GeneralLedgerBackfillCommandTest extends TestCase
         DB::table('transactions')->insert([
             ['id' => 964, 'business_id' => 7, 'location_id' => 70, 'type' => 'expense', 'status' => 'final', 'expense_category_id' => 5, 'transaction_date' => '2023-08-02 10:00:00', 'final_total' => 100, 'total_before_tax' => 100, 'tax_amount' => 0, 'created_by' => 1, 'invoice_no' => 'EXP-964'],
             ['id' => 965, 'business_id' => 7, 'location_id' => 70, 'type' => 'expense', 'status' => 'final', 'expense_category_id' => 6, 'transaction_date' => '2023-08-03 10:00:00', 'final_total' => 80, 'total_before_tax' => 80, 'tax_amount' => 0, 'created_by' => 1, 'invoice_no' => 'EXP-965'],
-            ['id' => 966, 'business_id' => 7, 'location_id' => 70, 'type' => 'sell', 'status' => 'final', 'transaction_date' => '2023-08-04 10:00:00', 'final_total' => 120, 'total_before_tax' => 120, 'tax_amount' => 0, 'created_by' => 1, 'invoice_no' => 'SALE-966'],
-            ['id' => 967, 'business_id' => 7, 'location_id' => 70, 'type' => 'purchase', 'status' => 'received', 'transaction_date' => '2023-08-05 10:00:00', 'final_total' => 130, 'total_before_tax' => 130, 'tax_amount' => 0, 'created_by' => 1, 'invoice_no' => 'PUR-967'],
+            ['id' => 966, 'business_id' => 7, 'location_id' => 70, 'type' => 'sell', 'status' => 'final', 'expense_category_id' => null, 'transaction_date' => '2023-08-04 10:00:00', 'final_total' => 120, 'total_before_tax' => 120, 'tax_amount' => 0, 'created_by' => 1, 'invoice_no' => 'SALE-966'],
+            ['id' => 967, 'business_id' => 7, 'location_id' => 70, 'type' => 'purchase', 'status' => 'received', 'expense_category_id' => null, 'transaction_date' => '2023-08-05 10:00:00', 'final_total' => 130, 'total_before_tax' => 130, 'tax_amount' => 0, 'created_by' => 1, 'invoice_no' => 'PUR-967'],
         ]);
         DB::table('transaction_payments')->insert([
             ['id' => 560, 'transaction_id' => 964, 'business_id' => 7, 'account_id' => 201, 'amount' => 100, 'paid_on' => '2023-08-02 10:00:00', 'created_by' => 1, 'is_return' => 0, 'is_advance' => 0],
