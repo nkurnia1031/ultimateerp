@@ -1067,6 +1067,7 @@ class ReconciliationFindingInboxTest extends TestCase
             $table->text('error_message')->nullable();
             $table->unsignedInteger('records_linked')->default(0);
             $table->unsignedInteger('records_for_review')->default(0);
+            $table->timestamps();
         });
         Schema::create('accounting_legacy_import_crosswalks', function (Blueprint $table) {
             $table->bigIncrements('id');
