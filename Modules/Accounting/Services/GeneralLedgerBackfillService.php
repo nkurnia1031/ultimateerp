@@ -723,13 +723,7 @@ class GeneralLedgerBackfillService
             ->join('transactions as transaction', 'transaction.id', '=', 'payment.transaction_id')
             ->where('transaction.business_id', $businessId)
             ->where('payment.business_id', $businessId)
-            ->where(function ($query) {
-                $query->where(function ($query) {
-                    $query->where('transaction.type', 'sell')->where('transaction.status', 'final');
-                })->orWhere(function ($query) {
-                    $query->where('transaction.type', 'purchase')->where('transaction.status', 'received');
-                });
-            });
+            ->whereIn('transaction.type', ['sell', 'purchase']);
         if (Schema::hasColumn('transaction_payments', 'deleted_at')) {
             $payments->whereNull('payment.deleted_at');
         }

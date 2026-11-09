@@ -169,6 +169,52 @@ class GeneralLedgerBackfillCommandTest extends TestCase
         $this->assertSame(3, DB::table('accounting_acc_trans_mappings')->count());
     }
 
+    public function test_legacy_recheck_payment_progress_total_includes_non_posting_transactions(): void
+    {
+        DB::table('transactions')->insert([
+            'id' => 998,
+            'business_id' => 7,
+            'location_id' => 70,
+            'type' => 'sell',
+            'status' => 'draft',
+            'transaction_date' => '2023-01-03 10:00:00',
+            'final_total' => 100,
+            'total_before_tax' => 100,
+            'tax_amount' => 0,
+            'created_by' => 1,
+            'invoice_no' => 'DRAFT-998',
+            'ref_no' => 'DRAFT-998',
+        ]);
+        DB::table('transaction_payments')->insert([
+            'id' => 998,
+            'transaction_id' => 998,
+            'business_id' => 7,
+            'account_id' => 201,
+            'amount' => 100,
+            'paid_on' => '2023-01-03 10:00:00',
+            'created_by' => 1,
+            'is_return' => 0,
+            'is_advance' => 0,
+        ]);
+
+        $paymentProgress = null;
+        app(\Modules\Accounting\Services\GeneralLedgerBackfillService::class)->run(
+            7,
+            true,
+            true,
+            900,
+            function (string $phase, int $processed, array $counts) use (&$paymentProgress): void {
+                $checkpoint = $counts['checkpoint'] ?? [];
+                if ($phase === 'gl_payments' && ! empty($checkpoint['completed'])) {
+                    $paymentProgress = $checkpoint;
+                }
+            }
+        );
+
+        $this->assertSame(1, $paymentProgress['processed']);
+        $this->assertSame(1, $paymentProgress['total']);
+    }
+
     public function test_legacy_recheck_replaces_generated_rows_uses_unique_journal_pattern_and_keeps_manual_rows(): void
     {
         DB::table('business_locations')->insert([
