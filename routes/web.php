@@ -480,6 +480,7 @@ Route::middleware(['setData', 'auth', 'SetSessionData', 'language', 'timezone', 
     Route::patch('import-expense/{batch}/rows/{row}/date', [ExpenseController::class, 'expenseImportUpdateDate'])->name('expenses.import.rows.date');
     Route::patch('import-expense/{batch}/rows/{row}/tax', [ExpenseController::class, 'expenseImportUpdateTax'])->name('expenses.import.rows.tax');
     Route::patch('import-expense/{batch}/rows/{row}/journal', [ExpenseController::class, 'expenseImportUpdateJournalMatch'])->name('expenses.import.rows.journal');
+    Route::patch('import-expense/{batch}/rows/{row}/existing-expense', [ExpenseController::class, 'expenseImportUpdateExistingExpenseAction'])->name('expenses.import.rows.existing-expense');
     Route::post('import-expense/{batch}/confirm', [ExpenseController::class, 'expenseImportConfirm'])->name('expenses.import.confirm');
     Route::post('import-expense/{batch}/cancel', [ExpenseController::class, 'expenseImportCancel'])->name('expenses.import.cancel');
     Route::get('expenses/{id}/duplicate', [ExpenseController::class, 'duplicate'])

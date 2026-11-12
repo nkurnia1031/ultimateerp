@@ -44,6 +44,10 @@
         return $('#expense_import_preview_modal').data('journal-template').replace('__BATCH__', encodeURIComponent(id)).replace('__ROW__', encodeURIComponent(row));
     }
 
+    function existingExpenseUrl(id, row) {
+        return $('#expense_import_preview_modal').data('existing-expense-template').replace('__BATCH__', encodeURIComponent(id)).replace('__ROW__', encodeURIComponent(row));
+    }
+
     function escapeHtml(value) {
         return $('<div>').text(value === null || typeof value === 'undefined' ? '' : value).html();
     }
@@ -92,6 +96,9 @@
         $('[data-expense-summary="skipped"]').text(summary.skipped || 0);
         $('#expense_import_journal_summary').text(
             'Journal cocok: ' + Number(summary.journal_matched_groups || 0) + ' grup · perlu pilihan: ' + Number(summary.journal_review_groups || 0) + ' grup'
+        );
+        $('#expense_import_existing_summary').text(
+            'Expense lama diperbarui: ' + Number(summary.existing_expense_updated_groups || 0) + ' grup · perlu pilihan: ' + Number(summary.existing_expense_review_groups || 0) + ' grup'
         );
         $('#expense_import_confirm').prop('disabled', Number(summary.importable || 0) < 1);
     }
@@ -238,10 +245,43 @@
                     if (value === 'none') { return '<span class="text-muted">Excel: tanpa pajak</span>'; }
                     return escapeHtml(row.tax_name || (row.payload && row.payload.applicable_tax) || '-');
                 } },
-                { data: 'status', render: function (value) { return value === 'valid' ? '<span class="label label-success">Valid</span>' : '<span class="label label-danger">Error</span>'; } },
-                { data: 'errors', render: function (value) { return escapeHtml((value || []).join(' ')); } },
+                { data: 'status', render: function (value, type, row) {
+                    var output = value === 'valid' ? '<span class="label label-success">Valid</span>' : (value === 'skipped' ? '<span class="label label-default">Dilewati</span>' : '<span class="label label-danger">Error</span>');
+                    var existing = row.existing_expense_match || {};
+                    if (existing.review_required && !existing.action) {
+                        output += '<div><span class="label label-warning">Pilih aksi untuk referensi lama</span></div>';
+                    } else if (existing.action && existing.action.indexOf('merge:') === 0) {
+                        output += '<div><span class="label label-info">Perbarui Expense #' + Number(existing.selected_transaction_id || existing.action.split(':')[1]) + '</span></div>';
+                    } else if (existing.action === 'new') {
+                        output += '<div><span class="label label-warning">Expense baru dipilih</span></div>';
+                    }
+                    return output;
+                } },
+                { data: 'errors', render: function (value, type, row) {
+                    var details = (value || []).map(escapeHtml);
+                    var existing = row.existing_expense_match || {};
+                    if (existing.review_required) {
+                        (existing.candidates || []).forEach(function (candidate) {
+                            var dateDiff = candidate.date_difference_days === null ? 'tanggal tidak tersedia' : Number(candidate.date_difference_days) + ' hari';
+                            details.push('Expense #' + Number(candidate.id) + ': lama ' + escapeHtml(candidate.date || '-') + ' / Rp ' + Number(candidate.total || 0).toLocaleString('id-ID') + '; Excel ' + escapeHtml(candidate.incoming_date || '-') + ' / Rp ' + Number(candidate.incoming_total || 0).toLocaleString('id-ID') + '; beda ' + dateDiff + ' dan Rp ' + Number(candidate.amount_difference || 0).toLocaleString('id-ID'));
+                        });
+                    }
+                    return details.join('<br>');
+                } },
                 { data: null, orderable: false, searchable: false, render: function (value, type, row) {
                     var actions = '';
+                    var existing = row.existing_expense_match || {};
+                    if (existing.review_required) {
+                        var existingSelect = '<select class="form-control input-sm expense-import-existing-action" data-row="' + row.id + '"><option value="">Pilih aksi transaksi</option>';
+                        (existing.candidates || []).forEach(function (candidate) {
+                            var mergeValue = 'merge:' + Number(candidate.id);
+                            var selected = existing.action === mergeValue ? ' selected' : '';
+                            existingSelect += '<option value="' + mergeValue + '"' + selected + '>Gabungkan ke Expense #' + Number(candidate.id) + '</option>';
+                        });
+                        existingSelect += '<option value="new"' + (existing.action === 'new' ? ' selected' : '') + '>Buat transaksi baru</option>';
+                        existingSelect += '<option value="skip"' + (existing.action === 'skip' ? ' selected' : '') + '>Lewati</option></select>';
+                        actions += existingSelect + ' ';
+                    }
                     if (row.status === 'error' && !row.expense_date && row.raw_expense_date) { actions += '<button type="button" class="btn btn-xs btn-primary expense-import-edit-date" data-row="' + row.id + '" data-field="expense_date"><i class="fa fa-calendar"></i> Tanggal</button> '; }
                     if (row.status === 'error' && !row.paid_on_date && row.raw_paid_on_date) { actions += '<button type="button" class="btn btn-xs btn-primary expense-import-edit-date" data-row="' + row.id + '" data-field="paid_on_date"><i class="fa fa-calendar"></i> Bayar</button> '; }
                     if (row.tax_status === 'unknown' || row.tax_status === 'mapped' || row.tax_mapping_required) {
@@ -264,6 +304,9 @@
                             });
                             actions += journalSelect + '</select>';
                         }
+                    }
+                    if (journalMatch.status === 'unavailable') {
+                        actions += '<span class="text-muted">Posting Journal belum siap</span> ';
                     }
                     return actions || '<span class="text-muted">-</span>';
                 } }
@@ -327,6 +370,34 @@
             if (window.toastr) { toastr.success(response.message || 'Posting Journal dipilih.'); }
         }).fail(function (xhr) {
             var message = (xhr.responseJSON && (xhr.responseJSON.message || xhr.responseJSON.msg)) || 'Posting Journal gagal dipilih.';
+            if (window.toastr) { toastr.error(message); }
+            select.val('');
+        }).always(function () {
+            select.prop('disabled', false);
+        });
+    });
+
+    $('#expense_import_preview_table').on('change', '.expense-import-existing-action', function () {
+        var select = $(this);
+        var action = select.val();
+        if (!batchId || !action) { return; }
+
+        select.prop('disabled', true);
+        $.ajax({
+            url: existingExpenseUrl(batchId, select.data('row')),
+            method: 'PATCH',
+            dataType: 'json',
+            headers: { Accept: 'application/json' },
+            data: {
+                _token: form.find('input[name="_token"]').val(),
+                action: action
+            }
+        }).done(function (response) {
+            updateSummary(response.summary || {});
+            if (previewTable) { previewTable.ajax.reload(null, false); }
+            if (window.toastr) { toastr.success(response.message || 'Aksi transaksi diperbarui.'); }
+        }).fail(function (xhr) {
+            var message = (xhr.responseJSON && (xhr.responseJSON.message || xhr.responseJSON.msg)) || 'Aksi transaksi gagal disimpan.';
             if (window.toastr) { toastr.error(message); }
             select.val('');
         }).always(function () {

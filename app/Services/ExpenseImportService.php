@@ -16,6 +16,7 @@ use App\Utils\TransactionUtil;
 use Carbon\Carbon;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Maatwebsite\Excel\Facades\Excel;
 use PhpOffice\PhpSpreadsheet\Shared\Date as ExcelDate;
@@ -78,6 +79,7 @@ class ExpenseImportService
         $rows = $this->parseWorkbook($path, $businessId, $overrides, $progress);
         $rows = $this->applyJournalMatches($rows, $businessId, $overrides);
         $rows = $this->validateGroupTaxes($rows);
+        $rows = $this->applyExistingExpenseMatches($rows, $businessId, $overrides);
         $progress && $progress('matching', 'Memvalidasi kategori, lokasi, pembayaran, dan tanggal.', 70, count($rows), count($rows));
 
         DB::transaction(function () use ($batchId, $businessId, $rows, $progress) {
@@ -98,7 +100,9 @@ class ExpenseImportService
                     'raw_payload' => json_encode($row['raw_payload'], JSON_UNESCAPED_UNICODE),
                     'normalized_payload' => json_encode($row['normalized_payload'], JSON_UNESCAPED_UNICODE),
                     'is_importable' => $row['is_importable'],
-                    'skip_reason' => $row['is_importable'] ? null : ($row['errors'][0] ?? null),
+                    'skip_reason' => $row['status'] === 'skipped'
+                        ? 'Dilewati dari preview.'
+                        : ($row['is_importable'] ? null : ($row['errors'][0] ?? null)),
                     'created_at' => now(),
                     'updated_at' => now(),
                 ];
@@ -142,7 +146,7 @@ class ExpenseImportService
             ->pluck('aggregate', 'status');
 
         return [
-            'total' => (int) ($counts['valid'] ?? 0) + (int) ($counts['error'] ?? 0),
+            'total' => (int) ($counts['valid'] ?? 0) + (int) ($counts['error'] ?? 0) + (int) ($counts['skipped'] ?? 0),
             'valid' => (int) ($counts['valid'] ?? 0),
             'errors' => (int) ($counts['error'] ?? 0),
             'importable' => (int) DB::table('expense_import_preview_rows')
@@ -153,6 +157,8 @@ class ExpenseImportService
             'skipped' => (int) ($counts['skipped'] ?? 0),
             'journal_matched_groups' => (int) ($storedSummary['journal_matched_groups'] ?? 0),
             'journal_review_groups' => (int) ($storedSummary['journal_review_groups'] ?? 0),
+            'existing_expense_updated_groups' => (int) ($storedSummary['existing_expense_updated_groups'] ?? 0),
+            'existing_expense_review_groups' => (int) ($storedSummary['existing_expense_review_groups'] ?? 0),
         ];
     }
 
@@ -205,6 +211,7 @@ class ExpenseImportService
                     'tax_name' => $normalized['tax_name'] ?? null,
                     'tax_status' => $normalized['tax_status'] ?? 'none',
                     'journal_match' => $normalized['journal_match'] ?? ['status' => 'none', 'candidates' => []],
+                    'existing_expense_match' => $normalized['existing_expense_match'] ?? ['status' => 'none', 'candidates' => []],
                     'tax_mapping_required' => collect($errors)->contains(fn ($error) => str_contains((string) $error, 'satu TaxRate atau grup pajak')),
                     'payload' => $normalized,
                 ];
@@ -338,6 +345,58 @@ class ExpenseImportService
             json_decode((string) ($batch->row_overrides ?? '[]'), true) ?: []
         );
         $overrides['journal_candidate:'.$this->normalize($reference)] = $journalMappingId;
+        $path = $batch->file_path;
+        if (! $path || ! Storage::disk('local')->exists($path)) {
+            throw new RuntimeException('File sumber preview sudah tidak tersedia.');
+        }
+
+        $summary = $this->preview($batchId, $businessId, Storage::disk('local')->path($path), $overrides);
+        DB::table('expense_import_batches')->where('id', $batchId)->where('business_id', $businessId)->update([
+            'row_overrides' => json_encode($overrides, JSON_UNESCAPED_UNICODE),
+            'updated_at' => now(),
+        ]);
+
+        return $summary;
+    }
+
+    public function updateExistingExpenseAction(string $batchId, int $rowId, int $businessId, string $action): array
+    {
+        $batch = DB::table('expense_import_batches')->where('id', $batchId)->where('business_id', $businessId)->first();
+        if (! $batch || $batch->status !== 'preview' || (($batch->process_state ?? 'completed') !== 'completed')) {
+            throw new RuntimeException('Batch preview tidak ditemukan atau sudah diproses.');
+        }
+
+        $row = DB::table('expense_import_preview_rows')
+            ->where('id', $rowId)->where('batch_id', $batchId)->where('business_id', $businessId)->first();
+        if (! $row) {
+            throw new RuntimeException('Baris preview tidak ditemukan.');
+        }
+
+        $normalized = json_decode((string) $row->normalized_payload, true) ?: [];
+        $reference = trim((string) ($normalized['reference_no'] ?? ''));
+        $match = $normalized['existing_expense_match'] ?? [];
+        if ($reference === '' || empty($match['review_required'])) {
+            throw new RuntimeException('Baris ini tidak memerlukan pilihan untuk Expense dengan referensi yang sudah ada.');
+        }
+
+        if (! in_array($action, ['skip', 'new'], true)) {
+            if (! preg_match('/^merge:([1-9][0-9]*)$/D', $action, $matches)) {
+                throw new RuntimeException('Pilih Lewati, Gabungkan, atau Buat transaksi baru.');
+            }
+            $transactionId = (int) $matches[1];
+            $candidateExists = collect($match['candidates'] ?? [])->contains(function ($candidate) use ($transactionId) {
+                return (int) ($candidate['id'] ?? 0) === $transactionId;
+            });
+            if (! $candidateExists) {
+                throw new RuntimeException('Expense yang dipilih bukan kandidat untuk referensi ini. Muat ulang preview.');
+            }
+        }
+
+        $overrides = array_merge(
+            json_decode((string) ($batch->date_overrides ?? '[]'), true) ?: [],
+            json_decode((string) ($batch->row_overrides ?? '[]'), true) ?: []
+        );
+        $overrides['expense_existing_action:'.$this->normalize($reference)] = $action;
         $path = $batch->file_path;
         if (! $path || ! Storage::disk('local')->exists($path)) {
             throw new RuntimeException('File sumber preview sudah tidak tersedia.');
@@ -634,6 +693,11 @@ class ExpenseImportService
                 $row['errors'][] = 'Ada beberapa posting Journal Expense dengan REFERENCE NO ini. Pilih satu kandidat sebelum import agar GL tidak tertaut ganda.';
             } elseif ($match['status'] === 'selection_invalid') {
                 $row['errors'][] = 'Pilihan Journal sudah tidak tersedia. Pilih ulang kandidat yang masih aktif.';
+            } elseif ($match['status'] === 'unavailable') {
+                $issues = collect($match['candidates'] ?? [])->pluck('issue')->filter()->unique()->values();
+                $row['errors'][] = $issues->isNotEmpty()
+                    ? 'Journal dengan referensi ini belum siap dipakai: '.$issues->implode(' ')
+                    : 'Journal dengan referensi ini belum memiliki satu posting GL yang siap dipakai.';
             } elseif ($match['status'] === 'matched') {
                 $candidate = $match['selected'];
                 $payload['journal_mapping_id'] = $candidate['mapping_id'] ?? null;
@@ -667,6 +731,187 @@ class ExpenseImportService
             $row['normalized_payload'] = $payload;
         }
         unset($row);
+
+        return $rows;
+    }
+
+    private function applyExistingExpenseMatches(array $rows, int $businessId, array $overrides): array
+    {
+        $references = [];
+        $groupTotals = [];
+        $groupDates = [];
+        foreach ($rows as $index => $row) {
+            $payload = $row['normalized_payload'];
+            $reference = trim((string) ($payload['reference_no'] ?? ''));
+            $normalizedReference = $this->normalize($reference);
+            if ($normalizedReference === '') {
+                continue;
+            }
+
+            $references[$normalizedReference] = $reference;
+            $groupTotals[$normalizedReference]['excel'] = ($groupTotals[$normalizedReference]['excel'] ?? 0)
+                + (float) ($payload['total_amount'] ?? 0);
+            $groupTotals[$normalizedReference]['base'] = ($groupTotals[$normalizedReference]['base'] ?? 0)
+                + $this->excelLineBaseAmount($payload);
+            $expenseDate = substr((string) ($payload['expense_date'] ?? ''), 0, 10);
+            if ($expenseDate !== '') {
+                $groupDates[$normalizedReference][$expenseDate] = $expenseDate;
+            }
+            $groupTotals[$normalizedReference]['indexes'][] = $index;
+        }
+
+        if ($references === []) {
+            return $rows;
+        }
+
+        $lookupReferences = array_values(array_unique(array_map(fn ($reference) => mb_strtolower(trim($reference)), $references)));
+        $existingByReference = [];
+        foreach (array_chunk($lookupReferences, 300) as $referenceChunk) {
+            Transaction::where('business_id', $businessId)
+                ->where('type', 'expense')
+                ->whereNotNull('ref_no')
+                ->whereIn(DB::raw('LOWER(TRIM(ref_no))'), $referenceChunk)
+                ->get(['id', 'ref_no', 'transaction_date', 'final_total'])
+                ->each(function ($transaction) use (&$existingByReference) {
+                    $normalizedReference = $this->normalize((string) $transaction->ref_no);
+                    $existingByReference[$normalizedReference][] = $transaction;
+                });
+        }
+
+        foreach ($references as $normalizedReference => $reference) {
+            $indexes = $groupTotals[$normalizedReference]['indexes'] ?? [];
+            if ($indexes === []) {
+                continue;
+            }
+
+            $candidates = collect($existingByReference[$normalizedReference] ?? [])->unique('id')->values();
+            $firstPayload = $rows[$indexes[0]]['normalized_payload'];
+            $journalMatch = $firstPayload['journal_match'] ?? [];
+            $linkedTransactionId = ($journalMatch['status'] ?? null) === 'matched'
+                ? (int) ($firstPayload['journal_source_transaction_id'] ?? 0)
+                : 0;
+            if ($linkedTransactionId > 0) {
+                $linked = $candidates->first(fn ($candidate) => (int) $candidate->id === $linkedTransactionId);
+                if ($linked) {
+                    $candidates = collect([$linked]);
+                }
+            }
+
+            if ($candidates->isEmpty()) {
+                foreach ($indexes as $index) {
+                    $payload = $rows[$index]['normalized_payload'];
+                    $payload['existing_expense_match'] = [
+                        'status' => 'none',
+                        'review_required' => false,
+                        'action' => null,
+                        'selected_transaction_id' => null,
+                        'candidates' => [],
+                    ];
+                    $rows[$index]['normalized_payload'] = $payload;
+                }
+                if (! empty($overrides['expense_existing_action:'.$normalizedReference])) {
+                    foreach ($indexes as $index) {
+                        $rows[$index]['errors'][] = 'Expense yang dipilih sebelumnya tidak lagi tersedia untuk referensi ini. Preview perlu diperiksa ulang.';
+                        $rows[$index]['errors'] = array_values(array_unique($rows[$index]['errors']));
+                        $rows[$index]['status'] = 'error';
+                        $rows[$index]['is_importable'] = false;
+                    }
+                }
+                continue;
+            }
+
+            $incomingTotal = (float) ($groupTotals[$normalizedReference]['excel'] ?? 0);
+            if (($journalMatch['status'] ?? null) === 'matched'
+                && (float) ($journalMatch['selected']['tax_amount'] ?? 0) > 0) {
+                $incomingTotal = (float) ($groupTotals[$normalizedReference]['base'] ?? 0)
+                    + (float) $journalMatch['selected']['tax_amount'];
+            }
+            $incomingDates = array_values($groupDates[$normalizedReference] ?? []);
+            sort($incomingDates);
+            $incomingDate = $incomingDates[0] ?? null;
+            $candidateDetails = $candidates->map(function ($candidate) use ($incomingDate, $incomingTotal) {
+                $existingDate = substr((string) ($candidate->transaction_date ?? ''), 0, 10);
+                $dateDifference = null;
+                if ($incomingDate && $existingDate !== '') {
+                    try {
+                        $dateDifference = Carbon::parse($incomingDate)->startOfDay()->diffInDays(Carbon::parse($existingDate)->startOfDay());
+                    } catch (\Throwable $exception) {
+                        $dateDifference = null;
+                    }
+                }
+                $existingTotal = (float) ($candidate->final_total ?? 0);
+                $amountDifference = abs($incomingTotal - $existingTotal);
+                $relativeDifference = $amountDifference / max(abs($existingTotal), 1);
+
+                return [
+                    'id' => (int) $candidate->id,
+                    'reference' => (string) $candidate->ref_no,
+                    'date' => $existingDate,
+                    'total' => $existingTotal,
+                    'incoming_date' => $incomingDate,
+                    'incoming_total' => $incomingTotal,
+                    'date_difference_days' => $dateDifference,
+                    'amount_difference' => $amountDifference,
+                    'amount_difference_percent' => $relativeDifference * 100,
+                    'large_difference' => ($dateDifference !== null && $dateDifference > 30)
+                        || ($amountDifference >= 100000 && $relativeDifference > 0.10),
+                ];
+            })->values()->all();
+
+            $reviewRequired = count($candidateDetails) > 1
+                || collect($candidateDetails)->contains(fn ($candidate) => ! empty($candidate['large_difference']))
+                || count($incomingDates) > 1;
+            $actionKey = 'expense_existing_action:'.$normalizedReference;
+            $requestedAction = trim((string) ($overrides[$actionKey] ?? ''));
+            $action = '';
+            $selectedTransactionId = null;
+            $actionValid = false;
+
+            if (in_array($requestedAction, ['skip', 'new'], true)) {
+                $action = $requestedAction;
+                $actionValid = true;
+            } elseif (preg_match('/^merge:([1-9][0-9]*)$/D', $requestedAction, $actionMatches)) {
+                $selectedId = (int) $actionMatches[1];
+                if (collect($candidateDetails)->contains(fn ($candidate) => (int) $candidate['id'] === $selectedId)) {
+                    $action = $requestedAction;
+                    $selectedTransactionId = $selectedId;
+                    $actionValid = true;
+                }
+            } elseif ($requestedAction === '' && count($candidateDetails) === 1 && ! $reviewRequired) {
+                $selectedTransactionId = (int) $candidateDetails[0]['id'];
+                $action = 'merge:'.$selectedTransactionId;
+                $actionValid = true;
+            }
+
+            $matchStatus = count($candidateDetails) > 1 ? 'ambiguous' : 'matched';
+            $match = [
+                'status' => $matchStatus,
+                'review_required' => $reviewRequired,
+                'action' => $actionValid ? $action : null,
+                'selected_transaction_id' => $selectedTransactionId,
+                'candidates' => $candidateDetails,
+            ];
+
+            foreach ($indexes as $index) {
+                $rows[$index]['normalized_payload']['existing_expense_match'] = $match;
+                if ($requestedAction !== '' && ! $actionValid) {
+                    $rows[$index]['errors'][] = 'Pilihan transaksi Expense sudah tidak cocok dengan kandidat yang tersedia. Pilih ulang aksi.';
+                } elseif ($reviewRequired && ! $actionValid) {
+                    $rows[$index]['errors'][] = 'REFERENCE NO sudah memiliki Expense dengan tanggal atau total yang berbeda jauh. Pilih Lewati, Gabungkan ke transaksi lama, atau Buat transaksi baru.';
+                }
+
+                if ($actionValid && $action === 'skip') {
+                    $rows[$index]['errors'] = [];
+                    $rows[$index]['status'] = 'skipped';
+                    $rows[$index]['is_importable'] = false;
+                    continue;
+                }
+
+                $rows[$index]['errors'] = array_values(array_unique($rows[$index]['errors']));
+                $rows[$index]['status'] = $rows[$index]['errors'] === [] ? 'valid' : 'error';
+                $rows[$index]['is_importable'] = $rows[$index]['errors'] === [];
+            }
+        }
 
         return $rows;
     }
@@ -710,12 +955,14 @@ class ExpenseImportService
     {
         $first = $rows->first();
         $payload = json_decode((string) $first->normalized_payload, true) ?: [];
-        $categoryId = $this->validCategoryId($payload['category_id'] ?? null, $businessId)
-            ?: $this->resolveCategory($payload['category_name'] ?? '', $businessId, null);
-
         $journalMatch = $payload['journal_match'] ?? [];
         $hasJournalMatch = ($journalMatch['status'] ?? null) === 'matched';
         $reference = trim((string) ($payload['reference_no'] ?? ''));
+        if ($reference !== '') {
+            $this->lockExpenseReference($businessId, $reference);
+        }
+        $categoryId = $this->validCategoryId($payload['category_id'] ?? null, $businessId)
+            ?: $this->resolveCategory($payload['category_name'] ?? '', $businessId, null);
         $lockedJournal = $hasJournalMatch
             ? $this->journalLinkService->lockSelectedJournal($journalMatch, $businessId, $reference)
             : null;
@@ -780,10 +1027,86 @@ class ExpenseImportService
             $reference = $this->transactionUtil->generateReferenceNumber('expense', $this->transactionUtil->setAndGetReferenceCount('expense', $businessId), $businessId);
         }
 
+        $existingMatch = $payload['existing_expense_match'] ?? [];
+        $existingAction = (string) ($existingMatch['action'] ?? '');
         $transaction = $lockedJournal['transaction'] ?? null;
+        $preserveExistingJournalLink = false;
+        if (! empty($existingMatch['review_required']) && $existingAction === '') {
+            throw new RuntimeException('REFERENCE NO memerlukan pilihan di preview. Muat ulang preview sebelum mengimpor.');
+        }
+        if (str_starts_with($existingAction, 'merge:')) {
+            $targetId = (int) substr($existingAction, strlen('merge:'));
+            if ($targetId < 1 || ($transaction && (int) $transaction->id !== $targetId)) {
+                throw new RuntimeException('Expense yang dipilih tidak sama dengan transaksi yang tertaut ke Journal. Muat ulang preview.');
+            }
+            if (! $transaction) {
+                $transaction = Transaction::where('business_id', $businessId)
+                    ->where('type', 'expense')
+                    ->lockForUpdate()
+                    ->find($targetId);
+            }
+            if (! $transaction || $this->normalize((string) $transaction->ref_no) !== $this->normalize($reference)) {
+                throw new RuntimeException('Expense yang dipilih tidak lagi tersedia untuk REFERENCE NO ini. Muat ulang preview.');
+            }
+        } elseif ($existingAction === 'new') {
+            $preserveExistingJournalLink = $lockedJournal !== null && $transaction !== null;
+            $transaction = null;
+        } elseif ($existingAction === 'skip') {
+            throw new RuntimeException('Kelompok REFERENCE NO yang dipilih untuk dilewati tidak boleh masuk proses import.');
+        }
+
+        if (! $transaction && $existingAction === '' && $reference !== '') {
+            $liveCandidates = Transaction::where('business_id', $businessId)
+                ->where('type', 'expense')
+                ->whereNotNull('ref_no')
+                ->whereRaw('LOWER(TRIM(ref_no)) = ?', [$this->normalize($reference)])
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get();
+
+            if ($liveCandidates->count() > 1) {
+                throw new RuntimeException('Expense dengan REFERENCE NO ini berubah setelah preview dan memiliki beberapa kandidat. Muat ulang preview untuk memilih transaksi.');
+            }
+
+            if ($liveCandidates->count() === 1) {
+                $incomingDates = collect($rows)
+                    ->map(function ($row) {
+                        $item = json_decode((string) $row->normalized_payload, true) ?: [];
+
+                        return substr((string) ($item['expense_date'] ?? ''), 0, 10);
+                    })
+                    ->filter()
+                    ->unique()
+                    ->values();
+                $existing = $liveCandidates->first();
+                $dateDifference = null;
+                $existingDate = substr((string) ($existing->transaction_date ?? ''), 0, 10);
+                if ($incomingDates->count() === 1 && $existingDate !== '') {
+                    try {
+                        $dateDifference = Carbon::parse($incomingDates->first())->startOfDay()->diffInDays(Carbon::parse($existingDate)->startOfDay());
+                    } catch (\Throwable $exception) {
+                        $dateDifference = null;
+                    }
+                }
+                $amountDifference = abs($total - (float) ($existing->final_total ?? 0));
+                $relativeDifference = $amountDifference / max(abs((float) ($existing->final_total ?? 0)), 1);
+                $largeDifference = $incomingDates->count() > 1
+                    || ($dateDifference !== null && $dateDifference > 30)
+                    || ($amountDifference >= 100000 && $relativeDifference > 0.10);
+
+                if ($largeDifference) {
+                    throw new RuntimeException('Expense dengan REFERENCE NO ini berubah setelah preview dan memiliki selisih besar. Muat ulang preview untuk memilih Lewati, Gabungkan, atau Buat transaksi baru.');
+                }
+
+                $transaction = $existing;
+            }
+        }
+
         $isExistingTransaction = $transaction !== null;
         if ($transaction) {
-            $this->journalLinkService->removeProvenDuplicateExpenseMap($transaction);
+            if ($lockedJournal !== null) {
+                $this->journalLinkService->removeProvenDuplicateExpenseMap($transaction);
+            }
             $transaction->fill([
                 'location_id' => $payload['location_id'] ?? null,
                 'expense_category_id' => $categoryId,
@@ -829,6 +1152,9 @@ class ExpenseImportService
                 'import_time' => now(),
                 'import_file' => DB::table('expense_import_batches')->where('id', $batchId)->value('file_name'),
             ]);
+            if ($lockedJournal !== null && $preserveExistingJournalLink) {
+                $this->journalLinkService->removeProvenDuplicateExpenseMap($transaction);
+            }
         }
         foreach ($lineRows as &$line) {
             $line['transaction_id'] = $transaction->id;
@@ -863,8 +1189,39 @@ class ExpenseImportService
             $transaction->tags()->sync($tagIds);
         }
 
-        if ($lockedJournal !== null) {
+        if ($lockedJournal !== null && ! $preserveExistingJournalLink) {
             $this->journalLinkService->link($lockedJournal, $transaction, $businessId);
+        }
+    }
+
+    private function lockExpenseReference(int $businessId, string $reference): void
+    {
+        if (! Schema::hasTable('expense_import_reference_locks')) {
+            throw new RuntimeException('Tabel pengunci referensi Expense belum tersedia. Jalankan migration sebelum memproses import.');
+        }
+
+        $normalizedReference = $this->normalize($reference);
+        if ($normalizedReference === '') {
+            return;
+        }
+
+        $now = now();
+        $referenceHash = hash('sha256', $normalizedReference);
+        DB::table('expense_import_reference_locks')->insertOrIgnore([
+            'business_id' => $businessId,
+            'reference_hash' => $referenceHash,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+
+        $lockedReference = DB::table('expense_import_reference_locks')
+            ->where('business_id', $businessId)
+            ->where('reference_hash', $referenceHash)
+            ->lockForUpdate()
+            ->first();
+
+        if (! $lockedReference) {
+            throw new RuntimeException('Referensi Expense gagal dikunci. Ulangi proses import.');
         }
     }
 
@@ -1035,13 +1392,25 @@ class ExpenseImportService
             return (($row['normalized_payload']['journal_match']['status'] ?? null) === 'matched');
         })->count();
         $reviewGroups = $groupRows->filter(function ($row) {
-            return in_array(($row['normalized_payload']['journal_match']['status'] ?? null), ['ambiguous', 'selection_invalid'], true);
+            return in_array(($row['normalized_payload']['journal_match']['status'] ?? null), ['ambiguous', 'selection_invalid', 'unavailable'], true);
         })->count();
+        $existingUpdatedGroups = $groupRows->filter(function ($row) {
+            return str_starts_with((string) ($row['normalized_payload']['existing_expense_match']['action'] ?? ''), 'merge:');
+        })->count();
+        $existingReviewGroups = $groupRows->filter(function ($row) {
+            $match = $row['normalized_payload']['existing_expense_match'] ?? [];
+
+            return ! empty($match['review_required']) && empty($match['action']);
+        })->count();
+        $skipped = count(array_filter($rows, fn ($row) => ($row['status'] ?? null) === 'skipped'));
+        $errors = count(array_filter($rows, fn ($row) => ($row['status'] ?? null) === 'error'));
 
         return [
-            'total' => count($rows), 'valid' => $valid, 'errors' => count($rows) - $valid,
-            'importable' => $valid, 'groups' => $groups, 'skipped' => 0,
+            'total' => count($rows), 'valid' => $valid, 'errors' => $errors,
+            'importable' => $valid, 'groups' => $groups, 'skipped' => $skipped,
             'journal_matched_groups' => $matchedGroups, 'journal_review_groups' => $reviewGroups,
+            'existing_expense_updated_groups' => $existingUpdatedGroups,
+            'existing_expense_review_groups' => $existingReviewGroups,
         ];
     }
 

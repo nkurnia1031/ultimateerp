@@ -131,23 +131,30 @@ class ExpenseImportJournalMatcher
                 return strcmp((string) ($left['date'] ?? ''), (string) ($right['date'] ?? ''))
                     ?: ((int) ($left['journal_row_id'] ?? 0) <=> (int) ($right['journal_row_id'] ?? 0));
             });
+            $readyCandidates = array_values(array_filter($candidates, function (array $candidate): bool {
+                return ! empty($candidate['mapping_id']) && ! empty($candidate['ready']);
+            }));
 
             $override = $overrides['journal_candidate:'.$reference] ?? null;
             if ($override !== null && $override !== '') {
                 $selected = null;
-                foreach ($candidates as $candidate) {
+                foreach ($readyCandidates as $candidate) {
                     if ((int) ($candidate['mapping_id'] ?? 0) === (int) $override) {
                         $selected = $candidate;
                         break;
                     }
                 }
                 $matches[$reference] = $selected === null
-                    ? ['status' => 'selection_invalid', 'selected' => null, 'candidates' => $candidates]
-                    : ['status' => 'matched', 'selected' => $selected, 'candidates' => $candidates, 'selected_by_user' => true];
-            } elseif (count($candidates) === 1) {
-                $matches[$reference] = ['status' => 'matched', 'selected' => $candidates[0], 'candidates' => $candidates, 'selected_by_user' => false];
-            } elseif (count($candidates) > 1) {
-                $matches[$reference] = ['status' => 'ambiguous', 'selected' => null, 'candidates' => $candidates];
+                    ? (count($readyCandidates) === 1
+                        ? ['status' => 'matched', 'selected' => $readyCandidates[0], 'candidates' => $readyCandidates, 'selected_by_user' => false]
+                        : ['status' => 'selection_invalid', 'selected' => null, 'candidates' => $readyCandidates])
+                    : ['status' => 'matched', 'selected' => $selected, 'candidates' => $readyCandidates, 'selected_by_user' => true];
+            } elseif (count($readyCandidates) === 1) {
+                $matches[$reference] = ['status' => 'matched', 'selected' => $readyCandidates[0], 'candidates' => $readyCandidates, 'selected_by_user' => false];
+            } elseif (count($readyCandidates) > 1) {
+                $matches[$reference] = ['status' => 'ambiguous', 'selected' => null, 'candidates' => $readyCandidates];
+            } elseif ($candidates !== []) {
+                $matches[$reference] = ['status' => 'unavailable', 'selected' => null, 'candidates' => $candidates];
             } else {
                 $matches[$reference] = ['status' => 'none', 'selected' => null, 'candidates' => []];
             }

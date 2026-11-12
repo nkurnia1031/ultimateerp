@@ -1037,6 +1037,22 @@ class ExpenseController extends Controller
         return response()->json(['success' => true, 'summary' => $result, 'message' => 'Posting Journal dipilih dan preview dihitung ulang.']);
     }
 
+    public function expenseImportUpdateExistingExpenseAction(Request $request, string $batchId, int $rowId)
+    {
+        $businessId = $this->authorizeExpenseImport($request);
+        $validated = $request->validate([
+            'action' => ['required', 'regex:/^(skip|new|merge:[1-9][0-9]*)$/'],
+        ]);
+        $result = $this->expenseImportService->updateExistingExpenseAction(
+            $batchId,
+            $rowId,
+            $businessId,
+            (string) $validated['action']
+        );
+
+        return response()->json(['success' => true, 'summary' => $result, 'message' => 'Pilihan transaksi untuk referensi ini disimpan dan preview dihitung ulang.']);
+    }
+
     public function expenseImportConfirm(Request $request, string $batchId)
     {
         $businessId = $this->authorizeExpenseImport($request);
