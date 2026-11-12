@@ -24,6 +24,10 @@
         return $('#expense_import_preview_modal').data('preview-template').replace('__BATCH__', encodeURIComponent(id));
     }
 
+    function refreshPreviewUrl(id) {
+        return $('#expense_import_preview_modal').data('refresh-template').replace('__BATCH__', encodeURIComponent(id));
+    }
+
     function confirmUrl(id) {
         return $('#expense_import_preview_modal').data('confirm-template').replace('__BATCH__', encodeURIComponent(id));
     }
@@ -50,6 +54,53 @@
 
     function escapeHtml(value) {
         return $('<div>').text(value === null || typeof value === 'undefined' ? '' : value).html();
+    }
+
+    function formatRupiah(value) {
+        if (value === null || typeof value === 'undefined' || value === '') { return '—'; }
+        return 'Rp ' + Number(value || 0).toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    function selectableJournalCandidates(journalMatch) {
+        if (Array.isArray(journalMatch.selectable_candidates)) {
+            return journalMatch.selectable_candidates;
+        }
+        return (journalMatch.candidates || []).filter(function (candidate) {
+            return Number(candidate.mapping_id || 0) > 0 && candidate.ready;
+        });
+    }
+
+    function renderJournalCandidateDetails(journalMatch) {
+        var candidates = journalMatch.candidates || [];
+        if (!candidates.length) { return ''; }
+
+        var selectable = selectableJournalCandidates(journalMatch);
+        var expanded = candidates.length === 2 ? ' open' : '';
+        var html = '<details class="expense-import-journal-candidates"' + expanded + '><summary>Bandingkan isi ' + candidates.length + ' posting Journal</summary>';
+        candidates.forEach(function (candidate) {
+            var state = candidate.ready ? '<span class="label label-success">Siap ditautkan</span>' : '<span class="label label-warning">Belum siap</span>';
+            var lines = candidate.lines || [];
+            html += '<div class="tw-mt-2 tw-mb-3"><div><strong>Baris #' + Number(candidate.journal_row_id || 0) + '</strong> · impor #' + Number(candidate.journal_import_id || 0) + ' · GL #' + Number(candidate.mapping_id || 0) + ' · ' + state + '</div>';
+            html += '<div class="text-muted">Tanggal ' + escapeHtml(candidate.date || '—') + ' · Referensi ' + escapeHtml(candidate.reference || '—') + '</div>';
+            html += '<div>' + escapeHtml(candidate.description || 'Tanpa deskripsi') + '</div>';
+            html += '<div>Debit ' + escapeHtml(formatRupiah(candidate.debit_total)) + ' · Kredit ' + escapeHtml(formatRupiah(candidate.credit_total)) + ' · Pajak ' + escapeHtml(candidate.tax_label || formatRupiah(candidate.tax_amount)) + '</div>';
+            if (candidate.issue || candidate.tax_issue) {
+                html += '<div class="text-danger">' + escapeHtml(candidate.issue || candidate.tax_issue) + '</div>';
+            }
+            html += '<div class="table-responsive"><table class="table table-condensed table-bordered"><thead><tr><th>Akun</th><th class="text-right">Debit</th><th class="text-right">Kredit</th><th>Klasifikasi</th></tr></thead><tbody>';
+            if (!lines.length) {
+                html += '<tr><td colspan="4" class="text-muted">Rincian akun belum tersedia; perbarui preview untuk membaca isi Journal terbaru.</td></tr>';
+            } else {
+                lines.forEach(function (line) {
+                    var accountLabel = (line.account_no ? line.account_no + ' · ' : '') + (line.account_name || 'Akun tanpa nama');
+                    var classification = line.is_tax ? ('Pajak ' + (line.tax_direction || 'belum terklasifikasi')) : 'Non-pajak';
+                    html += '<tr><td>' + escapeHtml(accountLabel) + '</td><td class="text-right">' + escapeHtml(formatRupiah(line.debit)) + '</td><td class="text-right">' + escapeHtml(formatRupiah(line.credit)) + '</td><td>' + escapeHtml(classification) + '</td></tr>';
+                });
+            }
+            html += '</tbody></table></div></div>';
+        });
+        html += '</details>';
+        return html;
     }
 
     function formatDuration(seconds) {
@@ -120,7 +171,7 @@
                     stopPolling();
                     $('#expense_import_progress_error').text(status.error || 'Proses import gagal.').show();
                     $('#expense_import_cancel').hide();
-                    if ((status.operation || operation) === 'import' && status.domain_status === 'preview') {
+                    if (status.domain_status === 'preview') {
                         $('#expense_import_retry_preview').show();
                     }
                     $('#expense_import_close_progress').show();
@@ -229,15 +280,23 @@
                 { data: 'paid_on_date', render: function (value, type, row) { return escapeHtml(value || row.raw_paid_on_date || '-'); } },
                 { data: 'tax_status', render: function (value, type, row) {
                     var journalMatch = row.journal_match || {};
+                    var candidateCount = (journalMatch.candidates || []).length;
+                    var selectableCount = selectableJournalCandidates(journalMatch).length;
+                    var candidateSummary = candidateCount > 1
+                        ? '<div class="text-muted">' + candidateCount + ' posting ditemukan · ' + selectableCount + ' siap. Rincian ada di kolom Detail.</div>'
+                        : '';
                     if (journalMatch.status === 'matched') {
                         var selected = journalMatch.selected || {};
                         if (selected.issue || selected.tax_issue) {
-                            return '<span class="label label-danger">Perlu ditinjau</span><div class="text-danger">' + escapeHtml(selected.issue || selected.tax_issue) + '</div>';
+                            return '<span class="label label-danger">Perlu ditinjau</span><div class="text-danger">' + escapeHtml(selected.issue || selected.tax_issue) + '</div>' + candidateSummary;
                         }
-                        return '<span class="label label-info">' + escapeHtml(selected.tax_label || 'Journal cocok') + '</span>';
+                        return '<span class="label label-info">' + escapeHtml(selected.tax_label || 'Journal cocok') + '</span>' + candidateSummary;
                     }
                     if (journalMatch.status === 'ambiguous' || journalMatch.status === 'selection_invalid') {
-                        return '<span class="label label-warning">Journal: pilih kandidat (' + Number((journalMatch.candidates || []).length) + ')</span>';
+                        return '<span class="label label-warning">Pilih 1 dari ' + selectableCount + ' posting siap</span>' + candidateSummary;
+                    }
+                    if (journalMatch.status === 'unavailable') {
+                        return '<span class="label label-warning">' + candidateCount + ' posting ditemukan, belum siap</span>' + candidateSummary;
                     }
                     if (value === 'unknown') {
                         return '<span class="label label-warning">Belum dikenal: ' + escapeHtml(row.raw_applicable_tax || '-') + '</span>';
@@ -266,7 +325,7 @@
                             details.push('Expense #' + Number(candidate.id) + ': lama ' + escapeHtml(candidate.date || '-') + ' / Rp ' + Number(candidate.total || 0).toLocaleString('id-ID') + '; Excel ' + escapeHtml(candidate.incoming_date || '-') + ' / Rp ' + Number(candidate.incoming_total || 0).toLocaleString('id-ID') + '; beda ' + dateDiff + ' dan Rp ' + Number(candidate.amount_difference || 0).toLocaleString('id-ID'));
                         });
                     }
-                    return details.join('<br>');
+                    return details.join('<br>') + renderJournalCandidateDetails(row.journal_match || {});
                 } },
                 { data: null, orderable: false, searchable: false, render: function (value, type, row) {
                     var actions = '';
@@ -295,12 +354,18 @@
                     }
                     var journalMatch = row.journal_match || {};
                     if (journalMatch.status === 'ambiguous' || journalMatch.status === 'selection_invalid') {
-                        var candidates = (journalMatch.candidates || []).filter(function (candidate) { return Number(candidate.mapping_id) > 0; });
+                        var candidates = journalMatch.candidates || [];
+                        var selectable = selectableJournalCandidates(journalMatch);
                         if (candidates.length) {
                             var journalSelect = '<select class="form-control input-sm expense-import-map-journal" data-row="' + row.id + '"><option value="">Pilih posting Journal</option>';
                             candidates.forEach(function (candidate) {
-                                var label = (candidate.date || 'Tanggal —') + ' · GL ' + (candidate.journal_total === null ? '—' : Number(candidate.journal_total).toLocaleString()) + ' · ' + (candidate.tax_label || candidate.issue || candidate.tax_issue || 'pajak belum terklasifikasi') + ' · baris #' + candidate.journal_row_id;
-                                journalSelect += '<option value="' + Number(candidate.mapping_id) + '">' + escapeHtml(label) + '</option>';
+                                var mappingId = Number(candidate.mapping_id || 0);
+                                var canSelect = mappingId > 0 && selectable.some(function (ready) { return Number(ready.mapping_id || 0) === mappingId; });
+                                var label = (candidate.ready ? 'Siap' : 'Belum siap') + ' · ' + (candidate.date || 'tanggal —')
+                                    + ' · debit ' + formatRupiah(candidate.debit_total) + ' · kredit ' + formatRupiah(candidate.credit_total)
+                                    + ' · baris #' + Number(candidate.journal_row_id || 0);
+                                if (!canSelect && (candidate.issue || candidate.tax_issue)) { label += ' · ' + (candidate.issue || candidate.tax_issue); }
+                                journalSelect += '<option value="' + (canSelect ? mappingId : '') + '"' + (canSelect ? '' : ' disabled') + '>' + escapeHtml(label) + '</option>';
                             });
                             actions += journalSelect + '</select>';
                         }
@@ -319,6 +384,29 @@
         if (previewTable) {
             previewTable.ajax.reload();
         }
+    });
+
+    $('#expense_import_refresh_preview').on('click', function () {
+        if (!batchId) { return; }
+        var button = $(this);
+        button.prop('disabled', true).addClass('disabled');
+        $.ajax({
+            url: refreshPreviewUrl(batchId),
+            method: 'POST',
+            dataType: 'json',
+            headers: { Accept: 'application/json' },
+            data: { _token: form.find('input[name="_token"]').val() }
+        }).done(function (response) {
+            previewModal.modal('hide');
+            showProgress(response.batch_id || batchId, 'preview');
+            pollDelay = 1000;
+            pollStatus(response.batch_id || batchId);
+        }).fail(function (xhr) {
+            var message = (xhr.responseJSON && (xhr.responseJSON.message || xhr.responseJSON.msg)) || 'Preview gagal dijadwalkan ulang.';
+            if (window.toastr) { toastr.error(message); }
+        }).always(function () {
+            button.prop('disabled', false).removeClass('disabled');
+        });
     });
 
     $('#expense_import_preview_table').on('change', '.expense-import-map-tax', function () {

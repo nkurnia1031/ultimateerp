@@ -148,7 +148,21 @@ class ExpenseImportTaxTest extends TestCase
 
         $this->assertSame('matched', $match['status']);
         $this->assertSame(25, (int) $match['selected']['mapping_id']);
-        $this->assertCount(1, $match['candidates']);
+        $this->assertCount(2, $match['candidates']);
+        $this->assertCount(1, $match['selectable_candidates']);
+        $unmapped = array_values(array_filter($match['candidates'], fn ($candidate) => (int) $candidate['journal_row_id'] === 101))[0];
+        $this->assertFalse($unmapped['ready']);
+        $this->assertSame('5-100', $unmapped['lines'][0]['account_no']);
+        $this->assertSame(100.0, (float) $unmapped['lines'][0]['debit']);
+
+        $previewRows = $this->applyJournalMatches->invoke($this->service, [[
+            'normalized_payload' => ['reference_no' => 'REF-ONE-READY', 'total_amount' => 100, 'excel_tax_rate' => 0],
+            'errors' => [],
+            'status' => 'valid',
+            'is_importable' => true,
+        ]], 1, []);
+        $this->assertCount(2, $previewRows[0]['normalized_payload']['journal_match']['candidates']);
+        $this->assertCount(1, $previewRows[0]['normalized_payload']['journal_match']['selectable_candidates']);
 
         $staleSelection = $matcher->matchReferences(1, ['REF-ONE-READY'], [
             'journal_candidate:ref-one-ready' => 99,
@@ -156,6 +170,29 @@ class ExpenseImportTaxTest extends TestCase
         $this->assertSame('matched', $staleSelection['status']);
         $this->assertSame(25, (int) $staleSelection['selected']['mapping_id']);
         $this->assertFalse($staleSelection['selected_by_user']);
+    }
+
+    public function test_ambiguous_ready_journal_postings_include_account_breakdowns_for_comparison(): void
+    {
+        $this->insertJournalExpense(200, 20, 40, 'REF-COMPARE', 0, 100, '5-100', 'Office Expense');
+        $this->insertJournalExpense(201, 21, 41, 'REF-COMPARE', 0, 175, '5-225', 'Vehicle Repair');
+        $matcher = new ExpenseImportJournalMatcher(
+            new \Modules\Accounting\Services\JournalImportAccountComponentService(),
+            new \Modules\Accounting\Services\JournalImportTaxResolver()
+        );
+
+        $match = $matcher->matchReferences(1, ['REF-COMPARE'], [], ['ref-compare' => 100])['ref-compare'];
+
+        $this->assertSame('ambiguous', $match['status']);
+        $this->assertCount(2, $match['candidates']);
+        $this->assertCount(2, $match['selectable_candidates']);
+        $first = $match['candidates'][0];
+        $second = $match['candidates'][1];
+        $this->assertSame('5-100', $first['lines'][0]['account_no']);
+        $this->assertSame('Office Expense', $first['lines'][0]['account_name']);
+        $this->assertSame('5-225', $second['lines'][0]['account_no']);
+        $this->assertSame('Vehicle Repair', $second['lines'][0]['account_name']);
+        $this->assertNotSame($first['debit_total'], $second['debit_total']);
     }
 
     public function test_journal_match_reuses_a_unique_source_link_and_blocks_conflicting_links(): void
@@ -693,19 +730,28 @@ class ExpenseImportTaxTest extends TestCase
         DB::table('expense_import_batches')->insert(['id' => 'batch-1', 'file_name' => 'unit-test.xlsx']);
     }
 
-    private function insertJournalExpense(int $rowId, int $importId, ?int $mappingId, string $reference, float $taxAmount): void
+    private function insertJournalExpense(
+        int $rowId,
+        int $importId,
+        ?int $mappingId,
+        string $reference,
+        float $taxAmount,
+        float $baseAmount = 100,
+        string $expenseAccountNo = '5-100',
+        string $expenseAccountName = 'Office Expense'
+    ): void
     {
         $entry = [
             'source_type' => 'Expense',
             'source_number' => $reference,
             'date' => '2026-10-21',
             'description' => 'Journal expense test',
-            'debit_total' => 100 + $taxAmount,
-            'credit_total' => 100 + $taxAmount,
+            'debit_total' => $baseAmount + $taxAmount,
+            'credit_total' => $baseAmount + $taxAmount,
             'lines' => [
-                ['account_no' => '5-100', 'account_name' => 'Office Expense', 'debit' => 100, 'credit' => 0],
+                ['account_no' => $expenseAccountNo, 'account_name' => $expenseAccountName, 'debit' => $baseAmount, 'credit' => 0],
                 ['account_no' => '1-120', 'account_name' => 'VAT In', 'debit' => $taxAmount, 'credit' => 0],
-                ['account_no' => '1-100', 'account_name' => 'Bank', 'debit' => 0, 'credit' => 100 + $taxAmount],
+                ['account_no' => '1-100', 'account_name' => 'Bank', 'debit' => 0, 'credit' => $baseAmount + $taxAmount],
             ],
         ];
         DB::table('accounting_journal_imports')->insert([
@@ -728,7 +774,7 @@ class ExpenseImportTaxTest extends TestCase
         ]);
         if ($mappingId !== null) {
             DB::table('accounting_accounts_transactions')->insert([
-                'acc_trans_mapping_id' => $mappingId, 'amount' => 100 + $taxAmount, 'type' => 'debit',
+                'acc_trans_mapping_id' => $mappingId, 'amount' => $baseAmount + $taxAmount, 'type' => 'debit',
             ]);
         }
     }

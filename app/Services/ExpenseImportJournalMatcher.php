@@ -146,17 +146,17 @@ class ExpenseImportJournalMatcher
                 }
                 $matches[$reference] = $selected === null
                     ? (count($readyCandidates) === 1
-                        ? ['status' => 'matched', 'selected' => $readyCandidates[0], 'candidates' => $readyCandidates, 'selected_by_user' => false]
-                        : ['status' => 'selection_invalid', 'selected' => null, 'candidates' => $readyCandidates])
-                    : ['status' => 'matched', 'selected' => $selected, 'candidates' => $readyCandidates, 'selected_by_user' => true];
+                        ? ['status' => 'matched', 'selected' => $readyCandidates[0], 'candidates' => $candidates, 'selectable_candidates' => $readyCandidates, 'selected_by_user' => false]
+                        : ['status' => 'selection_invalid', 'selected' => null, 'candidates' => $candidates, 'selectable_candidates' => $readyCandidates])
+                    : ['status' => 'matched', 'selected' => $selected, 'candidates' => $candidates, 'selectable_candidates' => $readyCandidates, 'selected_by_user' => true];
             } elseif (count($readyCandidates) === 1) {
-                $matches[$reference] = ['status' => 'matched', 'selected' => $readyCandidates[0], 'candidates' => $readyCandidates, 'selected_by_user' => false];
+                $matches[$reference] = ['status' => 'matched', 'selected' => $readyCandidates[0], 'candidates' => $candidates, 'selectable_candidates' => $readyCandidates, 'selected_by_user' => false];
             } elseif (count($readyCandidates) > 1) {
-                $matches[$reference] = ['status' => 'ambiguous', 'selected' => null, 'candidates' => $readyCandidates];
+                $matches[$reference] = ['status' => 'ambiguous', 'selected' => null, 'candidates' => $candidates, 'selectable_candidates' => $readyCandidates];
             } elseif ($candidates !== []) {
-                $matches[$reference] = ['status' => 'unavailable', 'selected' => null, 'candidates' => $candidates];
+                $matches[$reference] = ['status' => 'unavailable', 'selected' => null, 'candidates' => $candidates, 'selectable_candidates' => []];
             } else {
-                $matches[$reference] = ['status' => 'none', 'selected' => null, 'candidates' => []];
+                $matches[$reference] = ['status' => 'none', 'selected' => null, 'candidates' => [], 'selectable_candidates' => []];
             }
         }
 
@@ -246,7 +246,10 @@ class ExpenseImportJournalMatcher
             $ready = false;
         }
 
-        $tax = $this->journalTax($entry, $businessId, $taxableBase);
+        $components = $this->componentService->groupJournalLines($entry, $businessId);
+        $debitTotal = round((float) collect($components)->sum('debit'), 4);
+        $creditTotal = round((float) collect($components)->sum('credit'), 4);
+        $tax = $this->journalTax($entry, $businessId, $taxableBase, $components);
         if ($issue === null && $tax['issue'] !== null) {
             $issue = $tax['issue'];
             $ready = false;
@@ -259,7 +262,10 @@ class ExpenseImportJournalMatcher
             'reference' => trim((string) ($entry['source_number'] ?? $row->source_number ?? '')),
             'date' => substr(trim((string) ($entry['date'] ?? '')), 0, 10),
             'description' => trim((string) ($entry['description'] ?? '')),
-            'journal_total' => is_numeric($entry['debit_total'] ?? null) ? (float) $entry['debit_total'] : null,
+            'journal_total' => $debitTotal,
+            'debit_total' => $debitTotal,
+            'credit_total' => $creditTotal,
+            'lines' => $components,
             'tax_amount' => $tax['amount'],
             'tax_id' => $tax['tax_id'],
             'tax_name' => $tax['tax_name'],
@@ -271,9 +277,9 @@ class ExpenseImportJournalMatcher
         ];
     }
 
-    private function journalTax(array $entry, int $businessId, float $taxableBase): array
+    private function journalTax(array $entry, int $businessId, float $taxableBase, ?array $components = null): array
     {
-        $components = $this->componentService->groupJournalLines($entry, $businessId);
+        $components = $components ?? $this->componentService->groupJournalLines($entry, $businessId);
         if ($components === []) {
             return $this->taxIssue('Baris GL Journal tidak memiliki komponen akun yang dapat dibaca.');
         }

@@ -210,7 +210,7 @@ class ExpenseImportService
                     'tax_id' => $normalized['tax_id'] ?? null,
                     'tax_name' => $normalized['tax_name'] ?? null,
                     'tax_status' => $normalized['tax_status'] ?? 'none',
-                    'journal_match' => $normalized['journal_match'] ?? ['status' => 'none', 'candidates' => []],
+                    'journal_match' => $normalized['journal_match'] ?? ['status' => 'none', 'candidates' => [], 'selectable_candidates' => []],
                     'existing_expense_match' => $normalized['existing_expense_match'] ?? ['status' => 'none', 'candidates' => []],
                     'tax_mapping_required' => collect($errors)->contains(fn ($error) => str_contains((string) $error, 'satu TaxRate atau grup pajak')),
                     'payload' => $normalized,
@@ -332,7 +332,11 @@ class ExpenseImportService
             throw new RuntimeException('Baris tanpa REFERENCE NO tidak dapat ditautkan ke Journal.');
         }
         $match = $normalized['journal_match'] ?? [];
-        $candidateExists = collect($match['candidates'] ?? [])->contains(function ($candidate) use ($journalMappingId) {
+        $selectableCandidates = $match['selectable_candidates'] ?? array_values(array_filter(
+            $match['candidates'] ?? [],
+            fn ($candidate) => ! empty($candidate['mapping_id']) && ! empty($candidate['ready'])
+        ));
+        $candidateExists = collect($selectableCandidates)->contains(function ($candidate) use ($journalMappingId) {
             return (int) ($candidate['mapping_id'] ?? 0) === $journalMappingId
                 && ! empty($candidate['mapping_id']);
         });
@@ -676,17 +680,18 @@ class ExpenseImportService
             $payload = $row['normalized_payload'];
             $normalizedReference = $this->normalize((string) ($payload['reference_no'] ?? ''));
             if ($normalizedReference === '') {
-                $payload['journal_match'] = ['status' => 'none', 'selected' => null, 'candidates' => []];
+                $payload['journal_match'] = ['status' => 'none', 'selected' => null, 'candidates' => [], 'selectable_candidates' => []];
                 $row['normalized_payload'] = $payload;
                 continue;
             }
 
-            $match = $matches[$normalizedReference] ?? ['status' => 'none', 'selected' => null, 'candidates' => []];
+            $match = $matches[$normalizedReference] ?? ['status' => 'none', 'selected' => null, 'candidates' => [], 'selectable_candidates' => []];
             $payload['journal_match'] = [
                 'status' => $match['status'],
                 'selected_by_user' => (bool) ($match['selected_by_user'] ?? false),
                 'selected' => $match['selected'] ?? null,
                 'candidates' => $match['candidates'] ?? [],
+                'selectable_candidates' => $match['selectable_candidates'] ?? [],
             ];
 
             if ($match['status'] === 'ambiguous') {

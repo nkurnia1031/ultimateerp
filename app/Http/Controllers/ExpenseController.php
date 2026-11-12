@@ -993,6 +993,37 @@ class ExpenseController extends Controller
         ]);
     }
 
+    public function expenseImportRefreshPreview(Request $request, string $batchId)
+    {
+        $businessId = $this->authorizeExpenseImport($request);
+        $batch = DB::table('expense_import_batches')
+            ->where('id', $batchId)
+            ->where('business_id', $businessId)
+            ->first();
+
+        abort_if(! $batch, 404, 'Batch import Expense tidak ditemukan.');
+
+        $state = $batch->process_state ?: 'completed';
+        $operation = $batch->operation ?: 'preview';
+        abort_unless(
+            $batch->status === 'preview'
+                && $operation === 'preview'
+                && in_array($state, ['completed', 'failed'], true),
+            409,
+            'Preview hanya dapat diperbarui sebelum proses import dimulai dan saat tidak ada proses yang berjalan.'
+        );
+
+        $this->expenseImportProcessService->queued($batchId, $businessId, 'preview');
+        ProcessExpensePreview::dispatch($batchId, $businessId);
+
+        return response()->json([
+            'success' => true,
+            'batch_id' => $batchId,
+            'status_url' => route('expenses.import.status', $batchId),
+            'message' => 'Preview dan kandidat Journal sedang diperbarui dari workbook tersimpan.',
+        ], 202);
+    }
+
     public function expenseImportUpdateDate(Request $request, string $batchId, int $rowId)
     {
         $businessId = $this->authorizeExpenseImport($request);

@@ -51,6 +51,17 @@
             vertical-align: top;
         }
 
+        #expense_import_preview_modal .expense-import-journal-candidates > summary {
+            cursor: pointer;
+            font-weight: 600;
+            margin-top: 6px;
+        }
+
+        #expense_import_preview_modal .expense-import-journal-candidates .table {
+            margin: 6px 0 0;
+            min-width: 520px;
+        }
+
         #expense_import_preview_modal #expense_import_preview_table th:first-child,
         #expense_import_preview_modal #expense_import_preview_table th:nth-child(5),
         #expense_import_preview_modal #expense_import_preview_table th:last-child,
@@ -206,7 +217,7 @@
             </div>
         </div>
 
-        <div class="modal fade" id="expense_import_preview_modal" tabindex="-1" role="dialog" aria-labelledby="expenseImportPreviewTitle" data-preview-template="{{ route('expenses.import.preview', ['batch' => '__BATCH__']) }}" data-confirm-template="{{ route('expenses.import.confirm', ['batch' => '__BATCH__']) }}" data-date-template="{{ route('expenses.import.rows.date', ['batch' => '__BATCH__', 'row' => '__ROW__']) }}" data-tax-template="{{ route('expenses.import.rows.tax', ['batch' => '__BATCH__', 'row' => '__ROW__']) }}" data-journal-template="{{ route('expenses.import.rows.journal', ['batch' => '__BATCH__', 'row' => '__ROW__']) }}" data-existing-expense-template="{{ route('expenses.import.rows.existing-expense', ['batch' => '__BATCH__', 'row' => '__ROW__']) }}">
+        <div class="modal fade" id="expense_import_preview_modal" tabindex="-1" role="dialog" aria-labelledby="expenseImportPreviewTitle" data-preview-template="{{ route('expenses.import.preview', ['batch' => '__BATCH__']) }}" data-refresh-template="{{ route('expenses.import.refresh-preview', ['batch' => '__BATCH__']) }}" data-confirm-template="{{ route('expenses.import.confirm', ['batch' => '__BATCH__']) }}" data-date-template="{{ route('expenses.import.rows.date', ['batch' => '__BATCH__', 'row' => '__ROW__']) }}" data-tax-template="{{ route('expenses.import.rows.tax', ['batch' => '__BATCH__', 'row' => '__ROW__']) }}" data-journal-template="{{ route('expenses.import.rows.journal', ['batch' => '__BATCH__', 'row' => '__ROW__']) }}" data-existing-expense-template="{{ route('expenses.import.rows.existing-expense', ['batch' => '__BATCH__', 'row' => '__ROW__']) }}">
             <div class="modal-dialog modal-xl" role="document">
                 <div class="modal-content">
                     <div class="modal-header">
@@ -215,7 +226,7 @@
                     </div>
                     <div class="modal-body">
                         <div class="alert alert-info">Total Amount dianggap sudah termasuk pajak. Jika REFERENCE NO cocok dengan satu posting Journal Expense yang siap, nominal pajak Journal menjadi acuan; atribut operasional lainnya mengikuti Excel. Jika Journal tidak mencatat pajak, pajak menjadi 0 dan total Excel tetap dipertahankan. Tanpa Journal yang cocok, berlaku pajak dari Excel. REFERENCE NO yang sudah ada akan memperbarui Expense lama; bila tanggal berbeda lebih dari 30 hari atau total berbeda lebih dari 10% dan minimal Rp100.000, pilih Lewati, Gabungkan, atau Buat transaksi baru.</div>
-                        <div class="form-inline tw-mb-3"><label for="expense_import_preview_status" class="tw-mr-2">Filter status</label><select id="expense_import_preview_status" class="form-control"><option value="">Semua</option><option value="valid">Valid</option><option value="error">Error</option><option value="skipped">Dilewati</option></select></div>
+                        <div class="form-inline tw-mb-3"><label for="expense_import_preview_status" class="tw-mr-2">Filter status</label><select id="expense_import_preview_status" class="form-control"><option value="">Semua</option><option value="valid">Valid</option><option value="error">Error</option><option value="skipped">Dilewati</option></select> <button type="button" id="expense_import_refresh_preview" class="btn btn-default"><i class="fa fa-refresh"></i> Perbarui preview &amp; kandidat Journal</button><span class="text-muted">Membaca ulang workbook tersimpan; pilihan tanggal, pajak, dan kandidat tetap dipakai.</span></div>
                         <div class="row" id="expense_import_summary">
                             <div class="col-sm-3"><div class="small-box bg-blue"><div class="inner"><h3 data-expense-summary="total">0</h3><p>Total baris</p></div></div></div>
                             <div class="col-sm-3"><div class="small-box bg-green"><div class="inner"><h3 data-expense-summary="valid">0</h3><p>Valid / siap import</p></div></div></div>
