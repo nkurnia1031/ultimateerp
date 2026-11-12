@@ -465,7 +465,7 @@ class ExpenseImportService
         $taxesById = $taxes->keyBy('id');
         $paymentTypes = $this->transactionUtil->payment_types(null, false, $businessId);
 
-        return compact('locations', 'categories', 'categoryByName', 'contacts', 'users', 'taxesByName', 'taxesById', 'paymentTypes');
+        return compact('businessId', 'locations', 'categories', 'categoryByName', 'contacts', 'users', 'taxesByName', 'taxesById', 'paymentTypes');
     }
 
     private function validateRow(array $row, int $sourceRow, array $context, array $overrides): array
@@ -541,7 +541,7 @@ class ExpenseImportService
             $taxStatus = 'unknown';
             $errors[] = "Tax '{$originalTaxName}' tidak dikenal. Pilih TaxRate yang tersedia dari preview.";
         }
-        $excelTaxRate = $this->taxPercentage($tax, $businessId);
+        $excelTaxRate = $this->taxPercentage($tax, (int) $context['businessId']);
 
         $normalized = [
             'location_id' => $location?->id,

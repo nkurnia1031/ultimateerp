@@ -46,6 +46,7 @@ class ExpenseImportTaxTest extends TestCase
         $this->database->setAsGlobal();
         EloquentModel::setConnectionResolver($this->database->getDatabaseManager());
         $container->instance('db', $this->database->getDatabaseManager());
+        $container->instance('db.schema', $this->database->schema());
         $container->instance('date', new DateFactory());
         Facade::setFacadeApplication($container);
 
@@ -295,6 +296,7 @@ class ExpenseImportTaxTest extends TestCase
         ]);
 
         return [
+            'businessId' => 1,
             'locations' => collect([$location])->keyBy(fn ($item) => strtolower($item->name)),
             'categories' => collect([$category]),
             'categoryByName' => collect([$category])->groupBy(fn ($item) => strtolower($item->name)),
