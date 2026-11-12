@@ -206,7 +206,7 @@
             </div>
         </div>
 
-        <div class="modal fade" id="expense_import_preview_modal" tabindex="-1" role="dialog" aria-labelledby="expenseImportPreviewTitle" data-preview-template="{{ route('expenses.import.preview', ['batch' => '__BATCH__']) }}" data-confirm-template="{{ route('expenses.import.confirm', ['batch' => '__BATCH__']) }}" data-date-template="{{ route('expenses.import.rows.date', ['batch' => '__BATCH__', 'row' => '__ROW__']) }}" data-tax-template="{{ route('expenses.import.rows.tax', ['batch' => '__BATCH__', 'row' => '__ROW__']) }}">
+        <div class="modal fade" id="expense_import_preview_modal" tabindex="-1" role="dialog" aria-labelledby="expenseImportPreviewTitle" data-preview-template="{{ route('expenses.import.preview', ['batch' => '__BATCH__']) }}" data-confirm-template="{{ route('expenses.import.confirm', ['batch' => '__BATCH__']) }}" data-date-template="{{ route('expenses.import.rows.date', ['batch' => '__BATCH__', 'row' => '__ROW__']) }}" data-tax-template="{{ route('expenses.import.rows.tax', ['batch' => '__BATCH__', 'row' => '__ROW__']) }}" data-journal-template="{{ route('expenses.import.rows.journal', ['batch' => '__BATCH__', 'row' => '__ROW__']) }}">
             <div class="modal-dialog modal-xl" role="document">
                 <div class="modal-content">
                     <div class="modal-header">
@@ -214,7 +214,7 @@
                         <h4 class="modal-title" id="expenseImportPreviewTitle"><i class="fa fa-table"></i> Preview import Expense</h4>
                     </div>
                     <div class="modal-body">
-                        <div class="alert alert-info">Total Amount dianggap sudah termasuk pajak. TaxRate yang tidak ditemukan harus dipetakan ke TaxRate atau grup pajak aktif sebelum baris terkait dapat diimpor. Baris error lain dapat dibiarkan dilewati.</div>
+                        <div class="alert alert-info">Total Amount dianggap sudah termasuk pajak. Jika REFERENCE NO cocok dengan satu posting Journal Expense, nominal pajak Journal menjadi acuan; atribut operasional lainnya mengikuti Excel. Jika Journal tidak mencatat pajak, pajak menjadi 0 dan total Excel tetap dipertahankan. Tanpa Journal yang cocok, berlaku pajak dari Excel. Referensi dengan beberapa posting harus dipilih sebelum import.</div>
                         <div class="form-inline tw-mb-3"><label for="expense_import_preview_status" class="tw-mr-2">Filter status</label><select id="expense_import_preview_status" class="form-control"><option value="">Semua</option><option value="valid">Valid</option><option value="error">Error</option><option value="skipped">Dilewati</option></select></div>
                         <div class="row" id="expense_import_summary">
                             <div class="col-sm-3"><div class="small-box bg-blue"><div class="inner"><h3 data-expense-summary="total">0</h3><p>Total baris</p></div></div></div>
@@ -222,6 +222,7 @@
                             <div class="col-sm-3"><div class="small-box bg-red"><div class="inner"><h3 data-expense-summary="errors">0</h3><p>Perlu diperbaiki</p></div></div></div>
                             <div class="col-sm-3"><div class="small-box bg-yellow"><div class="inner"><h3 data-expense-summary="skipped">0</h3><p>Dilewati</p></div></div></div>
                         </div>
+                        <p class="text-muted" id="expense_import_journal_summary">Journal cocok: 0 grup · perlu pilihan: 0 grup</p>
                         <div class="table-responsive">
                             <table class="table table-bordered table-striped" id="expense_import_preview_table" style="width:100%">
                                 <thead><tr><th>Baris Excel</th><th>Referensi</th><th>Tanggal</th><th>Tanggal bayar</th><th>Pajak</th><th>Status</th><th>Detail</th><th>Aksi</th></tr></thead>

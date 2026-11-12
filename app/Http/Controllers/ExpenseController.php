@@ -1021,6 +1021,22 @@ class ExpenseController extends Controller
         return response()->json(['success' => true, 'summary' => $result, 'message' => 'TaxRate dipetakan dan preview dihitung ulang.']);
     }
 
+    public function expenseImportUpdateJournalMatch(Request $request, string $batchId, int $rowId)
+    {
+        $businessId = $this->authorizeExpenseImport($request);
+        $validated = $request->validate([
+            'journal_mapping_id' => ['required', 'integer', 'min:1'],
+        ]);
+        $result = $this->expenseImportService->updateJournalMatch(
+            $batchId,
+            $rowId,
+            $businessId,
+            (int) $validated['journal_mapping_id']
+        );
+
+        return response()->json(['success' => true, 'summary' => $result, 'message' => 'Posting Journal dipilih dan preview dihitung ulang.']);
+    }
+
     public function expenseImportConfirm(Request $request, string $batchId)
     {
         $businessId = $this->authorizeExpenseImport($request);

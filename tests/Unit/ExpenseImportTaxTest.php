@@ -3,6 +3,7 @@
 namespace Tests\Unit;
 
 use App\Services\ExpenseImportService;
+use App\Services\ExpenseImportJournalMatcher;
 use App\Transaction;
 use App\Utils\TransactionUtil;
 use Illuminate\Container\Container;
@@ -26,6 +27,8 @@ class ExpenseImportTaxTest extends TestCase
 
     private ReflectionMethod $importGroup;
 
+    private ReflectionMethod $applyJournalMatches;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -48,13 +51,22 @@ class ExpenseImportTaxTest extends TestCase
 
         $this->createSchema();
         $this->createMasterData();
-        $this->service = new ExpenseImportService(new TransactionUtil());
+        $this->service = new ExpenseImportService(
+            new TransactionUtil(),
+            new ExpenseImportJournalMatcher(
+                new \Modules\Accounting\Services\JournalImportAccountComponentService(),
+                new \Modules\Accounting\Services\JournalImportTaxResolver()
+            ),
+            new \App\Services\ExpenseImportJournalLinkService()
+        );
         $this->validateRow = new ReflectionMethod(ExpenseImportService::class, 'validateRow');
         $this->validateRow->setAccessible(true);
         $this->validateGroupTaxes = new ReflectionMethod(ExpenseImportService::class, 'validateGroupTaxes');
         $this->validateGroupTaxes->setAccessible(true);
         $this->importGroup = new ReflectionMethod(ExpenseImportService::class, 'importGroup');
         $this->importGroup->setAccessible(true);
+        $this->applyJournalMatches = new ReflectionMethod(ExpenseImportService::class, 'applyJournalMatches');
+        $this->applyJournalMatches->setAccessible(true);
     }
 
     protected function tearDown(): void
@@ -69,6 +81,7 @@ class ExpenseImportTaxTest extends TestCase
     {
         $known = $this->validate('VAT');
         $unknown = $this->validate('Special Tax');
+        $zero = $this->validate('0');
         $mapped = $this->validate('Special Tax', 'REF-MAPPED', 110, 'Mapped expense', ['tax_name:special tax' => 3]);
 
         $this->assertSame('matched', $known['normalized_payload']['tax_status']);
@@ -77,10 +90,136 @@ class ExpenseImportTaxTest extends TestCase
         $this->assertSame('unknown', $unknown['normalized_payload']['tax_status']);
         $this->assertFalse($unknown['is_importable']);
         $this->assertStringContainsString('Pilih TaxRate yang tersedia dari preview', implode(' ', $unknown['errors']));
+        $this->assertSame('none', $zero['normalized_payload']['tax_status']);
+        $this->assertTrue($zero['is_importable'], implode(' | ', $zero['errors']));
         $this->assertSame('mapped', $mapped['normalized_payload']['tax_status']);
         $this->assertSame(3, (int) $mapped['normalized_payload']['tax_id']);
         $this->assertTrue($mapped['is_importable']);
         $this->assertSame(2, DB::table('tax_rates')->count(), 'Preview mapping must not create TaxRate rows.');
+    }
+
+    public function test_journal_expense_match_uses_exact_reference_and_holds_duplicates_for_selection(): void
+    {
+        $this->insertJournalExpense(100, 10, 25, 'REF-JOURNAL', 10);
+        $matcher = new ExpenseImportJournalMatcher(
+            new \Modules\Accounting\Services\JournalImportAccountComponentService(),
+            new \Modules\Accounting\Services\JournalImportTaxResolver()
+        );
+
+        $unique = $matcher->matchReferences(1, ['REF-JOURNAL'], [], ['ref-journal' => 100])['ref-journal'];
+        $this->assertSame('matched', $unique['status']);
+        $this->assertSame(10.0, (float) $unique['selected']['tax_amount']);
+        $this->assertSame(2, (int) $unique['selected']['tax_id']);
+
+        $this->insertJournalExpense(101, 11, 26, 'REF-JOURNAL', 10);
+        $ambiguous = $matcher->matchReferences(1, ['REF-JOURNAL'], [], ['ref-journal' => 100])['ref-journal'];
+        $this->assertSame('ambiguous', $ambiguous['status']);
+        $this->assertCount(2, $ambiguous['candidates']);
+
+        $selected = $matcher->matchReferences(1, ['REF-JOURNAL'], [
+            'journal_candidate:ref-journal' => 26,
+        ], ['ref-journal' => 100])['ref-journal'];
+        $this->assertSame('matched', $selected['status']);
+        $this->assertTrue($selected['selected_by_user']);
+        $this->assertSame(26, (int) $selected['selected']['mapping_id']);
+
+        $this->insertJournalExpense(102, 12, 27, 'REF-NO-TAX', 0);
+        $noTax = $matcher->matchReferences(1, ['REF-NO-TAX'], [], ['ref-no-tax' => 100])['ref-no-tax'];
+        $this->assertSame('matched', $noTax['status']);
+        $this->assertSame(0.0, (float) $noTax['selected']['tax_amount']);
+        $this->assertSame('Journal: tanpa pajak', $noTax['selected']['tax_label']);
+    }
+
+    public function test_journal_match_reuses_a_unique_source_link_and_blocks_conflicting_links(): void
+    {
+        $this->insertJournalExpense(100, 10, 25, 'REF-LINKED', 10);
+        DB::table('transactions')->insert([
+            'id' => 88,
+            'business_id' => 1,
+            'ref_no' => 'REF-LINKED',
+            'transaction_date' => '2026-10-21 00:00:00',
+            'type' => 'expense',
+            'status' => 'final',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('accounting_journal_import_source_links')->insert([
+            'business_id' => 1,
+            'journal_import_id' => 10,
+            'journal_import_row_id' => 100,
+            'journal_source_type' => 'Expense',
+            'source_record_type' => Transaction::class,
+            'source_record_id' => 88,
+            'source_reference' => 'REF-LINKED',
+            'link_method' => 'single',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $matcher = new ExpenseImportJournalMatcher(
+            new \Modules\Accounting\Services\JournalImportAccountComponentService(),
+            new \Modules\Accounting\Services\JournalImportTaxResolver()
+        );
+        $unique = $matcher->matchReferences(1, ['REF-LINKED'], [], ['ref-linked' => 100])['ref-linked']['selected'];
+        $this->assertTrue($unique['ready']);
+        $this->assertSame(88, $unique['source_transaction_id']);
+
+        DB::table('accounting_journal_import_source_links')->insert([
+            'business_id' => 1,
+            'journal_import_id' => 10,
+            'journal_import_row_id' => 100,
+            'journal_source_type' => 'Expense',
+            'source_record_type' => Transaction::class,
+            'source_record_id' => 89,
+            'source_reference' => 'REF-LINKED',
+            'link_method' => 'single',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $conflicting = $matcher->matchReferences(1, ['REF-LINKED'], [], ['ref-linked' => 100])['ref-linked']['selected'];
+        $this->assertFalse($conflicting['ready']);
+        $this->assertStringContainsString('lebih dari satu relasi', $conflicting['issue']);
+    }
+
+    public function test_expense_import_uses_journal_vat_when_workbook_tax_is_zero_and_links_existing_gl(): void
+    {
+        $this->insertJournalExpense(100, 10, 25, 'REF-JOURNAL', 10);
+        $validated = $this->validate('0', 'REF-JOURNAL', 100, 'Expense from Excel');
+        $matchedRows = $this->applyJournalMatches->invoke($this->service, [$validated], 1, []);
+
+        $this->assertTrue($matchedRows[0]['is_importable'], implode(' | ', $matchedRows[0]['errors']));
+        $this->assertSame('journal_matched', $matchedRows[0]['normalized_payload']['tax_status']);
+        $this->assertSame(10.0, (float) $matchedRows[0]['normalized_payload']['journal_tax_amount']);
+
+        $this->importGroup->invoke($this->service, collect([$this->previewRow($matchedRows[0])]), 1, 9, 'batch-1', 1);
+
+        $transaction = Transaction::where('business_id', 1)->where('type', 'expense')->first();
+        $this->assertNotNull($transaction);
+        $this->assertSame(100.0, (float) $transaction->total_before_tax);
+        $this->assertSame(10.0, (float) $transaction->tax_amount);
+        $this->assertSame(110.0, (float) $transaction->final_total);
+        $mapping = DB::table('accounting_acc_trans_mappings')->where('id', 25)->first();
+        $journalRow = DB::table('accounting_journal_import_rows')->where('id', 100)->first();
+        $this->assertSame(\App\Transaction::class, $mapping->source_record_type);
+        $this->assertSame((int) $transaction->id, (int) $mapping->source_record_id);
+        $this->assertSame((int) $transaction->id, (int) $journalRow->source_record_id);
+        $this->assertSame(1, DB::table('accounting_journal_import_source_links')->count());
+        $this->assertSame(1, DB::table('accounting_accounts_transactions')->count(), 'Expense import must reuse the existing Journal GL posting.');
+    }
+
+    public function test_journal_without_tax_preserves_excel_total_as_non_taxable_amount(): void
+    {
+        $this->insertJournalExpense(100, 10, 25, 'REF-NO-TAX', 0);
+        $validated = $this->validate('VAT', 'REF-NO-TAX', 110, 'No tax in Journal');
+        $matchedRows = $this->applyJournalMatches->invoke($this->service, [$validated], 1, []);
+
+        $this->assertTrue($matchedRows[0]['is_importable'], implode(' | ', $matchedRows[0]['errors']));
+        $this->importGroup->invoke($this->service, collect([$this->previewRow($matchedRows[0])]), 1, 9, 'batch-1', 1);
+
+        $transaction = Transaction::where('business_id', 1)->where('type', 'expense')->first();
+        $this->assertSame(110.0, (float) $transaction->total_before_tax);
+        $this->assertSame(0.0, (float) $transaction->tax_amount);
+        $this->assertSame(110.0, (float) $transaction->final_total);
     }
 
     public function test_reference_group_inherits_one_known_tax_but_rejects_conflicting_rates(): void
@@ -240,6 +379,67 @@ class ExpenseImportTaxTest extends TestCase
         $schema->create('expense_import_batches', function ($table) {
             $table->string('id')->primary();
             $table->string('file_name')->nullable();
+            $table->string('business_id')->nullable();
+        });
+        $schema->create('accounting_journal_imports', function ($table) {
+            $table->increments('id');
+            $table->unsignedInteger('business_id');
+            $table->string('status');
+        });
+        $schema->create('accounting_journal_import_rows', function ($table) {
+            $table->increments('id');
+            $table->unsignedInteger('journal_import_id');
+            $table->unsignedInteger('business_id');
+            $table->string('source_type');
+            $table->string('source_number')->nullable();
+            $table->string('source_record_type')->nullable();
+            $table->unsignedInteger('source_record_id')->nullable();
+            $table->text('entry_data');
+            $table->string('processing_status');
+            $table->unsignedInteger('journal_mapping_id')->nullable();
+            $table->text('processing_message')->nullable();
+            $table->timestamps();
+        });
+        $schema->create('accounting_acc_trans_mappings', function ($table) {
+            $table->increments('id');
+            $table->unsignedInteger('business_id');
+            $table->unsignedInteger('journal_import_id')->nullable();
+            $table->string('type');
+            $table->string('source_record_type')->nullable();
+            $table->unsignedInteger('source_record_id')->nullable();
+            $table->string('source_link_status')->nullable();
+            $table->text('source_link_note')->nullable();
+        });
+        $schema->create('accounting_accounts_transactions', function ($table) {
+            $table->increments('id');
+            $table->unsignedInteger('acc_trans_mapping_id')->nullable();
+            $table->unsignedInteger('transaction_id')->nullable();
+            $table->unsignedInteger('transaction_payment_id')->nullable();
+            $table->string('map_type')->nullable();
+            $table->string('sub_type')->nullable();
+            $table->unsignedInteger('accounting_account_id')->nullable();
+            $table->decimal('amount', 22, 4);
+            $table->string('type');
+            $table->unsignedInteger('created_by')->nullable();
+            $table->dateTime('operation_date')->nullable();
+            $table->text('note')->nullable();
+        });
+        $schema->create('accounting_journal_import_source_links', function ($table) {
+            $table->increments('id');
+            $table->unsignedInteger('business_id');
+            $table->unsignedInteger('journal_import_id');
+            $table->unsignedInteger('journal_import_row_id');
+            $table->string('journal_source_type');
+            $table->string('source_record_type');
+            $table->unsignedInteger('source_record_id');
+            $table->text('source_reference')->nullable();
+            $table->date('source_date')->nullable();
+            $table->decimal('base_amount', 22, 4)->nullable();
+            $table->decimal('tax_amount', 22, 4)->nullable();
+            $table->decimal('total_amount', 22, 4)->nullable();
+            $table->string('link_method')->default('single');
+            $table->timestamps();
+            $table->unique(['journal_import_row_id', 'source_record_type', 'source_record_id']);
         });
     }
 
@@ -252,5 +452,41 @@ class ExpenseImportTaxTest extends TestCase
             ['id' => 3, 'business_id' => 1, 'name' => 'Reduced VAT', 'amount' => 5, 'is_tax_group' => false],
         ]);
         DB::table('expense_import_batches')->insert(['id' => 'batch-1', 'file_name' => 'unit-test.xlsx']);
+    }
+
+    private function insertJournalExpense(int $rowId, int $importId, int $mappingId, string $reference, float $taxAmount): void
+    {
+        $entry = [
+            'source_type' => 'Expense',
+            'source_number' => $reference,
+            'date' => '2026-10-21',
+            'description' => 'Journal expense test',
+            'debit_total' => 100 + $taxAmount,
+            'credit_total' => 100 + $taxAmount,
+            'lines' => [
+                ['account_no' => '5-100', 'account_name' => 'Office Expense', 'debit' => 100, 'credit' => 0],
+                ['account_no' => '1-120', 'account_name' => 'VAT In', 'debit' => $taxAmount, 'credit' => 0],
+                ['account_no' => '1-100', 'account_name' => 'Bank', 'debit' => 0, 'credit' => 100 + $taxAmount],
+            ],
+        ];
+        DB::table('accounting_journal_imports')->insert([
+            'id' => $importId, 'business_id' => 1, 'status' => 'imported',
+        ]);
+        DB::table('accounting_acc_trans_mappings')->insert([
+            'id' => $mappingId, 'business_id' => 1, 'journal_import_id' => $importId, 'type' => 'journal_entry',
+        ]);
+        DB::table('accounting_journal_import_rows')->insert([
+            'id' => $rowId,
+            'journal_import_id' => $importId,
+            'business_id' => 1,
+            'source_type' => 'Expense',
+            'source_number' => $reference,
+            'entry_data' => json_encode($entry),
+            'processing_status' => 'completed',
+            'journal_mapping_id' => $mappingId,
+        ]);
+        DB::table('accounting_accounts_transactions')->insert([
+            'acc_trans_mapping_id' => $mappingId, 'amount' => 100 + $taxAmount, 'type' => 'debit',
+        ]);
     }
 }

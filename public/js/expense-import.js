@@ -40,6 +40,10 @@
         return $('#expense_import_preview_modal').data('tax-template').replace('__BATCH__', encodeURIComponent(id)).replace('__ROW__', encodeURIComponent(row));
     }
 
+    function journalUrl(id, row) {
+        return $('#expense_import_preview_modal').data('journal-template').replace('__BATCH__', encodeURIComponent(id)).replace('__ROW__', encodeURIComponent(row));
+    }
+
     function escapeHtml(value) {
         return $('<div>').text(value === null || typeof value === 'undefined' ? '' : value).html();
     }
@@ -86,6 +90,9 @@
         $('[data-expense-summary="valid"]').text(summary.valid || 0);
         $('[data-expense-summary="errors"]').text(summary.errors || 0);
         $('[data-expense-summary="skipped"]').text(summary.skipped || 0);
+        $('#expense_import_journal_summary').text(
+            'Journal cocok: ' + Number(summary.journal_matched_groups || 0) + ' grup · perlu pilihan: ' + Number(summary.journal_review_groups || 0) + ' grup'
+        );
         $('#expense_import_confirm').prop('disabled', Number(summary.importable || 0) < 1);
     }
 
@@ -214,10 +221,21 @@
                 { data: 'expense_date', render: function (value, type, row) { return escapeHtml(value || row.raw_expense_date || '-'); } },
                 { data: 'paid_on_date', render: function (value, type, row) { return escapeHtml(value || row.raw_paid_on_date || '-'); } },
                 { data: 'tax_status', render: function (value, type, row) {
+                    var journalMatch = row.journal_match || {};
+                    if (journalMatch.status === 'matched') {
+                        var selected = journalMatch.selected || {};
+                        if (selected.issue || selected.tax_issue) {
+                            return '<span class="label label-danger">Perlu ditinjau</span><div class="text-danger">' + escapeHtml(selected.issue || selected.tax_issue) + '</div>';
+                        }
+                        return '<span class="label label-info">' + escapeHtml(selected.tax_label || 'Journal cocok') + '</span>';
+                    }
+                    if (journalMatch.status === 'ambiguous' || journalMatch.status === 'selection_invalid') {
+                        return '<span class="label label-warning">Journal: pilih kandidat (' + Number((journalMatch.candidates || []).length) + ')</span>';
+                    }
                     if (value === 'unknown') {
                         return '<span class="label label-warning">Belum dikenal: ' + escapeHtml(row.raw_applicable_tax || '-') + '</span>';
                     }
-                    if (value === 'none') { return '<span class="text-muted">-</span>'; }
+                    if (value === 'none') { return '<span class="text-muted">Excel: tanpa pajak</span>'; }
                     return escapeHtml(row.tax_name || (row.payload && row.payload.applicable_tax) || '-');
                 } },
                 { data: 'status', render: function (value) { return value === 'valid' ? '<span class="label label-success">Valid</span>' : '<span class="label label-danger">Error</span>'; } },
@@ -234,6 +252,18 @@
                             select += '<option value="' + Number(tax.id) + '"' + selected + '>' + escapeHtml(tax.label) + '</option>';
                         });
                         actions += select + '</select>';
+                    }
+                    var journalMatch = row.journal_match || {};
+                    if (journalMatch.status === 'ambiguous' || journalMatch.status === 'selection_invalid') {
+                        var candidates = (journalMatch.candidates || []).filter(function (candidate) { return Number(candidate.mapping_id) > 0; });
+                        if (candidates.length) {
+                            var journalSelect = '<select class="form-control input-sm expense-import-map-journal" data-row="' + row.id + '"><option value="">Pilih posting Journal</option>';
+                            candidates.forEach(function (candidate) {
+                                var label = (candidate.date || 'Tanggal —') + ' · GL ' + (candidate.journal_total === null ? '—' : Number(candidate.journal_total).toLocaleString()) + ' · ' + (candidate.tax_label || candidate.issue || candidate.tax_issue || 'pajak belum terklasifikasi') + ' · baris #' + candidate.journal_row_id;
+                                journalSelect += '<option value="' + Number(candidate.mapping_id) + '">' + escapeHtml(label) + '</option>';
+                            });
+                            actions += journalSelect + '</select>';
+                        }
                     }
                     return actions || '<span class="text-muted">-</span>';
                 } }
@@ -269,6 +299,34 @@
             if (window.toastr) { toastr.success(response.message || 'TaxRate berhasil dipetakan.'); }
         }).fail(function (xhr) {
             var message = (xhr.responseJSON && (xhr.responseJSON.message || xhr.responseJSON.msg)) || 'TaxRate gagal dipetakan.';
+            if (window.toastr) { toastr.error(message); }
+            select.val('');
+        }).always(function () {
+            select.prop('disabled', false);
+        });
+    });
+
+    $('#expense_import_preview_table').on('change', '.expense-import-map-journal', function () {
+        var select = $(this);
+        var journalMappingId = select.val();
+        if (!batchId || !journalMappingId) { return; }
+
+        select.prop('disabled', true);
+        $.ajax({
+            url: journalUrl(batchId, select.data('row')),
+            method: 'PATCH',
+            dataType: 'json',
+            headers: { Accept: 'application/json' },
+            data: {
+                _token: form.find('input[name="_token"]').val(),
+                journal_mapping_id: journalMappingId
+            }
+        }).done(function (response) {
+            updateSummary(response.summary || {});
+            if (previewTable) { previewTable.ajax.reload(null, false); }
+            if (window.toastr) { toastr.success(response.message || 'Posting Journal dipilih.'); }
+        }).fail(function (xhr) {
+            var message = (xhr.responseJSON && (xhr.responseJSON.message || xhr.responseJSON.msg)) || 'Posting Journal gagal dipilih.';
             if (window.toastr) { toastr.error(message); }
             select.val('');
         }).always(function () {

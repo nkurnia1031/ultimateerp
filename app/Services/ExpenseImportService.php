@@ -23,6 +23,10 @@ use RuntimeException;
 
 class ExpenseImportService
 {
+    private $journalMatcher;
+
+    private $journalLinkService;
+
     private const REQUIRED_HEADERS = [
         'LOCATION', 'CATEGORY', 'SUB-CATEGORY', 'DESCRIPTION', 'REFERENCE NO',
         'TAGS', 'EXPENSE DATE', 'EXPENSE FOR', 'EXPENSE FOR CONTACT ID',
@@ -31,8 +35,13 @@ class ExpenseImportService
         'PAYMENT ACCOUND', 'PAYMENT NOTE',
     ];
 
-    public function __construct(private TransactionUtil $transactionUtil)
-    {
+    public function __construct(
+        private TransactionUtil $transactionUtil,
+        ?ExpenseImportJournalMatcher $journalMatcher = null,
+        ?ExpenseImportJournalLinkService $journalLinkService = null
+    ) {
+        $this->journalMatcher = $journalMatcher ?: app(ExpenseImportJournalMatcher::class);
+        $this->journalLinkService = $journalLinkService ?: app(ExpenseImportJournalLinkService::class);
     }
 
     public function storeUploadedFile(UploadedFile $file, int $businessId, ?int $userId): object
@@ -67,6 +76,7 @@ class ExpenseImportService
     {
         $progress && $progress('reading', 'Membaca workbook Excel.', 10, 0, 0);
         $rows = $this->parseWorkbook($path, $businessId, $overrides, $progress);
+        $rows = $this->applyJournalMatches($rows, $businessId, $overrides);
         $rows = $this->validateGroupTaxes($rows);
         $progress && $progress('matching', 'Memvalidasi kategori, lokasi, pembayaran, dan tanggal.', 70, count($rows), count($rows));
 
@@ -122,6 +132,8 @@ class ExpenseImportService
 
     public function summary(string $batchId, int $businessId): array
     {
+        $storedSummary = json_decode((string) DB::table('expense_import_batches')
+            ->where('id', $batchId)->where('business_id', $businessId)->value('summary'), true) ?: [];
         $counts = DB::table('expense_import_preview_rows')
             ->where('batch_id', $batchId)
             ->where('business_id', $businessId)
@@ -139,6 +151,8 @@ class ExpenseImportService
                 ->where('batch_id', $batchId)->where('business_id', $businessId)->where('is_importable', true)
                 ->distinct('group_key')->count('group_key'),
             'skipped' => (int) ($counts['skipped'] ?? 0),
+            'journal_matched_groups' => (int) ($storedSummary['journal_matched_groups'] ?? 0),
+            'journal_review_groups' => (int) ($storedSummary['journal_review_groups'] ?? 0),
         ];
     }
 
@@ -190,6 +204,7 @@ class ExpenseImportService
                     'tax_id' => $normalized['tax_id'] ?? null,
                     'tax_name' => $normalized['tax_name'] ?? null,
                     'tax_status' => $normalized['tax_status'] ?? 'none',
+                    'journal_match' => $normalized['journal_match'] ?? ['status' => 'none', 'candidates' => []],
                     'tax_mapping_required' => collect($errors)->contains(fn ($error) => str_contains((string) $error, 'satu TaxRate atau grup pajak')),
                     'payload' => $normalized,
                 ];
@@ -277,6 +292,52 @@ class ExpenseImportService
             json_decode((string) ($batch->row_overrides ?? '[]'), true) ?: []
         );
         $overrides['tax_name:'.$this->normalize($rawTaxName)] = (int) $taxRate->id;
+        $path = $batch->file_path;
+        if (! $path || ! Storage::disk('local')->exists($path)) {
+            throw new RuntimeException('File sumber preview sudah tidak tersedia.');
+        }
+
+        $summary = $this->preview($batchId, $businessId, Storage::disk('local')->path($path), $overrides);
+        DB::table('expense_import_batches')->where('id', $batchId)->where('business_id', $businessId)->update([
+            'row_overrides' => json_encode($overrides, JSON_UNESCAPED_UNICODE),
+            'updated_at' => now(),
+        ]);
+
+        return $summary;
+    }
+
+    public function updateJournalMatch(string $batchId, int $rowId, int $businessId, int $journalMappingId): array
+    {
+        $batch = DB::table('expense_import_batches')->where('id', $batchId)->where('business_id', $businessId)->first();
+        if (! $batch || $batch->status !== 'preview' || (($batch->process_state ?? 'completed') !== 'completed')) {
+            throw new RuntimeException('Batch preview tidak ditemukan atau sudah diproses.');
+        }
+
+        $row = DB::table('expense_import_preview_rows')
+            ->where('id', $rowId)->where('batch_id', $batchId)->where('business_id', $businessId)->first();
+        if (! $row) {
+            throw new RuntimeException('Baris preview tidak ditemukan.');
+        }
+
+        $normalized = json_decode((string) $row->normalized_payload, true) ?: [];
+        $reference = trim((string) ($normalized['reference_no'] ?? ''));
+        if ($reference === '') {
+            throw new RuntimeException('Baris tanpa REFERENCE NO tidak dapat ditautkan ke Journal.');
+        }
+        $match = $normalized['journal_match'] ?? [];
+        $candidateExists = collect($match['candidates'] ?? [])->contains(function ($candidate) use ($journalMappingId) {
+            return (int) ($candidate['mapping_id'] ?? 0) === $journalMappingId
+                && ! empty($candidate['mapping_id']);
+        });
+        if (! $candidateExists) {
+            throw new RuntimeException('Journal yang dipilih bukan kandidat untuk referensi ini. Muat ulang preview dan pilih kandidat yang tersedia.');
+        }
+
+        $overrides = array_merge(
+            json_decode((string) ($batch->date_overrides ?? '[]'), true) ?: [],
+            json_decode((string) ($batch->row_overrides ?? '[]'), true) ?: []
+        );
+        $overrides['journal_candidate:'.$this->normalize($reference)] = $journalMappingId;
         $path = $batch->file_path;
         if (! $path || ! Storage::disk('local')->exists($path)) {
             throw new RuntimeException('File sumber preview sudah tidak tersedia.');
@@ -399,7 +460,7 @@ class ExpenseImportService
         $categoryByName = $categories->groupBy(fn ($category) => $this->normalize($category->name));
         $contacts = Contact::where('business_id', $businessId)->get();
         $users = User::where('business_id', $businessId)->get();
-        $taxes = TaxRate::where('business_id', $businessId)->get();
+        $taxes = TaxRate::where('business_id', $businessId)->with('sub_taxes')->get();
         $taxesByName = $taxes->keyBy(fn ($tax) => $this->normalize($tax->name));
         $taxesById = $taxes->keyBy('id');
         $paymentTypes = $this->transactionUtil->payment_types(null, false, $businessId);
@@ -460,7 +521,8 @@ class ExpenseImportService
         }
 
         $originalTaxName = $this->stringValue($row['APPLICABLE TAX'] ?? null);
-        $taxOverrideId = $originalTaxName !== ''
+        $hasNoTax = $originalTaxName === '' || $this->isZeroTaxValue($originalTaxName);
+        $taxOverrideId = ! $hasNoTax
             ? ($overrides['tax_name:'.$this->normalize($originalTaxName)] ?? null)
             : null;
         $tax = is_numeric($taxOverrideId)
@@ -469,16 +531,17 @@ class ExpenseImportService
         $matchedTax = $originalTaxName !== ''
             ? $context['taxesByName']->get($this->normalize($originalTaxName))
             : null;
-        $taxStatus = $originalTaxName === '' ? 'none' : 'matched';
+        $taxStatus = $hasNoTax ? 'none' : 'matched';
         if ($tax) {
             $taxStatus = 'mapped';
         } else {
             $tax = $matchedTax;
         }
-        if (! $tax && $originalTaxName !== '') {
+        if (! $tax && ! $hasNoTax) {
             $taxStatus = 'unknown';
             $errors[] = "Tax '{$originalTaxName}' tidak dikenal. Pilih TaxRate yang tersedia dari preview.";
         }
+        $excelTaxRate = $this->taxPercentage($tax, $businessId);
 
         $normalized = [
             'location_id' => $location?->id,
@@ -494,11 +557,14 @@ class ExpenseImportService
             'expense_for' => $this->stringValue($row['EXPENSE FOR'] ?? null),
             'expense_for_contact_id' => $this->stringValue($row['EXPENSE FOR CONTACT ID'] ?? null),
             'attach_document' => $this->stringValue($row['ATTACH DOCUMENT'] ?? null),
-            'applicable_tax' => $tax?->name ?? $originalTaxName,
-            'original_applicable_tax' => $originalTaxName,
+            'applicable_tax' => $tax?->name ?? ($hasNoTax ? '' : $originalTaxName),
+            'original_applicable_tax' => $hasNoTax ? '' : $originalTaxName,
             'tax_id' => $tax?->id,
             'tax_name' => $tax?->name,
             'tax_status' => $taxStatus,
+            'excel_tax_id' => $tax?->id,
+            'excel_tax_name' => $tax?->name,
+            'excel_tax_rate' => $excelTaxRate,
             'expense_note' => $this->stringValue($row['EXPENSE NOTE'] ?? null),
             'total_amount' => $total,
             'paid_amount' => $paid,
@@ -511,13 +577,133 @@ class ExpenseImportService
 
         return [
             'source_row' => $sourceRow,
-            'group_key' => $normalized['reference_no'] !== '' ? 'ref:'.$normalized['reference_no'] : 'row:'.$sourceRow,
+            'group_key' => $normalized['reference_no'] !== '' ? 'ref:'.$this->normalize($normalized['reference_no']) : 'row:'.$sourceRow,
             'raw_payload' => $row,
             'normalized_payload' => $normalized,
             'errors' => array_values(array_unique($errors)),
             'status' => $errors === [] ? 'valid' : 'error',
             'is_importable' => $errors === [],
         ];
+    }
+
+    private function applyJournalMatches(array $rows, int $businessId, array $overrides): array
+    {
+        $references = [];
+        $taxableBases = [];
+        foreach ($rows as $row) {
+            $payload = $row['normalized_payload'];
+            $reference = trim((string) ($payload['reference_no'] ?? ''));
+            $normalizedReference = $this->normalize($reference);
+            if ($normalizedReference === '') {
+                continue;
+            }
+            $references[$normalizedReference] = $reference;
+            $taxableBases[$normalizedReference] = ($taxableBases[$normalizedReference] ?? 0)
+                + $this->excelLineBaseAmount($payload);
+        }
+
+        if ($references === []) {
+            return $rows;
+        }
+
+        $matches = $this->journalMatcher->matchReferences(
+            $businessId,
+            array_values($references),
+            $overrides,
+            $taxableBases
+        );
+
+        foreach ($rows as &$row) {
+            $payload = $row['normalized_payload'];
+            $normalizedReference = $this->normalize((string) ($payload['reference_no'] ?? ''));
+            if ($normalizedReference === '') {
+                $payload['journal_match'] = ['status' => 'none', 'selected' => null, 'candidates' => []];
+                $row['normalized_payload'] = $payload;
+                continue;
+            }
+
+            $match = $matches[$normalizedReference] ?? ['status' => 'none', 'selected' => null, 'candidates' => []];
+            $payload['journal_match'] = [
+                'status' => $match['status'],
+                'selected_by_user' => (bool) ($match['selected_by_user'] ?? false),
+                'selected' => $match['selected'] ?? null,
+                'candidates' => $match['candidates'] ?? [],
+            ];
+
+            if ($match['status'] === 'ambiguous') {
+                $row['errors'][] = 'Ada beberapa posting Journal Expense dengan REFERENCE NO ini. Pilih satu kandidat sebelum import agar GL tidak tertaut ganda.';
+            } elseif ($match['status'] === 'selection_invalid') {
+                $row['errors'][] = 'Pilihan Journal sudah tidak tersedia. Pilih ulang kandidat yang masih aktif.';
+            } elseif ($match['status'] === 'matched') {
+                $candidate = $match['selected'];
+                $payload['journal_mapping_id'] = $candidate['mapping_id'] ?? null;
+                $payload['journal_row_id'] = $candidate['journal_row_id'] ?? null;
+                $payload['journal_import_id'] = $candidate['journal_import_id'] ?? null;
+                $payload['journal_source_transaction_id'] = $candidate['source_transaction_id'] ?? null;
+                $payload['journal_tax_amount'] = $candidate['tax_amount'];
+                $payload['journal_tax_id'] = $candidate['tax_id'] ?? null;
+                $payload['journal_tax_name'] = $candidate['tax_name'] ?? null;
+
+                if (empty($candidate['ready'])) {
+                    $row['errors'][] = (string) ($candidate['issue'] ?? 'Posting Journal belum siap untuk ditautkan.');
+                } elseif (! is_numeric($candidate['tax_amount'] ?? null)) {
+                    $row['errors'][] = (string) ($candidate['tax_issue'] ?? 'Pajak Journal tidak dapat ditentukan.');
+                } else {
+                    $row['errors'] = array_values(array_filter($row['errors'], function ($error) {
+                        return ! str_starts_with((string) $error, 'Tax ')
+                            && ! str_contains((string) $error, 'satu TaxRate atau grup pajak');
+                    }));
+                    $payload['tax_id'] = $candidate['tax_id'] ?? null;
+                    $payload['tax_name'] = $candidate['tax_name'] ?? null;
+                    $payload['applicable_tax'] = $candidate['tax_name'] ?? '';
+                    $payload['original_applicable_tax'] = '';
+                    $payload['tax_status'] = (float) $candidate['tax_amount'] > 0 ? 'journal_matched' : 'journal_no_tax';
+                }
+            }
+
+            $row['errors'] = array_values(array_unique($row['errors']));
+            $row['status'] = $row['errors'] === [] ? 'valid' : 'error';
+            $row['is_importable'] = $row['errors'] === [];
+            $row['normalized_payload'] = $payload;
+        }
+        unset($row);
+
+        return $rows;
+    }
+
+    private function excelLineBaseAmount(array $payload): float
+    {
+        $amount = (float) ($payload['total_amount'] ?? 0);
+        $rate = (float) ($payload['excel_tax_rate'] ?? 0);
+        if ($rate <= 0) {
+            return $amount;
+        }
+
+        return (float) $this->transactionUtil->calc_percentage_base($amount, $rate);
+    }
+
+    private function taxPercentage($tax, int $businessId): float
+    {
+        if (! $tax) {
+            return 0.0;
+        }
+        if (! empty($tax->is_tax_group)) {
+            $subTaxes = $tax->sub_taxes ?? collect();
+            return (float) collect($subTaxes)->where('business_id', $businessId)->sum('amount');
+        }
+
+        return (float) ($tax->amount ?? 0);
+    }
+
+    private function isZeroTaxValue(string $value): bool
+    {
+        $normalized = trim(str_replace([' ', '%'], '', $value));
+        if ($normalized === '') {
+            return false;
+        }
+        $parsed = $this->parseAmount($normalized);
+
+        return $parsed !== null && abs($parsed) < 0.00001;
     }
 
     private function importGroup($rows, int $businessId, int $userId, string $batchId, int $importBatchNumber): void
@@ -527,31 +713,39 @@ class ExpenseImportService
         $categoryId = $this->validCategoryId($payload['category_id'] ?? null, $businessId)
             ?: $this->resolveCategory($payload['category_name'] ?? '', $businessId, null);
 
+        $journalMatch = $payload['journal_match'] ?? [];
+        $hasJournalMatch = ($journalMatch['status'] ?? null) === 'matched';
+        $reference = trim((string) ($payload['reference_no'] ?? ''));
+        $lockedJournal = $hasJournalMatch
+            ? $this->journalLinkService->lockSelectedJournal($journalMatch, $businessId, $reference)
+            : null;
+
         $taxName = trim((string) ($payload['applicable_tax'] ?? ''));
         $originalTaxName = trim((string) ($payload['original_applicable_tax'] ?? $taxName));
-        $tax = ! empty($payload['tax_id'])
-            ? TaxRate::where('business_id', $businessId)->find((int) $payload['tax_id'])
+        $taxId = $hasJournalMatch ? ($payload['journal_tax_id'] ?? null) : ($payload['tax_id'] ?? null);
+        $tax = ! empty($taxId)
+            ? TaxRate::where('business_id', $businessId)->find((int) $taxId)
             : null;
-        if (! $tax && $taxName !== '') {
+        if (! $hasJournalMatch && ! $tax && $taxName !== '') {
             $tax = $this->resolveTax($taxName, $businessId);
         }
-        if ($originalTaxName !== '' && ! $tax) {
+        if (! $hasJournalMatch && $originalTaxName !== '' && ! $tax) {
             throw new RuntimeException("Tax '{$originalTaxName}' tidak lagi tersedia. Buka ulang preview dan petakan ke TaxRate yang aktif.");
         }
-        $taxPercentage = 0.0;
-        if ($tax) {
-            $tax->loadMissing('sub_taxes');
-            $taxPercentage = $tax->is_tax_group
-                ? (float) $tax->sub_taxes->where('business_id', $businessId)->sum('amount')
-                : (float) $tax->amount;
-            if ($tax->is_tax_group && $taxPercentage <= 0) {
-                throw new RuntimeException("Grup pajak '{$tax->name}' tidak memiliki komponen aktif yang valid.");
-            }
+        $taxPercentage = $hasJournalMatch
+            ? (float) ($payload['excel_tax_rate'] ?? 0)
+            : $this->taxPercentage($tax, $businessId);
+        if (! $hasJournalMatch && $tax && ! empty($tax->is_tax_group) && $taxPercentage <= 0) {
+            throw new RuntimeException("Grup pajak '{$tax->name}' tidak memiliki komponen aktif yang valid.");
+        }
+        $journalTaxAmount = $hasJournalMatch ? (float) ($payload['journal_tax_amount'] ?? 0) : null;
+        if ($hasJournalMatch && (! is_finite($journalTaxAmount) || $journalTaxAmount < 0)) {
+            throw new RuntimeException('Nominal pajak Journal tidak valid; Expense tidak diubah.');
         }
 
         $lineRows = [];
-        $total = 0;
-        $totalBeforeTax = 0;
+        $excelTotal = 0.0;
+        $totalBeforeTax = 0.0;
         $paid = 0;
         foreach ($rows as $row) {
             $item = json_decode((string) $row->normalized_payload, true) ?: [];
@@ -560,10 +754,13 @@ class ExpenseImportService
             $lineSubCategoryId = $this->validCategoryId($item['sub_category_id'] ?? null, $businessId, $lineCategoryId)
                 ?: $this->resolveCategory($item['sub_category_name'] ?? '', $businessId, $lineCategoryId);
             $inclusiveAmount = (float) ($item['total_amount'] ?? 0);
-            $lineBaseAmount = $tax
-                ? $this->transactionUtil->calc_percentage_base($inclusiveAmount, $taxPercentage)
+            $lineRate = $hasJournalMatch
+                ? ($journalTaxAmount > 0 ? (float) ($item['excel_tax_rate'] ?? 0) : 0.0)
+                : $taxPercentage;
+            $lineBaseAmount = $lineRate > 0
+                ? (float) $this->transactionUtil->calc_percentage_base($inclusiveAmount, $lineRate)
                 : $inclusiveAmount;
-            $total += $inclusiveAmount;
+            $excelTotal += $inclusiveAmount;
             $totalBeforeTax += $lineBaseAmount;
             $paid += (float) ($item['paid_amount'] ?? 0);
             $lineRows[] = [
@@ -574,36 +771,65 @@ class ExpenseImportService
             ];
         }
 
-        $taxAmount = $total - $totalBeforeTax;
+        $totalBeforeTax = round($totalBeforeTax, 4);
+        $taxAmount = $hasJournalMatch ? round($journalTaxAmount, 4) : round($excelTotal - $totalBeforeTax, 4);
+        $total = $hasJournalMatch ? round($totalBeforeTax + $taxAmount, 4) : round($excelTotal, 4);
         $contactId = $this->resolveContact($payload['expense_for_contact_id'] ?? '', $businessId, $userId);
         $expenseFor = $this->resolveUser($payload['expense_for'] ?? '', $businessId, $userId);
-        $reference = trim((string) ($payload['reference_no'] ?? ''));
         if ($reference === '') {
             $reference = $this->transactionUtil->generateReferenceNumber('expense', $this->transactionUtil->setAndGetReferenceCount('expense', $businessId), $businessId);
         }
-        $transaction = Transaction::create([
-            'business_id' => $businessId,
-            'location_id' => $payload['location_id'] ?? null,
-            'created_by' => $userId,
-            'expense_category_id' => $categoryId,
-            'expense_sub_category_id' => $lineRows[0]['sub_category_id'] ?? null,
-            'expense_for' => $expenseFor,
-            'contact_id' => $contactId,
-            'ref_no' => $reference,
-            'transaction_date' => $payload['expense_date'] ?: now()->toDateTimeString(),
-            'additional_notes' => $payload['expense_note'] ?? null,
-            'document' => $payload['attach_document'] ?? null,
-            'tax_id' => $tax?->id,
-            'tax_amount' => $taxAmount,
-            'total_before_tax' => $totalBeforeTax,
-            'final_total' => $total,
-            'status' => 'final',
-            'payment_status' => 'due',
-            'type' => 'expense',
-            'import_batch' => $importBatchNumber,
-            'import_time' => now(),
-            'import_file' => DB::table('expense_import_batches')->where('id', $batchId)->value('file_name'),
-        ]);
+
+        $transaction = $lockedJournal['transaction'] ?? null;
+        $isExistingTransaction = $transaction !== null;
+        if ($transaction) {
+            $this->journalLinkService->removeProvenDuplicateExpenseMap($transaction);
+            $transaction->fill([
+                'location_id' => $payload['location_id'] ?? null,
+                'expense_category_id' => $categoryId,
+                'expense_sub_category_id' => $lineRows[0]['sub_category_id'] ?? null,
+                'expense_for' => $expenseFor,
+                'contact_id' => $contactId,
+                'ref_no' => $reference,
+                'transaction_date' => $payload['expense_date'] ?: now()->toDateTimeString(),
+                'additional_notes' => $payload['expense_note'] ?? null,
+                'document' => $payload['attach_document'] ?? null,
+                'tax_id' => $tax?->id,
+                'tax_amount' => $taxAmount,
+                'total_before_tax' => $totalBeforeTax,
+                'final_total' => $total,
+                'status' => 'final',
+                'import_batch' => $importBatchNumber,
+                'import_time' => now(),
+                'import_file' => DB::table('expense_import_batches')->where('id', $batchId)->value('file_name'),
+            ]);
+            $transaction->save();
+            ExpenseLine::where('transaction_id', $transaction->id)->delete();
+        } else {
+            $transaction = Transaction::create([
+                'business_id' => $businessId,
+                'location_id' => $payload['location_id'] ?? null,
+                'created_by' => $userId,
+                'expense_category_id' => $categoryId,
+                'expense_sub_category_id' => $lineRows[0]['sub_category_id'] ?? null,
+                'expense_for' => $expenseFor,
+                'contact_id' => $contactId,
+                'ref_no' => $reference,
+                'transaction_date' => $payload['expense_date'] ?: now()->toDateTimeString(),
+                'additional_notes' => $payload['expense_note'] ?? null,
+                'document' => $payload['attach_document'] ?? null,
+                'tax_id' => $tax?->id,
+                'tax_amount' => $taxAmount,
+                'total_before_tax' => $totalBeforeTax,
+                'final_total' => $total,
+                'status' => 'final',
+                'payment_status' => 'due',
+                'type' => 'expense',
+                'import_batch' => $importBatchNumber,
+                'import_time' => now(),
+                'import_file' => DB::table('expense_import_batches')->where('id', $batchId)->value('file_name'),
+            ]);
+        }
         foreach ($lineRows as &$line) {
             $line['transaction_id'] = $transaction->id;
         }
@@ -612,7 +838,7 @@ class ExpenseImportService
 
         $firstDate = $payload['paid_on_date'] ?: $payload['expense_date'];
         $paymentMethod = $payload['payment_method'] ?: 'other';
-        if ($paid > 0) {
+        if ($paid > 0 || $isExistingTransaction) {
             $accountId = $this->resolveAccountId($payload['payment_account'] ?? '', $businessId);
             $paymentData = [
                 'amount' => $paid,
@@ -627,14 +853,18 @@ class ExpenseImportService
                     break;
                 }
             }
-            $this->transactionUtil->createOrUpdatePaymentLines($transaction, [$paymentData], $businessId, $userId, false);
+            $this->transactionUtil->createOrUpdatePaymentLines($transaction, $paid > 0 ? [$paymentData] : [], $businessId, $userId, false);
             $this->transactionUtil->updatePaymentStatus($transaction->id, $transaction->final_total);
         }
 
         $tags = collect(explode(';', (string) ($payload['tags'] ?? '')))->map(fn ($tag) => trim($tag))->filter();
-        if ($tags->isNotEmpty()) {
-            $tagIds = $tags->map(fn ($tag) => Tag::firstOrCreate(['business_id' => $businessId, 'name' => $tag])->id)->unique()->values()->all();
+        $tagIds = $tags->map(fn ($tag) => Tag::firstOrCreate(['business_id' => $businessId, 'name' => $tag])->id)->unique()->values()->all();
+        if ($tagIds !== [] || $isExistingTransaction) {
             $transaction->tags()->sync($tagIds);
+        }
+
+        if ($lockedJournal !== null) {
+            $this->journalLinkService->link($lockedJournal, $transaction, $businessId);
         }
     }
 
@@ -800,7 +1030,19 @@ class ExpenseImportService
     {
         $valid = count(array_filter($rows, fn ($row) => $row['is_importable']));
         $groups = collect($rows)->filter(fn ($row) => $row['is_importable'])->pluck('group_key')->filter()->unique()->count();
-        return ['total' => count($rows), 'valid' => $valid, 'errors' => count($rows) - $valid, 'importable' => $valid, 'groups' => $groups, 'skipped' => 0];
+        $groupRows = collect($rows)->groupBy('group_key')->map(fn ($group) => $group->first());
+        $matchedGroups = $groupRows->filter(function ($row) {
+            return (($row['normalized_payload']['journal_match']['status'] ?? null) === 'matched');
+        })->count();
+        $reviewGroups = $groupRows->filter(function ($row) {
+            return in_array(($row['normalized_payload']['journal_match']['status'] ?? null), ['ambiguous', 'selection_invalid'], true);
+        })->count();
+
+        return [
+            'total' => count($rows), 'valid' => $valid, 'errors' => count($rows) - $valid,
+            'importable' => $valid, 'groups' => $groups, 'skipped' => 0,
+            'journal_matched_groups' => $matchedGroups, 'journal_review_groups' => $reviewGroups,
+        ];
     }
 
     private function validateGroupTaxes(array $rows): array
@@ -812,6 +1054,19 @@ class ExpenseImportService
 
         foreach ($groupIndexes as $indexes) {
             if (count($indexes) < 2) {
+                continue;
+            }
+
+            $journalMappingIds = [];
+            foreach ($indexes as $index) {
+                $journalMatch = $rows[$index]['normalized_payload']['journal_match'] ?? [];
+                if (($journalMatch['status'] ?? null) !== 'matched') {
+                    $journalMappingIds = [];
+                    break;
+                }
+                $journalMappingIds[] = (int) ($journalMatch['selected']['mapping_id'] ?? 0);
+            }
+            if ($journalMappingIds !== [] && count(array_unique($journalMappingIds)) === 1 && $journalMappingIds[0] > 0) {
                 continue;
             }
 
