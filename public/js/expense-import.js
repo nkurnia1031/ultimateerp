@@ -151,7 +151,8 @@
         $('#expense_import_existing_summary').text(
             'Expense lama diperbarui: ' + Number(summary.existing_expense_updated_groups || 0) + ' grup · perlu pilihan: ' + Number(summary.existing_expense_review_groups || 0) + ' grup'
         );
-        $('#expense_import_confirm').prop('disabled', Number(summary.importable || 0) < 1);
+        var hasStaleReadyJournalCandidate = Boolean(summary.journal_candidate_refresh_required);
+        $('#expense_import_confirm').prop('disabled', Number(summary.importable || 0) < 1 && !hasStaleReadyJournalCandidate);
     }
 
     function pollStatus(id) {

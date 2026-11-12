@@ -159,6 +159,7 @@ class ExpenseImportService
             'journal_review_groups' => (int) ($storedSummary['journal_review_groups'] ?? 0),
             'existing_expense_updated_groups' => (int) ($storedSummary['existing_expense_updated_groups'] ?? 0),
             'existing_expense_review_groups' => (int) ($storedSummary['existing_expense_review_groups'] ?? 0),
+            'journal_candidate_refresh_required' => $this->needsJournalCandidateRefresh($batchId, $businessId),
         ];
     }
 
