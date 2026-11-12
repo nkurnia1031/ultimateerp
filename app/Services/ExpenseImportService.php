@@ -162,6 +162,62 @@ class ExpenseImportService
         ];
     }
 
+    /**
+     * Older persisted previews may still mark a reference ambiguous even
+     * though their saved candidate snapshot contains exactly one ready GL
+     * posting. Re-run the workbook preview so the current matcher can select
+     * that posting before the user confirms the import.
+     */
+    public function needsJournalCandidateRefresh(string $batchId, int $businessId): bool
+    {
+        $needsRefresh = false;
+        DB::table('expense_import_preview_rows')
+            ->where('batch_id', $batchId)
+            ->where('business_id', $businessId)
+            ->where('status', 'error')
+            ->where(function ($query) {
+                foreach (['ambiguous', 'selection_invalid', 'unavailable'] as $status) {
+                    $query->orWhere('normalized_payload', 'like', '%"status":"'.$status.'"%');
+                }
+            })
+            ->select(['id', 'normalized_payload'])
+            ->chunkById(200, function ($rows) use (&$needsRefresh) {
+                foreach ($rows as $row) {
+                    $payload = json_decode((string) $row->normalized_payload, true) ?: [];
+                    if ($this->journalMatchNeedsRefresh($payload['journal_match'] ?? [])) {
+                        $needsRefresh = true;
+
+                        return false;
+                    }
+                }
+
+                return true;
+            });
+
+        return $needsRefresh;
+    }
+
+    private function journalMatchNeedsRefresh(array $journalMatch): bool
+    {
+        if (! in_array(($journalMatch['status'] ?? null), ['ambiguous', 'selection_invalid', 'unavailable'], true)) {
+            return false;
+        }
+
+        $candidates = $journalMatch['selectable_candidates'] ?? null;
+        if (! is_array($candidates)) {
+            $candidates = array_values(array_filter(
+                $journalMatch['candidates'] ?? [],
+                fn ($candidate) => ! empty($candidate['mapping_id']) && ! empty($candidate['ready'])
+            ));
+        }
+
+        $readyCandidates = array_values(array_filter($candidates, fn ($candidate) =>
+            ! empty($candidate['mapping_id']) && ! empty($candidate['ready'])
+        ));
+
+        return count($readyCandidates) === 1;
+    }
+
     public function previewRows(string $batchId, int $businessId, int $start, int $length, string $search = '', ?string $status = null, string $orderBy = 'source_row', string $orderDir = 'asc'): array
     {
         $allowedOrderColumns = ['id', 'source_row', 'group_key', 'status'];

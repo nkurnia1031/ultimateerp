@@ -1087,7 +1087,8 @@ class ExpenseController extends Controller
     public function expenseImportConfirm(Request $request, string $batchId)
     {
         $businessId = $this->authorizeExpenseImport($request);
-        $batch = DB::transaction(function () use ($batchId, $businessId) {
+        $refreshPreview = false;
+        $batch = DB::transaction(function () use ($batchId, $businessId, &$refreshPreview) {
             $batch = DB::table('expense_import_batches')->where('id', $batchId)->where('business_id', $businessId)->lockForUpdate()->first();
             abort_if(! $batch, 404, 'Batch import Expense tidak ditemukan.');
             $processState = $batch->process_state ?: 'completed';
@@ -1097,6 +1098,12 @@ class ExpenseController extends Controller
             // recoverable from the existing preview screen.
             $canRetryImport = $processState === 'failed' && $batch->operation === 'import';
             abort_unless($batch->status === 'preview' && ($processState === 'completed' || $canRetryImport), 409, 'Preview belum selesai atau sudah diproses.');
+            if ($this->expenseImportService->needsJournalCandidateRefresh($batchId, $businessId)) {
+                $refreshPreview = true;
+
+                return $batch;
+            }
+
             $summary = $this->expenseImportService->summary($batchId, $businessId);
             abort_unless($summary['importable'] > 0, 422, 'Tidak ada baris valid untuk diimpor. Perbaiki error terlebih dahulu.');
             DB::table('expense_import_batches')->where('id', $batchId)->update([
@@ -1111,6 +1118,20 @@ class ExpenseController extends Controller
             ]);
             return $batch;
         });
+
+        if ($refreshPreview) {
+            $this->expenseImportProcessService->queued($batch->id, $businessId, 'preview');
+            ProcessExpensePreview::dispatch($batch->id, $businessId);
+
+            return response()->json([
+                'success' => true,
+                'batch_id' => $batch->id,
+                'operation' => 'preview',
+                'status_url' => route('expenses.import.status', $batch->id),
+                'message' => 'Ditemukan satu posting Journal yang siap. Preview diperbarui otomatis; periksa hasilnya lalu konfirmasi import kembali.',
+            ], 202);
+        }
+
         ProcessExpenseImport::dispatch($batch->id, $businessId, (int) $request->session()->get('user.id'));
 
         return response()->json([

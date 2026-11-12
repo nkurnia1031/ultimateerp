@@ -31,6 +31,8 @@ class ExpenseImportTaxTest extends TestCase
 
     private ReflectionMethod $applyExistingExpenseMatches;
 
+    private ReflectionMethod $journalMatchNeedsRefresh;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -72,6 +74,8 @@ class ExpenseImportTaxTest extends TestCase
         $this->applyJournalMatches->setAccessible(true);
         $this->applyExistingExpenseMatches = new ReflectionMethod(ExpenseImportService::class, 'applyExistingExpenseMatches');
         $this->applyExistingExpenseMatches->setAccessible(true);
+        $this->journalMatchNeedsRefresh = new ReflectionMethod(ExpenseImportService::class, 'journalMatchNeedsRefresh');
+        $this->journalMatchNeedsRefresh->setAccessible(true);
     }
 
     protected function tearDown(): void
@@ -170,6 +174,32 @@ class ExpenseImportTaxTest extends TestCase
         $this->assertSame('matched', $staleSelection['status']);
         $this->assertSame(25, (int) $staleSelection['selected']['mapping_id']);
         $this->assertFalse($staleSelection['selected_by_user']);
+    }
+
+    public function test_stale_ambiguous_preview_refreshes_when_exactly_one_candidate_is_ready(): void
+    {
+        $stalePreview = [
+            'status' => 'ambiguous',
+            'candidates' => [
+                ['mapping_id' => null, 'ready' => false],
+                ['mapping_id' => 44068, 'ready' => true],
+            ],
+        ];
+        $twoReadyCandidates = [
+            'status' => 'ambiguous',
+            'selectable_candidates' => [
+                ['mapping_id' => 44068, 'ready' => true],
+                ['mapping_id' => 44069, 'ready' => true],
+            ],
+        ];
+        $noReadyCandidate = [
+            'status' => 'unavailable',
+            'candidates' => [['mapping_id' => null, 'ready' => false]],
+        ];
+
+        $this->assertTrue($this->journalMatchNeedsRefresh->invoke($this->service, $stalePreview));
+        $this->assertFalse($this->journalMatchNeedsRefresh->invoke($this->service, $twoReadyCandidates));
+        $this->assertFalse($this->journalMatchNeedsRefresh->invoke($this->service, $noReadyCandidate));
     }
 
     public function test_ambiguous_ready_journal_postings_include_account_breakdowns_for_comparison(): void

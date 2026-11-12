@@ -521,7 +521,11 @@
         $.ajax({ url: confirmUrl(batchId), method: 'POST', dataType: 'json', headers: { Accept: 'application/json' }, data: { _token: form.find('input[name="_token"]').val() } })
             .done(function (result) {
                 previewModal.modal('hide');
-                showProgress(result.batch_id || batchId, 'import');
+                var nextOperation = result.operation || 'import';
+                showProgress(result.batch_id || batchId, nextOperation);
+                if (result.message) {
+                    setProgress(0, result.message, nextOperation === 'preview' ? 'refreshing_preview' : 'queued', 0, 0);
+                }
                 pollDelay = 1000;
                 pollStatus(result.batch_id || batchId);
             })
