@@ -137,7 +137,6 @@ class ExpenseImportJournalLinkService
                 'source_record_id' => $transactionId,
                 'source_link_status' => 'matched',
                 'source_link_note' => 'Expense ditautkan dari import Expense melalui referensi Journal yang unik.',
-                'updated_at' => now(),
             ]);
 
         DB::table('accounting_journal_import_rows')
