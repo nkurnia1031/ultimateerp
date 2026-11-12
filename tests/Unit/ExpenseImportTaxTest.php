@@ -204,7 +204,9 @@ class ExpenseImportTaxTest extends TestCase
             'created_at' => now(),
             'updated_at' => now(),
         ]);
-        $conflicting = $matcher->matchReferences(1, ['REF-LINKED'], [], ['ref-linked' => 100])['ref-linked']['selected'];
+        $conflictingMatch = $matcher->matchReferences(1, ['REF-LINKED'], [], ['ref-linked' => 100])['ref-linked'];
+        $this->assertSame('unavailable', $conflictingMatch['status']);
+        $conflicting = $conflictingMatch['candidates'][0];
         $this->assertFalse($conflicting['ready']);
         $this->assertStringContainsString('lebih dari satu relasi', $conflicting['issue']);
     }
