@@ -225,7 +225,7 @@ class ExpenseImportJournalMatcher
                 trim((string) ($entry['source_number'] ?? $row->source_number ?? ''))
             );
             if ($confirmedSourceGroup === null) {
-                $issue = 'Journal memiliki relasi grup Expense yang belum dikonfirmasi atau tidak konsisten.';
+                $issue = 'Journal memiliki lebih dari satu relasi sumber; grup Expense belum dikonfirmasi atau tidak konsisten.';
                 $ready = false;
             } else {
                 $sourceTransactionIds = $confirmedSourceGroup['ids'];
