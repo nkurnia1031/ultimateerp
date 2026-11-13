@@ -982,7 +982,7 @@ class ExpenseController extends Controller
     public function expenseImportPreviewRows(Request $request, string $batchId)
     {
         $businessId = $this->authorizeExpenseImport($request);
-        $sortColumns = ['source_row', 'group_key', 'group_key', 'group_key', 'source_row', 'status', 'status', 'source_row'];
+        $sortColumns = ['source_row', 'group_key', 'group_key', 'group_key', 'source_row', 'source_row', 'status', 'status'];
         $sortIndex = (int) $request->input('order.0.column', 0);
         $result = $this->expenseImportService->previewRows(
             $batchId,

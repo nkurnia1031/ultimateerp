@@ -63,11 +63,9 @@
         }
 
         #expense_import_preview_modal #expense_import_preview_table th:first-child,
-        #expense_import_preview_modal #expense_import_preview_table th:nth-child(5),
-        #expense_import_preview_modal #expense_import_preview_table th:last-child,
+        #expense_import_preview_modal #expense_import_preview_table th:nth-child(6),
         #expense_import_preview_modal #expense_import_preview_table td:first-child,
-        #expense_import_preview_modal #expense_import_preview_table td:nth-child(5),
-        #expense_import_preview_modal #expense_import_preview_table td:last-child {
+        #expense_import_preview_modal #expense_import_preview_table td:nth-child(6) {
             white-space: nowrap;
         }
 
@@ -237,7 +235,7 @@
                         <p class="text-muted" id="expense_import_existing_summary">Expense lama diperbarui: 0 grup · perlu pilihan: 0 grup</p>
                         <div class="table-responsive">
                             <table class="table table-bordered table-striped" id="expense_import_preview_table" style="width:100%">
-                                <thead><tr><th>Baris Excel</th><th>Referensi</th><th>Tanggal</th><th>Tanggal bayar</th><th>Pajak</th><th>Status</th><th>Detail</th><th>Aksi</th></tr></thead>
+                                <thead><tr><th>Baris Excel</th><th>Referensi</th><th>Tanggal</th><th>Tanggal bayar</th><th>Aksi</th><th>Pajak</th><th>Status</th><th>Detail</th></tr></thead>
                             </table>
                         </div>
                     </div>

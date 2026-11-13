@@ -259,7 +259,7 @@
         if (!$.fn.DataTable) {
             return;
         }
-        previewTable = $('#expense_import_preview_table').DataTable({
+        var previewTableOptions = {
             processing: true,
             serverSide: true,
             pageLength: 25,
@@ -378,7 +378,9 @@
                 } }
             ],
             order: [[0, 'asc']]
-        });
+        };
+        previewTableOptions.columns.splice(4, 0, previewTableOptions.columns.pop());
+        previewTable = $('#expense_import_preview_table').DataTable(previewTableOptions);
     }
 
     $('#expense_import_preview_status').on('change', function () {
