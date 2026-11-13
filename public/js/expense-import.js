@@ -149,7 +149,9 @@
             'Journal cocok: ' + Number(summary.journal_matched_groups || 0) + ' grup · perlu pilihan: ' + Number(summary.journal_review_groups || 0) + ' grup'
         );
         $('#expense_import_existing_summary').text(
-            'Expense lama diperbarui: ' + Number(summary.existing_expense_updated_groups || 0) + ' grup · perlu pilihan: ' + Number(summary.existing_expense_review_groups || 0) + ' grup'
+            'Expense lama diperbarui: ' + Number(summary.existing_expense_updated_groups || 0)
+            + ' grup · grup split cocok: ' + Number(summary.existing_expense_group_matched_groups || 0)
+            + ' · perlu pilihan: ' + Number(summary.existing_expense_review_groups || 0) + ' grup'
         );
         var hasStaleReadyJournalCandidate = Boolean(summary.journal_candidate_refresh_required);
         $('#expense_import_confirm').prop('disabled', Number(summary.importable || 0) < 1 && !hasStaleReadyJournalCandidate);
@@ -313,6 +315,9 @@
                         output += '<div><span class="label label-warning">Pilih aksi untuk referensi lama</span></div>';
                     } else if (existing.action && existing.action.indexOf('merge:') === 0) {
                         output += '<div><span class="label label-info">Perbarui Expense #' + Number(existing.selected_transaction_id || existing.action.split(':')[1]) + '</span></div>';
+                    } else if (existing.action && existing.action.indexOf('group:') === 0) {
+                        var selectedGroup = existing.selected_group || {};
+                        output += '<div><span class="label label-info">Cocokkan grup split (' + Number((selectedGroup.member_ids || []).length) + ' transaksi; tetap terpisah)</span></div>';
                     } else if (existing.action === 'new') {
                         output += '<div><span class="label label-warning">Expense baru dipilih</span></div>';
                     }
@@ -326,6 +331,17 @@
                             var dateDiff = candidate.date_difference_days === null ? 'tanggal tidak tersedia' : Number(candidate.date_difference_days) + ' hari';
                             details.push('Expense #' + Number(candidate.id) + ': lama ' + escapeHtml(candidate.date || '-') + ' / Rp ' + Number(candidate.total || 0).toLocaleString('id-ID') + '; Excel ' + escapeHtml(candidate.incoming_date || '-') + ' / Rp ' + Number(candidate.incoming_total || 0).toLocaleString('id-ID') + '; beda ' + dateDiff + ' dan Rp ' + Number(candidate.amount_difference || 0).toLocaleString('id-ID'));
                         });
+                        (existing.groups || []).forEach(function (group) {
+                            var members = (group.members || []).map(function (member) {
+                                return 'Expense #' + Number(member.id) + ' (' + formatRupiah(member.amount) + ')';
+                            }).join(' + ');
+                            details.push('Grup split cocok: ' + members + ' = ' + formatRupiah(group.total_amount)
+                                + ' · dasar ' + formatRupiah(group.base_amount) + ' · pajak ' + formatRupiah(group.tax_amount)
+                                + ' · referensi dan tanggal sama. Pilih grup untuk menautkan tanpa menggabungkan transaksi. Saat import, mapping Expense lama hanya dibersihkan bila terbukti sebagai pasangan duplikat Journal.');
+                        });
+                        if (existing.group_status === 'limited') {
+                            details.push('Pencarian kombinasi Expense dibatasi karena kandidat terlalu banyak; tidak ada grup yang disarankan otomatis.');
+                        }
                     }
                     return details.join('<br>') + renderJournalCandidateDetails(row.journal_match || {});
                 } },
@@ -334,11 +350,19 @@
                     var existing = row.existing_expense_match || {};
                     if (existing.review_required) {
                         var existingSelect = '<select class="form-control input-sm expense-import-existing-action" data-row="' + row.id + '"><option value="">Pilih aksi transaksi</option>';
-                        (existing.candidates || []).forEach(function (candidate) {
-                            var mergeValue = 'merge:' + Number(candidate.id);
-                            var selected = existing.action === mergeValue ? ' selected' : '';
-                            existingSelect += '<option value="' + mergeValue + '"' + selected + '>Gabungkan ke Expense #' + Number(candidate.id) + '</option>';
+                        (existing.groups || []).forEach(function (group) {
+                            var groupValue = 'group:' + String(group.fingerprint || '');
+                            var memberIds = (group.member_ids || []).map(function (id) { return '#' + Number(id); }).join(' + ');
+                            var groupLabel = 'Cocokkan grup split ' + memberIds + ' · ' + formatRupiah(group.total_amount) + ' (tetap terpisah)';
+                            existingSelect += '<option value="' + escapeHtml(groupValue) + '"' + (existing.action === groupValue ? ' selected' : '') + '>' + escapeHtml(groupLabel) + '</option>';
                         });
+                        if (!existing.group_linked) {
+                            (existing.candidates || []).forEach(function (candidate) {
+                                var mergeValue = 'merge:' + Number(candidate.id);
+                                var selected = existing.action === mergeValue ? ' selected' : '';
+                                existingSelect += '<option value="' + mergeValue + '"' + selected + '>Gabungkan ke Expense #' + Number(candidate.id) + '</option>';
+                            });
+                        }
                         existingSelect += '<option value="new"' + (existing.action === 'new' ? ' selected' : '') + '>Buat transaksi baru</option>';
                         existingSelect += '<option value="skip"' + (existing.action === 'skip' ? ' selected' : '') + '>Lewati</option></select>';
                         actions += existingSelect + ' ';

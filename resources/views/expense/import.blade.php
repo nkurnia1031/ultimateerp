@@ -424,7 +424,7 @@
                             <div class="col-sm-3"><div class="small-box bg-yellow"><div class="inner"><h3 data-expense-summary="skipped">0</h3><p>Dilewati</p></div></div></div>
                         </div>
                         <p class="text-muted" id="expense_import_journal_summary">Journal cocok: 0 grup · perlu pilihan: 0 grup</p>
-                        <p class="text-muted" id="expense_import_existing_summary">Expense lama diperbarui: 0 grup · perlu pilihan: 0 grup</p>
+                        <p class="text-muted" id="expense_import_existing_summary">Expense lama diperbarui: 0 grup · grup split cocok: 0 · perlu pilihan: 0 grup</p>
                         <p class="text-muted small expense-import-responsive-hint">Pada layar sempit, informasi baris tersusun sebagai kartu; pilihan aksi dan rincian tetap tampil tanpa scroll mendatar.</p>
                         <div class="table-responsive">
                             <table class="table table-bordered table-striped" id="expense_import_preview_table" style="width:100%">

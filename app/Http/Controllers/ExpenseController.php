@@ -1083,7 +1083,7 @@ class ExpenseController extends Controller
     {
         $businessId = $this->authorizeExpenseImport($request);
         $validated = $request->validate([
-            'action' => ['required', 'regex:/^(skip|new|merge:[1-9][0-9]*)$/'],
+            'action' => ['required', 'regex:/^(skip|new|merge:[1-9][0-9]*|group:[a-f0-9]{64})$/'],
         ]);
         $result = $this->expenseImportService->updateExistingExpenseAction(
             $batchId,

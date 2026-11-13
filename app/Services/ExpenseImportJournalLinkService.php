@@ -92,12 +92,71 @@ class ExpenseImportJournalLinkService
                 });
         }
 
-        if (count($linkedRecords) > 1) {
-            throw new RuntimeException('Journal memiliki lebih dari satu relasi sumber. Selesaikan relasi yang bentrok sebelum import.');
-        }
-
         $sourceTransaction = null;
-        if ($linkedRecords !== []) {
+        $sourceTransactions = collect();
+        if (count($linkedRecords) > 1) {
+            $memberIds = array_values(array_unique(array_map('intval', $sourceLinkGroup['member_ids'] ?? [])));
+            sort($memberIds);
+            $linkedIds = array_values(array_unique(array_map(fn ($record) => (int) $record['id'], array_values($linkedRecords))));
+            sort($linkedIds);
+            $memberTypes = collect($sourceLinkMembers)->map(fn ($member) => (string) ($member['record_type'] ?? ''))->unique()->values();
+            $memberRecordIds = collect($sourceLinkMembers)->pluck('id')->map(fn ($id) => (int) $id)->unique()->sort()->values()->all();
+            if (($sourceLinkGroup['status'] ?? null) !== 'confirmed'
+                || count($memberIds) < 2
+                || $memberIds !== $linkedIds
+                || $memberIds !== $memberRecordIds
+                || $memberTypes->count() !== 1
+                || $memberTypes->first() !== Transaction::class
+                || collect($linkedRecords)->contains(fn ($linked) => $linked['type'] !== Transaction::class)) {
+                throw new RuntimeException('Relasi grup sumber Journal tidak memiliki konfirmasi atau anggota yang konsisten.');
+            }
+
+            $sourceTransactions = Transaction::where('business_id', $businessId)
+                ->where('type', 'expense')
+                ->whereIn('id', $memberIds)
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get();
+            if ($sourceTransactions->count() !== count($memberIds)) {
+                throw new RuntimeException('Salah satu Expense dalam grup sumber Journal tidak ditemukan pada business aktif.');
+            }
+            $journalDate = substr(trim((string) ($entry['date'] ?? '')), 0, 10);
+            $sourceMembersById = collect($sourceLinkMembers)->keyBy(fn ($member) => (int) ($member['id'] ?? 0));
+            foreach ($sourceTransactions as $source) {
+                $sourceMember = $sourceMembersById->get((int) $source->id);
+                if ($this->normalizeReference((string) $source->ref_no) !== $this->normalizeReference($reference)
+                    || substr((string) $source->transaction_date, 0, 10) !== $journalDate
+                    || ! $sourceMember
+                    || abs((float) $source->total_before_tax - (float) ($sourceMember['base_amount'] ?? -1)) > 0.01
+                    || abs((float) $source->tax_amount - (float) ($sourceMember['tax_amount'] ?? -1)) > 0.01
+                    || abs((float) $source->final_total - (float) ($sourceMember['amount'] ?? -1)) > 0.01) {
+                    throw new RuntimeException('Tanggal, referensi, atau nilai anggota grup Expense berubah setelah konfirmasi Journal.');
+                }
+            }
+            $groupTotals = [
+                'base_amount' => (float) $sourceTransactions->sum(fn ($source) => (float) ($source->total_before_tax ?? 0)),
+                'tax_amount' => (float) $sourceTransactions->sum(fn ($source) => (float) ($source->tax_amount ?? 0)),
+                'total_amount' => (float) $sourceTransactions->sum(fn ($source) => (float) ($source->final_total ?? 0)),
+            ];
+            foreach ($groupTotals as $key => $amount) {
+                if (! is_numeric($sourceLinkGroup[$key] ?? null) || abs($amount - (float) $sourceLinkGroup[$key]) > 0.01) {
+                    throw new RuntimeException('Nominal anggota grup Expense berubah setelah konfirmasi Journal.');
+                }
+            }
+            $journalTotals = DB::table('accounting_accounts_transactions')
+                ->where('acc_trans_mapping_id', (int) $mapping->id)
+                ->selectRaw("SUM(CASE WHEN type = 'debit' THEN amount ELSE 0 END) as debit_total, SUM(CASE WHEN type = 'credit' THEN amount ELSE 0 END) as credit_total")
+                ->first();
+            if (! $journalTotals
+                || abs((float) $journalTotals->debit_total - (float) $journalTotals->credit_total) > 0.01
+                || abs((float) $journalTotals->debit_total - $groupTotals['total_amount']) > 0.01
+                || ! is_numeric($sourceLinkGroup['journal_total_amount'] ?? null)
+                || abs((float) $journalTotals->debit_total - (float) $sourceLinkGroup['journal_total_amount']) > 0.01) {
+                throw new RuntimeException('Nilai posting GL berubah atau tidak seimbang dengan grup Expense.');
+            }
+            $sourceTransaction = $sourceTransactions->firstWhere('id', (int) ($mapping->source_record_id ?? 0))
+                ?: $sourceTransactions->first();
+        } elseif ($linkedRecords !== []) {
             $linked = reset($linkedRecords);
             if ($linked['type'] !== Transaction::class) {
                 throw new RuntimeException('Journal sudah tertaut ke jenis sumber lain; relasi tersebut tidak akan ditimpa.');
@@ -112,6 +171,7 @@ class ExpenseImportJournalLinkService
             if ($this->normalizeReference((string) $sourceTransaction->ref_no) !== $this->normalizeReference($reference)) {
                 throw new RuntimeException('Referensi Expense yang sudah tertaut berbeda dari workbook; relasi tidak akan ditimpa.');
             }
+            $sourceTransactions = collect([$sourceTransaction]);
         }
 
         return [
@@ -119,6 +179,7 @@ class ExpenseImportJournalLinkService
             'mapping' => $mapping,
             'entry' => $entry,
             'transaction' => $sourceTransaction,
+            'transactions' => $sourceTransactions,
         ];
     }
 
@@ -172,6 +233,95 @@ class ExpenseImportJournalLinkService
                 $transactionId
             );
         }
+    }
+
+    public function linkGroup(array $lockedJournal, $transactions, int $businessId, int $userId, array $matchedGroup): void
+    {
+        if (! Schema::hasTable('accounting_journal_import_source_links')) {
+            throw new RuntimeException('Relasi grup sumber Journal belum tersedia. Jalankan migration Accounting.');
+        }
+        $transactions = collect($transactions)->sortBy('id')->values();
+        if ($transactions->count() < 2 || $transactions->contains(function ($transaction) use ($businessId) {
+            return (int) $transaction->business_id !== $businessId || $transaction->type !== 'expense';
+        })) {
+            throw new RuntimeException('Grup sumber harus memuat minimal dua Expense aktif pada business ini.');
+        }
+
+        $row = $lockedJournal['row'];
+        $mapping = $lockedJournal['mapping'];
+        $entry = $lockedJournal['entry'];
+        $members = $transactions->map(function ($transaction) {
+            return [
+                'record_type' => Transaction::class,
+                'id' => (int) $transaction->id,
+                'reference' => (string) $transaction->ref_no,
+                'date' => substr((string) $transaction->transaction_date, 0, 10),
+                'base_amount' => (float) $transaction->total_before_tax,
+                'tax_amount' => (float) $transaction->tax_amount,
+                'amount' => (float) $transaction->final_total,
+            ];
+        })->all();
+        $primary = $transactions->first();
+        $baseAmount = (float) $transactions->sum(fn ($transaction) => (float) $transaction->total_before_tax);
+        $taxAmount = (float) $transactions->sum(fn ($transaction) => (float) $transaction->tax_amount);
+        $totalAmount = (float) $transactions->sum(fn ($transaction) => (float) $transaction->final_total);
+        $fingerprint = hash('sha256', json_encode([
+            'business_id' => $businessId,
+            'journal_import_row_id' => (int) $row->id,
+            'member_ids' => $transactions->pluck('id')->map(fn ($id) => (int) $id)->values()->all(),
+            'base' => $baseAmount,
+            'tax' => $taxAmount,
+            'total' => $totalAmount,
+        ], JSON_UNESCAPED_SLASHES));
+
+        $entry['source_link_status'] = 'matched';
+        $entry['source_link_label'] = 'Grup split ('.$transactions->count().' Expense)';
+        $entry['source_link_note'] = 'Satu posting Journal ditautkan ke Expense yang tetap terpisah.';
+        $entry['source_link_group'] = [
+            'status' => 'confirmed',
+            'method' => 'expense_import_split_group',
+            'fingerprint' => $fingerprint,
+            'confirmed_by' => $userId,
+            'confirmed_at' => now()->toDateTimeString(),
+            'member_ids' => $transactions->pluck('id')->map(fn ($id) => (int) $id)->values()->all(),
+            'members' => $members,
+            'base_amount' => $baseAmount,
+            'tax_amount' => $taxAmount,
+            'total_amount' => $totalAmount,
+            'journal_base_amount' => (float) ($matchedGroup['journal_base_amount'] ?? $baseAmount),
+            'journal_tax_amount' => (float) ($matchedGroup['journal_tax_amount'] ?? $taxAmount),
+            'journal_total_amount' => (float) ($matchedGroup['journal_total_amount'] ?? $totalAmount),
+        ];
+
+        DB::table('accounting_acc_trans_mappings')
+            ->where('id', (int) $mapping->id)
+            ->where('business_id', $businessId)
+            ->update([
+                'source_record_type' => Transaction::class,
+                'source_record_id' => (int) $primary->id,
+                'source_link_status' => 'matched',
+                'source_link_note' => 'Satu posting Journal ditautkan ke grup Expense terpisah melalui import Expense.',
+            ]);
+        DB::table('accounting_journal_import_rows')
+            ->where('id', (int) $row->id)
+            ->where('business_id', $businessId)
+            ->update([
+                'source_record_type' => Transaction::class,
+                'source_record_id' => (int) $primary->id,
+                'entry_data' => json_encode($entry, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                'processing_message' => 'Posting Journal ditautkan ke grup Expense terpisah melalui import Expense.',
+                'updated_at' => now(),
+            ]);
+
+        $this->sourceLinkService->sync(
+            (int) $row->id,
+            (int) $row->journal_import_id,
+            $businessId,
+            'Expense',
+            $entry,
+            Transaction::class,
+            (int) $primary->id
+        );
     }
 
     /**

@@ -210,15 +210,28 @@ class ExpenseImportJournalMatcher
                 ];
             }
         }
-        if (count($linkedRecords) > 1) {
-            $issue = 'Journal memiliki lebih dari satu relasi sumber operasional; perlu ditinjau agar Expense tidak dibuat ganda.';
-            $ready = false;
-        }
         $linkedRecord = $linkedRecords === [] ? null : reset($linkedRecords);
         $sourceType = $linkedRecord['type'] ?? '';
         $sourceId = $linkedRecord['id'] ?? null;
         $sourceTransactionId = null;
-        if ($sourceId !== null) {
+        $sourceTransactionIds = [];
+        $confirmedSourceGroup = null;
+        if (count($linkedRecords) > 1) {
+            $confirmedSourceGroup = $this->validateConfirmedExpenseGroup(
+                $sourceLinkGroup,
+                array_values($linkedRecords),
+                $entry,
+                $businessId,
+                trim((string) ($entry['source_number'] ?? $row->source_number ?? ''))
+            );
+            if ($confirmedSourceGroup === null) {
+                $issue = 'Journal memiliki relasi grup Expense yang belum dikonfirmasi atau tidak konsisten.';
+                $ready = false;
+            } else {
+                $sourceTransactionIds = $confirmedSourceGroup['ids'];
+                $sourceTransactionId = $confirmedSourceGroup['primary_id'];
+            }
+        } elseif ($sourceId !== null) {
             if ($sourceType !== Transaction::class) {
                 $issue = 'Journal sudah tertaut ke jenis sumber lain; Expense tidak akan menimpa relasi itu.';
                 $ready = false;
@@ -236,6 +249,7 @@ class ExpenseImportJournalMatcher
                         $ready = false;
                     } else {
                         $sourceTransactionId = (int) $sourceTransaction->id;
+                        $sourceTransactionIds = [$sourceTransactionId];
                     }
                 }
             }
@@ -253,6 +267,24 @@ class ExpenseImportJournalMatcher
         if ($issue === null && $tax['issue'] !== null) {
             $issue = $tax['issue'];
             $ready = false;
+        }
+        if ($issue === null && $confirmedSourceGroup !== null) {
+            $journalSourceTotals = $this->componentService->totalsForSource($components, 'Expense');
+            foreach ([
+                [(float) $confirmedSourceGroup['total_amount'], $debitTotal],
+                [(float) $confirmedSourceGroup['base_amount'], (float) $journalSourceTotals['base']],
+                [(float) $confirmedSourceGroup['tax_amount'], (float) $tax['amount']],
+                [(float) ($sourceLinkGroup['journal_total_amount'] ?? -1), $debitTotal],
+                [(float) ($sourceLinkGroup['journal_base_amount'] ?? -1), (float) $journalSourceTotals['base']],
+                [(float) ($sourceLinkGroup['journal_tax_amount'] ?? -1), (float) $tax['amount']],
+            ] as [$sourceAmount, $journalAmount]) {
+                if (abs($sourceAmount - $journalAmount) > 0.01) {
+                    $issue = 'Nominal grup Expense tidak lagi sama dengan komponen posting Journal.';
+                    $ready = false;
+
+                    break;
+                }
+            }
         }
 
         return [
@@ -272,9 +304,84 @@ class ExpenseImportJournalMatcher
             'tax_label' => $tax['tax_label'],
             'tax_issue' => $tax['issue'],
             'source_transaction_id' => $sourceTransactionId,
+            'source_transaction_ids' => $sourceTransactionIds,
+            'source_group' => $confirmedSourceGroup,
             'ready' => $ready,
             'issue' => $issue,
         ];
+    }
+
+    private function validateConfirmedExpenseGroup(array $group, array $linkedRecords, array $entry, int $businessId, string $reference): ?array
+    {
+        if (($group['status'] ?? null) !== 'confirmed') {
+            return null;
+        }
+        $memberIds = array_values(array_unique(array_map('intval', $group['member_ids'] ?? [])));
+        sort($memberIds);
+        $linkedIds = [];
+        foreach ($linkedRecords as $linked) {
+            if (($linked['type'] ?? null) !== Transaction::class || (int) ($linked['id'] ?? 0) < 1) {
+                return null;
+            }
+            $linkedIds[] = (int) $linked['id'];
+        }
+        $linkedIds = array_values(array_unique($linkedIds));
+        sort($linkedIds);
+        $members = is_array($group['members'] ?? null) ? $group['members'] : [];
+        $memberRecordIds = [];
+        foreach ($members as $member) {
+            if (! is_array($member) || ($member['record_type'] ?? null) !== Transaction::class) {
+                return null;
+            }
+            $memberRecordIds[] = (int) ($member['id'] ?? 0);
+        }
+        $memberRecordIds = array_values(array_unique($memberRecordIds));
+        sort($memberRecordIds);
+        if (count($memberIds) < 2 || $memberIds !== $linkedIds || $memberIds !== $memberRecordIds) {
+            return null;
+        }
+
+        $date = substr(trim((string) ($entry['date'] ?? '')), 0, 10);
+        $transactions = Transaction::where('business_id', $businessId)
+            ->where('type', 'expense')
+            ->whereIn('id', $memberIds)
+            ->get(['id', 'ref_no', 'transaction_date', 'total_before_tax', 'tax_amount', 'final_total']);
+        if ($transactions->count() !== count($memberIds)) {
+            return null;
+        }
+        $membersById = collect($members)->keyBy(fn ($member) => (int) ($member['id'] ?? 0));
+        foreach ($transactions as $transaction) {
+            $member = $membersById->get((int) $transaction->id);
+            if (! $member
+                || $this->normalizeReference((string) $transaction->ref_no) !== $this->normalizeReference($reference)
+                || substr((string) $transaction->transaction_date, 0, 10) !== $date
+                || $this->amountDiffers((float) $transaction->total_before_tax, (float) ($member['base_amount'] ?? -1))
+                || $this->amountDiffers((float) $transaction->tax_amount, (float) ($member['tax_amount'] ?? -1))
+                || $this->amountDiffers((float) $transaction->final_total, (float) ($member['amount'] ?? -1))) {
+                return null;
+            }
+        }
+
+        $totals = [
+            'base_amount' => (float) $transactions->sum(fn ($transaction) => (float) $transaction->total_before_tax),
+            'tax_amount' => (float) $transactions->sum(fn ($transaction) => (float) $transaction->tax_amount),
+            'total_amount' => (float) $transactions->sum(fn ($transaction) => (float) $transaction->final_total),
+        ];
+        foreach ($totals as $key => $amount) {
+            if (! is_numeric($group[$key] ?? null) || $this->amountDiffers($amount, (float) $group[$key])) {
+                return null;
+            }
+        }
+
+        return array_merge($totals, [
+            'ids' => $memberIds,
+            'primary_id' => $memberIds[0],
+        ]);
+    }
+
+    private function amountDiffers(float $left, float $right): bool
+    {
+        return abs($left - $right) > 0.01;
     }
 
     private function journalTax(array $entry, int $businessId, float $taxableBase, ?array $components = null): array

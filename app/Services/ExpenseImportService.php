@@ -158,6 +158,7 @@ class ExpenseImportService
             'journal_matched_groups' => (int) ($storedSummary['journal_matched_groups'] ?? 0),
             'journal_review_groups' => (int) ($storedSummary['journal_review_groups'] ?? 0),
             'existing_expense_updated_groups' => (int) ($storedSummary['existing_expense_updated_groups'] ?? 0),
+            'existing_expense_group_matched_groups' => (int) ($storedSummary['existing_expense_group_matched_groups'] ?? 0),
             'existing_expense_review_groups' => (int) ($storedSummary['existing_expense_review_groups'] ?? 0),
             'journal_candidate_refresh_required' => $this->needsJournalCandidateRefresh($batchId, $businessId),
         ];
@@ -440,7 +441,16 @@ class ExpenseImportService
             throw new RuntimeException('Baris ini tidak memerlukan pilihan untuk Expense dengan referensi yang sudah ada.');
         }
 
-        if (! in_array($action, ['skip', 'new'], true)) {
+        if (preg_match('/^group:([a-f0-9]{64})$/D', $action, $groupMatches)) {
+            $groupExists = collect($match['groups'] ?? [])->contains(function ($group) use ($groupMatches) {
+                return hash_equals((string) ($group['fingerprint'] ?? ''), $groupMatches[1]);
+            });
+            if (! $groupExists) {
+                throw new RuntimeException('Grup Expense yang dipilih tidak lagi cocok dengan referensi dan nilai sumber. Muat ulang preview.');
+            }
+        }
+
+        if (! in_array($action, ['skip', 'new'], true) && ! preg_match('/^group:[a-f0-9]{64}$/D', $action)) {
             if (! preg_match('/^merge:([1-9][0-9]*)$/D', $action, $matches)) {
                 throw new RuntimeException('Pilih Lewati, Gabungkan, atau Buat transaksi baru.');
             }
@@ -766,6 +776,7 @@ class ExpenseImportService
                 $payload['journal_row_id'] = $candidate['journal_row_id'] ?? null;
                 $payload['journal_import_id'] = $candidate['journal_import_id'] ?? null;
                 $payload['journal_source_transaction_id'] = $candidate['source_transaction_id'] ?? null;
+                $payload['journal_source_transaction_ids'] = $candidate['source_transaction_ids'] ?? [];
                 $payload['journal_tax_amount'] = $candidate['tax_amount'];
                 $payload['journal_tax_id'] = $candidate['tax_id'] ?? null;
                 $payload['journal_tax_name'] = $candidate['tax_name'] ?? null;
@@ -833,7 +844,7 @@ class ExpenseImportService
                 ->where('type', 'expense')
                 ->whereNotNull('ref_no')
                 ->whereIn(DB::raw('LOWER(TRIM(ref_no))'), $referenceChunk)
-                ->get(['id', 'ref_no', 'transaction_date', 'final_total'])
+                ->get(['id', 'ref_no', 'transaction_date', 'total_before_tax', 'tax_amount', 'final_total'])
                 ->each(function ($transaction) use (&$existingByReference) {
                     $normalizedReference = $this->normalize((string) $transaction->ref_no);
                     $existingByReference[$normalizedReference][] = $transaction;
@@ -849,10 +860,15 @@ class ExpenseImportService
             $candidates = collect($existingByReference[$normalizedReference] ?? [])->unique('id')->values();
             $firstPayload = $rows[$indexes[0]]['normalized_payload'];
             $journalMatch = $firstPayload['journal_match'] ?? [];
+            $linkedTransactionIds = ($journalMatch['status'] ?? null) === 'matched'
+                ? array_values(array_unique(array_filter(array_map('intval', $firstPayload['journal_source_transaction_ids'] ?? []))))
+                : [];
             $linkedTransactionId = ($journalMatch['status'] ?? null) === 'matched'
                 ? (int) ($firstPayload['journal_source_transaction_id'] ?? 0)
                 : 0;
-            if ($linkedTransactionId > 0) {
+            if (count($linkedTransactionIds) > 1) {
+                $candidates = $candidates->whereIn('id', $linkedTransactionIds)->values();
+            } elseif ($linkedTransactionId > 0) {
                 $linked = $candidates->first(fn ($candidate) => (int) $candidate->id === $linkedTransactionId);
                 if ($linked) {
                     $candidates = collect([$linked]);
@@ -882,12 +898,15 @@ class ExpenseImportService
                 continue;
             }
 
-            $incomingTotal = (float) ($groupTotals[$normalizedReference]['excel'] ?? 0);
-            if (($journalMatch['status'] ?? null) === 'matched'
-                && (float) ($journalMatch['selected']['tax_amount'] ?? 0) > 0) {
-                $incomingTotal = (float) ($groupTotals[$normalizedReference]['base'] ?? 0)
-                    + (float) $journalMatch['selected']['tax_amount'];
-            }
+            $hasMatchedJournal = ($journalMatch['status'] ?? null) === 'matched';
+            $journalTaxAmount = $hasMatchedJournal ? (float) ($journalMatch['selected']['tax_amount'] ?? 0) : 0.0;
+            $incomingBase = $journalTaxAmount > 0
+                ? (float) ($groupTotals[$normalizedReference]['base'] ?? 0)
+                : (float) ($groupTotals[$normalizedReference]['excel'] ?? 0);
+            $incomingTax = $hasMatchedJournal ? $journalTaxAmount : 0.0;
+            $incomingTotal = $hasMatchedJournal
+                ? $incomingBase + $incomingTax
+                : (float) ($groupTotals[$normalizedReference]['excel'] ?? 0);
             $incomingDates = array_values($groupDates[$normalizedReference] ?? []);
             sort($incomingDates);
             $incomingDate = $incomingDates[0] ?? null;
@@ -909,6 +928,8 @@ class ExpenseImportService
                     'id' => (int) $candidate->id,
                     'reference' => (string) $candidate->ref_no,
                     'date' => $existingDate,
+                    'base' => (float) ($candidate->total_before_tax ?? 0),
+                    'tax' => (float) ($candidate->tax_amount ?? 0),
                     'total' => $existingTotal,
                     'incoming_date' => $incomingDate,
                     'incoming_total' => $incomingTotal,
@@ -920,6 +941,22 @@ class ExpenseImportService
                 ];
             })->values()->all();
 
+            $selectedJournalTotal = (float) ($journalMatch['selected']['journal_total'] ?? 0);
+            $groupSuggestions = ($journalMatch['status'] ?? null) === 'matched'
+                && count($incomingDates) === 1
+                && ($journalMatch['selected']['date'] ?? null) === $incomingDate
+                && abs($selectedJournalTotal - $incomingTotal) <= 0.01
+                ? $this->findExistingExpenseGroups(
+                    $candidateDetails,
+                    $incomingDate,
+                    $incomingBase,
+                    $incomingTax,
+                    $incomingTotal,
+                    $businessId,
+                    $normalizedReference
+                )
+                : ['status' => 'none', 'groups' => []];
+
             $reviewRequired = count($candidateDetails) > 1
                 || collect($candidateDetails)->contains(fn ($candidate) => ! empty($candidate['large_difference']))
                 || count($incomingDates) > 1;
@@ -927,6 +964,7 @@ class ExpenseImportService
             $requestedAction = trim((string) ($overrides[$actionKey] ?? ''));
             $action = '';
             $selectedTransactionId = null;
+            $selectedGroup = null;
             $actionValid = false;
 
             if (in_array($requestedAction, ['skip', 'new'], true)) {
@@ -934,11 +972,28 @@ class ExpenseImportService
                 $actionValid = true;
             } elseif (preg_match('/^merge:([1-9][0-9]*)$/D', $requestedAction, $actionMatches)) {
                 $selectedId = (int) $actionMatches[1];
-                if (collect($candidateDetails)->contains(fn ($candidate) => (int) $candidate['id'] === $selectedId)) {
+                if (count($linkedTransactionIds) <= 1
+                    && collect($candidateDetails)->contains(fn ($candidate) => (int) $candidate['id'] === $selectedId)) {
                     $action = $requestedAction;
                     $selectedTransactionId = $selectedId;
                     $actionValid = true;
                 }
+            } elseif (preg_match('/^group:([a-f0-9]{64})$/D', $requestedAction, $actionMatches)) {
+                $selectedGroup = collect($groupSuggestions['groups'] ?? [])->first(function ($group) use ($actionMatches) {
+                    return hash_equals((string) ($group['fingerprint'] ?? ''), $actionMatches[1]);
+                });
+                if ($selectedGroup) {
+                    $action = $requestedAction;
+                    $actionValid = true;
+                }
+            } elseif ($requestedAction === '' && count($groupSuggestions['groups'] ?? []) === 1
+                && count($linkedTransactionIds) > 1
+                && collect($groupSuggestions['groups'][0]['member_ids'] ?? [])->sort()->values()->all() === collect($linkedTransactionIds)->sort()->values()->all()) {
+                // A previously confirmed Journal source group is already an
+                // explicit user decision. Keep re-imports idempotent.
+                $selectedGroup = $groupSuggestions['groups'][0];
+                $action = 'group:'.$selectedGroup['fingerprint'];
+                $actionValid = true;
             } elseif ($requestedAction === '' && count($candidateDetails) === 1 && ! $reviewRequired) {
                 $selectedTransactionId = (int) $candidateDetails[0]['id'];
                 $action = 'merge:'.$selectedTransactionId;
@@ -951,7 +1006,11 @@ class ExpenseImportService
                 'review_required' => $reviewRequired,
                 'action' => $actionValid ? $action : null,
                 'selected_transaction_id' => $selectedTransactionId,
+                'selected_group' => $selectedGroup,
+                'group_linked' => count($linkedTransactionIds) > 1,
                 'candidates' => $candidateDetails,
+                'groups' => $groupSuggestions['groups'] ?? [],
+                'group_status' => $groupSuggestions['status'] ?? 'none',
             ];
 
             foreach ($indexes as $index) {
@@ -959,7 +1018,7 @@ class ExpenseImportService
                 if ($requestedAction !== '' && ! $actionValid) {
                     $rows[$index]['errors'][] = 'Pilihan transaksi Expense sudah tidak cocok dengan kandidat yang tersedia. Pilih ulang aksi.';
                 } elseif ($reviewRequired && ! $actionValid) {
-                    $rows[$index]['errors'][] = 'REFERENCE NO sudah memiliki Expense dengan tanggal atau total yang berbeda jauh. Pilih Lewati, Gabungkan ke transaksi lama, atau Buat transaksi baru.';
+                    $rows[$index]['errors'][] = 'REFERENCE NO sudah memiliki beberapa Expense. Pilih Lewati, Gabungkan ke satu transaksi, Cocokkan grup split yang nilainya tepat, atau Buat transaksi baru.';
                 }
 
                 if ($actionValid && $action === 'skip') {
@@ -987,6 +1046,170 @@ class ExpenseImportService
         }
 
         return (float) $this->transactionUtil->calc_percentage_base($amount, $rate);
+    }
+
+    private function findExistingExpenseGroups(
+        array $candidates,
+        ?string $incomingDate,
+        float $incomingBase,
+        float $incomingTax,
+        float $incomingTotal,
+        int $businessId,
+        string $normalizedReference
+    ): array {
+        $eligible = array_values(array_filter($candidates, function ($candidate) use ($incomingDate) {
+            return $incomingDate !== null
+                && ($candidate['date'] ?? null) === $incomingDate
+                && is_numeric($candidate['base'] ?? null)
+                && is_numeric($candidate['tax'] ?? null)
+                && is_numeric($candidate['total'] ?? null)
+                && (float) $candidate['base'] >= 0
+                && (float) $candidate['tax'] >= 0
+                && (float) $candidate['total'] > 0;
+        }));
+
+        if (count($eligible) < 2) {
+            return ['status' => 'none', 'groups' => []];
+        }
+        if (count($eligible) > 36) {
+            return ['status' => 'limited', 'groups' => []];
+        }
+
+        $units = fn ($amount) => (int) round((float) $amount * 10000, 0, PHP_ROUND_HALF_UP);
+        foreach ($eligible as &$candidate) {
+            $candidate['_total_units'] = $units($candidate['total']);
+            $candidate['_base_units'] = $units($candidate['base']);
+            $candidate['_tax_units'] = $units($candidate['tax']);
+        }
+        unset($candidate);
+        usort($eligible, fn ($left, $right) => $right['_total_units'] <=> $left['_total_units']);
+
+        $targets = [
+            'total' => $units($incomingTotal),
+            'base' => $units($incomingBase),
+            'tax' => $units($incomingTax),
+        ];
+        $suffix = array_fill(0, count($eligible) + 1, ['total' => 0, 'base' => 0, 'tax' => 0]);
+        for ($index = count($eligible) - 1; $index >= 0; $index--) {
+            $suffix[$index] = [
+                'total' => $suffix[$index + 1]['total'] + $eligible[$index]['_total_units'],
+                'base' => $suffix[$index + 1]['base'] + $eligible[$index]['_base_units'],
+                'tax' => $suffix[$index + 1]['tax'] + $eligible[$index]['_tax_units'],
+            ];
+        }
+
+        $tolerance = 100; // One cent at the matcher's four-decimal precision.
+        $groups = [];
+        $steps = 0;
+        $exhausted = false;
+        $search = function (int $start, array $members, int $total, int $base, int $tax) use (
+            &$search,
+            &$groups,
+            &$steps,
+            &$exhausted,
+            $eligible,
+            $suffix,
+            $targets,
+            $tolerance,
+            $incomingDate,
+            $incomingBase,
+            $incomingTax,
+            $incomingTotal,
+            $businessId,
+            $normalizedReference
+        ): void {
+            if ($exhausted || count($groups) >= 5) {
+                return;
+            }
+            $steps++;
+            if ($steps > 50000) {
+                $exhausted = true;
+
+                return;
+            }
+
+            if (count($members) >= 2
+                && abs($total - $targets['total']) <= $tolerance
+                && abs($base - $targets['base']) <= $tolerance
+                && abs($tax - $targets['tax']) <= $tolerance) {
+                usort($members, fn ($left, $right) => (int) $left['id'] <=> (int) $right['id']);
+                $memberIds = array_values(array_map(fn ($member) => (int) $member['id'], $members));
+                $group = [
+                    'member_ids' => $memberIds,
+                    'members' => array_map(function ($member) {
+                        return [
+                            'id' => (int) $member['id'],
+                            'reference' => (string) $member['reference'],
+                            'date' => (string) $member['date'],
+                            'base_amount' => (float) $member['base'],
+                            'tax_amount' => (float) $member['tax'],
+                            'amount' => (float) $member['total'],
+                        ];
+                    }, $members),
+                    'base_amount' => $base / 10000,
+                    'tax_amount' => $tax / 10000,
+                    'total_amount' => $total / 10000,
+                    'journal_base_amount' => $incomingBase,
+                    'journal_tax_amount' => $incomingTax,
+                    'journal_total_amount' => $incomingTotal,
+                ];
+                $group['fingerprint'] = hash('sha256', json_encode([
+                    'business_id' => $businessId,
+                    'reference' => $normalizedReference,
+                    'date' => $incomingDate,
+                    'member_ids' => $memberIds,
+                    'members' => array_map(fn ($member) => [
+                        'id' => (int) $member['id'],
+                        'base' => (float) $member['base'],
+                        'tax' => (float) $member['tax'],
+                        'total' => (float) $member['total'],
+                    ], $members),
+                    'base' => $group['base_amount'],
+                    'tax' => $group['tax_amount'],
+                    'total' => $group['total_amount'],
+                ], JSON_UNESCAPED_SLASHES));
+                $groups[] = $group;
+
+                return;
+            }
+            if ($start >= count($eligible)) {
+                return;
+            }
+
+            $remaining = $suffix[$start];
+            if ($total + $remaining['total'] < $targets['total'] - $tolerance
+                || $base + $remaining['base'] < $targets['base'] - $tolerance
+                || $tax + $remaining['tax'] < $targets['tax'] - $tolerance) {
+                return;
+            }
+
+            for ($index = $start; $index < count($eligible); $index++) {
+                $candidate = $eligible[$index];
+                $nextTotal = $total + $candidate['_total_units'];
+                $nextBase = $base + $candidate['_base_units'];
+                $nextTax = $tax + $candidate['_tax_units'];
+                if ($nextTotal > $targets['total'] + $tolerance
+                    || $nextBase > $targets['base'] + $tolerance
+                    || $nextTax > $targets['tax'] + $tolerance) {
+                    continue;
+                }
+
+                $search($index + 1, array_merge($members, [$candidate]), $nextTotal, $nextBase, $nextTax);
+                if ($exhausted || count($groups) >= 5) {
+                    return;
+                }
+            }
+        };
+
+        $search(0, [], 0, 0, 0);
+        if ($exhausted || count($groups) >= 5) {
+            return ['status' => 'limited', 'groups' => []];
+        }
+
+        return [
+            'status' => count($groups) === 1 ? 'unique' : (count($groups) > 1 ? 'ambiguous' : 'none'),
+            'groups' => $groups,
+        ];
     }
 
     private function taxPercentage($tax, int $businessId): float
@@ -1023,11 +1246,65 @@ class ExpenseImportService
         if ($reference !== '') {
             $this->lockExpenseReference($businessId, $reference);
         }
-        $categoryId = $this->validCategoryId($payload['category_id'] ?? null, $businessId)
-            ?: $this->resolveCategory($payload['category_name'] ?? '', $businessId, null);
         $lockedJournal = $hasJournalMatch
             ? $this->journalLinkService->lockSelectedJournal($journalMatch, $businessId, $reference)
             : null;
+
+        $existingMatch = $payload['existing_expense_match'] ?? [];
+        $existingAction = (string) ($existingMatch['action'] ?? '');
+        if (str_starts_with($existingAction, 'group:')) {
+            if (! $hasJournalMatch || ! $lockedJournal) {
+                throw new RuntimeException('Grup Expense split hanya dapat ditautkan ke satu posting Journal yang siap. Muat ulang preview.');
+            }
+            $selectedGroup = $existingMatch['selected_group'] ?? null;
+            if (! is_array($selectedGroup)
+                || ! hash_equals((string) ($selectedGroup['fingerprint'] ?? ''), substr($existingAction, strlen('group:')))) {
+                throw new RuntimeException('Pilihan grup Expense tidak lagi tersedia. Muat ulang preview.');
+            }
+            $journalTax = $journalMatch['selected']['tax_amount'] ?? null;
+            if (! is_numeric($journalTax) || (float) $journalTax < 0) {
+                throw new RuntimeException('Nilai pajak Journal tidak valid; grup Expense tidak diubah.');
+            }
+            $incomingBase = collect($rows)->sum(function ($row) use ($journalTax) {
+                $item = json_decode((string) $row->normalized_payload, true) ?: [];
+
+                return (float) $journalTax > 0
+                    ? $this->excelLineBaseAmount($item)
+                    : (float) ($item['total_amount'] ?? 0);
+            });
+            $incomingTax = (float) $journalTax;
+            $incomingTotal = $incomingBase + $incomingTax;
+            $selectedJournalTotal = $journalMatch['selected']['journal_total'] ?? null;
+            if (! is_numeric($selectedJournalTotal) || abs($incomingTotal - (float) $selectedJournalTotal) > 0.01) {
+                throw new RuntimeException('Total grup Expense tidak lagi cocok dengan posting Journal yang dipilih. Muat ulang preview.');
+            }
+            $transactions = $this->lockExistingExpenseGroup(
+                $selectedGroup,
+                $rows,
+                $businessId,
+                $reference,
+                $incomingBase,
+                $incomingTax,
+                $incomingTotal
+            );
+            $alreadyLinked = collect($lockedJournal['transactions'] ?? [])->pluck('id')->map(fn ($id) => (int) $id)->sort()->values()->all();
+            $selectedIds = collect($transactions)->pluck('id')->map(fn ($id) => (int) $id)->sort()->values()->all();
+            $lockedTransactionId = (int) ($lockedJournal['transaction']->id ?? 0);
+            if (($lockedTransactionId > 0 && ! in_array($lockedTransactionId, $selectedIds, true))
+                || ($alreadyLinked !== [] && $alreadyLinked !== $selectedIds)) {
+                throw new RuntimeException('Journal sudah tertaut ke Expense lain. Relasi sumber tidak diubah.');
+            }
+
+            foreach ($transactions as $transaction) {
+                $this->journalLinkService->removeProvenDuplicateExpenseMap($transaction);
+            }
+            $this->journalLinkService->linkGroup($lockedJournal, $transactions, $businessId, $userId, $selectedGroup);
+
+            return;
+        }
+
+        $categoryId = $this->validCategoryId($payload['category_id'] ?? null, $businessId)
+            ?: $this->resolveCategory($payload['category_name'] ?? '', $businessId, null);
 
         $taxName = trim((string) ($payload['applicable_tax'] ?? ''));
         $originalTaxName = trim((string) ($payload['original_applicable_tax'] ?? $taxName));
@@ -1089,10 +1366,8 @@ class ExpenseImportService
             $reference = $this->transactionUtil->generateReferenceNumber('expense', $this->transactionUtil->setAndGetReferenceCount('expense', $businessId), $businessId);
         }
 
-        $existingMatch = $payload['existing_expense_match'] ?? [];
-        $existingAction = (string) ($existingMatch['action'] ?? '');
         $transaction = $lockedJournal['transaction'] ?? null;
-        $preserveExistingJournalLink = false;
+        $preserveExistingJournalLink = collect($lockedJournal['transactions'] ?? [])->count() > 1;
         if (! empty($existingMatch['review_required']) && $existingAction === '') {
             throw new RuntimeException('REFERENCE NO memerlukan pilihan di preview. Muat ulang preview sebelum mengimpor.');
         }
@@ -1111,7 +1386,8 @@ class ExpenseImportService
                 throw new RuntimeException('Expense yang dipilih tidak lagi tersedia untuk REFERENCE NO ini. Muat ulang preview.');
             }
         } elseif ($existingAction === 'new') {
-            $preserveExistingJournalLink = $lockedJournal !== null && $transaction !== null;
+            $preserveExistingJournalLink = $lockedJournal !== null
+                && ($transaction !== null || collect($lockedJournal['transactions'] ?? [])->count() > 1);
             $transaction = null;
         } elseif ($existingAction === 'skip') {
             throw new RuntimeException('Kelompok REFERENCE NO yang dipilih untuk dilewati tidak boleh masuk proses import.');
@@ -1254,6 +1530,82 @@ class ExpenseImportService
         if ($lockedJournal !== null && ! $preserveExistingJournalLink) {
             $this->journalLinkService->link($lockedJournal, $transaction, $businessId);
         }
+    }
+
+    private function lockExistingExpenseGroup(
+        array $group,
+        $rows,
+        int $businessId,
+        string $reference,
+        float $expectedBase,
+        float $expectedTax,
+        float $expectedTotal
+    ) {
+        $memberIds = array_values(array_unique(array_map('intval', $group['member_ids'] ?? [])));
+        sort($memberIds);
+        if (count($memberIds) < 2 || count($memberIds) !== count($group['member_ids'] ?? [])) {
+            throw new RuntimeException('Grup Expense harus memuat minimal dua transaksi yang berbeda.');
+        }
+
+        $incomingDates = collect($rows)
+            ->map(function ($row) {
+                $item = json_decode((string) $row->normalized_payload, true) ?: [];
+
+                return substr((string) ($item['expense_date'] ?? ''), 0, 10);
+            })
+            ->filter()
+            ->unique()
+            ->values();
+        if ($incomingDates->count() !== 1) {
+            throw new RuntimeException('Grup Expense split memerlukan satu tanggal transaksi yang sama.');
+        }
+        $expectedDate = (string) $incomingDates->first();
+
+        $transactions = Transaction::where('business_id', $businessId)
+            ->where('type', 'expense')
+            ->whereIn('id', $memberIds)
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->get();
+        if ($transactions->count() !== count($memberIds)) {
+            throw new RuntimeException('Salah satu transaksi Expense dalam grup tidak lagi tersedia. Muat ulang preview.');
+        }
+
+        $memberSnapshots = collect($group['members'] ?? [])->keyBy(fn ($member) => (int) ($member['id'] ?? 0));
+        foreach ($transactions as $transaction) {
+            $snapshot = $memberSnapshots->get((int) $transaction->id);
+            if ($this->normalize((string) $transaction->ref_no) !== $this->normalize($reference)
+                || substr((string) $transaction->transaction_date, 0, 10) !== $expectedDate
+                || ! $snapshot
+                || abs((float) $transaction->total_before_tax - (float) ($snapshot['base_amount'] ?? -1)) > 0.01
+                || abs((float) $transaction->tax_amount - (float) ($snapshot['tax_amount'] ?? -1)) > 0.01
+                || abs((float) $transaction->final_total - (float) ($snapshot['amount'] ?? -1)) > 0.01) {
+                throw new RuntimeException('Referensi, tanggal, atau nilai anggota grup Expense berubah sejak preview. Muat ulang preview.');
+            }
+        }
+
+        $actualBase = (float) $transactions->sum(fn ($transaction) => (float) ($transaction->total_before_tax ?? 0));
+        $actualTax = (float) $transactions->sum(fn ($transaction) => (float) ($transaction->tax_amount ?? 0));
+        $actualTotal = (float) $transactions->sum(fn ($transaction) => (float) ($transaction->final_total ?? 0));
+        foreach ([
+            [$actualBase, $expectedBase],
+            [$actualTax, $expectedTax],
+            [$actualTotal, $expectedTotal],
+            [$actualBase, (float) ($group['base_amount'] ?? -1)],
+            [$actualTax, (float) ($group['tax_amount'] ?? -1)],
+            [$actualTotal, (float) ($group['total_amount'] ?? -1)],
+        ] as [$actual, $expected]) {
+            if (abs($actual - $expected) > 0.01) {
+                throw new RuntimeException('Nominal grup Expense berubah atau tidak lagi cocok dengan workbook/Journal. Muat ulang preview.');
+            }
+        }
+
+        $groupIds = collect($transactions)->pluck('id')->map(fn ($id) => (int) $id)->sort()->values()->all();
+        if ($groupIds !== $memberIds) {
+            throw new RuntimeException('Anggota grup Expense berubah sejak preview. Muat ulang preview.');
+        }
+
+        return $transactions;
     }
 
     private function lockExpenseReference(int $businessId, string $reference): void
@@ -1459,6 +1811,9 @@ class ExpenseImportService
         $existingUpdatedGroups = $groupRows->filter(function ($row) {
             return str_starts_with((string) ($row['normalized_payload']['existing_expense_match']['action'] ?? ''), 'merge:');
         })->count();
+        $existingGroupMatchedGroups = $groupRows->filter(function ($row) {
+            return str_starts_with((string) ($row['normalized_payload']['existing_expense_match']['action'] ?? ''), 'group:');
+        })->count();
         $existingReviewGroups = $groupRows->filter(function ($row) {
             $match = $row['normalized_payload']['existing_expense_match'] ?? [];
 
@@ -1472,6 +1827,7 @@ class ExpenseImportService
             'importable' => $valid, 'groups' => $groups, 'skipped' => $skipped,
             'journal_matched_groups' => $matchedGroups, 'journal_review_groups' => $reviewGroups,
             'existing_expense_updated_groups' => $existingUpdatedGroups,
+            'existing_expense_group_matched_groups' => $existingGroupMatchedGroups,
             'existing_expense_review_groups' => $existingReviewGroups,
         ];
     }
