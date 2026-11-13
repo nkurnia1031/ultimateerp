@@ -263,13 +263,16 @@ class ExpenseImportJournalMatcher
         $components = $this->componentService->groupJournalLines($entry, $businessId);
         $debitTotal = round((float) collect($components)->sum('debit'), 4);
         $creditTotal = round((float) collect($components)->sum('credit'), 4);
+        $journalSourceTotals = $this->componentService->totalsForSource($components, 'Expense');
+        $taxableBase = (float) $journalSourceTotals['base'] > 0
+            ? (float) $journalSourceTotals['base']
+            : $taxableBase;
         $tax = $this->journalTax($entry, $businessId, $taxableBase, $components);
         if ($issue === null && $tax['issue'] !== null) {
             $issue = $tax['issue'];
             $ready = false;
         }
         if ($issue === null && $confirmedSourceGroup !== null) {
-            $journalSourceTotals = $this->componentService->totalsForSource($components, 'Expense');
             foreach ([
                 [(float) $confirmedSourceGroup['total_amount'], $debitTotal],
                 [(float) $confirmedSourceGroup['base_amount'], (float) $journalSourceTotals['base']],

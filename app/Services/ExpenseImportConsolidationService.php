@@ -1,0 +1,383 @@
+<?php
+
+namespace App\Services;
+
+use App\Transaction;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+use RuntimeException;
+
+class ExpenseImportConsolidationService
+{
+    private $journalLinkService;
+
+    public function __construct(?ExpenseImportJournalLinkService $journalLinkService = null)
+    {
+        $this->journalLinkService = $journalLinkService ?: app(ExpenseImportJournalLinkService::class);
+    }
+
+    /**
+     * Consolidate a uniquely matched same-reference Expense group into its
+     * lowest-id member while preserving supported child records and payments.
+     */
+    public function consolidate(
+        Collection $transactions,
+        int $businessId,
+        string $reference,
+        float $expectedTotal,
+        int $journalRowId,
+        int $journalMappingId
+    ): array {
+        $memberIds = $transactions->pluck('id')->map(fn ($id) => (int) $id)->unique()->sort()->values()->all();
+        if (count($memberIds) < 2 || count($memberIds) !== $transactions->count()) {
+            throw new RuntimeException('Konsolidasi Expense memerlukan sedikitnya dua transaksi sumber yang berbeda.');
+        }
+
+        $transactions = Transaction::where('business_id', $businessId)
+            ->where('type', 'expense')
+            ->whereIn('id', $memberIds)
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->get();
+        if ($transactions->count() !== count($memberIds)) {
+            throw new RuntimeException('Salah satu Expense sumber tidak lagi tersedia. Muat ulang preview.');
+        }
+
+        foreach ($transactions as $transaction) {
+            if ($this->normalizeReference((string) $transaction->ref_no) !== $this->normalizeReference($reference)) {
+                throw new RuntimeException('Referensi Expense sumber berubah. Muat ulang preview sebelum menggabungkan.');
+            }
+        }
+
+        $actualTotal = (float) $transactions->sum(fn ($transaction) => (float) $transaction->final_total);
+        if (abs($actualTotal - $expectedTotal) > 0.01) {
+            throw new RuntimeException('Total Expense sumber berubah sejak preview. Muat ulang preview sebelum menggabungkan.');
+        }
+
+        $paymentTotal = Schema::hasTable('transaction_payments')
+            ? (float) DB::table('transaction_payments')->whereIn('transaction_id', $memberIds)->sum('amount')
+            : 0.0;
+        $paymentCount = Schema::hasTable('transaction_payments')
+            ? (int) DB::table('transaction_payments')->whereIn('transaction_id', $memberIds)->count()
+            : 0;
+        if ($paymentTotal - $expectedTotal > 0.01) {
+            throw new RuntimeException('Total pembayaran Expense sumber melebihi total Expense hasil gabungan; riwayat pembayaran tidak diubah.');
+        }
+
+        $preserved = $this->preservedTransactionValues($transactions);
+        $this->assertNoUnsupportedReferences($transactions, $memberIds);
+        $this->assertJournalRelationsAreExclusive($memberIds, $businessId, $journalRowId, $journalMappingId);
+        $this->assertGeneratedMappingsAreReplaceable($transactions, $businessId, $reference, $date, $journalMappingId);
+
+        foreach ($transactions as $transaction) {
+            $this->journalLinkService->removeProvenDuplicateExpenseMap($transaction);
+            $this->removeProvenGeneratedBackfill($transaction, $businessId, $reference, $date);
+            $this->assertNoUnreplaceableSourceLedgerRows($transaction, $journalMappingId);
+        }
+
+        $primary = $transactions->first();
+        $secondaryIds = array_values(array_diff($memberIds, [(int) $primary->id]));
+        if ($secondaryIds !== []) {
+            $this->moveExpenseChildren($primary, $secondaryIds, $memberIds, $journalRowId);
+            Transaction::where('business_id', $businessId)
+                ->where('type', 'expense')
+                ->whereIn('id', $secondaryIds)
+                ->delete();
+        }
+
+        $primary->refresh();
+
+        return [
+            'transaction' => $primary,
+            'member_ids' => $memberIds,
+            'preserved' => $preserved,
+            'payment_total' => $paymentTotal,
+            'payment_count' => $paymentCount,
+        ];
+    }
+
+    private function preservedTransactionValues(Collection $transactions): array
+    {
+        foreach (['location_id', 'contact_id', 'expense_for', 'currency_id', 'exchange_rate'] as $column) {
+            $values = $transactions->pluck($column)->filter(fn ($value) => $value !== null && $value !== '')
+                ->map(fn ($value) => (string) $value)->unique()->values();
+            if ($values->count() > 1) {
+                throw new RuntimeException("Expense dengan REFERENCE NO sama memiliki nilai {$column} yang berbeda; transaksi tidak digabung.");
+            }
+        }
+
+        $documents = $transactions->pluck('document')->map(fn ($value) => trim((string) $value))->filter()->unique()->values();
+        if ($documents->count() > 1) {
+            throw new RuntimeException('Expense sumber memiliki lampiran dokumen berbeda; gabungkan dokumen tersebut sebelum mengimpor.');
+        }
+
+        $notes = $transactions->pluck('additional_notes')->map(fn ($value) => trim((string) $value))->filter()->unique()->values();
+        if ($notes->count() > 1) {
+            throw new RuntimeException('Expense sumber memiliki catatan berbeda; tinjau catatan sebelum mengimpor gabungan.');
+        }
+
+        if (Schema::hasTable('expense_lines')
+            && DB::table('expense_lines')->whereIn('transaction_id', $transactions->pluck('id'))->whereNotNull('document')->where('document', '<>', '')->exists()) {
+            throw new RuntimeException('Baris Expense sumber memiliki lampiran. Baris tidak digabung agar lampiran tidak hilang.');
+        }
+
+        $tags = collect();
+        if (Schema::hasTable('transaction_tags') && Schema::hasTable('tags')) {
+            $tags = DB::table('transaction_tags as transaction_tag')
+                ->join('tags', 'tags.id', '=', 'transaction_tag.tag_id')
+                ->whereIn('transaction_tag.transaction_id', $transactions->pluck('id'))
+                ->pluck('tags.name')
+                ->map(fn ($name) => trim((string) $name))
+                ->filter()
+                ->unique()
+                ->values();
+        }
+
+        return [
+            'location_id' => $this->singleValue($transactions, 'location_id'),
+            'contact_id' => $this->singleValue($transactions, 'contact_id'),
+            'expense_for' => $this->singleValue($transactions, 'expense_for'),
+            'document' => $documents->first(),
+            'additional_notes' => $notes->first(),
+            'tags' => $tags->all(),
+        ];
+    }
+
+    private function singleValue(Collection $transactions, string $column)
+    {
+        return $transactions->pluck($column)->filter(fn ($value) => $value !== null && $value !== '')
+            ->unique()->values()->first();
+    }
+
+    private function assertNoUnsupportedReferences(Collection $transactions, array $memberIds): void
+    {
+        $secondaryIds = array_values(array_diff($memberIds, [(int) $transactions->first()->id]));
+        foreach (['return_parent_id', 'recur_parent_id', 'transfer_parent_id'] as $column) {
+            if (Schema::hasColumn('transactions', $column)
+                && $transactions->contains(fn ($transaction) => ! empty($transaction->{$column}))) {
+                throw new RuntimeException('Expense sumber merupakan bagian dari relasi transaksi lain dan tidak dapat digabung otomatis.');
+            }
+        }
+        foreach (['return_parent_id', 'recur_parent_id', 'transfer_parent_id'] as $column) {
+            if (Schema::hasColumn('transactions', $column)
+                && Transaction::whereIn($column, $secondaryIds)->exists()) {
+                throw new RuntimeException('Expense sumber terhubung ke transaksi lain dan tidak dapat digabung otomatis.');
+            }
+        }
+
+        if (Schema::hasTable('heavy_equipment_driver_settlements')
+            && Schema::hasColumn('heavy_equipment_driver_settlements', 'payroll_transaction_id')
+            && DB::table('heavy_equipment_driver_settlements')->whereIn('payroll_transaction_id', $secondaryIds)->exists()) {
+            throw new RuntimeException('Expense sumber tertaut ke penyelesaian payroll dan tidak dapat digabung otomatis.');
+        }
+
+        foreach ([
+            'inventory_products' => 'transaction_id',
+            'purchase_lines' => 'transaction_id',
+            'transaction_sell_lines' => 'transaction_id',
+            'stock_adjustment_lines' => 'transaction_id',
+            'asset_consumptions' => 'transaction_id',
+            'asset_depreciation' => 'transaction_id',
+            'heavy_equipment_trip_billings' => 'transaction_id',
+            'project_invoice_lines' => 'transaction_id',
+        ] as $table => $column) {
+            if (Schema::hasTable($table) && Schema::hasColumn($table, $column)
+                && DB::table($table)->whereIn($column, $secondaryIds)->exists()) {
+                throw new RuntimeException('Expense sumber memiliki relasi operasional tambahan pada '.str_replace('_', ' ', $table).'; transaksi tidak digabung otomatis.');
+            }
+        }
+    }
+
+    private function assertJournalRelationsAreExclusive(array $memberIds, int $businessId, int $journalRowId, int $journalMappingId): void
+    {
+        if (Schema::hasTable('accounting_acc_trans_mappings')) {
+            $mappings = DB::table('accounting_acc_trans_mappings')
+                ->whereIn('source_record_id', $memberIds)
+                ->where('source_record_type', Transaction::class)
+                ->lockForUpdate()
+                ->get(['id', 'business_id', 'type', 'source_record_id']);
+            foreach ($mappings as $mapping) {
+                if ((int) $mapping->business_id !== $businessId
+                    || ((int) $mapping->id !== $journalMappingId && (string) $mapping->type !== 'general_ledger_backfill')) {
+                    throw new RuntimeException('Expense sumber tertaut ke posting lain; relasi Journal tersebut tidak disentuh.');
+                }
+            }
+        }
+
+        if (Schema::hasTable('accounting_journal_import_source_links')) {
+            $foreignLinkExists = DB::table('accounting_journal_import_source_links')
+                ->whereIn('source_record_id', $memberIds)
+                ->where('source_record_type', Transaction::class)
+                ->where(function ($query) use ($businessId, $journalRowId) {
+                    $query->where('business_id', '<>', $businessId)
+                        ->orWhere('journal_import_row_id', '<>', $journalRowId);
+                })
+                ->exists();
+            if ($foreignLinkExists) {
+                throw new RuntimeException('Expense sumber tertaut ke baris Journal lain; transaksi tidak digabung otomatis.');
+            }
+        }
+
+        if (Schema::hasTable('accounting_journal_import_rows')) {
+            $otherJournalRowExists = DB::table('accounting_journal_import_rows')
+                ->whereIn('source_record_id', $memberIds)
+                ->where('source_record_type', Transaction::class)
+                ->where('id', '<>', $journalRowId)
+                ->exists();
+            if ($otherJournalRowExists) {
+                throw new RuntimeException('Expense sumber telah dipakai oleh baris Journal lain; transaksi tidak digabung otomatis.');
+            }
+        }
+    }
+
+    private function assertGeneratedMappingsAreReplaceable(Collection $transactions, int $businessId, string $reference, string $date, int $journalMappingId): void
+    {
+        if (! Schema::hasTable('accounting_acc_trans_mappings') || ! Schema::hasTable('accounting_accounts_transactions')) {
+            return;
+        }
+
+        $ids = $transactions->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $mappings = DB::table('accounting_acc_trans_mappings')
+            ->where('source_record_type', Transaction::class)
+            ->whereIn('source_record_id', $ids)
+            ->lockForUpdate()
+            ->get(['id', 'business_id', 'type', 'source_record_id']);
+        $generatedCounts = $mappings->where('type', 'general_ledger_backfill')->groupBy('source_record_id');
+        if ($generatedCounts->contains(fn ($rows) => $rows->count() > 1)) {
+            throw new RuntimeException('Expense sumber memiliki lebih dari satu posting otomatis; transaksi tidak digabung otomatis.');
+        }
+        foreach ($mappings as $mapping) {
+            if ((int) $mapping->id === $journalMappingId) {
+                continue;
+            }
+            if ((int) $mapping->business_id !== $businessId || (string) $mapping->type !== 'general_ledger_backfill') {
+                throw new RuntimeException('Expense sumber memiliki mapping akuntansi yang tidak boleh dipindahkan otomatis.');
+            }
+            $source = $transactions->firstWhere('id', (int) $mapping->source_record_id);
+            if (! $source || ! $this->generatedPostingIsExact($mapping, $source, $reference, $date)) {
+                throw new RuntimeException('Posting Expense lama tidak terbukti sebagai duplikat Journal; transaksi tidak digabung otomatis.');
+            }
+        }
+    }
+
+    private function generatedPostingIsExact(object $mapping, Transaction $transaction, string $reference, string $date): bool
+    {
+        $fullMapping = DB::table('accounting_acc_trans_mappings')->where('id', (int) $mapping->id)->first(['ref_no', 'operation_date']);
+        if (! $fullMapping
+            || $this->normalizeReference((string) $fullMapping->ref_no) !== $this->normalizeReference($reference)
+            || substr((string) $fullMapping->operation_date, 0, 10) !== $date) {
+            return false;
+        }
+
+        $lines = DB::table('accounting_accounts_transactions')->where('acc_trans_mapping_id', (int) $mapping->id)
+            ->get(['transaction_id', 'transaction_payment_id', 'amount', 'type', 'sub_type', 'map_type']);
+        if ($lines->count() !== 2
+            || $lines->contains(fn ($line) => (int) $line->transaction_id !== (int) $transaction->id
+                || $line->transaction_payment_id !== null
+                || (string) $line->sub_type !== 'expense'
+                || (string) $line->map_type !== 'general_ledger_backfill'
+                || abs((float) $line->amount - (float) $transaction->final_total) > 0.01)) {
+            return false;
+        }
+
+        return $lines->where('type', 'debit')->count() === 1 && $lines->where('type', 'credit')->count() === 1;
+    }
+
+    private function removeProvenGeneratedBackfill(Transaction $transaction, int $businessId, string $reference, string $date): void
+    {
+        if (! Schema::hasTable('accounting_acc_trans_mappings') || ! Schema::hasTable('accounting_accounts_transactions')) {
+            return;
+        }
+
+        $mappings = DB::table('accounting_acc_trans_mappings')
+            ->where('business_id', $businessId)
+            ->where('source_record_type', Transaction::class)
+            ->where('source_record_id', (int) $transaction->id)
+            ->where('type', 'general_ledger_backfill')
+            ->get(['id']);
+        foreach ($mappings as $mapping) {
+            if (! $this->generatedPostingIsExact($mapping, $transaction, $reference, $date)) {
+                throw new RuntimeException('Posting Expense lama berubah saat konsolidasi; transaksi tidak digabung.');
+            }
+            DB::table('accounting_accounts_transactions')->where('acc_trans_mapping_id', (int) $mapping->id)->delete();
+            DB::table('accounting_acc_trans_mappings')->where('id', (int) $mapping->id)->delete();
+        }
+    }
+
+    private function assertNoUnreplaceableSourceLedgerRows(Transaction $transaction, int $journalMappingId): void
+    {
+        if (! Schema::hasTable('accounting_accounts_transactions')) {
+            return;
+        }
+
+        $rows = DB::table('accounting_accounts_transactions')
+            ->where('transaction_id', (int) $transaction->id)
+            ->whereNull('transaction_payment_id')
+            ->get(['acc_trans_mapping_id', 'map_type']);
+        foreach ($rows as $row) {
+            if ((int) ($row->acc_trans_mapping_id ?? 0) === $journalMappingId) {
+                continue;
+            }
+            throw new RuntimeException('Expense masih memiliki baris GL operasional yang tidak terbukti duplikat Journal. Transaksi tidak digabung otomatis.');
+        }
+    }
+
+    private function moveExpenseChildren(Transaction $primary, array $secondaryIds, array $memberIds, int $journalRowId): void
+    {
+        $primaryId = (int) $primary->id;
+        foreach ([
+            'expense_lines' => 'transaction_id',
+            'transaction_payments' => 'transaction_id',
+            'account_transactions' => 'transaction_id',
+            'cash_register_transactions' => 'transaction_id',
+        ] as $table => $column) {
+            if (Schema::hasTable($table) && Schema::hasColumn($table, $column)) {
+                DB::table($table)->whereIn($column, $secondaryIds)->update([$column => $primaryId]);
+            }
+        }
+
+        if (Schema::hasTable('accounting_accounts_transactions') && Schema::hasColumn('accounting_accounts_transactions', 'transaction_id')) {
+            DB::table('accounting_accounts_transactions')->whereIn('transaction_id', $secondaryIds)->update(['transaction_id' => $primaryId]);
+        }
+
+        foreach (['heavy_equipment_vendor_loadings', 'heavy_equipment_vendor_loading_lines', 'heavy_equipment_vendor_loading_documents'] as $table) {
+            if (Schema::hasTable($table) && Schema::hasColumn($table, 'expense_transaction_id')) {
+                DB::table($table)->whereIn('expense_transaction_id', $secondaryIds)->update(['expense_transaction_id' => $primaryId]);
+            }
+        }
+
+        if (Schema::hasTable('media') && Schema::hasColumn('media', 'model_type') && Schema::hasColumn('media', 'model_id')) {
+            DB::table('media')->where('model_type', $primary->getMorphClass())
+                ->whereIn('model_id', $secondaryIds)->update(['model_id' => $primaryId]);
+        }
+
+        if (Schema::hasTable('transaction_tags')) {
+            $now = now();
+            $tagIds = DB::table('transaction_tags')->whereIn('transaction_id', $memberIds)->pluck('tag_id')->unique()->values();
+            $links = $tagIds->map(fn ($tagId) => [
+                'transaction_id' => $primaryId,
+                'tag_id' => (int) $tagId,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ])->all();
+            if ($links !== []) {
+                DB::table('transaction_tags')->insertOrIgnore($links);
+            }
+            DB::table('transaction_tags')->whereIn('transaction_id', $secondaryIds)->delete();
+        }
+
+        if (Schema::hasTable('accounting_journal_import_source_links')) {
+            DB::table('accounting_journal_import_source_links')
+                ->where('journal_import_row_id', $journalRowId)
+                ->where('source_record_type', Transaction::class)
+                ->whereIn('source_record_id', $memberIds)
+                ->delete();
+        }
+    }
+
+    private function normalizeReference(string $reference): string
+    {
+        return mb_strtolower(trim(preg_replace('/\s+/u', ' ', $reference)));
+    }
+}
