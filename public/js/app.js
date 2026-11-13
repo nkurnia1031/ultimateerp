@@ -1568,6 +1568,37 @@ $(document).ready(function () {
         },
     });
 
+    $(document).on('click', '.js-export-transaction-lines', function (event) {
+        event.preventDefault();
+
+        var $button = $(this);
+        if ($button.data('exporting')) {
+            return;
+        }
+
+        var tableId = $button.data('table');
+        var tableElement = document.getElementById(tableId);
+        if (!tableElement || !$.fn.DataTable.isDataTable(tableElement)) {
+            return;
+        }
+
+        var table = $(tableElement).DataTable();
+        $button.data('exporting', true).addClass('disabled').attr('aria-disabled', 'true');
+
+        table.ajax.reload(function () {
+            var params = $.extend(true, {}, table.ajax.params() || {});
+            delete params.draw;
+            delete params._;
+            params.export_lines = 1;
+            params.start = 0;
+            params.length = -1;
+
+            var target = new URL(table.ajax.url(), window.location.href);
+            target.search = $.param(params);
+            window.location.assign(target.toString());
+        }, false);
+    });
+
     $('select#location_id, select#expense_for, select#created_by, select#select#expense_contact_filter, \
         select#expense_category_id, select#expense_payment_status, \
         select#expense_sub_category_id_filter').on(

@@ -101,9 +101,13 @@
         <div class="row">
             <div class="col-md-12">
                 @component('components.widget', ['class' => 'box-primary', 'title' => __('expense.all_expenses')])
-                    @can('expense.add')
-                        @slot('tool')
-                            <div class="box-tools">
+                    @slot('tool')
+                        <div class="box-tools">
+                            <a class="tw-dw-btn tw-bg-gradient-to-r tw-from-emerald-600 tw-to-green-500 tw-font-bold tw-text-white tw-border-none tw-rounded-full pull-right tw-m-2 js-export-transaction-lines"
+                                href="#" data-table="expense_table" aria-label="Ekspor detail transaksi ke Excel">
+                                <i class="fa fa-file-excel-o" aria-hidden="true"></i> Ekspor Excel
+                            </a>
+                            @can('expense.add')
                                 {{-- <a class="btn btn-block btn-primary" href="{{action([\App\Http\Controllers\ExpenseController::class, 'create'])}}">
                             <i class="fa fa-plus"></i> @lang('messages.add')</a> --}}
                                 <a class="tw-dw-btn tw-bg-gradient-to-r tw-from-indigo-600 tw-to-blue-500 tw-font-bold tw-text-white tw-border-none tw-rounded-full pull-right tw-m-2"
@@ -126,9 +130,9 @@
                                         <path d="M5 12l14 0" />
                                     </svg> @lang('expense.import_expense')
                                 </a>
-                            </div>
-                        @endslot
-                    @endcan
+                            @endcan
+                        </div>
+                    @endslot
                     <div class="table-responsive">
                         <table class="table table-bordered table-striped text-nowrap" id="expense_table">
                             <thead>

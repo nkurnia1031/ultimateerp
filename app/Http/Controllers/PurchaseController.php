@@ -7,6 +7,7 @@ use App\Business;
 use App\BusinessLocation;
 use App\Contact;
 use App\CustomerGroup;
+use App\Exports\TransactionLineExport;
 use App\Product;
 use App\Presenters\PurchaseFinancialSummaryPresenter;
 use App\Presenters\PurchaseIndexProductPresenter;
@@ -85,7 +86,7 @@ class PurchaseController extends Controller
             abort(403, 'Unauthorized action.');
         }
         $business_id = request()->session()->get('user.business_id');
-        if (request()->ajax()) {
+        if (request()->ajax() || request()->boolean('export_lines')) {
             $purchases = $this->transactionUtil->getListPurchases($business_id);
 
             $permitted_locations = auth()->user()->permitted_locations();
@@ -148,7 +149,7 @@ class PurchaseController extends Controller
                 return $purchaseAmountsCache[$row->id];
             };
 
-            return Datatables::of($purchases)
+            $dataTable = Datatables::of($purchases)
                 ->addColumn('action', function ($row) {
                     $html = '<div class="btn-group">
                             <button type="button" class="btn-modal tw-dw-btn tw-dw-btn-xs tw-dw-btn-outline  tw-dw-btn-info tw-w-max dropdown-toggle" 
@@ -315,8 +316,18 @@ class PurchaseController extends Controller
                         }
                     },
                 ])
-                ->rawColumns(['total_before_tax', 'total_tax', 'final_total', 'action', 'payment_due', 'tags', 'products', 'payment_status', 'status', 'ref_no', 'name'])
-                ->make(true);
+                ->rawColumns(['total_before_tax', 'total_tax', 'final_total', 'action', 'payment_due', 'tags', 'products', 'payment_status', 'status', 'ref_no', 'name']);
+
+            if (request()->boolean('export_lines')) {
+                $filteredQuery = $dataTable->skipPaging()->getFilteredQuery();
+
+                return Excel::download(
+                    new TransactionLineExport('purchase', (int) $business_id, $filteredQuery),
+                    'purchase_transaction_lines.xlsx'
+                );
+            }
+
+            return $dataTable->make(true);
         }
 
         $business_locations = BusinessLocation::forDropdown($business_id);

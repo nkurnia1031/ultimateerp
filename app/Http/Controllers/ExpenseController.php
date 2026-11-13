@@ -6,6 +6,7 @@ use App\Account;
 use App\AccountTransaction;
 use App\BusinessLocation;
 use App\Contact;
+use App\Exports\TransactionLineExport;
 use App\Events\ExpenseCreatedOrModified;
 use App\ExpenseCategory;
 use App\TaxRate;
@@ -130,7 +131,7 @@ class ExpenseController extends Controller
             abort(403, 'Unauthorized action.');
         }
 
-        if (request()->ajax()) {
+        if (request()->ajax() || request()->boolean('export_lines')) {
             $business_id = request()->session()->get('user.business_id');
 
             $expenses = Transaction::leftJoin('expense_categories AS ec', 'transactions.expense_category_id', '=', 'ec.id')
@@ -269,7 +270,7 @@ class ExpenseController extends Controller
                 });
             }
 
-            return Datatables::of($expenses)
+            $dataTable = Datatables::of($expenses)
                 ->addColumn('action', '<div class="btn-group">
                         <button type="button" class="tw-dw-btn tw-dw-btn-xs tw-dw-btn-outline  tw-dw-btn-info tw-w-max dropdown-toggle" 
                             data-toggle="dropdown" aria-expanded="false"> @lang("messages.actions")<span class="caret"></span><span class="sr-only">Toggle Dropdown
@@ -425,8 +426,18 @@ class ExpenseController extends Controller
 
                     return $ref_no;
                 })
-                ->rawColumns(['deskripsi', 'tags', 'total_before_tax', 'final_total', 'action', 'payment_status', 'contact_name', 'payment_due', 'ref_no', 'recur_details'])
-                ->make(true);
+                ->rawColumns(['deskripsi', 'tags', 'total_before_tax', 'final_total', 'action', 'payment_status', 'contact_name', 'payment_due', 'ref_no', 'recur_details']);
+
+            if (request()->boolean('export_lines')) {
+                $filteredQuery = $dataTable->skipPaging()->getFilteredQuery();
+
+                return Excel::download(
+                    new TransactionLineExport('expense', (int) $business_id, $filteredQuery),
+                    'expense_transaction_lines.xlsx'
+                );
+            }
+
+            return $dataTable->make(true);
         }
 
         $business_id = request()->session()->get('user.business_id');

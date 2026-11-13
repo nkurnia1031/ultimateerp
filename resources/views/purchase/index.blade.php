@@ -115,9 +115,13 @@
         @endcomponent
 
         @component('components.widget', ['class' => 'box-primary', 'title' => __('purchase.all_purchases')])
-            @can('purchase.create')
-                @slot('tool')
-                    <div class="box-tools">
+            @slot('tool')
+                <div class="box-tools">
+                    <a class="tw-dw-btn tw-bg-gradient-to-r tw-from-emerald-600 tw-to-green-500 tw-font-bold tw-text-white tw-border-none tw-rounded-full pull-right tw-m-2 js-export-transaction-lines"
+                        href="#" data-table="purchase_table" aria-label="Ekspor detail transaksi ke Excel">
+                        <i class="fa fa-file-excel-o" aria-hidden="true"></i> Ekspor Excel
+                    </a>
+                    @can('purchase.create')
                         {{-- <a class="btn btn-block btn-primary" href="{{action([\App\Http\Controllers\PurchaseController::class, 'create'])}}">
                     <i class="fa fa-plus"></i> @lang('messages.add')</a> --}}
                         <a class="tw-dw-btn tw-bg-gradient-to-r tw-from-indigo-600 tw-to-blue-500 tw-font-bold tw-text-white tw-border-none tw-rounded-full pull-right"
@@ -130,9 +134,9 @@
                                 <path d="M5 12l14 0" />
                             </svg> @lang('messages.add')
                         </a>
-                    </div>
-                @endslot
-            @endcan
+                    @endcan
+                </div>
+            @endslot
             @include('purchase.partials.purchase_table')
         @endcomponent
 

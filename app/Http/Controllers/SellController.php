@@ -7,6 +7,7 @@ use App\Business;
 use App\BusinessLocation;
 use App\Contact;
 use App\CustomerGroup;
+use App\Exports\TransactionLineExport;
 use App\InvoiceScheme;
 use App\Media;
 use App\Product;
@@ -26,6 +27,7 @@ use App\Utils\TransactionUtil;
 use App\Variation;
 use App\Warranty;
 use DB;
+use Excel;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Artisan;
 use Spatie\Activitylog\Models\Activity;
@@ -108,7 +110,7 @@ class SellController extends Controller
         $is_service_staff_enabled = $this->transactionUtil->isModuleEnabled('service_staff');
         $is_types_service_enabled = $this->moduleUtil->isModuleEnabled('types_of_service');
 
-        if (request()->ajax()) {
+        if (request()->ajax() || request()->boolean('export_lines')) {
             $payment_types = $this->transactionUtil->payment_types(null, true, $business_id);
             $with = [];
             $shipping_statuses = $this->transactionUtil->shipping_statuses();
@@ -1545,7 +1547,7 @@ class SellController extends Controller
 
             $sells->groupBy('transactions.id');
 
-            return Datatables::of($sells)
+            $dataTable = Datatables::of($sells)
                 ->addColumn(
                     'action',
                     function ($row) {
@@ -1670,8 +1672,18 @@ class SellController extends Controller
                         }
                     },
                 ])
-                ->rawColumns(['action', 'invoice_no', 'transaction_date', 'conatct_name'])
-                ->make(true);
+                ->rawColumns(['action', 'invoice_no', 'transaction_date', 'conatct_name']);
+
+            if (request()->boolean('export_lines')) {
+                $filteredQuery = $dataTable->skipPaging()->getFilteredQuery();
+
+                return Excel::download(
+                    new TransactionLineExport('sell', (int) $business_id, $filteredQuery),
+                    'sell_transaction_lines.xlsx'
+                );
+            }
+
+            return $dataTable->make(true);
         }
     }
 
