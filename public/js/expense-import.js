@@ -262,6 +262,7 @@
         var previewTableOptions = {
             processing: true,
             serverSide: true,
+            autoWidth: false,
             pageLength: 25,
             lengthMenu: [[25, 50, 100], [25, 50, 100]],
             ajax: {
@@ -377,7 +378,13 @@
                     return actions || '<span class="text-muted">-</span>';
                 } }
             ],
-            order: [[0, 'asc']]
+            order: [[0, 'asc']],
+            createdRow: function (row) {
+                var labels = ['Baris Excel', 'Referensi', 'Tanggal', 'Tanggal bayar', 'Aksi', 'Pajak', 'Status', 'Detail'];
+                $(row).children('td').each(function (index) {
+                    $(this).attr('data-label', labels[index] || '');
+                });
+            }
         };
         previewTableOptions.columns.splice(4, 0, previewTableOptions.columns.pop());
         previewTable = $('#expense_import_preview_table').DataTable(previewTableOptions);

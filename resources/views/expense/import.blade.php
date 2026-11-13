@@ -3,8 +3,7 @@
 
 @section('css')
     <style>
-        /* Keep the preview usable on small screens and with large imports. The
-         * header/footer stay in the viewport while only the preview body scrolls. */
+        /* Keep preview controls visible while the modal body scrolls vertically. */
         #expense_import_preview_modal .modal-dialog {
             width: calc(100% - 24px);
             max-width: 1220px;
@@ -38,17 +37,90 @@
 
         #expense_import_preview_modal .table-responsive {
             max-width: 100%;
-            overflow-x: auto;
-            -webkit-overflow-scrolling: touch;
+            overflow-x: hidden;
         }
 
         #expense_import_preview_modal #expense_import_preview_table {
-            min-width: 760px;
+            width: 100% !important;
+            min-width: 0 !important;
+            table-layout: fixed;
         }
 
         #expense_import_preview_modal #expense_import_preview_table th,
         #expense_import_preview_modal #expense_import_preview_table td {
             vertical-align: top;
+            white-space: normal;
+            overflow-wrap: anywhere;
+        }
+
+        #expense_import_preview_modal #expense_import_preview_table th:first-child,
+        #expense_import_preview_modal #expense_import_preview_table td:first-child {
+            width: 7%;
+            white-space: nowrap;
+        }
+
+        #expense_import_preview_modal #expense_import_preview_table th:nth-child(2),
+        #expense_import_preview_modal #expense_import_preview_table td:nth-child(2) { width: 10%; }
+        #expense_import_preview_modal #expense_import_preview_table th:nth-child(3),
+        #expense_import_preview_modal #expense_import_preview_table td:nth-child(3) { width: 10%; }
+        #expense_import_preview_modal #expense_import_preview_table th:nth-child(4),
+        #expense_import_preview_modal #expense_import_preview_table td:nth-child(4) { width: 10%; }
+        #expense_import_preview_modal #expense_import_preview_table th:nth-child(5),
+        #expense_import_preview_modal #expense_import_preview_table td:nth-child(5) { width: 18%; }
+        #expense_import_preview_modal #expense_import_preview_table th:nth-child(6),
+        #expense_import_preview_modal #expense_import_preview_table td:nth-child(6) { width: 10%; }
+        #expense_import_preview_modal #expense_import_preview_table th:nth-child(7),
+        #expense_import_preview_modal #expense_import_preview_table td:nth-child(7) { width: 10%; }
+        #expense_import_preview_modal #expense_import_preview_table th:nth-child(8),
+        #expense_import_preview_modal #expense_import_preview_table td:nth-child(8) { width: 25%; }
+
+        #expense_import_preview_modal #expense_import_preview_table_wrapper,
+        #expense_import_preview_modal #expense_import_preview_table_wrapper .row {
+            max-width: 100%;
+        }
+
+        #expense_import_preview_modal #expense_import_preview_table_wrapper .row {
+            display: flex;
+            flex-wrap: wrap;
+            margin-left: -6px;
+            margin-right: -6px;
+        }
+
+        #expense_import_preview_modal #expense_import_preview_table_wrapper .row > [class*="col-"] {
+            float: none;
+            flex: 1 1 230px;
+            width: auto;
+            max-width: 100%;
+            padding-left: 6px;
+            padding-right: 6px;
+        }
+
+        #expense_import_preview_modal #expense_import_preview_table_wrapper .dt-buttons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            margin-bottom: 8px;
+        }
+
+        #expense_import_preview_modal #expense_import_preview_table_wrapper .dataTables_filter label {
+            white-space: normal;
+        }
+
+        #expense_import_preview_modal #expense_import_preview_table_wrapper .dataTables_filter input {
+            max-width: 100%;
+        }
+
+        #expense_import_preview_modal .expense-import-responsive-hint {
+            display: none;
+        }
+
+        #expense_import_preview_modal .expense-import-existing-action,
+        #expense_import_preview_modal .expense-import-map-tax,
+        #expense_import_preview_modal .expense-import-map-journal {
+            width: 100%;
+            min-width: 0;
+            max-width: 100%;
+            margin-bottom: 6px;
         }
 
         #expense_import_preview_modal .expense-import-journal-candidates > summary {
@@ -59,14 +131,30 @@
 
         #expense_import_preview_modal .expense-import-journal-candidates .table {
             margin: 6px 0 0;
-            min-width: 520px;
+            width: 100%;
+            min-width: 0;
+            table-layout: fixed;
         }
 
-        #expense_import_preview_modal #expense_import_preview_table th:first-child,
-        #expense_import_preview_modal #expense_import_preview_table th:nth-child(6),
-        #expense_import_preview_modal #expense_import_preview_table td:first-child,
-        #expense_import_preview_modal #expense_import_preview_table td:nth-child(6) {
-            white-space: nowrap;
+        #expense_import_preview_modal .expense-import-journal-candidates .table th,
+        #expense_import_preview_modal .expense-import-journal-candidates .table td {
+            white-space: normal;
+            overflow-wrap: anywhere;
+        }
+
+        #expense_import_preview_modal .expense-import-journal-candidates .table th:first-child,
+        #expense_import_preview_modal .expense-import-journal-candidates .table td:first-child {
+            width: 40%;
+            white-space: normal !important;
+        }
+
+        #expense_import_preview_modal .expense-import-journal-candidates .table th:nth-child(2),
+        #expense_import_preview_modal .expense-import-journal-candidates .table td:nth-child(2),
+        #expense_import_preview_modal .expense-import-journal-candidates .table th:nth-child(3),
+        #expense_import_preview_modal .expense-import-journal-candidates .table td:nth-child(3),
+        #expense_import_preview_modal .expense-import-journal-candidates .table th:nth-child(4),
+        #expense_import_preview_modal .expense-import-journal-candidates .table td:nth-child(4) {
+            width: 20%;
         }
 
         #expense_import_preview_modal .modal-footer {
@@ -78,6 +166,76 @@
 
         #expense_import_preview_modal .modal-footer .btn {
             margin: 0;
+        }
+
+        @media (max-width: 1199px) {
+            #expense_import_preview_modal .expense-import-responsive-hint {
+                display: block;
+            }
+
+            #expense_import_preview_modal #expense_import_preview_table {
+                display: block;
+                table-layout: auto;
+            }
+
+            #expense_import_preview_modal #expense_import_preview_table thead {
+                position: absolute;
+                width: 1px;
+                height: 1px;
+                padding: 0;
+                margin: -1px;
+                overflow: hidden;
+                clip: rect(0, 0, 0, 0);
+                white-space: nowrap;
+                border: 0;
+            }
+
+            #expense_import_preview_modal #expense_import_preview_table tbody {
+                display: block;
+                width: 100%;
+            }
+
+            #expense_import_preview_modal #expense_import_preview_table tbody tr {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 8px 14px;
+                width: 100%;
+                margin: 0 0 12px;
+                padding: 10px;
+                border: 1px solid #d2d6de;
+                border-radius: 4px;
+                background: #fff;
+            }
+
+            #expense_import_preview_modal #expense_import_preview_table tbody tr td[colspan] {
+                grid-column: 1 / -1;
+            }
+
+            #expense_import_preview_modal #expense_import_preview_table tbody td {
+                display: block;
+                width: auto !important;
+                min-width: 0;
+                padding: 4px 2px !important;
+                border: 0 !important;
+            }
+
+            #expense_import_preview_modal #expense_import_preview_table tbody td::before {
+                display: block;
+                margin-bottom: 3px;
+                color: #666;
+                font-size: 11px;
+                font-weight: 700;
+                content: attr(data-label);
+            }
+
+            #expense_import_preview_modal #expense_import_preview_table tbody td:nth-child(5),
+            #expense_import_preview_modal #expense_import_preview_table tbody td:nth-child(8) {
+                grid-column: 1 / -1;
+            }
+
+            #expense_import_preview_modal #expense_import_preview_table tbody td:first-child {
+                white-space: normal;
+            }
         }
 
         @media (max-width: 767px) {
@@ -94,6 +252,40 @@
 
             #expense_import_preview_modal .modal-body {
                 padding: 12px;
+            }
+
+            #expense_import_preview_modal .modal-body > .form-inline {
+                display: flex;
+                align-items: center;
+                flex-wrap: wrap;
+                gap: 8px;
+            }
+
+            #expense_import_preview_modal .modal-body > .form-inline .text-muted {
+                flex: 1 1 100%;
+            }
+
+            #expense_import_preview_modal #expense_import_preview_table_wrapper .dataTables_filter {
+                float: none;
+                text-align: left;
+            }
+
+            #expense_import_preview_modal #expense_import_preview_table_wrapper .dataTables_filter label {
+                display: flex;
+                align-items: center;
+                flex-wrap: wrap;
+                gap: 6px;
+            }
+
+            #expense_import_preview_modal #expense_import_preview_table_wrapper .dataTables_filter input {
+                flex: 1 1 140px;
+                width: auto;
+            }
+
+            #expense_import_preview_modal #expense_import_preview_table_wrapper .dataTables_paginate {
+                float: none;
+                text-align: left;
+                white-space: normal;
             }
 
             #expense_import_preview_modal #expense_import_summary {
@@ -233,6 +425,7 @@
                         </div>
                         <p class="text-muted" id="expense_import_journal_summary">Journal cocok: 0 grup · perlu pilihan: 0 grup</p>
                         <p class="text-muted" id="expense_import_existing_summary">Expense lama diperbarui: 0 grup · perlu pilihan: 0 grup</p>
+                        <p class="text-muted small expense-import-responsive-hint">Pada layar sempit, informasi baris tersusun sebagai kartu; pilihan aksi dan rincian tetap tampil tanpa scroll mendatar.</p>
                         <div class="table-responsive">
                             <table class="table table-bordered table-striped" id="expense_import_preview_table" style="width:100%">
                                 <thead><tr><th>Baris Excel</th><th>Referensi</th><th>Tanggal</th><th>Tanggal bayar</th><th>Aksi</th><th>Pajak</th><th>Status</th><th>Detail</th></tr></thead>
