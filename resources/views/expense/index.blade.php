@@ -135,7 +135,7 @@
                     @endslot
                     <div class="table-responsive">
                         <table class="table table-bordered table-striped text-nowrap" id="expense_table"
-                            data-ajax-url="{{ rtrim(request()->getBaseUrl(), '/') }}/expenses">
+                            data-ajax-url="{{ rtrim(request()->root(), '/') }}/expenses">
                             <thead>
                                 <tr>
                                     <th>@lang('messages.action')</th>

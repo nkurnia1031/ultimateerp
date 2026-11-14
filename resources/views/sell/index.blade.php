@@ -70,7 +70,7 @@
                     $custom_labels = json_decode(session('business.custom_labels'), true);
                 @endphp
                 <table class="table table-bordered table-striped ajax_view" id="sell_table"
-                    data-ajax-url="{{ rtrim(request()->getBaseUrl(), '/') }}/sells">
+                    data-ajax-url="{{ rtrim(request()->root(), '/') }}/sells">
                     <thead>
                         <tr>
                             <th>@lang('messages.action')</th>

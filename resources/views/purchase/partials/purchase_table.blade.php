@@ -1,4 +1,4 @@
-<table class="table table-bordered table-striped ajax_view" id="purchase_table" data-ajax-url="{{ rtrim(request()->getBaseUrl(), '/') }}/purchases" style="width: 100%;">
+<table class="table table-bordered table-striped ajax_view" id="purchase_table" data-ajax-url="{{ rtrim(request()->root(), '/') }}/purchases" style="width: 100%;">
     <thead>
         <tr>
             <th>@lang('messages.action')</th>
