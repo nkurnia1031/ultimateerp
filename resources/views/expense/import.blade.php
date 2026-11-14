@@ -5,7 +5,7 @@
     <style>
         html, body { overflow-x: hidden; }
         .expense-import-row-progress { min-width: 110px; height: 18px; margin-bottom: 4px; }
-        #expense_import_batches_table { width: 100%; table-layout: fixed; }
+        #expense_import_batches_table { width: 100%; table-layout: fixed; scroll-margin-top: 24px; }
         #expense_import_batches_table td { vertical-align: middle; overflow-wrap: anywhere; white-space: normal; }
         #expense_import_batches_table_wrapper, #expense_import_batches_table_wrapper .row { max-width: 100%; }
         @media (max-width: 767px) {

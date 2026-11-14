@@ -99,8 +99,8 @@
         var element = document.getElementById('expense_import_batches_table');
         if (!element) { return; }
         window.setTimeout(function () {
-            var top = element.getBoundingClientRect().top + window.pageYOffset - 24;
-            window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+            if (!document.body.contains(element)) { return; }
+            element.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }, 50);
     }
 
