@@ -160,7 +160,12 @@ class ExpenseImportTaxTest extends TestCase
         $this->assertSame(100.0, (float) $unmapped['lines'][0]['debit']);
 
         $previewRows = $this->applyJournalMatches->invoke($this->service, [[
-            'normalized_payload' => ['reference_no' => 'REF-ONE-READY', 'total_amount' => 100, 'excel_tax_rate' => 0],
+            'normalized_payload' => [
+                'reference_no' => 'REF-ONE-READY',
+                'expense_date' => '2026-10-21',
+                'total_amount' => 100,
+                'excel_tax_rate' => 0,
+            ],
             'errors' => [],
             'status' => 'valid',
             'is_importable' => true,
@@ -497,7 +502,7 @@ class ExpenseImportTaxTest extends TestCase
             'business_id' => 1,
             'location_id' => 1,
             'ref_no' => 'REF-STALE-LARGE-DIFF',
-            'transaction_date' => '2024-01-01 00:00:00',
+            'transaction_date' => '2026-10-21 00:00:00',
             'type' => 'expense',
             'status' => 'final',
             'payment_status' => 'due',
@@ -520,7 +525,7 @@ class ExpenseImportTaxTest extends TestCase
             'business_id' => 1,
             'location_id' => 1,
             'ref_no' => 'REF-LARGE-DIFF',
-            'transaction_date' => '2024-01-01 00:00:00',
+            'transaction_date' => '2026-10-21 00:00:00',
             'type' => 'expense',
             'status' => 'final',
             'payment_status' => 'due',

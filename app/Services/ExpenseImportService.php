@@ -203,12 +203,15 @@ class ExpenseImportService
 
     private function journalMatchNeedsRefresh(array $payload): bool
     {
-        $journalMatch = $payload['journal_match'] ?? [];
-        $expenseDate = substr((string) ($payload['expense_date'] ?? ''), 0, 10);
-        $incomingYear = preg_match('/^\d{4}-\d{2}-\d{2}$/', $expenseDate) ? (int) substr($expenseDate, 0, 4) : null;
-        if ((int) ($journalMatch['scope_version'] ?? 0) !== self::JOURNAL_MATCH_SCOPE_VERSION
-            || ($journalMatch['comparison_year'] ?? null) !== $incomingYear) {
-            return true;
+        $hasPreviewPayload = array_key_exists('journal_match', $payload) || array_key_exists('expense_date', $payload);
+        $journalMatch = $hasPreviewPayload ? ($payload['journal_match'] ?? []) : $payload;
+        if ($hasPreviewPayload) {
+            $expenseDate = substr((string) ($payload['expense_date'] ?? ''), 0, 10);
+            $incomingYear = preg_match('/^\d{4}-\d{2}-\d{2}$/', $expenseDate) ? (int) substr($expenseDate, 0, 4) : null;
+            if ((int) ($journalMatch['scope_version'] ?? 0) !== self::JOURNAL_MATCH_SCOPE_VERSION
+                || ($journalMatch['comparison_year'] ?? null) !== $incomingYear) {
+                return true;
+            }
         }
 
         if (! in_array(($journalMatch['status'] ?? null), ['ambiguous', 'selection_invalid', 'unavailable'], true)) {

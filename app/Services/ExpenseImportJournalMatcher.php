@@ -54,6 +54,7 @@ class ExpenseImportJournalMatcher
         }
 
         $rowsByReference = [];
+        $dateYearExpression = $this->journalEntryYearExpression();
         foreach (array_chunk(array_keys($normalizedReferences), 300) as $referenceChunk) {
             $journalRowsQuery = DB::table('accounting_journal_import_rows as journal_row')
                 ->join('accounting_journal_imports as journal_import', 'journal_import.id', '=', 'journal_row.journal_import_id')
@@ -87,18 +88,21 @@ class ExpenseImportJournalMatcher
                 // Preserve the matcher's standalone behavior for older callers.
                 $journalRowsQuery->whereIn(DB::raw('LOWER(TRIM(journal_row.source_number))'), $referenceChunk);
             } else {
-                $journalRowsQuery->where(function ($query) use ($referenceChunk, $referenceYears) {
+                $journalRowsQuery->where(function ($query) use ($referenceChunk, $referenceYears, $dateYearExpression) {
                     $hasYearScopedReference = false;
                     foreach ($referenceChunk as $reference) {
                         $year = $referenceYears[$reference] ?? null;
-                        if (! is_numeric($year) || (int) $year < 1000 || (int) $year > 9999) {
+                        if ($dateYearExpression === null
+                            || ! is_numeric($year)
+                            || (int) $year < 1000
+                            || (int) $year > 9999) {
                             continue;
                         }
                         $hasYearScopedReference = true;
-                        $query->orWhere(function ($candidateQuery) use ($reference, $year) {
+                        $query->orWhere(function ($candidateQuery) use ($reference, $year, $dateYearExpression) {
                             $candidateQuery
                                 ->whereRaw('LOWER(TRIM(journal_row.source_number)) = ?', [$reference])
-                                ->whereRaw("YEAR(JSON_UNQUOTE(JSON_EXTRACT(journal_row.entry_data, '$.date'))) = ?", [(int) $year]);
+                                ->whereRaw($dateYearExpression.' = ?', [(int) $year]);
                         });
                     }
                     if (! $hasYearScopedReference) {
@@ -200,6 +204,22 @@ class ExpenseImportJournalMatcher
         }
 
         return $matches;
+    }
+
+    private function journalEntryYearExpression(): ?string
+    {
+        $driver = DB::connection()->getDriverName();
+        if (in_array($driver, ['mysql', 'mariadb'], true)) {
+            return "YEAR(JSON_UNQUOTE(JSON_EXTRACT(journal_row.entry_data, '$.date')))";
+        }
+        if ($driver === 'sqlite') {
+            return "CAST(strftime('%Y', json_extract(journal_row.entry_data, '$.date')) AS INTEGER)";
+        }
+        if ($driver === 'pgsql') {
+            return "EXTRACT(YEAR FROM NULLIF(journal_row.entry_data::json->>'date', '')::date)";
+        }
+
+        return null;
     }
 
     private function candidate(object $row, array $entry, int $businessId, float $taxableBase, array $sourceLinks = []): array
