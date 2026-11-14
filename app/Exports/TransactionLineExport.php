@@ -5,10 +5,23 @@ namespace App\Exports;
 use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Facades\DB;
 use Maatwebsite\Excel\Concerns\FromGenerator;
+use Maatwebsite\Excel\Concerns\WithColumnFormatting;
+use Maatwebsite\Excel\Concerns\WithColumnWidths;
+use Maatwebsite\Excel\Concerns\WithCustomStartCell;
 use Maatwebsite\Excel\Concerns\WithHeadings;
+use Maatwebsite\Excel\Concerns\WithStyles;
+use Maatwebsite\Excel\Concerns\WithTitle;
+use PhpOffice\PhpSpreadsheet\Shared\Date as ExcelDate;
+use PhpOffice\PhpSpreadsheet\Style\Alignment;
+use PhpOffice\PhpSpreadsheet\Style\Border;
+use PhpOffice\PhpSpreadsheet\Style\Conditional;
+use PhpOffice\PhpSpreadsheet\Style\Fill;
+use PhpOffice\PhpSpreadsheet\Worksheet\PageSetup;
+use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
+use Carbon\Carbon;
 use Generator;
 
-class TransactionLineExport implements FromGenerator, WithHeadings
+class TransactionLineExport implements FromGenerator, WithHeadings, WithCustomStartCell, WithColumnWidths, WithColumnFormatting, WithStyles, WithTitle
 {
     private const TRANSACTION_CHUNK_SIZE = 200;
 
@@ -50,6 +63,112 @@ class TransactionLineExport implements FromGenerator, WithHeadings
             'Nilai line setelah pajak',
             'Total transaksi',
         ];
+    }
+
+    public function startCell(): string
+    {
+        return 'A4';
+    }
+
+    public function title(): string
+    {
+        return [
+            'expense' => 'Detail Expense',
+            'purchase' => 'Detail Pembelian',
+            'sell' => 'Detail Penjualan',
+        ][$this->type] ?? 'Detail Transaksi';
+    }
+
+    public function columnWidths(): array
+    {
+        return [
+            'A' => 17, 'B' => 19, 'C' => 22, 'D' => 30, 'E' => 19,
+            'F' => 36, 'G' => 22, 'H' => 22, 'I' => 15, 'J' => 12,
+            'K' => 25, 'L' => 25, 'M' => 22, 'N' => 16, 'O' => 22,
+            'P' => 20, 'Q' => 19, 'R' => 20, 'S' => 24, 'T' => 24,
+            'U' => 22,
+        ];
+    }
+
+    public function columnFormats(): array
+    {
+        $currency = '"Rp" #,##0.00;[Red]("Rp" #,##0.00);-';
+
+        return [
+            'A' => 'dd mmm yyyy hh:mm',
+            'I' => '#,##0.####;[Red](#,##0.####);-',
+            'K' => $currency,
+            'L' => $currency,
+            'M' => $currency,
+            'O' => '#,##0.00;[Red](#,##0.00);-',
+            'P' => $currency,
+            'Q' => $currency,
+            'R' => $currency,
+            'S' => $currency,
+            'T' => $currency,
+            'U' => $currency,
+        ];
+    }
+
+    public function styles(Worksheet $sheet): array
+    {
+        $lastColumn = 'U';
+        $lastRow = max(4, $sheet->getHighestRow());
+        $sheet->mergeCells("A1:{$lastColumn}1");
+        $sheet->mergeCells("A2:{$lastColumn}2");
+        $sheet->mergeCells("A3:{$lastColumn}3");
+        $sheet->setCellValue('A1', $this->title());
+        $sheet->setCellValue('A2', 'Diekspor pada '.now()->format('d M Y H:i:s'));
+        $sheet->setCellValue('A3', 'Satu baris untuk tiap rincian transaksi. Filter dan pencarian aktif pada index diterapkan.');
+        $sheet->getRowDimension(1)->setRowHeight(32);
+        $sheet->getRowDimension(2)->setRowHeight(22);
+        $sheet->getRowDimension(3)->setRowHeight(22);
+        $sheet->getRowDimension(4)->setRowHeight(44);
+        $sheet->freezePane('F5');
+        $sheet->setAutoFilter("A4:{$lastColumn}{$lastRow}");
+        $sheet->setShowGridlines(false);
+        $sheet->getSheetView()->setZoomScale(85);
+        $sheet->getTabColor()->setRGB('16A34A');
+        $sheet->getPageSetup()->setOrientation(PageSetup::ORIENTATION_LANDSCAPE);
+
+        if ($lastRow > 4) {
+            $bodyRange = "A5:{$lastColumn}{$lastRow}";
+            $bandedRows = new Conditional();
+            $bandedRows->setConditionType(Conditional::CONDITION_EXPRESSION);
+            $bandedRows->addCondition('MOD(ROW(),2)=0');
+            $bandedRows->getStyle()->getFill()->setFillType(Fill::FILL_SOLID);
+            $bandedRows->getStyle()->getFill()->getStartColor()->setRGB('F1F5F9');
+            $sheet->setConditionalStyles($bodyRange, [$bandedRows]);
+        }
+
+        $styles = [
+            'A1:U1' => [
+                'font' => ['name' => 'Aptos Display', 'size' => 16, 'bold' => true, 'color' => ['rgb' => 'FFFFFF']],
+                'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => '1E3A5F']],
+                'alignment' => ['vertical' => Alignment::VERTICAL_CENTER],
+            ],
+            'A2:U3' => [
+                'font' => ['name' => 'Aptos', 'size' => 10, 'color' => ['rgb' => '475569']],
+                'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => 'EAF0F6']],
+                'alignment' => ['vertical' => Alignment::VERTICAL_CENTER],
+            ],
+            'A4:U4' => [
+                'font' => ['name' => 'Aptos', 'size' => 10, 'bold' => true, 'color' => ['rgb' => 'FFFFFF']],
+                'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => '334155']],
+                'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER, 'wrapText' => true],
+                'borders' => ['bottom' => ['borderStyle' => Border::BORDER_MEDIUM, 'color' => ['rgb' => '16A34A']]],
+            ],
+        ];
+
+        if ($lastRow > 4) {
+            $styles["A5:U{$lastRow}"] = [
+                'font' => ['name' => 'Aptos', 'size' => 10, 'color' => ['rgb' => '1F2937']],
+                'alignment' => ['vertical' => Alignment::VERTICAL_CENTER],
+                'borders' => ['bottom' => ['borderStyle' => Border::BORDER_HAIR, 'color' => ['rgb' => 'D9E2EC']]],
+            ];
+        }
+
+        return $styles;
     }
 
     public function generator(): Generator
@@ -225,7 +344,12 @@ class TransactionLineExport implements FromGenerator, WithHeadings
         $isRefund = $isExpense && $row->type === 'expense_refund';
         $sign = $isRefund ? -1 : 1;
 
-        $transactionType = $this->safeText((string) $row->type);
+        $transactionType = $this->safeText([
+            'expense' => 'Expense',
+            'expense_refund' => 'Pengembalian Expense',
+            'purchase' => 'Pembelian',
+            'sell' => 'Penjualan',
+        ][$row->type] ?? (string) $row->type);
         $documentNumber = $this->safeText((string) ($row->invoice_no ?: $row->ref_no));
         $contact = trim(implode(' / ', array_filter([
             trim((string) $row->supplier_business_name),
@@ -234,7 +358,7 @@ class TransactionLineExport implements FromGenerator, WithHeadings
 
         if ($row->line_id === null) {
             return [
-                (string) $row->transaction_date,
+                $this->excelDateValue((string) $row->transaction_date),
                 $transactionType,
                 $documentNumber,
                 $this->safeText($contact),
@@ -319,7 +443,7 @@ class TransactionLineExport implements FromGenerator, WithHeadings
         }
 
         return [
-            (string) $row->transaction_date,
+            $this->excelDateValue((string) $row->transaction_date),
             $transactionType,
             $documentNumber,
             $this->safeText($contact),
@@ -332,7 +456,10 @@ class TransactionLineExport implements FromGenerator, WithHeadings
             $priceBeforeDiscount,
             $priceAfterDiscount,
             $priceIncTax,
-            $this->safeText((string) $discountType),
+            $this->safeText([
+                'percentage' => 'Persentase',
+                'fixed' => 'Nominal',
+            ][$discountType] ?? (string) $discountType),
             $discountValue,
             $lineDiscount,
             $itemTax,
@@ -354,5 +481,14 @@ class TransactionLineExport implements FromGenerator, WithHeadings
         }
 
         return $value;
+    }
+
+    private function excelDateValue(string $value): ?float
+    {
+        if (trim($value) === '') {
+            return null;
+        }
+
+        return ExcelDate::PHPToExcel(Carbon::parse($value));
     }
 }

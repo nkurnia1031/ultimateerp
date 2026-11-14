@@ -179,6 +179,41 @@
     #scrollable-container{
         position:relative;
     }
+
+    .box-header .transaction-index-actions {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 8px;
+    }
+
+    .box-header .transaction-index-actions > a {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        min-height: 40px;
+        float: none !important;
+        margin: 0 !important;
+        line-height: 1;
+        white-space: nowrap;
+    }
+
+    .box-header .transaction-index-actions > a svg {
+        width: 18px;
+        height: 18px;
+    }
+
+    @media (max-width: 767px) {
+        .box-header .transaction-index-actions {
+            position: static;
+            clear: both;
+            width: 100%;
+            justify-content: flex-start;
+            flex-wrap: wrap;
+            margin-top: 8px;
+        }
+    }
     
 
 

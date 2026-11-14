@@ -116,15 +116,11 @@
 
         @component('components.widget', ['class' => 'box-primary', 'title' => __('purchase.all_purchases')])
             @slot('tool')
-                <div class="box-tools">
-                    <a class="tw-dw-btn tw-bg-gradient-to-r tw-from-emerald-600 tw-to-green-500 tw-font-bold tw-text-white tw-border-none tw-rounded-full pull-right tw-m-2 js-export-transaction-lines"
-                        href="#" data-table="purchase_table" aria-label="Ekspor detail transaksi ke Excel">
-                        <i class="fa fa-file-excel-o" aria-hidden="true"></i> Ekspor Excel
-                    </a>
+                <div class="box-tools transaction-index-actions" role="group" aria-label="Aksi pembelian">
                     @can('purchase.create')
                         {{-- <a class="btn btn-block btn-primary" href="{{action([\App\Http\Controllers\PurchaseController::class, 'create'])}}">
                     <i class="fa fa-plus"></i> @lang('messages.add')</a> --}}
-                        <a class="tw-dw-btn tw-bg-gradient-to-r tw-from-indigo-600 tw-to-blue-500 tw-font-bold tw-text-white tw-border-none tw-rounded-full pull-right"
+                        <a class="tw-dw-btn tw-bg-gradient-to-r tw-from-indigo-600 tw-to-blue-500 tw-font-bold tw-text-white tw-border-none tw-rounded-full"
                             href="{{action([\App\Http\Controllers\PurchaseController::class, 'create'])}}">
                             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
                                 stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
@@ -135,6 +131,10 @@
                             </svg> @lang('messages.add')
                         </a>
                     @endcan
+                    <a class="tw-dw-btn tw-bg-gradient-to-r tw-from-emerald-600 tw-to-green-500 tw-font-bold tw-text-white tw-border-none tw-rounded-full js-export-transaction-lines"
+                        href="#" data-table="purchase_table" aria-label="Ekspor detail transaksi ke Excel">
+                        <i class="fa fa-file-excel-o" aria-hidden="true"></i> Ekspor Excel
+                    </a>
                 </div>
             @endslot
             @include('purchase.partials.purchase_table')
