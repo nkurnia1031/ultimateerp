@@ -1842,6 +1842,7 @@ class ExpenseImportService
         $excelTotal = 0.0;
         $totalBeforeTax = 0.0;
         $paid = 0;
+        $hasExpenseLineDocument = Schema::hasColumn('expense_lines', 'document');
         foreach ($rows as $row) {
             $item = json_decode((string) $row->normalized_payload, true) ?: [];
             $inclusiveAmount = (float) ($item['total_amount'] ?? 0);
@@ -1863,16 +1864,21 @@ class ExpenseImportService
                     : $inclusiveAmount;
             }
             $totalBeforeTax += $lineBaseAmount;
-            $lineRows[] = [
+            $lineRow = [
                 'category_id' => $lineCategoryId,
                 'sub_category_id' => $lineSubCategoryId,
                 'description' => $item['description'] ?? null,
                 'note' => null,
-                'document' => trim((string) ($item['attach_document'] ?? '')) !== ''
-                    ? trim((string) $item['attach_document'])
-                    : null,
                 'amount' => $lineBaseAmount,
             ];
+            $attachment = trim((string) ($item['attach_document'] ?? ''));
+            if ($attachment !== '' && ! $hasExpenseLineDocument) {
+                throw new RuntimeException('Kolom lampiran expense-line belum tersedia. Jalankan migration Expense sebelum mengimpor berkas lampiran.');
+            }
+            if ($hasExpenseLineDocument) {
+                $lineRow['document'] = $attachment !== '' ? $attachment : null;
+            }
+            $lineRows[] = $lineRow;
         }
 
         $totalBeforeTax = round($totalBeforeTax, 4);
@@ -1983,10 +1989,12 @@ class ExpenseImportService
         }
 
         $isExistingTransaction = $transaction !== null;
+        $existingLineColumns = ['category_id', 'sub_category_id', 'description', 'note', 'amount'];
+        if ($hasExpenseLineDocument) {
+            $existingLineColumns[] = 'document';
+        }
         $existingExpenseLines = $transaction && $existingAction !== 'new'
-            ? ExpenseLine::where('transaction_id', $transaction->id)->orderBy('id')->get([
-                'category_id', 'sub_category_id', 'description', 'note', 'document', 'amount',
-            ])
+            ? ExpenseLine::where('transaction_id', $transaction->id)->orderBy('id')->get($existingLineColumns)
             : collect();
         $lineRows = $this->preserveExistingExpenseLineMetadata($lineRows, $existingExpenseLines);
 
