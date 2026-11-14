@@ -56,7 +56,7 @@
                         </a>
                     @endcan
                     @if (auth()->user()->can('direct_sell.view') || auth()->user()->can('view_own_sell_only') || auth()->user()->can('view_commission_agent_sell'))
-                        <a class="tw-dw-btn tw-bg-gradient-to-r tw-from-emerald-600 tw-to-green-500 tw-font-bold tw-text-white tw-border-none tw-rounded-full js-export-transaction-lines"
+                        <a class="tw-dw-btn tw-font-bold tw-text-white tw-border-none tw-rounded-full transaction-export-button js-export-transaction-lines"
                             href="#" data-table="sell_table" aria-label="Ekspor detail transaksi ke Excel">
                             <i class="fa fa-file-excel-o" aria-hidden="true"></i> Ekspor Excel
                         </a>

@@ -204,6 +204,33 @@
         height: 18px;
     }
 
+    .box-header .transaction-index-actions > a.transaction-export-button {
+        background: #217346 !important;
+        background-image: none !important;
+        border: 1px solid #185c37 !important;
+        color: #fff !important;
+        box-shadow: 0 2px 5px rgba(24, 92, 55, 0.2);
+        transition: background-color 120ms ease, box-shadow 120ms ease;
+    }
+
+    .box-header .transaction-index-actions > a.transaction-export-button:hover,
+    .box-header .transaction-index-actions > a.transaction-export-button:active {
+        background: #185c37 !important;
+        background-image: none !important;
+        color: #fff !important;
+    }
+
+    .box-header .transaction-index-actions > a.transaction-export-button:focus-visible {
+        outline: 3px solid rgba(33, 115, 70, 0.35);
+        outline-offset: 2px;
+    }
+
+    .box-header .transaction-index-actions > a.transaction-export-button .fa-file-excel-o {
+        color: #fff !important;
+        font-size: 16px;
+        line-height: 1;
+    }
+
     @media (max-width: 767px) {
         .box-header .transaction-index-actions {
             position: static;
