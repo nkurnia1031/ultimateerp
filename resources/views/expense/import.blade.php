@@ -400,7 +400,7 @@
                     </div>
                     <div class="modal-footer">
                         <button type="button" id="expense_import_cancel" class="btn btn-warning"><i class="fa fa-ban"></i> Batalkan</button>
-                        <button type="button" id="expense_import_retry_preview" class="btn btn-primary" style="display:none"><i class="fa fa-table"></i> Buka preview &amp; coba lagi</button>
+                        <button type="button" id="expense_import_retry_preview" class="btn btn-primary" style="display:none"><i class="fa fa-table"></i> Perbarui preview &amp; tinjau</button>
                         <button type="button" id="expense_import_close_progress" class="btn btn-default" data-dismiss="modal" style="display:none">Tutup</button>
                     </div>
                 </div>

@@ -56,6 +56,10 @@
         return $('<div>').text(value === null || typeof value === 'undefined' ? '' : value).html();
     }
 
+    function escapeMultiline(value) {
+        return escapeHtml(value).replace(/\r\n|\r|\n/g, '<br>');
+    }
+
     function formatRupiah(value) {
         if (value === null || typeof value === 'undefined' || value === '') { return '—'; }
         return 'Rp ' + Number(value || 0).toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -250,6 +254,29 @@
         xhr.send(data);
     }
 
+    function requestPreviewRefresh(button) {
+        if (!batchId) { return; }
+        button.prop('disabled', true).addClass('disabled');
+        $.ajax({
+            url: refreshPreviewUrl(batchId),
+            method: 'POST',
+            dataType: 'json',
+            headers: { Accept: 'application/json' },
+            data: { _token: form.find('input[name="_token"]').val() }
+        }).done(function (response) {
+            previewModal.modal('hide');
+            progressModal.modal('hide');
+            showProgress(response.batch_id || batchId, 'preview');
+            pollDelay = 1000;
+            pollStatus(response.batch_id || batchId);
+        }).fail(function (xhr) {
+            var message = (xhr.responseJSON && (xhr.responseJSON.message || xhr.responseJSON.msg)) || 'Preview gagal dijadwalkan ulang.';
+            if (window.toastr) { toastr.error(message); }
+        }).always(function () {
+            button.prop('disabled', false).removeClass('disabled');
+        });
+    }
+
     function openPreview(id) {
         batchId = id;
         updateSummary({});
@@ -319,7 +346,7 @@
                     var output = value === 'valid' ? '<span class="label label-success">Valid</span>' : (value === 'skipped' ? '<span class="label label-default">Dilewati</span>' : '<span class="label label-danger">Error</span>');
                     var existing = row.existing_expense_match || {};
                     if (existing.review_required && !existing.action) {
-                        output += '<div><span class="label label-warning">Pilih aksi untuk referensi lama</span></div>';
+                        output += '<div><span class="label label-warning">' + (existing.note_review_required ? 'Tinjau catatan dan pilih aksi' : 'Pilih aksi untuk referensi lama') + '</span></div>';
                     } else if (existing.action && existing.action.indexOf('merge:') === 0) {
                         output += '<div><span class="label label-info">Perbarui Expense #' + Number(existing.selected_transaction_id || existing.action.split(':')[1]) + '</span></div>';
                     } else if (existing.action && existing.action.indexOf('group:') === 0) {
@@ -348,6 +375,9 @@
                                 + (line.tax_name ? ' ' + escapeHtml(line.tax_name) : '') + ')';
                         }
                         details.push(label);
+                        if (line.note) {
+                            details.push('Catatan Excel baris #' + Number(line.source_row || 0) + ': ' + escapeMultiline(line.note));
+                        }
                     });
                     if (journalMatch.comparison_year) {
                         details.push('Posting Journal hanya dicocokkan pada tahun ' + Number(journalMatch.comparison_year) + ' sesuai tanggal workbook.');
@@ -363,6 +393,17 @@
                         if (existing.group_status === 'limited') {
                             details.push('Pencarian kombinasi Expense dibatasi karena kandidat terlalu banyak; tidak ada grup yang disarankan otomatis.');
                         }
+                    }
+                    if ((existing.workbook_notes || []).length || (existing.source_notes || []).length) {
+                        if (existing.note_review_required) {
+                            details.push('<strong>Catatan berbeda; tinjau sebelum penggabungan:</strong>');
+                        }
+                        (existing.workbook_notes || []).forEach(function (note) {
+                            details.push('<strong>Catatan workbook:</strong> ' + escapeMultiline(note));
+                        });
+                        (existing.source_notes || []).forEach(function (source) {
+                            details.push('<strong>Catatan Expense #' + Number(source.id || 0) + ':</strong> ' + escapeMultiline(source.note || ''));
+                        });
                     }
                     (existing.groups || []).forEach(function (group) {
                         var members = (group.members || []).map(function (member) {
@@ -467,26 +508,7 @@
     });
 
     $('#expense_import_refresh_preview').on('click', function () {
-        if (!batchId) { return; }
-        var button = $(this);
-        button.prop('disabled', true).addClass('disabled');
-        $.ajax({
-            url: refreshPreviewUrl(batchId),
-            method: 'POST',
-            dataType: 'json',
-            headers: { Accept: 'application/json' },
-            data: { _token: form.find('input[name="_token"]').val() }
-        }).done(function (response) {
-            previewModal.modal('hide');
-            showProgress(response.batch_id || batchId, 'preview');
-            pollDelay = 1000;
-            pollStatus(response.batch_id || batchId);
-        }).fail(function (xhr) {
-            var message = (xhr.responseJSON && (xhr.responseJSON.message || xhr.responseJSON.msg)) || 'Preview gagal dijadwalkan ulang.';
-            if (window.toastr) { toastr.error(message); }
-        }).always(function () {
-            button.prop('disabled', false).removeClass('disabled');
-        });
+        requestPreviewRefresh($(this));
     });
 
     $('#expense_import_preview_table').on('change', '.expense-import-map-tax', function () {
@@ -585,9 +607,7 @@
     });
 
     $('#expense_import_retry_preview').on('click', function () {
-        if (!batchId) { return; }
-        progressModal.modal('hide');
-        openPreview(batchId);
+        requestPreviewRefresh($(this));
     });
 
     $('#expense_import_cancel').on('click', function () {

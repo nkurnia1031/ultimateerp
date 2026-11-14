@@ -1018,10 +1018,10 @@ class ExpenseController extends Controller
         $operation = $batch->operation ?: 'preview';
         abort_unless(
             $batch->status === 'preview'
-                && $operation === 'preview'
+                && ($operation === 'preview' || ($operation === 'import' && $state === 'failed'))
                 && in_array($state, ['completed', 'failed'], true),
             409,
-            'Preview hanya dapat diperbarui sebelum proses import dimulai dan saat tidak ada proses yang berjalan.'
+            'Preview hanya dapat diperbarui setelah proses selesai/gagal dan saat batch masih berstatus preview.'
         );
 
         $this->expenseImportProcessService->queued($batchId, $businessId, 'preview');

@@ -262,6 +262,7 @@ class ExpenseImportConsolidationService
             'expense_for' => $this->singleValue($transactions, 'expense_for'),
             'document' => $documents->first(),
             'additional_notes' => $notes->implode("\n"),
+            'additional_note_values' => $notes->all(),
             'tags' => $tags->all(),
         ];
     }
