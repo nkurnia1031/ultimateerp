@@ -122,6 +122,7 @@
                                             <th>Category</th>
                                             <th>Sub Category</th>
                                             <th>Description</th>
+                                            <th>Note</th>
                                             <th>Amount</th>
                                             <th>Attach Document</th>
                                         </tr>
@@ -132,6 +133,7 @@
                                                 <td>{{ $item->category?->name }}</td>
                                                 <td>{{ $item->subCategory?->name }}</td>
                                                 <td>{{ $item->description }}</td>
+                                                <td>{!! nl2br(e($item->note ?? '')) !!}</td>
                                                 <td><span class="display_currency"
                                                         data-currency_symbol="true">{{ $item->amount }}</span></td>
                                                 <td>

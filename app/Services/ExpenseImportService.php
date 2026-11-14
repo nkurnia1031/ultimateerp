@@ -482,9 +482,6 @@ class ExpenseImportService
         );
         $normalizedReference = $this->normalize($reference);
         $overrides['expense_existing_action:'.$normalizedReference] = $action;
-        if (! empty($match['note_review_required'])) {
-            $overrides['expense_existing_notes_reviewed:'.$normalizedReference] = (string) ($match['note_review_fingerprint'] ?? '');
-        }
         $path = $batch->file_path;
         if (! $path || ! Storage::disk('local')->exists($path)) {
             throw new RuntimeException('File sumber preview sudah tidak tersedia.');
@@ -1087,16 +1084,6 @@ class ExpenseImportService
                 ->values()
                 ->all();
             usort($sourceNotes, fn ($left, $right) => $left['id'] <=> $right['id']);
-            $combinedNoteValues = $this->uniqueExpenseNotes(array_merge(
-                $workbookNotes,
-                array_column($sourceNotes, 'note')
-            ));
-            $noteReviewRequired = count($combinedNoteValues) > 1;
-            $noteReviewFingerprint = hash('sha256', json_encode([
-                'workbook_notes' => $workbookNotes,
-                'source_notes' => $sourceNotes,
-            ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
-
             foreach ($groupSuggestions['groups'] ?? [] as $groupIndex => $group) {
                 $group['consolidation_mode'] = $hasMatchedJournal ? 'journal' : 'same_year_expense';
                 $group['consolidation_safe'] = true;
@@ -1122,8 +1109,7 @@ class ExpenseImportService
                 && collect($groupSuggestions['groups'][0]['members'] ?? [])->every(fn ($member) => ($member['date'] ?? null) === $incomingDate);
             $autoConsolidateGroup = $onlyExactGroup
                 && $exactGroupDatesMatch
-                && ! empty($groupSuggestions['groups'][0]['consolidation_safe'])
-                && ! $noteReviewRequired;
+                && ! empty($groupSuggestions['groups'][0]['consolidation_safe']);
             $unsafeGroupReasons = collect($groupSuggestions['groups'] ?? [])
                 ->filter(fn ($group) => empty($group['consolidation_safe']))
                 ->pluck('consolidation_issue')
@@ -1131,17 +1117,11 @@ class ExpenseImportService
                 ->unique()
                 ->values()
                 ->all();
-            $reviewRequired = $noteReviewRequired || (! $autoConsolidateGroup && (count($candidateDetails) > 1
+            $reviewRequired = ! $autoConsolidateGroup && (count($candidateDetails) > 1
                 || collect($candidateDetails)->contains(fn ($candidate) => ! empty($candidate['large_difference']))
-                || count($incomingDates) > 1));
+                || count($incomingDates) > 1);
             $actionKey = 'expense_existing_action:'.$normalizedReference;
             $requestedAction = trim((string) ($overrides[$actionKey] ?? ''));
-            $reviewedNotesFingerprint = (string) ($overrides['expense_existing_notes_reviewed:'.$normalizedReference] ?? '');
-            $notesReviewed = $reviewedNotesFingerprint !== ''
-                && hash_equals($noteReviewFingerprint, $reviewedNotesFingerprint);
-            if ($noteReviewRequired && ! $notesReviewed) {
-                $requestedAction = '';
-            }
             $action = '';
             $selectedTransactionId = null;
             $selectedGroup = null;
@@ -1192,9 +1172,6 @@ class ExpenseImportService
                 'incoming_lines' => $incomingLines,
                 'workbook_notes' => $workbookNotes,
                 'source_notes' => $sourceNotes,
-                'note_review_required' => $noteReviewRequired,
-                'note_review_fingerprint' => $noteReviewFingerprint,
-                'notes_reviewed' => $notesReviewed,
                 'action' => $actionValid ? $action : null,
                 'selected_transaction_id' => $selectedTransactionId,
                 'selected_group' => $selectedGroup,
@@ -1209,8 +1186,6 @@ class ExpenseImportService
                 $rows[$index]['normalized_payload']['existing_expense_match'] = $match;
                 if ($requestedAction !== '' && ! $actionValid) {
                     $rows[$index]['errors'][] = 'Pilihan transaksi Expense sudah tidak cocok dengan kandidat yang tersedia. Pilih ulang aksi.';
-                } elseif ($noteReviewRequired && ! $actionValid) {
-                    $rows[$index]['errors'][] = 'Catatan workbook dan/atau Expense sumber berbeda. Tinjau rincian catatan lalu pilih aksi sebelum mengimpor gabungan.';
                 } elseif ($reviewRequired && ! $actionValid) {
                     $rows[$index]['errors'][] = 'REFERENCE NO sudah memiliki beberapa Expense. Pilih Lewati, gabungkan grup yang nilainya cocok menjadi satu Expense, gabungkan ke satu transaksi, atau buat transaksi baru.';
                 }
@@ -1716,26 +1691,8 @@ class ExpenseImportService
         $journalMatch = $payload['journal_match'] ?? $journalMatch;
         $hasJournalMatch = ($journalMatch['status'] ?? null) === 'matched';
         $reference = trim((string) ($payload['reference_no'] ?? ''));
-        $liveReferenceNotes = [];
         if ($reference !== '') {
             $this->lockExpenseReference($businessId, $reference);
-            $incomingDatesForNotes = $rows->map(function ($row) {
-                $item = json_decode((string) $row->normalized_payload, true) ?: [];
-
-                return substr((string) ($item['expense_date'] ?? ''), 0, 10);
-            })->filter()->unique()->values();
-            if ($incomingDatesForNotes->count() === 1
-                && preg_match('/^\d{4}-\d{2}-\d{2}$/', (string) $incomingDatesForNotes->first())) {
-                $year = substr((string) $incomingDatesForNotes->first(), 0, 4);
-                $liveReferenceNotes = Transaction::where('business_id', $businessId)
-                    ->where('type', 'expense')
-                    ->whereNotNull('ref_no')
-                    ->whereRaw('LOWER(TRIM(ref_no)) = ?', [mb_strtolower(trim($reference))])
-                    ->whereBetween('transaction_date', [$year.'-01-01 00:00:00', $year.'-12-31 23:59:59'])
-                    ->orderBy('id')
-                    ->get(['id', 'additional_notes'])
-                    ->all();
-            }
         }
         $lockedJournal = $hasJournalMatch
             ? $this->journalLinkService->lockSelectedJournal($journalMatch, $businessId, $reference)
@@ -1747,32 +1704,6 @@ class ExpenseImportService
 
         $existingMatch = $payload['existing_expense_match'] ?? [];
         $existingAction = (string) ($existingMatch['action'] ?? '');
-        $candidateIds = collect($existingMatch['candidates'] ?? [])
-            ->pluck('id')->map(fn ($id) => (int) $id)->filter()->all();
-        $liveSourceNotes = collect($liveReferenceNotes)
-            ->when($candidateIds !== [], fn ($items) => $items->whereIn('id', $candidateIds))
-            ->filter(fn ($transaction) => trim((string) ($transaction->additional_notes ?? '')) !== '')
-            ->map(fn ($transaction) => [
-                'id' => (int) $transaction->id,
-                'note' => trim((string) $transaction->additional_notes),
-            ])
-            ->values()
-            ->all();
-        usort($liveSourceNotes, fn ($left, $right) => $left['id'] <=> $right['id']);
-        $liveCombinedNotes = $this->uniqueExpenseNotes(array_merge(
-            $workbookNoteValues,
-            array_column($liveSourceNotes, 'note')
-        ));
-        $liveNoteReviewFingerprint = hash('sha256', json_encode([
-            'workbook_notes' => $workbookNoteValues,
-            'source_notes' => $liveSourceNotes,
-        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
-        if (count($liveCombinedNotes) > 1
-            && (empty($existingMatch['note_review_required'])
-                || empty($existingMatch['notes_reviewed'])
-                || ! hash_equals((string) ($existingMatch['note_review_fingerprint'] ?? ''), $liveNoteReviewFingerprint))) {
-            throw new RuntimeException('Catatan workbook atau Expense sumber berubah sejak preview. Perbarui preview dan tinjau catatan sebelum mengimpor gabungan.');
-        }
         $transaction = $lockedJournal['transaction'] ?? null;
         $preserveMergedPayments = false;
         $preserveExistingJournalLink = false;
@@ -1943,6 +1874,7 @@ class ExpenseImportService
                 'category_id' => $lineCategoryId,
                 'sub_category_id' => $lineSubCategoryId,
                 'description' => $item['description'] ?? null,
+                'note' => $item['expense_note'] ?? null,
                 'amount' => $lineBaseAmount,
             ];
         }
@@ -1970,7 +1902,9 @@ class ExpenseImportService
 
         $transaction = $lockedJournal['transaction'] ?? $transaction;
         $preserveExistingJournalLink = $preserveExistingJournalLink || collect($lockedJournal['transactions'] ?? [])->count() > 1;
-        if (! empty($existingMatch['review_required']) && $existingAction === '') {
+        if (! empty($existingMatch['review_required'])
+            && empty($existingMatch['note_review_required'])
+            && $existingAction === '') {
             throw new RuntimeException('REFERENCE NO memerlukan pilihan di preview. Muat ulang preview sebelum mengimpor.');
         }
         if (str_starts_with($existingAction, 'merge:')) {
@@ -1987,11 +1921,10 @@ class ExpenseImportService
             if (! $transaction || $this->normalize((string) $transaction->ref_no) !== $this->normalize($reference)) {
                 throw new RuntimeException('Expense yang dipilih tidak lagi tersedia untuk REFERENCE NO ini. Muat ulang preview.');
             }
-            $candidateSnapshot = collect($existingMatch['candidates'] ?? [])
-                ->first(fn ($candidate) => (int) ($candidate['id'] ?? 0) === $targetId);
-            if (! $candidateSnapshot
-                || trim((string) ($candidateSnapshot['additional_notes'] ?? '')) !== trim((string) ($transaction->additional_notes ?? ''))) {
-                throw new RuntimeException('Catatan Expense berubah sejak preview. Perbarui preview lalu tinjau catatan sebelum melanjutkan.');
+            $candidateExists = collect($existingMatch['candidates'] ?? [])
+                ->contains(fn ($candidate) => (int) ($candidate['id'] ?? 0) === $targetId);
+            if (! $candidateExists) {
+                throw new RuntimeException('Expense yang dipilih bukan kandidat untuk referensi ini. Muat ulang preview.');
             }
         } elseif ($existingAction === 'new') {
             $preserveExistingJournalLink = $lockedJournal !== null

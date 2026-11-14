@@ -6272,11 +6272,18 @@ class TransactionUtil extends Util
                     $document = $line['document'];
                 }
             }
+            $lineNote = $line['note'] ?? null;
+            if (! array_key_exists('note', $line) && ! empty($line['id'])) {
+                $lineNote = ExpenseLine::where('transaction_id', $transaction->id)
+                    ->where('id', (int) $line['id'])
+                    ->value('note');
+            }
 
             $expense_lines[] = new ExpenseLine([
                 'category_id' => $line['category_id'] ?? null,
                 'sub_category_id' => $line['sub_category_id'] ?? null,
                 'description' => $line['description'] ?? null,
+                'note' => $lineNote,
                 'business_id' => $business_id,
                 'transaction_id' => $transaction->id,
                 'amount' => $amount,

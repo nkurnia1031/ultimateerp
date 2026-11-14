@@ -346,7 +346,7 @@
                     var output = value === 'valid' ? '<span class="label label-success">Valid</span>' : (value === 'skipped' ? '<span class="label label-default">Dilewati</span>' : '<span class="label label-danger">Error</span>');
                     var existing = row.existing_expense_match || {};
                     if (existing.review_required && !existing.action) {
-                        output += '<div><span class="label label-warning">' + (existing.note_review_required ? 'Tinjau catatan dan pilih aksi' : 'Pilih aksi untuk referensi lama') + '</span></div>';
+                        output += '<div><span class="label label-warning">Pilih aksi untuk referensi lama</span></div>';
                     } else if (existing.action && existing.action.indexOf('merge:') === 0) {
                         output += '<div><span class="label label-info">Perbarui Expense #' + Number(existing.selected_transaction_id || existing.action.split(':')[1]) + '</span></div>';
                     } else if (existing.action && existing.action.indexOf('group:') === 0) {
@@ -376,7 +376,7 @@
                         }
                         details.push(label);
                         if (line.note) {
-                            details.push('Catatan Excel baris #' + Number(line.source_row || 0) + ': ' + escapeMultiline(line.note));
+                            details.push('Catatan expense line dari baris Excel #' + Number(line.source_row || 0) + ': ' + escapeMultiline(line.note));
                         }
                     });
                     if (journalMatch.comparison_year) {
@@ -395,9 +395,7 @@
                         }
                     }
                     if ((existing.workbook_notes || []).length || (existing.source_notes || []).length) {
-                        if (existing.note_review_required) {
-                            details.push('<strong>Catatan berbeda; tinjau sebelum penggabungan:</strong>');
-                        }
+                        details.push('<strong>Catatan transaksi akan digabung pada Catatan Expense. Catatan dari tiap baris workbook disimpan terpisah pada expense line.</strong>');
                         (existing.workbook_notes || []).forEach(function (note) {
                             details.push('<strong>Catatan workbook:</strong> ' + escapeMultiline(note));
                         });

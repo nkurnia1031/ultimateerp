@@ -129,6 +129,7 @@
                                     <th>Category</th>
                                     <th>Sub Category</th>
                                     <th>Description</th>
+                                    <th>Note</th>
                                     <th>Amount</th>
                                     <th>Attach Document</th>
                                     <th>Action</th>
@@ -146,6 +147,7 @@
                                         'id' => 'sub_category_id0',
                                     ]) !!}</td>
                                     <td>{!! Form::text('expense_lines[0][description]', null, ['class' => 'form-control']) !!}</td>
+                                    <td>{!! Form::textarea('expense_lines[0][note]', null, ['class' => 'form-control', 'rows' => 1]) !!}</td>
                                     <td>{!! Form::text('expense_lines[0][amount]', null, ['class' => 'form-control input_number expense-amount']) !!}</td>
                                     <td>{!! Form::file('expense_lines[0][document]', ['class' => 'form-control']) !!}</td>
                                     <td><button type="button" class="btn btn-danger remove_row">x</button></td>
@@ -293,6 +295,7 @@
                         'id' => 'sub_category_id${line_index}',
                     ]) !!}</td>
                     <td>{!! Form::text('expense_lines[IDX][description]', null, ['class' => 'form-control']) !!}</td>
+                    <td>{!! Form::textarea('expense_lines[IDX][note]', null, ['class' => 'form-control', 'rows' => 1]) !!}</td>
                     <td>{!! Form::text('expense_lines[IDX][amount]', null, ['class' => 'form-control input_number expense-amount']) !!}</td>
                     <td>{!! Form::file('expense_lines[IDX][document]', ['class' => 'form-control']) !!}</td>
                     <td><button type="button" class="btn btn-danger remove_row">x</button></td>

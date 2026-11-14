@@ -15,6 +15,7 @@ class ExpenseLine extends Model
         'category_id',
         'sub_category_id',
         'description',
+        'note',
         'amount',
         'document',
     ];

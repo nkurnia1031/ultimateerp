@@ -673,6 +673,7 @@ class ExpenseImportTaxTest extends TestCase
             $table->unsignedInteger('category_id')->nullable();
             $table->unsignedInteger('sub_category_id')->nullable();
             $table->text('description')->nullable();
+            $table->text('note')->nullable();
             $table->decimal('amount', 22, 4);
             $table->timestamps();
         });

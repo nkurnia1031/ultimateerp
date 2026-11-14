@@ -538,6 +538,8 @@ class ExpenseController extends Controller
             //Validate document size
             $request->validate([
                 'document' => 'file|max:' . (config('constants.document_size_limit') / 1000),
+                'expense_lines' => 'sometimes|array',
+                'expense_lines.*.note' => 'nullable|string|max:16000',
             ]);
 
             $user_id = $request->session()->get('user.id');
@@ -778,6 +780,8 @@ class ExpenseController extends Controller
             //Validate document size
             $request->validate([
                 'document' => 'file|max:' . (config('constants.document_size_limit') / 1000),
+                'expense_lines' => 'sometimes|array',
+                'expense_lines.*.note' => 'nullable|string|max:16000',
             ]);
 
             $business_id = $request->session()->get('user.business_id');
