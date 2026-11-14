@@ -1511,7 +1511,7 @@ $(document).ready(function () {
         fixedHeader: false,
         aaSorting: [[1, 'desc']],
         ajax: {
-            url: '/expenses',
+            url: $('#expense_table').data('ajax-url'),
             data: function (d) {
                 d.expense_for = $('select#expense_for').val();
                 d.created_by = $('select#created_by').val();

@@ -69,7 +69,8 @@
                 @php
                     $custom_labels = json_decode(session('business.custom_labels'), true);
                 @endphp
-                <table class="table table-bordered table-striped ajax_view" id="sell_table">
+                <table class="table table-bordered table-striped ajax_view" id="sell_table"
+                    data-ajax-url="{{ rtrim(request()->getBaseUrl(), '/') }}/sells">
                     <thead>
                         <tr>
                             <th>@lang('messages.action')</th>
@@ -177,7 +178,7 @@
                     [1, 'desc']
                 ],
                 "ajax": {
-                    "url": "/sells",
+                    "url": $('#sell_table').data('ajax-url'),
                     "data": function(d) {
                         if ($('#sell_list_filter_date_range').val()) {
                             var start = $('#sell_list_filter_date_range').data('daterangepicker')
