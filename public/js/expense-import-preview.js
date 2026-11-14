@@ -11,6 +11,10 @@
     var dateModal = $('#expense_import_date_modal');
     var batchId = null;
     var previewTable = null;
+    var confirmButton = $('#expense_import_confirm');
+    var confirmFeedback = $('#expense_import_confirm_feedback');
+    var confirmAvailable = false;
+    var confirmPending = false;
 
     function previewUrl(id) {
         return config.data('preview-template').replace('__BATCH__', encodeURIComponent(id));
@@ -110,7 +114,25 @@
             + ' · perlu pilihan: ' + Number(summary.existing_expense_review_groups || 0) + ' grup'
         );
         var hasStaleReadyJournalCandidate = Boolean(summary.journal_candidate_refresh_required);
-        $('#expense_import_confirm').prop('disabled', Number(summary.importable || 0) < 1 && !hasStaleReadyJournalCandidate);
+        confirmAvailable = Number(summary.importable || 0) > 0 || hasStaleReadyJournalCandidate;
+        confirmButton.prop('disabled', confirmPending || !confirmAvailable);
+    }
+
+    function showConfirmFeedback(message, type, includeHistoryLink) {
+        confirmFeedback
+            .removeClass('alert-info alert-success alert-warning alert-danger')
+            .addClass('alert alert-' + type)
+            .attr('role', type === 'danger' ? 'alert' : 'status')
+            .text(message)
+            .show();
+
+        if (includeHistoryLink) {
+            $('<a>')
+                .attr('href', previewPage.data('history-url'))
+                .addClass('tw-ml-2')
+                .text('Buka riwayat import')
+                .appendTo(confirmFeedback);
+        }
     }
 
     function requestPreviewRefresh(button) {
@@ -447,15 +469,44 @@
         });
     });
 
-    $('#expense_import_confirm').on('click', function () {
-        if (!batchId || $(this).prop('disabled')) { return; }
-        $.ajax({ url: confirmUrl(batchId), method: 'POST', dataType: 'json', headers: { Accept: 'application/json' }, data: { _token: form.find('input[name="_token"]').val() } })
+    confirmButton.on('click', function () {
+        if (!batchId || confirmPending || confirmButton.prop('disabled')) { return; }
+        confirmPending = true;
+        confirmButton.prop('disabled', true).html('<i class="fa fa-spinner fa-spin"></i> Mengirim import...');
+        confirmFeedback.hide().empty();
+        showConfirmFeedback('Permintaan import sedang dikirim. Mohon tunggu...', 'info', false);
+
+        var redirecting = false;
+        $.ajax({
+            url: confirmUrl(batchId),
+            method: 'POST',
+            dataType: 'json',
+            timeout: 60000,
+            headers: { Accept: 'application/json' },
+            data: { _token: form.find('input[name="_token"]').val() }
+        })
             .done(function (result) {
+                if (!result || result.success === false) {
+                    showConfirmFeedback((result && result.message) || 'Server belum menerima permintaan import.', 'danger', true);
+                    if (window.toastr) { toastr.error((result && result.message) || 'Server belum menerima permintaan import.'); }
+                    return;
+                }
+                redirecting = true;
+                showConfirmFeedback('Permintaan diterima. Membuka riwayat untuk menampilkan progres...', 'success', false);
                 window.location.assign(result.history_url || previewPage.data('history-url'));
             })
-            .fail(function (xhr) {
+            .fail(function (xhr, status) {
                 var message = xhr.responseJSON && xhr.responseJSON.message ? xhr.responseJSON.message : 'Import tidak dapat dimulai.';
+                if (status === 'timeout') {
+                    message = 'Server belum memberi respons. Periksa riwayat import sebelum mencoba kembali.';
+                }
+                showConfirmFeedback(message, 'danger', true);
                 if (window.toastr) { toastr.error(message); }
+            })
+            .always(function () {
+                if (redirecting) { return; }
+                confirmPending = false;
+                confirmButton.html('<i class="fa fa-check"></i> Import baris valid').prop('disabled', !confirmAvailable);
             });
     });
 

@@ -79,6 +79,7 @@
             <button type="button" id="expense_import_refresh_preview" class="btn btn-default"><i class="fa fa-refresh"></i> Perbarui preview &amp; kandidat Journal</button>
             <button type="button" id="expense_import_confirm" class="btn btn-success" disabled><i class="fa fa-check"></i> Import baris valid</button>
         </div>
+        <div id="expense_import_confirm_feedback" class="alert alert-info" role="status" aria-live="polite" style="display:none"></div>
 
         <div class="expense-import-preview-filter tw-mb-3">
             <label for="expense_import_preview_status" class="tw-mr-2">Filter status</label>
