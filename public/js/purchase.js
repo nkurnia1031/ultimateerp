@@ -673,7 +673,7 @@ $(document).ready(function () {
         scrollX: true,
         scrollCollapse: true,
         ajax: {
-            url: '/purchases',
+            url: $('#purchase_table').data('ajax-url'),
             data: function (d) {
                 if ($('#purchase_list_filter_location_id').length) {
                     d.location_id = $('#purchase_list_filter_location_id').val();

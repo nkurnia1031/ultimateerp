@@ -334,6 +334,27 @@
                 { data: 'errors', render: function (value, type, row) {
                     var details = (value || []).map(escapeHtml);
                     var existing = row.existing_expense_match || {};
+                    var journalMatch = row.journal_match || {};
+                    if (existing.comparison_year) {
+                        details.push('Perbandingan Expense dibatasi pada tahun ' + Number(existing.comparison_year) + '. Total baris workbook: ' + formatRupiah(existing.incoming_total) + '.');
+                    }
+                    (existing.incoming_lines || []).forEach(function (line) {
+                        var label = 'Baris Excel #' + Number(line.source_row || 0);
+                        if (line.category) { label += ' · ' + escapeHtml(line.category); }
+                        if (line.description) { label += ' · ' + escapeHtml(line.description); }
+                        label += ' · ' + escapeHtml(line.date || '-') + ' · ' + formatRupiah(line.amount);
+                        if (Number(line.tax || 0) > 0) {
+                            label += ' (basis ' + formatRupiah(line.base) + ', pajak ' + formatRupiah(line.tax)
+                                + (line.tax_name ? ' ' + escapeHtml(line.tax_name) : '') + ')';
+                        }
+                        details.push(label);
+                    });
+                    if (journalMatch.comparison_year) {
+                        details.push('Posting Journal hanya dicocokkan pada tahun ' + Number(journalMatch.comparison_year) + ' sesuai tanggal workbook.');
+                        if (journalMatch.status === 'none') {
+                            details.push('Tidak ada posting Journal Expense yang cocok pada tahun tersebut; kandidat dari tahun lain diabaikan.');
+                        }
+                    }
                     if (existing.review_required) {
                         (existing.candidates || []).forEach(function (candidate) {
                             var dateDiff = candidate.date_difference_days === null ? 'tanggal tidak tersedia' : Number(candidate.date_difference_days) + ' hari';
@@ -347,12 +368,23 @@
                         var members = (group.members || []).map(function (member) {
                             return 'Expense #' + Number(member.id) + ' (' + escapeHtml(member.date || 'tanggal kosong') + ', ' + formatRupiah(member.amount) + ')';
                         }).join(' + ');
-                        var journalTax = Number(group.journal_tax_amount || 0);
-                        details.push('Gabungkan ' + members + ' menjadi satu Expense = ' + formatRupiah(group.total_amount)
-                            + ' · basis Journal ' + formatRupiah(group.journal_base_amount)
-                            + ' · pajak Journal ' + formatRupiah(journalTax)
-                            + (journalTax > 0 ? ' (dicatat pada atribut pajak)' : ' (tidak ada VAT Journal)')
-                            + '. Tanggal transaksi hasil mengikuti tanggal Journal/workbook. Riwayat pembayaran dan lampiran transaksi dipertahankan; rincian biaya mengikuti baris workbook dan baris VAT yang teridentifikasi masuk ke atribut pajak.');
+                        if (group.consolidation_mode === 'same_year_expense') {
+                            details.push((group.consolidation_safe === false ? 'Kombinasi nominal ditemukan tetapi belum aman digabung: ' : 'Kandidat gabung satu tahun: ')
+                                + members + ' menjadi satu Expense = ' + formatRupiah(group.total_amount)
+                                + (group.consolidation_safe === false
+                                    ? ' · ' + escapeHtml(group.consolidation_issue || 'perlu pemeriksaan GL tambahan')
+                                    : '. Rincian posting GL backfill dan akun asal dipertahankan setelah saldo debit/kredit diverifikasi.'));
+                        } else {
+                            var journalTax = Number(group.journal_tax_amount || 0);
+                            details.push('Gabungkan ' + members + ' menjadi satu Expense = ' + formatRupiah(group.total_amount)
+                                + ' · basis Journal ' + formatRupiah(group.journal_base_amount)
+                                + ' · pajak Journal ' + formatRupiah(journalTax)
+                                + (journalTax > 0 ? ' (dicatat pada atribut pajak)' : ' (tidak ada VAT Journal)')
+                                + '. Tanggal transaksi hasil mengikuti tanggal Journal/workbook. Riwayat pembayaran dan lampiran transaksi dipertahankan; rincian biaya mengikuti baris workbook dan baris VAT yang teridentifikasi masuk ke atribut pajak.');
+                        }
+                    });
+                    (existing.consolidation_issues || []).forEach(function (issue) {
+                        details.push('Grup belum aman digabung: ' + escapeHtml(issue));
                     });
                     return details.join('<br>') + renderJournalCandidateDetails(row.journal_match || {});
                 } },
@@ -362,6 +394,7 @@
                     if (existing.review_required || (existing.groups || []).length > 0) {
                         var existingSelect = '<select class="form-control input-sm expense-import-existing-action" data-row="' + row.id + '"><option value="">Pilih aksi transaksi</option>';
                         (existing.groups || []).forEach(function (group) {
+                            if (group.consolidation_safe === false) { return; }
                             var groupValue = 'group:' + String(group.fingerprint || '');
                             var memberIds = (group.member_ids || []).map(function (id) { return '#' + Number(id); }).join(' + ');
                             var groupLabel = 'Gabungkan Expense ' + memberIds + ' menjadi satu · ' + formatRupiah(group.total_amount);

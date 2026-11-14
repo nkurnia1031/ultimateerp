@@ -17,6 +17,122 @@ class ExpenseImportConsolidationService
         $this->journalLinkService = $journalLinkService ?: app(ExpenseImportJournalLinkService::class);
     }
 
+    public function assessSameYearExpenseGroup(
+        array $memberIds,
+        int $businessId,
+        string $reference,
+        ?string $date,
+        float $expectedTotal
+    ): array {
+        try {
+            $memberIds = array_values(array_unique(array_map('intval', $memberIds)));
+            sort($memberIds);
+            $transactions = Transaction::where('business_id', $businessId)
+                ->where('type', 'expense')
+                ->whereIn('id', $memberIds)
+                ->orderBy('id')
+                ->get();
+            if (count($memberIds) < 2 || $transactions->count() !== count($memberIds)) {
+                throw new RuntimeException('Salah satu Expense sumber tidak tersedia untuk penggabungan.');
+            }
+
+            $this->assertSameReferenceAndDate($transactions, $businessId, $reference, $date, $expectedTotal);
+            $this->preservedTransactionValues($transactions);
+            $this->assertNoUnsupportedReferences($transactions, $memberIds);
+            $this->assertNoJournalSourceRelations($memberIds);
+            $this->assertSameYearBackfillMappingsArePreservable($transactions, $businessId, $reference, (string) $date);
+
+            $paymentTotal = Schema::hasTable('transaction_payments')
+                ? (float) DB::table('transaction_payments')->whereIn('transaction_id', $memberIds)->sum('amount')
+                : 0.0;
+            if ($paymentTotal - $expectedTotal > 0.01) {
+                throw new RuntimeException('Total pembayaran Expense sumber melebihi total grup.');
+            }
+
+            return ['safe' => true, 'reason' => null];
+        } catch (RuntimeException $exception) {
+            return ['safe' => false, 'reason' => $exception->getMessage()];
+        }
+    }
+
+    public function consolidateSameYearExpenseGroup(
+        Collection $transactions,
+        int $businessId,
+        string $reference,
+        float $expectedTotal,
+        string $date
+    ): array {
+        $memberIds = $transactions->pluck('id')->map(fn ($id) => (int) $id)->unique()->sort()->values()->all();
+        if (count($memberIds) < 2 || count($memberIds) !== $transactions->count()) {
+            throw new RuntimeException('Konsolidasi Expense memerlukan sedikitnya dua transaksi sumber yang berbeda.');
+        }
+
+        $transactions = Transaction::where('business_id', $businessId)
+            ->where('type', 'expense')
+            ->whereIn('id', $memberIds)
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->get();
+        if ($transactions->count() !== count($memberIds)) {
+            throw new RuntimeException('Salah satu Expense sumber tidak lagi tersedia. Muat ulang preview.');
+        }
+
+        $this->assertSameReferenceAndDate($transactions, $businessId, $reference, $date, $expectedTotal);
+        $paymentTotal = Schema::hasTable('transaction_payments')
+            ? (float) DB::table('transaction_payments')->whereIn('transaction_id', $memberIds)->sum('amount')
+            : 0.0;
+        $paymentCount = Schema::hasTable('transaction_payments')
+            ? (int) DB::table('transaction_payments')->whereIn('transaction_id', $memberIds)->count()
+            : 0;
+        if ($paymentTotal - $expectedTotal > 0.01) {
+            throw new RuntimeException('Total pembayaran Expense sumber melebihi total grup; riwayat pembayaran tidak diubah.');
+        }
+
+        $preserved = $this->preservedTransactionValues($transactions);
+        $this->assertNoUnsupportedReferences($transactions, $memberIds);
+        $this->assertNoJournalSourceRelations($memberIds);
+        $mappings = $this->assertSameYearBackfillMappingsArePreservable($transactions, $businessId, $reference, $date);
+
+        $primary = $transactions->first();
+        $primaryMapping = $mappings->firstWhere('source_record_id', (int) $primary->id);
+        if (! $primaryMapping) {
+            throw new RuntimeException('Posting GL Expense utama tidak tersedia untuk dipertahankan.');
+        }
+        $secondaryIds = array_values(array_diff($memberIds, [(int) $primary->id]));
+        $this->moveExpenseChildren($primary, $secondaryIds, $memberIds, 0);
+
+        foreach ($mappings as $mapping) {
+            if ((int) $mapping->id === (int) $primaryMapping->id) {
+                continue;
+            }
+            DB::table('accounting_accounts_transactions')
+                ->where('acc_trans_mapping_id', (int) $mapping->id)
+                ->update(['acc_trans_mapping_id' => (int) $primaryMapping->id]);
+            DB::table('accounting_acc_trans_mappings')->where('id', (int) $mapping->id)->delete();
+        }
+        DB::table('accounting_acc_trans_mappings')->where('id', (int) $primaryMapping->id)->update([
+            'source_record_id' => (int) $primary->id,
+            'updated_at' => now(),
+        ]);
+
+        if ($secondaryIds !== []) {
+            Transaction::where('business_id', $businessId)
+                ->where('type', 'expense')
+                ->whereIn('id', $secondaryIds)
+                ->delete();
+        }
+
+        $primary->refresh();
+
+        return [
+            'transaction' => $primary,
+            'member_ids' => $memberIds,
+            'preserved' => $preserved,
+            'payment_total' => $paymentTotal,
+            'payment_count' => $paymentCount,
+        ];
+    }
+
     /**
      * Consolidate a uniquely matched same-reference Expense group into its
      * lowest-id member while preserving supported child records and payments.
@@ -43,6 +159,15 @@ class ExpenseImportConsolidationService
         if ($transactions->count() !== count($memberIds)) {
             throw new RuntimeException('Salah satu Expense sumber tidak lagi tersedia. Muat ulang preview.');
         }
+
+        $dates = $transactions->map(fn ($transaction) => substr((string) ($transaction->transaction_date ?? ''), 0, 10))
+            ->filter()
+            ->unique()
+            ->values();
+        if ($dates->count() !== 1) {
+            throw new RuntimeException('Grup Expense harus memiliki satu tanggal transaksi yang sama.');
+        }
+        $date = (string) $dates->first();
 
         foreach ($transactions as $transaction) {
             if ($this->normalizeReference((string) $transaction->ref_no) !== $this->normalizeReference($reference)) {
@@ -113,9 +238,6 @@ class ExpenseImportConsolidationService
         }
 
         $notes = $transactions->pluck('additional_notes')->map(fn ($value) => trim((string) $value))->filter()->unique()->values();
-        if ($notes->count() > 1) {
-            throw new RuntimeException('Expense sumber memiliki catatan berbeda; tinjau catatan sebelum mengimpor gabungan.');
-        }
 
         if (Schema::hasTable('expense_lines')
             && DB::table('expense_lines')->whereIn('transaction_id', $transactions->pluck('id'))->whereNotNull('document')->where('document', '<>', '')->exists()) {
@@ -139,7 +261,7 @@ class ExpenseImportConsolidationService
             'contact_id' => $this->singleValue($transactions, 'contact_id'),
             'expense_for' => $this->singleValue($transactions, 'expense_for'),
             'document' => $documents->first(),
-            'additional_notes' => $notes->first(),
+            'additional_notes' => $notes->implode("\n"),
             'tags' => $tags->all(),
         ];
     }
@@ -148,6 +270,91 @@ class ExpenseImportConsolidationService
     {
         return $transactions->pluck($column)->filter(fn ($value) => $value !== null && $value !== '')
             ->unique()->values()->first();
+    }
+
+    private function assertSameReferenceAndDate(
+        Collection $transactions,
+        int $businessId,
+        string $reference,
+        ?string $date,
+        float $expectedTotal
+    ): void {
+        if ($date === null || ! preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
+            throw new RuntimeException('Penggabungan Expense memerlukan tanggal workbook yang valid.');
+        }
+        foreach ($transactions as $transaction) {
+            if ((int) $transaction->business_id !== $businessId
+                || $this->normalizeReference((string) $transaction->ref_no) !== $this->normalizeReference($reference)
+                || substr((string) ($transaction->transaction_date ?? ''), 0, 10) !== $date) {
+                throw new RuntimeException('Referensi, business, atau tanggal Expense sumber berbeda; transaksi tidak digabung.');
+            }
+        }
+        $actualTotal = (float) $transactions->sum(fn ($transaction) => (float) $transaction->final_total);
+        if (abs($actualTotal - $expectedTotal) > 0.01) {
+            throw new RuntimeException('Total Expense sumber berubah atau berbeda dari total workbook.');
+        }
+    }
+
+    private function assertNoJournalSourceRelations(array $memberIds): void
+    {
+        if (Schema::hasTable('accounting_acc_trans_mappings')
+            && DB::table('accounting_acc_trans_mappings')
+                ->where('source_record_type', Transaction::class)
+                ->whereIn('source_record_id', $memberIds)
+                ->where('type', '<>', 'general_ledger_backfill')
+                ->exists()) {
+            throw new RuntimeException('Expense sumber sudah tertaut ke Journal atau mapping akuntansi lain.');
+        }
+
+        if (Schema::hasTable('accounting_journal_import_source_links')
+            && DB::table('accounting_journal_import_source_links')
+                ->where('source_record_type', Transaction::class)
+                ->whereIn('source_record_id', $memberIds)
+                ->exists()) {
+            throw new RuntimeException('Expense sumber memiliki relasi Journal; grup hanya dapat digabung lewat pencocokan Journal.');
+        }
+
+        if (Schema::hasTable('accounting_journal_import_rows')
+            && DB::table('accounting_journal_import_rows')
+                ->where('source_record_type', Transaction::class)
+                ->whereIn('source_record_id', $memberIds)
+                ->exists()) {
+            throw new RuntimeException('Expense sumber dipakai oleh baris Journal dan tidak dapat digabung tanpa Journal yang cocok.');
+        }
+    }
+
+    private function assertSameYearBackfillMappingsArePreservable(
+        Collection $transactions,
+        int $businessId,
+        string $reference,
+        string $date
+    ): Collection {
+        if (! Schema::hasTable('accounting_acc_trans_mappings') || ! Schema::hasTable('accounting_accounts_transactions')) {
+            throw new RuntimeException('Mapping atau baris General Ledger belum tersedia; posting Expense tidak dapat dipertahankan dengan aman.');
+        }
+
+        $ids = $transactions->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $mappings = DB::table('accounting_acc_trans_mappings')
+            ->where('business_id', $businessId)
+            ->where('source_record_type', Transaction::class)
+            ->whereIn('source_record_id', $ids)
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->get();
+        if ($mappings->count() !== count($ids)) {
+            throw new RuntimeException('Setiap Expense sumber harus memiliki tepat satu posting GL backfill yang akan dipertahankan.');
+        }
+
+        foreach ($transactions as $transaction) {
+            $sourceMappings = $mappings->where('source_record_id', (int) $transaction->id)->values();
+            if ($sourceMappings->count() !== 1
+                || (string) $sourceMappings[0]->type !== 'general_ledger_backfill'
+                || ! $this->generatedPostingIsExact($sourceMappings[0], $transaction, $reference, $date)) {
+                throw new RuntimeException('Posting GL Expense tidak dapat dibuktikan sebagai backfill seimbang yang aman untuk digabung.');
+            }
+        }
+
+        return $mappings;
     }
 
     private function assertNoUnsupportedReferences(Collection $transactions, array $memberIds): void
@@ -272,16 +479,23 @@ class ExpenseImportConsolidationService
 
         $lines = DB::table('accounting_accounts_transactions')->where('acc_trans_mapping_id', (int) $mapping->id)
             ->get(['transaction_id', 'transaction_payment_id', 'amount', 'type', 'sub_type', 'map_type']);
-        if ($lines->count() !== 2
+        if ($lines->count() < 2
             || $lines->contains(fn ($line) => (int) $line->transaction_id !== (int) $transaction->id
                 || $line->transaction_payment_id !== null
                 || (string) $line->sub_type !== 'expense'
                 || (string) $line->map_type !== 'general_ledger_backfill'
-                || abs((float) $line->amount - (float) $transaction->final_total) > 0.01)) {
+                || ! in_array((string) $line->type, ['debit', 'credit'], true)
+                || (float) $line->amount < 0)) {
             return false;
         }
 
-        return $lines->where('type', 'debit')->count() === 1 && $lines->where('type', 'credit')->count() === 1;
+        $debitTotal = (float) $lines->where('type', 'debit')->sum('amount');
+        $creditTotal = (float) $lines->where('type', 'credit')->sum('amount');
+
+        return $lines->where('type', 'debit')->isNotEmpty()
+            && $lines->where('type', 'credit')->isNotEmpty()
+            && abs($debitTotal - (float) $transaction->final_total) <= 0.01
+            && abs($creditTotal - (float) $transaction->final_total) <= 0.01;
     }
 
     private function removeProvenGeneratedBackfill(Transaction $transaction, int $businessId, string $reference, string $date): void

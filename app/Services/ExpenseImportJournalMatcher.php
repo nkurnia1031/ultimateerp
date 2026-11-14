@@ -28,7 +28,7 @@ class ExpenseImportJournalMatcher
      * Incomplete Journal rows are returned as unavailable candidates so an
      * Expense import cannot silently race or duplicate an unfinished posting.
      */
-    public function matchReferences(int $businessId, array $references, array $overrides, array $taxableBases): array
+    public function matchReferences(int $businessId, array $references, array $overrides, array $taxableBases, array $referenceYears = []): array
     {
         $normalizedReferences = [];
         foreach ($references as $reference) {
@@ -55,7 +55,7 @@ class ExpenseImportJournalMatcher
 
         $rowsByReference = [];
         foreach (array_chunk(array_keys($normalizedReferences), 300) as $referenceChunk) {
-            $journalRows = DB::table('accounting_journal_import_rows as journal_row')
+            $journalRowsQuery = DB::table('accounting_journal_import_rows as journal_row')
                 ->join('accounting_journal_imports as journal_import', 'journal_import.id', '=', 'journal_row.journal_import_id')
                 ->leftJoin('accounting_acc_trans_mappings as mapping', function ($join) {
                     $join->on('mapping.id', '=', 'journal_row.journal_mapping_id')
@@ -65,7 +65,6 @@ class ExpenseImportJournalMatcher
                 ->where('journal_import.business_id', $businessId)
                 ->where('journal_row.source_type', 'Expense')
                 ->whereIn('journal_import.status', ['analyzed', 'partially_imported', 'failed', 'cancelled', 'imported'])
-                ->whereIn(DB::raw('LOWER(TRIM(journal_row.source_number))'), $referenceChunk)
                 ->select([
                     'journal_row.id as journal_row_id',
                     'journal_row.journal_import_id',
@@ -82,8 +81,33 @@ class ExpenseImportJournalMatcher
                     'mapping.source_link_status',
                     'journal_import.status as journal_import_status',
                 ])
-                ->orderBy('journal_row.id')
-                ->get();
+                ->orderBy('journal_row.id');
+
+            if ($referenceYears === []) {
+                // Preserve the matcher's standalone behavior for older callers.
+                $journalRowsQuery->whereIn(DB::raw('LOWER(TRIM(journal_row.source_number))'), $referenceChunk);
+            } else {
+                $journalRowsQuery->where(function ($query) use ($referenceChunk, $referenceYears) {
+                    $hasYearScopedReference = false;
+                    foreach ($referenceChunk as $reference) {
+                        $year = $referenceYears[$reference] ?? null;
+                        if (! is_numeric($year) || (int) $year < 1000 || (int) $year > 9999) {
+                            continue;
+                        }
+                        $hasYearScopedReference = true;
+                        $query->orWhere(function ($candidateQuery) use ($reference, $year) {
+                            $candidateQuery
+                                ->whereRaw('LOWER(TRIM(journal_row.source_number)) = ?', [$reference])
+                                ->whereRaw("YEAR(JSON_UNQUOTE(JSON_EXTRACT(journal_row.entry_data, '$.date'))) = ?", [(int) $year]);
+                        });
+                    }
+                    if (! $hasYearScopedReference) {
+                        $query->whereRaw('1 = 0');
+                    }
+                });
+            }
+
+            $journalRows = $journalRowsQuery->get();
 
             $sourceLinksByRow = [];
             if (Schema::hasTable('accounting_journal_import_source_links') && $journalRows->isNotEmpty()) {
@@ -126,6 +150,19 @@ class ExpenseImportJournalMatcher
 
         $matches = [];
         foreach (array_keys($normalizedReferences) as $reference) {
+            $comparisonYear = $referenceYears[$reference] ?? null;
+            if ($referenceYears !== [] && (! is_numeric($comparisonYear) || (int) $comparisonYear < 1000 || (int) $comparisonYear > 9999)) {
+                $matches[$reference] = [
+                    'status' => 'none',
+                    'selected' => null,
+                    'candidates' => [],
+                    'selectable_candidates' => [],
+                    'comparison_year' => null,
+                    'year_scope_status' => 'ambiguous',
+                ];
+
+                continue;
+            }
             $candidates = array_values($rowsByReference[$reference] ?? []);
             usort($candidates, function (array $left, array $right): int {
                 return strcmp((string) ($left['date'] ?? ''), (string) ($right['date'] ?? ''))
@@ -158,6 +195,8 @@ class ExpenseImportJournalMatcher
             } else {
                 $matches[$reference] = ['status' => 'none', 'selected' => null, 'candidates' => [], 'selectable_candidates' => []];
             }
+            $matches[$reference]['comparison_year'] = $comparisonYear === null ? null : (int) $comparisonYear;
+            $matches[$reference]['year_scope_status'] = 'same_calendar_year';
         }
 
         return $matches;
