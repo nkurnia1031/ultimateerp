@@ -516,7 +516,8 @@ class ExpenseImportService
         }
 
         $inserted = 0;
-        DB::transaction(function () use ($rows, $businessId, $userId, $batchId, &$inserted, $progress) {
+        $importBatchNumber = null;
+        DB::transaction(function () use ($rows, $businessId, $userId, $batchId, &$inserted, &$importBatchNumber, $progress) {
             $groups = $rows->groupBy('group_key');
             // Each reference group becomes one transaction, but progress is
             // reported in source rows so it matches the preview total.
@@ -547,7 +548,11 @@ class ExpenseImportService
             ]);
             DB::table('expense_import_batches')->where('id', $batchId)->update([
                 'status' => 'imported', 'operation' => 'import', 'confirmed_at' => now(),
-                'summary' => json_encode(['transactions' => $inserted, 'rows' => $rows->count()], JSON_UNESCAPED_UNICODE),
+                'summary' => json_encode([
+                    'transactions' => $inserted,
+                    'rows' => $rows->count(),
+                    'legacy_import_batch_number' => $importBatchNumber,
+                ], JSON_UNESCAPED_UNICODE),
                 'updated_at' => now(),
             ]);
         });

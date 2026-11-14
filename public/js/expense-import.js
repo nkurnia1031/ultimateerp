@@ -2,10 +2,32 @@
     'use strict';
 
     var form = $('#expense_import_form');
-    var table = $('#expense_import_batches_table');
+    var table = $('#expense_import_history_table');
     var config = $('#expense_import_index_config');
     if (!form.length || !table.length || !config.length) {
         return;
+    }
+
+    var dataTable = null;
+    if ($.fn && $.fn.DataTable) {
+        dataTable = table.DataTable({
+            autoWidth: false,
+            order: [[2, 'desc']],
+            pageLength: 10,
+            lengthMenu: [[10, 25, 50, 100], [10, 25, 50, 100]],
+            columnDefs: [{ targets: [3, 4, 5, 6, 7], orderable: false }],
+            language: {
+                search: 'Cari:',
+                searchPlaceholder: 'Cari file, batch, atau transaksi',
+                lengthMenu: 'Tampilkan _MENU_ data',
+                info: 'Menampilkan _START_–_END_ dari _TOTAL_ data',
+                infoEmpty: 'Belum ada riwayat import',
+                infoFiltered: '(disaring dari _MAX_ data)',
+                zeroRecords: 'Data tidak ditemukan',
+                emptyTable: 'Belum ada riwayat import',
+                paginate: { first: 'Awal', last: 'Akhir', next: 'Berikutnya', previous: 'Sebelumnya' }
+            }
+        });
     }
 
     var timers = {};
@@ -38,19 +60,46 @@
     }
 
     function rowFor(id) {
-        return table.find('[data-expense-import-batch="' + String(id).replace(/[^a-zA-Z0-9_-]/g, '') + '"]');
+        var safeId = String(id).replace(/[^a-zA-Z0-9_-]/g, '');
+        if (!dataTable) { return table.find('[data-expense-import-batch="' + safeId + '"]'); }
+        return dataTable.rows().nodes().to$().filter('[data-expense-import-batch="' + safeId + '"]').first();
     }
 
     function createRow(id, fileName) {
-        var row = $('<tr>', { id: 'expense_import_batch_' + id, 'data-expense-import-batch': id });
+        var now = new Date();
+        if (dataTable) {
+            var batchId = escapeHtml(id);
+            var rowApi = dataTable.row.add([
+                'Preview',
+                escapeHtml(fileName || 'Workbook Expense'),
+                escapeHtml(now.toLocaleString('id-ID')),
+                '-',
+                '<span class="label label-warning" data-role="status">Upload diterima</span><div class="small text-muted" data-role="message">Menunggu proses preview.</div>',
+                '<div class="progress expense-import-progress"><div class="progress-bar progress-bar-success progress-bar-striped active" data-role="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" style="width:0%">0%</div></div><small class="text-muted" data-role="progress-meta">0 / 0</small>',
+                '<span data-role="summary">Menyiapkan ringkasan...</span>',
+                '<div class="expense-import-history-actions"><button type="button" class="btn btn-xs btn-success expense-import-open-preview" data-batch="' + batchId + '" style="display:none"><i class="fa fa-eye"></i> Periksa preview</button><button type="button" class="btn btn-xs btn-warning expense-import-cancel" data-batch="' + batchId + '" style="display:none"><i class="fa fa-ban"></i> Batalkan</button><span class="text-muted expense-import-done" style="display:none">Selesai</span></div>'
+            ]);
+            var node = $(rowApi.node());
+            node.attr({ id: 'expense_import_batch_' + batchId, 'data-expense-import-batch': id, 'data-process-state': 'queued' });
+            node.children('td').each(function (index) {
+                $(this).attr('data-label', ['Batch', 'File', 'Dibuat', 'Oleh', 'Status', 'Progress', 'Ringkasan', 'Aksi'][index]);
+            });
+            node.children('td').eq(2).attr('data-order', Math.floor(now.getTime() / 1000));
+            rowApi.invalidate('dom').draw(false);
+            return $(rowApi.node());
+        }
+
+        var row = $('<tr>', { id: 'expense_import_batch_' + id, 'data-expense-import-batch': id, 'data-process-state': 'queued' });
+        row.append('<td data-label="Batch">Preview</td>');
         row.append('<td data-label="File" data-role="file"></td>');
-        row.append('<td data-label="Dibuat" data-role="created"></td>');
+        row.append('<td data-label="Dibuat" data-role="created" data-order="' + Math.floor(now.getTime() / 1000) + '"></td>');
+        row.append('<td data-label="Oleh">-</td>');
         row.append('<td data-label="Status"><span class="label label-warning" data-role="status">Upload diterima</span><div class="small text-muted" data-role="message">Menunggu proses preview.</div></td>');
-        row.append('<td data-label="Progress"><div class="progress expense-import-row-progress"><div class="progress-bar progress-bar-success progress-bar-striped active" data-role="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" style="width:0%">0%</div></div><small class="text-muted" data-role="progress-meta">0 / 0</small></td>');
+        row.append('<td data-label="Progress"><div class="progress expense-import-progress"><div class="progress-bar progress-bar-success progress-bar-striped active" data-role="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" style="width:0%">0%</div></div><small class="text-muted" data-role="progress-meta">0 / 0</small></td>');
         row.append('<td data-label="Ringkasan"><span data-role="summary">Menyiapkan ringkasan...</span></td>');
-        row.append('<td data-label="Aksi"><button type="button" class="btn btn-xs btn-success expense-import-open-preview" data-batch="' + escapeHtml(id) + '" style="display:none"><i class="fa fa-eye"></i> Periksa preview</button><button type="button" class="btn btn-xs btn-warning expense-import-cancel" data-batch="' + escapeHtml(id) + '" style="display:none"><i class="fa fa-ban"></i> Batalkan</button><span class="text-muted expense-import-done" style="display:none">Selesai</span></td>');
+        row.append('<td data-label="Aksi"><div class="expense-import-history-actions"><button type="button" class="btn btn-xs btn-success expense-import-open-preview" data-batch="' + escapeHtml(id) + '" style="display:none"><i class="fa fa-eye"></i> Periksa preview</button><button type="button" class="btn btn-xs btn-warning expense-import-cancel" data-batch="' + escapeHtml(id) + '" style="display:none"><i class="fa fa-ban"></i> Batalkan</button><span class="text-muted expense-import-done" style="display:none">Selesai</span></div></td>');
         row.find('[data-role="file"]').text(fileName || 'Workbook Expense');
-        row.find('[data-role="created"]').text(new Date().toLocaleString('id-ID'));
+        row.find('[data-role="created"]').text(now.toLocaleString('id-ID'));
         table.find('tbody').prepend(row);
         return row;
     }
@@ -92,6 +141,10 @@
         row.find('.expense-import-cancel').toggle(status.state === 'queued');
         row.find('.expense-import-done').toggle(status.domain_status === 'imported' || status.domain_status === 'cancelled');
         row.attr('data-process-state', status.state || '');
+        if (dataTable) {
+            dataTable.row(row[0]).invalidate('dom').draw(false);
+            row = rowFor(id);
+        }
         return row;
     }
 
@@ -168,8 +221,10 @@
             var response = {};
             try { response = JSON.parse(request.responseText || '{}'); } catch (ignore) {}
             if (request.status >= 200 && request.status < 300 && response.batch_id) {
-                var row = createRow(response.batch_id, file.name);
-                row.attr('id', 'expense_import_batch_' + response.batch_id);
+                createRow(response.batch_id, file.name);
+                if (dataTable) {
+                    dataTable.search('').order([[2, 'desc']]).page('first').draw(false);
+                }
                 showUploadProgress(100, 'Upload diterima.', 'Preview berjalan di latar belakang. Progres selanjutnya terlihat pada baris workbook di bawah.');
                 window.history.replaceState(null, '', window.location.pathname + window.location.search + '#expense_import_batch_' + response.batch_id);
                 scrollToHistory();
@@ -217,7 +272,8 @@
         });
     });
 
-    table.find('[data-expense-import-batch]').each(function () {
+    var initialBatchRows = dataTable ? dataTable.rows().nodes().to$().filter('[data-expense-import-batch]') : table.find('[data-expense-import-batch]');
+    initialBatchRows.each(function () {
         var row = $(this);
         if (row.attr('data-process-state') === 'queued' || row.attr('data-process-state') === 'processing') {
             pollBatch(row.data('expense-import-batch'), 0);
