@@ -3,312 +3,17 @@
 
 @section('css')
     <style>
-        /* Keep preview controls visible while the modal body scrolls vertically. */
-        #expense_import_preview_modal .modal-dialog {
-            width: calc(100% - 24px);
-            max-width: 1220px;
-            height: calc(100vh - 24px);
-            height: calc(100dvh - 24px);
-            margin: 12px auto;
-            display: flex;
-            align-items: stretch;
-        }
-
-        #expense_import_preview_modal .modal-content {
-            width: 100%;
-            max-height: 100%;
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-        }
-
-        #expense_import_preview_modal .modal-header,
-        #expense_import_preview_modal .modal-footer {
-            flex: 0 0 auto;
-        }
-
-        #expense_import_preview_modal .modal-body {
-            flex: 1 1 auto;
-            min-height: 0;
-            overflow-x: hidden;
-            overflow-y: auto;
-            -webkit-overflow-scrolling: touch;
-        }
-
-        #expense_import_preview_modal .table-responsive {
-            max-width: 100%;
-            overflow-x: hidden;
-        }
-
-        #expense_import_preview_modal #expense_import_preview_table {
-            width: 100% !important;
-            min-width: 0 !important;
-            table-layout: fixed;
-        }
-
-        #expense_import_preview_modal #expense_import_preview_table th,
-        #expense_import_preview_modal #expense_import_preview_table td {
-            vertical-align: top;
-            white-space: normal;
-            overflow-wrap: anywhere;
-        }
-
-        #expense_import_preview_modal #expense_import_preview_table th:first-child,
-        #expense_import_preview_modal #expense_import_preview_table td:first-child {
-            width: 7%;
-            white-space: nowrap;
-        }
-
-        #expense_import_preview_modal #expense_import_preview_table th:nth-child(2),
-        #expense_import_preview_modal #expense_import_preview_table td:nth-child(2) { width: 10%; }
-        #expense_import_preview_modal #expense_import_preview_table th:nth-child(3),
-        #expense_import_preview_modal #expense_import_preview_table td:nth-child(3) { width: 10%; }
-        #expense_import_preview_modal #expense_import_preview_table th:nth-child(4),
-        #expense_import_preview_modal #expense_import_preview_table td:nth-child(4) { width: 10%; }
-        #expense_import_preview_modal #expense_import_preview_table th:nth-child(5),
-        #expense_import_preview_modal #expense_import_preview_table td:nth-child(5) { width: 18%; }
-        #expense_import_preview_modal #expense_import_preview_table th:nth-child(6),
-        #expense_import_preview_modal #expense_import_preview_table td:nth-child(6) { width: 10%; }
-        #expense_import_preview_modal #expense_import_preview_table th:nth-child(7),
-        #expense_import_preview_modal #expense_import_preview_table td:nth-child(7) { width: 10%; }
-        #expense_import_preview_modal #expense_import_preview_table th:nth-child(8),
-        #expense_import_preview_modal #expense_import_preview_table td:nth-child(8) { width: 25%; }
-
-        #expense_import_preview_modal #expense_import_preview_table_wrapper,
-        #expense_import_preview_modal #expense_import_preview_table_wrapper .row {
-            max-width: 100%;
-        }
-
-        #expense_import_preview_modal #expense_import_preview_table_wrapper .row {
-            display: flex;
-            flex-wrap: wrap;
-            margin-left: -6px;
-            margin-right: -6px;
-        }
-
-        #expense_import_preview_modal #expense_import_preview_table_wrapper .row > [class*="col-"] {
-            float: none;
-            flex: 1 1 230px;
-            width: auto;
-            max-width: 100%;
-            padding-left: 6px;
-            padding-right: 6px;
-        }
-
-        #expense_import_preview_modal #expense_import_preview_table_wrapper .dt-buttons {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 4px;
-            margin-bottom: 8px;
-        }
-
-        #expense_import_preview_modal #expense_import_preview_table_wrapper .dataTables_filter label {
-            white-space: normal;
-        }
-
-        #expense_import_preview_modal #expense_import_preview_table_wrapper .dataTables_filter input {
-            max-width: 100%;
-        }
-
-        #expense_import_preview_modal .expense-import-responsive-hint {
-            display: none;
-        }
-
-        #expense_import_preview_modal .expense-import-existing-action,
-        #expense_import_preview_modal .expense-import-map-tax,
-        #expense_import_preview_modal .expense-import-map-journal {
-            width: 100%;
-            min-width: 0;
-            max-width: 100%;
-            margin-bottom: 6px;
-        }
-
-        #expense_import_preview_modal .expense-import-journal-candidates > summary {
-            cursor: pointer;
-            font-weight: 600;
-            margin-top: 6px;
-        }
-
-        #expense_import_preview_modal .expense-import-journal-candidates .table {
-            margin: 6px 0 0;
-            width: 100%;
-            min-width: 0;
-            table-layout: fixed;
-        }
-
-        #expense_import_preview_modal .expense-import-journal-candidates .table th,
-        #expense_import_preview_modal .expense-import-journal-candidates .table td {
-            white-space: normal;
-            overflow-wrap: anywhere;
-        }
-
-        #expense_import_preview_modal .expense-import-journal-candidates .table th:first-child,
-        #expense_import_preview_modal .expense-import-journal-candidates .table td:first-child {
-            width: 40%;
-            white-space: normal !important;
-        }
-
-        #expense_import_preview_modal .expense-import-journal-candidates .table th:nth-child(2),
-        #expense_import_preview_modal .expense-import-journal-candidates .table td:nth-child(2),
-        #expense_import_preview_modal .expense-import-journal-candidates .table th:nth-child(3),
-        #expense_import_preview_modal .expense-import-journal-candidates .table td:nth-child(3),
-        #expense_import_preview_modal .expense-import-journal-candidates .table th:nth-child(4),
-        #expense_import_preview_modal .expense-import-journal-candidates .table td:nth-child(4) {
-            width: 20%;
-        }
-
-        #expense_import_preview_modal .modal-footer {
-            display: flex;
-            justify-content: flex-end;
-            flex-wrap: wrap;
-            gap: 8px;
-        }
-
-        #expense_import_preview_modal .modal-footer .btn {
-            margin: 0;
-        }
-
-        @media (max-width: 1199px) {
-            #expense_import_preview_modal .expense-import-responsive-hint {
-                display: block;
-            }
-
-            #expense_import_preview_modal #expense_import_preview_table {
-                display: block;
-                table-layout: auto;
-            }
-
-            #expense_import_preview_modal #expense_import_preview_table thead {
-                position: absolute;
-                width: 1px;
-                height: 1px;
-                padding: 0;
-                margin: -1px;
-                overflow: hidden;
-                clip: rect(0, 0, 0, 0);
-                white-space: nowrap;
-                border: 0;
-            }
-
-            #expense_import_preview_modal #expense_import_preview_table tbody {
-                display: block;
-                width: 100%;
-            }
-
-            #expense_import_preview_modal #expense_import_preview_table tbody tr {
-                display: grid;
-                grid-template-columns: repeat(2, minmax(0, 1fr));
-                gap: 8px 14px;
-                width: 100%;
-                margin: 0 0 12px;
-                padding: 10px;
-                border: 1px solid #d2d6de;
-                border-radius: 4px;
-                background: #fff;
-            }
-
-            #expense_import_preview_modal #expense_import_preview_table tbody tr td[colspan] {
-                grid-column: 1 / -1;
-            }
-
-            #expense_import_preview_modal #expense_import_preview_table tbody td {
-                display: block;
-                width: auto !important;
-                min-width: 0;
-                padding: 4px 2px !important;
-                border: 0 !important;
-            }
-
-            #expense_import_preview_modal #expense_import_preview_table tbody td::before {
-                display: block;
-                margin-bottom: 3px;
-                color: #666;
-                font-size: 11px;
-                font-weight: 700;
-                content: attr(data-label);
-            }
-
-            #expense_import_preview_modal #expense_import_preview_table tbody td:nth-child(5),
-            #expense_import_preview_modal #expense_import_preview_table tbody td:nth-child(8) {
-                grid-column: 1 / -1;
-            }
-
-            #expense_import_preview_modal #expense_import_preview_table tbody td:first-child {
-                white-space: normal;
-            }
-        }
-
+        html, body { overflow-x: hidden; }
+        .expense-import-row-progress { min-width: 110px; height: 18px; margin-bottom: 4px; }
+        #expense_import_batches_table { width: 100%; table-layout: fixed; }
+        #expense_import_batches_table td { vertical-align: middle; overflow-wrap: anywhere; white-space: normal; }
+        #expense_import_batches_table_wrapper, #expense_import_batches_table_wrapper .row { max-width: 100%; }
         @media (max-width: 767px) {
-            #expense_import_preview_modal .modal-dialog {
-                width: 100%;
-                height: 100vh;
-                height: 100dvh;
-                margin: 0;
-            }
-
-            #expense_import_preview_modal .modal-content {
-                border-radius: 0;
-            }
-
-            #expense_import_preview_modal .modal-body {
-                padding: 12px;
-            }
-
-            #expense_import_preview_modal .modal-body > .form-inline {
-                display: flex;
-                align-items: center;
-                flex-wrap: wrap;
-                gap: 8px;
-            }
-
-            #expense_import_preview_modal .modal-body > .form-inline .text-muted {
-                flex: 1 1 100%;
-            }
-
-            #expense_import_preview_modal #expense_import_preview_table_wrapper .dataTables_filter {
-                float: none;
-                text-align: left;
-            }
-
-            #expense_import_preview_modal #expense_import_preview_table_wrapper .dataTables_filter label {
-                display: flex;
-                align-items: center;
-                flex-wrap: wrap;
-                gap: 6px;
-            }
-
-            #expense_import_preview_modal #expense_import_preview_table_wrapper .dataTables_filter input {
-                flex: 1 1 140px;
-                width: auto;
-            }
-
-            #expense_import_preview_modal #expense_import_preview_table_wrapper .dataTables_paginate {
-                float: none;
-                text-align: left;
-                white-space: normal;
-            }
-
-            #expense_import_preview_modal #expense_import_summary {
-                display: grid;
-                grid-template-columns: repeat(2, minmax(0, 1fr));
-                margin-left: -6px;
-                margin-right: -6px;
-            }
-
-            #expense_import_preview_modal #expense_import_summary > [class*="col-"] {
-                float: none;
-                width: auto;
-                padding-left: 6px;
-                padding-right: 6px;
-            }
-
-            #expense_import_preview_modal .small-box {
-                margin-bottom: 12px;
-            }
-
-            #expense_import_preview_modal .modal-footer .btn {
-                flex: 1 1 160px;
-            }
+            #expense_import_batches_table, #expense_import_batches_table tbody, #expense_import_batches_table tr, #expense_import_batches_table td { display: block; width: 100%; }
+            #expense_import_batches_table thead { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+            #expense_import_batches_table tbody tr { margin-bottom: 12px; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
+            #expense_import_batches_table tbody td { padding: 6px 2px; border: 0; }
+            #expense_import_batches_table tbody td::before { display: block; margin-bottom: 3px; color: #666; font-size: 11px; font-weight: 700; content: attr(data-label); }
         }
     </style>
 @endsection
@@ -383,79 +88,7 @@
             </div>
         </div>
 
-        <div class="modal fade" id="expense_import_progress_modal" tabindex="-1" role="dialog" aria-labelledby="expenseImportProgressTitle" data-status-template="{{ route('expenses.import.status', ['batch' => '__BATCH__']) }}" data-preview-template="{{ route('expenses.import.preview', ['batch' => '__BATCH__']) }}" data-confirm-template="{{ route('expenses.import.confirm', ['batch' => '__BATCH__']) }}" data-cancel-template="{{ route('expenses.import.cancel', ['batch' => '__BATCH__']) }}">
-            <div class="modal-dialog" role="document">
-                <div class="modal-content">
-                    <div class="modal-header">
-                        <h4 class="modal-title" id="expenseImportProgressTitle"><i class="fa fa-refresh"></i> Memproses import Expense</h4>
-                    </div>
-                    <div class="modal-body">
-                        <div id="expense_import_progress_error" class="alert alert-danger" style="display:none"></div>
-                        <p id="expense_import_progress_message">Menyiapkan file...</p>
-                        <div class="progress">
-                            <div id="expense_import_progress_bar" class="progress-bar progress-bar-primary progress-bar-striped active" role="progressbar" style="width:0%">0%</div>
-                        </div>
-                        <p class="text-muted"><span id="expense_import_progress_stage">uploading</span> - <span id="expense_import_progress_count">0 / 0</span> - durasi <span id="expense_import_progress_elapsed">-</span> - pembaruan terakhir <span id="expense_import_progress_heartbeat">-</span></p>
-                        <button type="button" id="expense_import_retry_status" class="btn btn-default" style="display:none"><i class="fa fa-refresh"></i> Coba cek lagi</button>
-                    </div>
-                    <div class="modal-footer">
-                        <button type="button" id="expense_import_cancel" class="btn btn-warning"><i class="fa fa-ban"></i> Batalkan</button>
-                        <button type="button" id="expense_import_retry_preview" class="btn btn-primary" style="display:none"><i class="fa fa-table"></i> Perbarui preview &amp; tinjau</button>
-                        <button type="button" id="expense_import_close_progress" class="btn btn-default" data-dismiss="modal" style="display:none">Tutup</button>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <div class="modal fade" id="expense_import_preview_modal" tabindex="-1" role="dialog" aria-labelledby="expenseImportPreviewTitle" data-preview-template="{{ route('expenses.import.preview', ['batch' => '__BATCH__']) }}" data-refresh-template="{{ route('expenses.import.refresh-preview', ['batch' => '__BATCH__']) }}" data-confirm-template="{{ route('expenses.import.confirm', ['batch' => '__BATCH__']) }}" data-date-template="{{ route('expenses.import.rows.date', ['batch' => '__BATCH__', 'row' => '__ROW__']) }}" data-tax-template="{{ route('expenses.import.rows.tax', ['batch' => '__BATCH__', 'row' => '__ROW__']) }}" data-journal-template="{{ route('expenses.import.rows.journal', ['batch' => '__BATCH__', 'row' => '__ROW__']) }}" data-existing-expense-template="{{ route('expenses.import.rows.existing-expense', ['batch' => '__BATCH__', 'row' => '__ROW__']) }}">
-            <div class="modal-dialog modal-xl" role="document">
-                <div class="modal-content">
-                    <div class="modal-header">
-                        <button type="button" class="close" data-dismiss="modal" aria-label="Tutup"><span aria-hidden="true">&times;</span></button>
-                        <h4 class="modal-title" id="expenseImportPreviewTitle"><i class="fa fa-table"></i> Preview import Expense</h4>
-                    </div>
-                    <div class="modal-body">
-                        <div class="alert alert-info">Total Amount dianggap sudah termasuk pajak. Jika REFERENCE NO cocok dengan satu posting Journal Expense yang siap, nominal pajak Journal menjadi acuan; atribut operasional lainnya mengikuti Excel. Jika Journal tidak mencatat pajak, pajak menjadi 0 dan total Excel tetap dipertahankan. Tanpa Journal yang cocok, berlaku pajak dari Excel. REFERENCE NO yang sudah ada akan memperbarui Expense lama; bila tanggal berbeda lebih dari 30 hari atau total berbeda lebih dari 10% dan minimal Rp100.000, pilih Lewati, Gabungkan, atau Buat transaksi baru.</div>
-                        <div class="form-inline tw-mb-3"><label for="expense_import_preview_status" class="tw-mr-2">Filter status</label><select id="expense_import_preview_status" class="form-control"><option value="">Semua</option><option value="valid">Valid</option><option value="error">Error</option><option value="skipped">Dilewati</option></select> <button type="button" id="expense_import_refresh_preview" class="btn btn-default"><i class="fa fa-refresh"></i> Perbarui preview &amp; kandidat Journal</button><span class="text-muted">Membaca ulang workbook tersimpan; pilihan tanggal, pajak, dan kandidat tetap dipakai.</span></div>
-                        <div class="row" id="expense_import_summary">
-                            <div class="col-sm-3"><div class="small-box bg-blue"><div class="inner"><h3 data-expense-summary="total">0</h3><p>Total baris</p></div></div></div>
-                            <div class="col-sm-3"><div class="small-box bg-green"><div class="inner"><h3 data-expense-summary="valid">0</h3><p>Valid / siap import</p></div></div></div>
-                            <div class="col-sm-3"><div class="small-box bg-red"><div class="inner"><h3 data-expense-summary="errors">0</h3><p>Perlu diperbaiki</p></div></div></div>
-                            <div class="col-sm-3"><div class="small-box bg-yellow"><div class="inner"><h3 data-expense-summary="skipped">0</h3><p>Dilewati</p></div></div></div>
-                        </div>
-                        <p class="text-muted" id="expense_import_journal_summary">Journal cocok: 0 grup · perlu pilihan: 0 grup</p>
-                        <p class="text-muted" id="expense_import_existing_summary">Expense lama diperbarui: 0 grup · grup split cocok: 0 · perlu pilihan: 0 grup</p>
-                        <p class="text-muted small expense-import-responsive-hint">Pada layar sempit, informasi baris tersusun sebagai kartu; pilihan aksi dan rincian tetap tampil tanpa scroll mendatar.</p>
-                        <div class="table-responsive">
-                            <table class="table table-bordered table-striped" id="expense_import_preview_table" style="width:100%">
-                                <thead><tr><th>Baris Excel</th><th>Referensi</th><th>Tanggal</th><th>Tanggal bayar</th><th>Aksi</th><th>Pajak</th><th>Status</th><th>Detail</th></tr></thead>
-                            </table>
-                        </div>
-                    </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-default" data-dismiss="modal">Tutup</button>
-                        <button type="button" id="expense_import_confirm" class="btn btn-success" disabled><i class="fa fa-check"></i> Import baris valid</button>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <div class="modal fade" id="expense_import_date_modal" tabindex="-1" role="dialog" aria-labelledby="expenseImportDateTitle">
-            <div class="modal-dialog" role="document">
-                <div class="modal-content">
-                    <form id="expense_import_date_form">
-                        <div class="modal-header"><button type="button" class="close" data-dismiss="modal"><span aria-hidden="true">&times;</span></button><h4 class="modal-title" id="expenseImportDateTitle">Perbaiki tanggal</h4></div>
-                        <div class="modal-body">
-                            <div id="expense_import_date_error" class="alert alert-danger" style="display:none"></div>
-                            <input type="hidden" id="expense_import_date_row">
-                            <input type="hidden" id="expense_import_date_field">
-                            <div class="form-group"><label for="expense_import_date_value">Tanggal</label><input type="date" class="form-control" id="expense_import_date_value" required></div>
-                        </div>
-                        <div class="modal-footer"><button type="button" class="btn btn-default" data-dismiss="modal">Batal</button><button type="submit" class="btn btn-primary"><i class="fa fa-save"></i> Simpan dan validasi ulang</button></div>
-                    </form>
-                </div>
-            </div>
-        </div>
+        <div id="expense_import_index_config" data-status-template="{{ route('expenses.import.status', ['batch' => '__BATCH__']) }}" data-cancel-template="{{ route('expenses.import.cancel', ['batch' => '__BATCH__']) }}" data-preview-page-template="{{ route('expenses.import.preview-page', ['batch' => '__BATCH__']) }}"></div>
 
         <div class="row">
             <div class="col-sm-12">
@@ -597,19 +230,27 @@
         <div class="row">
             <div class="col-md-12">
                 @component('components.widget', ['title' => 'Riwayat preview import Expense'])
+                    <div id="expense_import_upload_status" class="alert alert-info" style="display:none" aria-live="polite">
+                        <strong id="expense_import_upload_message">Menyiapkan upload...</strong>
+                        <div class="progress tw-mt-2 tw-mb-1">
+                            <div id="expense_import_upload_progress" class="progress-bar progress-bar-success progress-bar-striped active" role="progressbar" style="width:0%">0%</div>
+                        </div>
+                        <small id="expense_import_upload_detail" class="text-muted">File diproses di latar belakang setelah upload selesai.</small>
+                    </div>
                     <div class="table-responsive">
                         <table class="table table-striped" id="expense_import_batches_table">
                             <thead><tr><th>File</th><th>Dibuat</th><th>Status</th><th>Progress</th><th>Ringkasan</th><th>Aksi</th></tr></thead>
                             <tbody>
                                 @foreach ($expense_import_batches as $batch)
                                     @php($batchSummary = json_decode((string) $batch->summary, true) ?: [])
-                                    <tr>
-                                        <td>{{ $batch->file_name }}</td>
-                                        <td>{{ @format_datetime($batch->created_at) }}</td>
-                                        <td><span class="label label-{{ $batch->status === 'imported' ? 'success' : ($batch->process_state === 'failed' ? 'danger' : 'warning') }}">{{ $batch->process_state ?: $batch->status }}</span></td>
-                                        <td>{{ (int) $batch->progress_percent }}%</td>
-                                        <td>{{ (int) ($batchSummary['valid'] ?? 0) }} valid - {{ (int) ($batchSummary['errors'] ?? 0) }} error</td>
-                                        <td><button type="button" class="btn btn-xs btn-primary expense-import-resume" data-batch="{{ $batch->id }}"><i class="fa fa-eye"></i> Buka</button></td>
+                                    @php($batchReady = $batch->status === 'preview' && in_array($batch->process_state ?: 'completed', ['completed', 'failed'], true))
+                                    <tr id="expense_import_batch_{{ $batch->id }}" data-expense-import-batch="{{ $batch->id }}" data-process-state="{{ $batch->process_state ?: 'completed' }}">
+                                        <td data-label="File">{{ $batch->file_name }}</td>
+                                        <td data-label="Dibuat">{{ @format_datetime($batch->created_at) }}</td>
+                                        <td data-label="Status"><span class="label label-{{ $batch->status === 'imported' ? 'success' : ($batch->process_state === 'failed' ? 'danger' : ($batch->process_state === 'completed' ? 'info' : 'warning')) }}" data-role="status">{{ $batch->process_state ?: $batch->status }}</span><div class="small text-muted" data-role="message">{{ $batch->progress_message }}</div></td>
+                                        <td data-label="Progress"><div class="progress expense-import-row-progress"><div class="progress-bar progress-bar-success{{ in_array($batch->process_state, ['queued', 'processing'], true) ? ' progress-bar-striped active' : '' }}" data-role="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ (int) $batch->progress_percent }}" style="width:{{ (int) $batch->progress_percent }}%">{{ (int) $batch->progress_percent }}%</div></div><small class="text-muted" data-role="progress-meta">{{ (int) $batch->progress_current }} / {{ (int) $batch->progress_total }}@if($batch->heartbeat_at) · {{ @format_datetime($batch->heartbeat_at) }}@endif</small></td>
+                                        <td data-label="Ringkasan"><span data-role="summary">{{ (int) ($batchSummary['valid'] ?? 0) }} valid - {{ (int) ($batchSummary['errors'] ?? 0) }} error</span></td>
+                                        <td data-label="Aksi"><button type="button" class="btn btn-xs btn-success expense-import-open-preview" data-batch="{{ $batch->id }}" style="{{ $batchReady ? '' : 'display:none' }}"><i class="fa fa-eye"></i> Periksa preview</button><button type="button" class="btn btn-xs btn-warning expense-import-cancel" data-batch="{{ $batch->id }}" style="{{ $batch->process_state === 'queued' ? '' : 'display:none' }}"><i class="fa fa-ban"></i> Batalkan</button><span class="text-muted expense-import-done" style="{{ $batch->status === 'imported' || $batch->status === 'cancelled' ? '' : 'display:none' }}">Selesai</span></td>
                                     </tr>
                                 @endforeach
                             </tbody>

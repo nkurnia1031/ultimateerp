@@ -959,6 +959,8 @@ class ExpenseController extends Controller
                 'batch_id' => $batch->id,
                 'status_url' => route('expenses.import.status', $batch->id),
                 'preview_url' => route('expenses.import.preview', $batch->id),
+                'preview_page_url' => route('expenses.import.preview-page', $batch->id),
+                'history_url' => route('expenses.import', ['focus_batch' => $batch->id]).'#expense_import_batch_'.$batch->id,
                 'message' => 'Upload diterima dan preview sedang diproses.',
             ], 202);
         }
@@ -973,6 +975,44 @@ class ExpenseController extends Controller
     {
         $businessId = $this->authorizeExpenseImport($request);
         return response()->json($this->expenseImportProcessService->status($batchId, $businessId));
+    }
+
+    public function expenseImportPreviewPage(Request $request, string $batchId)
+    {
+        $businessId = $this->authorizeExpenseImport($request);
+        $batch = DB::table('expense_import_batches')
+            ->where('id', $batchId)
+            ->where('business_id', $businessId)
+            ->first();
+
+        abort_if(! $batch, 404, 'Batch import Expense tidak ditemukan.');
+
+        $state = $batch->process_state ?: 'completed';
+        abort_unless(
+            $batch->status === 'preview' && in_array($state, ['completed', 'failed'], true),
+            409,
+            'Preview belum siap. Periksa progres batch pada tabel riwayat import.'
+        );
+
+        $expense_import_tax_options = TaxRate::where('business_id', $businessId)
+            ->orderBy('is_tax_group')
+            ->orderBy('name')
+            ->get(['id', 'name', 'amount', 'is_tax_group'])
+            ->map(function ($tax) {
+                $amount = is_numeric($tax->amount)
+                    ? rtrim(rtrim(number_format((float) $tax->amount, 4, '.', ''), '0'), '.')
+                    : null;
+                $label = ($tax->is_tax_group ? 'Grup: ' : '').$tax->name;
+                if (! $tax->is_tax_group && $amount !== null) {
+                    $label .= ' ('.$amount.'%)';
+                }
+
+                return ['id' => (int) $tax->id, 'label' => $label];
+            })
+            ->values()
+            ->all();
+
+        return view('expense.import_preview', compact('batch', 'expense_import_tax_options'));
     }
 
     public function expenseImportPreviewSummary(Request $request, string $batchId)
@@ -1143,6 +1183,7 @@ class ExpenseController extends Controller
                 'batch_id' => $batch->id,
                 'operation' => 'preview',
                 'status_url' => route('expenses.import.status', $batch->id),
+                'history_url' => route('expenses.import', ['focus_batch' => $batch->id]).'#expense_import_batch_'.$batch->id,
                 'message' => 'Ditemukan satu posting Journal yang siap. Preview diperbarui otomatis; periksa hasilnya lalu konfirmasi import kembali.',
             ], 202);
         }
@@ -1153,6 +1194,7 @@ class ExpenseController extends Controller
             'success' => true,
             'batch_id' => $batch->id,
             'status_url' => route('expenses.import.status', $batch->id),
+            'history_url' => route('expenses.import', ['focus_batch' => $batch->id]).'#expense_import_batch_'.$batch->id,
             'message' => 'Import diterima dan sedang diproses.',
         ], 202);
     }

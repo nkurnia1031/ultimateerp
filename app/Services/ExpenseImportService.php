@@ -283,6 +283,7 @@ class ExpenseImportService
                     'tax_status' => $normalized['tax_status'] ?? 'none',
                     'journal_match' => $normalized['journal_match'] ?? ['status' => 'none', 'candidates' => [], 'selectable_candidates' => []],
                     'existing_expense_match' => $normalized['existing_expense_match'] ?? ['status' => 'none', 'candidates' => []],
+                    'warnings' => $normalized['warnings'] ?? [],
                     'tax_mapping_required' => collect($errors)->contains(fn ($error) => str_contains((string) $error, 'satu TaxRate atau grup pajak')),
                     'payload' => $normalized,
                 ];
@@ -687,6 +688,11 @@ class ExpenseImportService
         }
         $excelTaxRate = $this->taxPercentage($tax, (int) $context['businessId']);
 
+        $description = $this->stringValue($row['DESCRIPTION'] ?? null);
+        $expenseNote = $this->stringValue($row['EXPENSE NOTE'] ?? null);
+        $attachDocument = $this->stringValue($row['ATTACH DOCUMENT'] ?? null);
+        $attachmentWarning = $this->attachmentWarning($attachDocument);
+
         $normalized = [
             'location_id' => $location?->id,
             'location_name' => $locationName,
@@ -694,13 +700,14 @@ class ExpenseImportService
             'category_name' => $categoryName,
             'sub_category_id' => $subCategory?->id,
             'sub_category_name' => $subCategoryName,
-            'description' => $this->stringValue($row['DESCRIPTION'] ?? null),
+            'description' => $expenseNote !== '' ? $expenseNote : $description,
             'reference_no' => $this->stringValue($row['REFERENCE NO'] ?? null),
             'tags' => $this->stringValue($row['TAGS'] ?? null),
             'expense_date' => $expenseDate['value'],
             'expense_for' => $this->stringValue($row['EXPENSE FOR'] ?? null),
             'expense_for_contact_id' => $this->stringValue($row['EXPENSE FOR CONTACT ID'] ?? null),
-            'attach_document' => $this->stringValue($row['ATTACH DOCUMENT'] ?? null),
+            'attach_document' => $attachDocument,
+            'warnings' => $attachmentWarning ? [$attachmentWarning] : [],
             'applicable_tax' => $tax?->name ?? ($hasNoTax ? '' : $originalTaxName),
             'original_applicable_tax' => $hasNoTax ? '' : $originalTaxName,
             'tax_id' => $tax?->id,
@@ -709,7 +716,6 @@ class ExpenseImportService
             'excel_tax_id' => $tax?->id,
             'excel_tax_name' => $tax?->name,
             'excel_tax_rate' => $excelTaxRate,
-            'expense_note' => $this->stringValue($row['EXPENSE NOTE'] ?? null),
             'total_amount' => $total,
             'paid_amount' => $paid,
             'paid_on_date' => $paidOnDate['value'],
@@ -1013,10 +1019,6 @@ class ExpenseImportService
             $incomingDates = array_values($groupDates[$normalizedReference] ?? []);
             sort($incomingDates);
             $incomingDate = $incomingDates[0] ?? null;
-            $workbookNotes = $this->uniqueExpenseNotes(array_map(
-                fn ($index) => $rows[$index]['normalized_payload']['expense_note'] ?? '',
-                $indexes
-            ));
             $candidateDetails = $candidates->map(function ($candidate) use ($incomingDate, $incomingTotal, $linkedTransactionId) {
                 $existingDate = substr((string) ($candidate->transaction_date ?? ''), 0, 10);
                 $dateDifference = null;
@@ -1170,7 +1172,6 @@ class ExpenseImportService
                 'incoming_base' => $incomingBase,
                 'incoming_tax' => $incomingTax,
                 'incoming_lines' => $incomingLines,
-                'workbook_notes' => $workbookNotes,
                 'source_notes' => $sourceNotes,
                 'action' => $actionValid ? $action : null,
                 'selected_transaction_id' => $selectedTransactionId,
@@ -1230,7 +1231,7 @@ class ExpenseImportService
                 'date' => substr((string) ($payload['expense_date'] ?? ''), 0, 10),
                 'category' => (string) ($payload['category_name'] ?? ''),
                 'description' => (string) ($payload['description'] ?? ''),
-                'note' => trim((string) ($payload['expense_note'] ?? '')),
+                'attachment' => trim((string) ($payload['attach_document'] ?? '')),
                 'amount' => $amount,
                 'base' => $base,
                 'tax' => round($amount - $base, 4),
@@ -1670,11 +1671,6 @@ class ExpenseImportService
     {
         $first = $rows->first();
         $payload = json_decode((string) $first->normalized_payload, true) ?: [];
-        $workbookNoteValues = $this->uniqueExpenseNotes($rows->map(function ($row) {
-            $item = json_decode((string) $row->normalized_payload, true) ?: [];
-
-            return $item['expense_note'] ?? '';
-        })->all());
         $journalMatch = $payload['journal_match'] ?? [];
         $hasJournalMatch = ($journalMatch['status'] ?? null) === 'matched';
         if ($hasJournalMatch) {
@@ -1803,9 +1799,6 @@ class ExpenseImportService
             if (trim((string) ($payload['expense_for'] ?? '')) === '' && ! empty($preserved['expense_for'])) {
                 $payload['_merged_expense_for_user_id'] = (int) $preserved['expense_for'];
             }
-            if (trim((string) ($payload['attach_document'] ?? '')) === '' && ! empty($preserved['document'])) {
-                $payload['attach_document'] = (string) $preserved['document'];
-            }
             if (! empty($preserved['tags'])) {
                 $payload['tags'] = implode('; ', array_values(array_unique(array_merge(
                     array_filter(array_map('trim', explode(';', (string) ($payload['tags'] ?? '')))),
@@ -1874,7 +1867,10 @@ class ExpenseImportService
                 'category_id' => $lineCategoryId,
                 'sub_category_id' => $lineSubCategoryId,
                 'description' => $item['description'] ?? null,
-                'note' => $item['expense_note'] ?? null,
+                'note' => null,
+                'document' => trim((string) ($item['attach_document'] ?? '')) !== ''
+                    ? trim((string) $item['attach_document'])
+                    : null,
                 'amount' => $lineBaseAmount,
             ];
         }
@@ -1934,20 +1930,6 @@ class ExpenseImportService
             throw new RuntimeException('Kelompok REFERENCE NO yang dipilih untuk dilewati tidak boleh masuk proses import.');
         }
 
-        $noteValuesToPreserve = $workbookNoteValues;
-        if (str_starts_with($existingAction, 'group:')) {
-            $noteValuesToPreserve = array_merge(
-                $noteValuesToPreserve,
-                $preserved['additional_note_values'] ?? []
-            );
-        } elseif ($transaction && $existingAction !== 'new') {
-            $noteValuesToPreserve[] = (string) ($transaction->additional_notes ?? '');
-        }
-        $mergedNoteValues = $this->uniqueExpenseNotes($noteValuesToPreserve);
-        if ($mergedNoteValues !== []) {
-            $payload['expense_note'] = implode("\n", $mergedNoteValues);
-        }
-
         if (! $transaction && $existingAction === '' && $reference !== '') {
             $incomingDates = collect($rows)
                 ->map(function ($row) {
@@ -2001,6 +1983,13 @@ class ExpenseImportService
         }
 
         $isExistingTransaction = $transaction !== null;
+        $existingExpenseLines = $transaction && $existingAction !== 'new'
+            ? ExpenseLine::where('transaction_id', $transaction->id)->orderBy('id')->get([
+                'category_id', 'sub_category_id', 'description', 'note', 'document', 'amount',
+            ])
+            : collect();
+        $lineRows = $this->preserveExistingExpenseLineMetadata($lineRows, $existingExpenseLines);
+
         if ($transaction) {
             if ($lockedJournal !== null) {
                 $this->journalLinkService->removeProvenDuplicateExpenseMap($transaction);
@@ -2013,12 +2002,6 @@ class ExpenseImportService
                 'contact_id' => $contactId,
                 'ref_no' => $reference,
                 'transaction_date' => $payload['expense_date'] ?: now()->toDateTimeString(),
-                'additional_notes' => trim((string) ($payload['expense_note'] ?? '')) !== ''
-                    ? $payload['expense_note']
-                    : $transaction->additional_notes,
-                'document' => trim((string) ($payload['attach_document'] ?? '')) !== ''
-                    ? $payload['attach_document']
-                    : $transaction->document,
                 'tax_id' => $tax?->id,
                 'tax_amount' => $taxAmount,
                 'total_before_tax' => $totalBeforeTax,
@@ -2041,8 +2024,8 @@ class ExpenseImportService
                 'contact_id' => $contactId,
                 'ref_no' => $reference,
                 'transaction_date' => $payload['expense_date'] ?: now()->toDateTimeString(),
-                'additional_notes' => $payload['expense_note'] ?? null,
-                'document' => $payload['attach_document'] ?? null,
+                'additional_notes' => null,
+                'document' => null,
                 'tax_id' => $tax?->id,
                 'tax_amount' => $taxAmount,
                 'total_before_tax' => $totalBeforeTax,
@@ -2212,15 +2195,113 @@ class ExpenseImportService
         return $transactions;
     }
 
-    private function uniqueExpenseNotes(array $notes): array
+    private function attachmentWarning(string $document): ?string
     {
-        return collect($notes)
-            ->flatMap(fn ($note) => preg_split('/\R/u', trim((string) $note)) ?: [])
-            ->map(fn ($note) => trim((string) $note))
-            ->filter()
-            ->unique(fn ($note) => mb_strtolower($note))
-            ->values()
-            ->all();
+        $document = trim($document);
+        if ($document === '') {
+            return null;
+        }
+
+        if (filter_var($document, FILTER_VALIDATE_URL)
+            || str_contains($document, '/')
+            || str_contains($document, '\\')
+            || basename($document) !== $document) {
+            return "Lampiran '{$document}' bukan nama file lokal yang dapat diperiksa. Nilainya tetap disimpan pada baris Expense.";
+        }
+
+        $directory = realpath(public_path('uploads/documents'));
+        $path = $directory ? realpath($directory.DIRECTORY_SEPARATOR.$document) : false;
+        if (! $directory || ! $path || ! is_file($path)
+            || ! str_starts_with(strtolower($path), strtolower($directory.DIRECTORY_SEPARATOR))) {
+            return "Lampiran '{$document}' tidak ditemukan di uploads/documents. Nama tetap disimpan pada baris Expense; file fisik tidak ikut workbook.";
+        }
+
+        return null;
+    }
+
+    private function preserveExistingExpenseLineMetadata(array $lineRows, $existingLines): array
+    {
+        $existingLines = collect($existingLines)->values();
+        if ($existingLines->isEmpty()) {
+            return $lineRows;
+        }
+
+        $used = [];
+        foreach ($lineRows as &$line) {
+            $description = $this->normalize((string) ($line['description'] ?? ''));
+            $categoryId = $line['category_id'] ?? null;
+            $subCategoryId = $line['sub_category_id'] ?? null;
+            $amount = (float) ($line['amount'] ?? 0);
+
+            $candidates = $existingLines->filter(function ($existing, $index) use ($used, $categoryId, $subCategoryId, $amount) {
+                if (isset($used[$index])) {
+                    return false;
+                }
+                if ($categoryId && (int) ($existing->category_id ?? 0) !== (int) $categoryId) {
+                    return false;
+                }
+                if ($subCategoryId && (int) ($existing->sub_category_id ?? 0) !== (int) $subCategoryId) {
+                    return false;
+                }
+                if (abs((float) ($existing->amount ?? 0) - $amount) > 0.01) {
+                    return false;
+                }
+
+                return true;
+            });
+
+            if ($description !== '') {
+                $descriptionMatches = $candidates->filter(fn ($existing) =>
+                    $this->normalize((string) ($existing->description ?? '')) === $description
+                );
+                if ($descriptionMatches->isNotEmpty()) {
+                    $candidates = $descriptionMatches;
+                } else {
+                    $legacyDescriptionMatches = $candidates->filter(fn ($existing) =>
+                        $this->normalize((string) ($existing->note ?? '')) === $description
+                    );
+                    if ($legacyDescriptionMatches->isNotEmpty()) {
+                        $candidates = $legacyDescriptionMatches;
+                    }
+                }
+            }
+
+            $candidate = $candidates->first();
+            $candidateIndex = $candidate ? $existingLines->search(fn ($existing) => $existing === $candidate) : false;
+            if ($candidates->count() > 1) {
+                $metadata = $candidates->map(fn ($existing) => [
+                    trim((string) ($existing->note ?? '')),
+                    trim((string) ($existing->document ?? '')),
+                ])->unique(fn ($values) => json_encode($values))->count();
+
+                if ($metadata > 1) {
+                    throw new RuntimeException('Catatan atau lampiran pada baris Expense lama memiliki lebih dari satu pasangan yang mungkin. Tidak ada data sumber yang dihapus; periksa baris Expense sebelum mengimpor ulang.');
+                }
+            }
+
+            if ($candidate && $candidateIndex !== false) {
+                $used[$candidateIndex] = true;
+                if (trim((string) ($line['note'] ?? '')) === '' && trim((string) ($candidate->note ?? '')) !== '') {
+                    $line['note'] = $candidate->note;
+                }
+                if (trim((string) ($line['document'] ?? '')) === '' && trim((string) ($candidate->document ?? '')) !== '') {
+                    $line['document'] = $candidate->document;
+                }
+            }
+        }
+        unset($line);
+
+        $unmatchedMetadata = $existingLines->filter(function ($existing, $index) use ($used) {
+            $hasMetadata = trim((string) ($existing->note ?? '')) !== '' || trim((string) ($existing->document ?? '')) !== '';
+
+            return ! isset($used[$index])
+                && $hasMetadata;
+        });
+        if ($unmatchedMetadata->isNotEmpty()) {
+            throw new RuntimeException('Catatan atau lampiran pada baris Expense lama tidak dapat dipasangkan dengan aman ke baris workbook. Tidak ada data sumber yang dihapus; periksa baris Expense sebelum mengimpor ulang.');
+        }
+
+        return $lineRows;
     }
 
     private function lockExpenseReference(int $businessId, string $reference): void
