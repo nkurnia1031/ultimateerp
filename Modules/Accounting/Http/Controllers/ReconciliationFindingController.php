@@ -141,11 +141,10 @@ class ReconciliationFindingController extends Controller
         }
         $canEditJournal = $request->user()->can('accounting.edit_journal');
         $result['source_review']['can_edit_journal'] = $canEditJournal;
-        if (! $canEditJournal) {
-            foreach ($result['source_review']['journals'] ?? [] as &$journal) {
-                $journal['edit_url'] = null;
+        if (! $canEditJournal && isset($result['source_review']['journals']) && is_array($result['source_review']['journals'])) {
+            foreach ($result['source_review']['journals'] as $index => $journal) {
+                $result['source_review']['journals'][$index]['edit_url'] = null;
             }
-            unset($journal);
         }
 
         return response()->json($result);
