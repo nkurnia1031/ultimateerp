@@ -1500,11 +1500,13 @@ class ExpenseImportService
             (string) ($payload['description'] ?? ''),
         ]));
 
-        if (preg_match('/\b(?:no|without|tanpa)\s+(?:ppn|pajak|vat|tax)\b/iu', $label) === 1) {
+        $vatLabel = '(?:ppn|vat|gst|pajak\s+pertambahan\s+nilai|value[\s-]+added[\s-]+tax|(?:input|output)\s+tax)';
+
+        if (preg_match('/\b(?:no|without|tanpa)\s+'.$vatLabel.'\b/iu', $label) === 1) {
             return false;
         }
 
-        return preg_match('/\b(?:ppn|pajak|vat|tax)\b/iu', $label) === 1;
+        return preg_match('/\b'.$vatLabel.'\b/iu', $label) === 1;
     }
 
     private function findUnlabelledTaxAmountRows(array $payloads, float $taxAmount): array

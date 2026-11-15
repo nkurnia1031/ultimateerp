@@ -842,6 +842,71 @@ class ExpenseImportTaxTest extends TestCase
         $this->assertSame(125.0, (float) $journalEntry['credit_total']);
     }
 
+    public function test_public_import_keeps_non_vat_tax_expense_as_an_expense_line(): void
+    {
+        DB::table('expense_categories')->insert([
+            'id' => 2,
+            'business_id' => 1,
+            'name' => 'Taxes and Licenses',
+            'parent_id' => null,
+        ]);
+        $this->insertJournalExpense(101, 11, 26, 'REF-TAX-EXPENSE', 0, 100, '6-60214', 'Taxes and Licenses');
+        $this->container->instance('excel', new class
+        {
+            public function toArray($import, $path, $disk = null, $readerType = null): array
+            {
+                return [[
+                    ['LOCATION', 'CATEGORY', 'SUB-CATEGORY', 'REFERENCE NO', 'EXPENSE DATE', 'EXPENSE FOR', 'EXPENSE FOR CONTACT ID', 'ATTACH DOCUMENT', 'APPLICABLE TAX', 'EXPENSE NOTE', 'TOTAL AMOUNT', 'PAID AMOUNT', 'PAID ON DATE', 'PAYMENT METHOD', 'PAYMENT ACCOUNT', 'PAYMENT NOTE'],
+                    ['Main Location', 'Taxes and Licenses', '', 'REF-TAX-EXPENSE', '2026-10-21', '', '', '', '', 'PAJAK BULAN Desember 2023 CV BMT', 100, 0, '', '', '', ''],
+                ]];
+            }
+        });
+        DB::table('expense_import_batches')->where('id', 'batch-1')->update([
+            'business_id' => 1,
+            'status' => 'preview',
+            'operation' => 'import',
+            'process_state' => 'completed',
+        ]);
+        $summary = $this->service->preview('batch-1', 1, 'ignored.xlsx');
+        $this->assertSame(1, $summary['valid']);
+
+        $this->service = new ExpenseImportService(
+            new class extends TransactionUtil
+            {
+                public function payment_types($location_id = null, $show_advance = false, $business_id = null)
+                {
+                    return [];
+                }
+
+                public function createOrUpdatePaymentLines($transaction, $payments, $business_id = null, $user_id = null, $uf_data = true)
+                {
+                    return true;
+                }
+
+                public function updatePaymentStatus($transaction_id, $final_amount = null)
+                {
+                    return 'due';
+                }
+            },
+            new ExpenseImportJournalMatcher(
+                new \Modules\Accounting\Services\JournalImportAccountComponentService(),
+                new \Modules\Accounting\Services\JournalImportTaxResolver()
+            ),
+            new \App\Services\ExpenseImportJournalLinkService()
+        );
+
+        $result = $this->service->import('batch-1', 1, 9);
+
+        $this->assertSame(['transactions' => 1, 'rows' => 1], $result);
+        $transaction = Transaction::where('business_id', 1)->where('type', 'expense')->first();
+        $this->assertSame(100.0, (float) $transaction->total_before_tax);
+        $this->assertSame(0.0, (float) $transaction->tax_amount);
+        $this->assertSame(100.0, (float) $transaction->final_total);
+        $line = DB::table('expense_lines')->where('transaction_id', $transaction->id)->first();
+        $this->assertSame('PAJAK BULAN Desember 2023 CV BMT', $line->description);
+        $this->assertSame(100.0, (float) $line->amount);
+    }
+
     private function validate(string $taxName, string $reference = 'REF-1', float $total = 110, string $description = 'Test expense', array $overrides = []): array
     {
         return $this->validateRow->invoke($this->service, [
