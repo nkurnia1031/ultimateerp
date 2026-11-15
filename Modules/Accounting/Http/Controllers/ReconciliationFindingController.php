@@ -128,9 +128,25 @@ class ReconciliationFindingController extends Controller
         $result = $actions->previewOperationalTaxCorrection($businessId, $findingId);
         $result['currency_symbol'] = (string) ($request->session()->get('currency')['symbol'] ?? '');
         $result['can_confirm'] = $request->user()->can('superadmin') || $request->user()->can('expense.edit');
-        $result['journal_url'] = \Illuminate\Support\Facades\Route::has('journal-entry.create')
-            ? route('journal-entry.create')
-            : null;
+        $sourceType = strtolower(trim((string) ($result['source_review']['source_type'] ?? '')));
+        $canEditOperational = match ($sourceType) {
+            'expense' => $request->user()->can('expense.edit'),
+            'purchase', 'purchase invoice' => $request->user()->can('purchase.update'),
+            'sell', 'sales invoice' => $request->user()->can('direct_sell.update') || $request->user()->can('so.update'),
+            default => false,
+        };
+        $result['source_review']['can_edit_operational'] = $canEditOperational;
+        if (! $canEditOperational && isset($result['source_review']['operational'])) {
+            $result['source_review']['operational']['edit_url'] = null;
+        }
+        $canEditJournal = $request->user()->can('accounting.edit_journal');
+        $result['source_review']['can_edit_journal'] = $canEditJournal;
+        if (! $canEditJournal) {
+            foreach ($result['source_review']['journals'] ?? [] as &$journal) {
+                $journal['edit_url'] = null;
+            }
+            unset($journal);
+        }
 
         return response()->json($result);
     }

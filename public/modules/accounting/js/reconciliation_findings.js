@@ -94,9 +94,9 @@
         function resetActionModal(title) {
             currentAction = null;
             document.getElementById('finding_action_title').textContent = title;
+            document.getElementById('finding_source_review').classList.add('hidden');
             document.getElementById('finding_action_proposal').classList.add('hidden');
             document.getElementById('finding_action_fallback').classList.add('hidden');
-            document.getElementById('finding_action_editor_link').classList.add('hidden');
             document.getElementById('finding_accept_reason_wrap').classList.add('hidden');
             document.getElementById('finding_action_confirm').classList.add('hidden');
             document.getElementById('finding_action_accept').classList.add('hidden');
@@ -121,6 +121,229 @@
                 row.appendChild(cell);
             });
             document.getElementById('finding_action_values').appendChild(row);
+        }
+
+        function addCell(row, value, className) {
+            var cell = document.createElement('td');
+            cell.textContent = value === null || value === undefined ? '' : String(value);
+            if (className) {
+                cell.className = className;
+            }
+            row.appendChild(cell);
+        }
+
+        function addMetaRow(list, label, value) {
+            if (value === null || value === undefined || String(value).trim() === '') {
+                return;
+            }
+            var term = document.createElement('dt');
+            term.textContent = label;
+            var description = document.createElement('dd');
+            description.textContent = String(value);
+            list.appendChild(term);
+            list.appendChild(description);
+        }
+
+        function renderOperationalReview(review, currencySymbol) {
+            var meta = document.getElementById('finding_action_operational_meta');
+            var message = document.getElementById('finding_action_operational_message');
+            var lines = document.getElementById('finding_action_operational_lines');
+            var edit = document.getElementById('finding_action_operational_edit');
+            var operational = review.operational || {};
+            var transaction = operational.transaction || {};
+
+            meta.textContent = '';
+            lines.textContent = '';
+            addMetaRow(meta, 'Jenis', operational.found ? transaction.type : review.source_type);
+            addMetaRow(meta, 'Nomor', transaction.number || review.source_number);
+            addMetaRow(meta, 'Tanggal', transaction.date || review.source_date);
+            addMetaRow(meta, 'Supplier / pelanggan', transaction.contact);
+            addMetaRow(meta, transaction.is_snapshot ? 'Akun pembayaran' : 'Lokasi', transaction.location);
+            addMetaRow(meta, 'Status', transaction.status);
+            if (operational.found) {
+                if (transaction.is_snapshot) {
+                    addMetaRow(meta, 'Nominal operasional', transaction.final_total === null ? '—' : formatMoney(transaction.final_total, currencySymbol));
+                    addMetaRow(meta, 'Pajak sumber', transaction.tax_amount === null ? '—' : formatMoney(transaction.tax_amount, currencySymbol));
+                } else {
+                    addMetaRow(meta, 'Total sebelum pajak', formatMoney(transaction.total_before_tax, currencySymbol));
+                    addMetaRow(meta, 'Pajak transaksi', formatMoney(transaction.tax_amount, currencySymbol));
+                    addMetaRow(meta, 'Total transaksi', formatMoney(transaction.final_total, currencySymbol));
+                }
+                addMetaRow(meta, 'Catatan transaksi', transaction.note);
+            }
+
+            message.textContent = operational.message || (!operational.found ? 'Sumber operasional belum dapat dicocokkan dengan satu transaksi.' : '');
+            message.classList.toggle('hidden', !message.textContent);
+            edit.classList.toggle('hidden', !(review.can_edit_operational && operational.edit_url));
+            if (review.can_edit_operational && operational.edit_url) {
+                edit.href = operational.edit_url;
+            } else {
+                edit.removeAttribute('href');
+            }
+
+            (operational.lines || []).forEach(function (line) {
+                var row = document.createElement('tr');
+                if (line.snapshot) {
+                    var snapshotDetail = [line.category, line.description]
+                        .filter(function (value) { return value && String(value).trim() !== ''; }).join(' · ');
+                    addCell(row, snapshotDetail || 'Movement kas/bank');
+                    addCell(row, '');
+                    addCell(row, '');
+                    addCell(row, line.source_vat === null ? '—' : formatMoney(line.source_vat, currencySymbol), 'text-right');
+                    var snapshotAmount = line.amount === null ? '—' : formatMoney(line.amount, currencySymbol);
+                    if (line.journal_amount !== null) {
+                        snapshotAmount += ' · GL ' + formatMoney(line.journal_amount, currencySymbol);
+                    }
+                    addCell(row, snapshotAmount, 'text-right');
+                } else if (transaction.type === 'expense') {
+                    var expenseDetail = [line.category, line.description, line.note, line.document ? 'Dokumen: ' + line.document : '']
+                        .filter(function (value) { return value && String(value).trim() !== ''; }).join(' · ');
+                    addCell(row, expenseDetail || 'Expense line');
+                    addCell(row, '');
+                    addCell(row, '');
+                    addCell(row, '');
+                    addCell(row, formatMoney(line.amount, currencySymbol), 'text-right');
+                } else {
+                    var product = line.product || 'Produk';
+                    if (line.code) {
+                        product += ' (' + line.code + ')';
+                    }
+                    addCell(row, product);
+                    addCell(row, new Intl.NumberFormat('id-ID', { maximumFractionDigits: 4 }).format(Number(line.quantity || 0)), 'text-right');
+                    var unitPrice = formatMoney(line.unit_price, currencySymbol);
+                    if (line.unit_price_inc_tax !== null && line.unit_price_inc_tax !== undefined) {
+                        unitPrice += ' / ' + formatMoney(line.unit_price_inc_tax, currencySymbol) + ' inc. pajak';
+                    }
+                    addCell(row, unitPrice, 'text-right');
+                    addCell(row, formatMoney(line.unit_tax, currencySymbol) + (line.tax_name ? ' · ' + line.tax_name : ''), 'text-right');
+                    addCell(row, formatMoney(line.line_total, currencySymbol), 'text-right');
+                }
+                lines.appendChild(row);
+            });
+
+            if (!lines.children.length) {
+                var empty = document.createElement('tr');
+                var emptyCell = document.createElement('td');
+                emptyCell.colSpan = 5;
+                emptyCell.className = 'text-muted';
+                emptyCell.textContent = 'Rincian line operasional tidak tersedia.';
+                empty.appendChild(emptyCell);
+                lines.appendChild(empty);
+            }
+        }
+
+        function renderJournalReview(review, currencySymbol) {
+            var container = document.getElementById('finding_action_journals');
+            container.textContent = '';
+            var journals = review.journals || [];
+
+            if (!journals.length) {
+                var empty = document.createElement('p');
+                empty.className = 'text-muted';
+                empty.textContent = 'Detail baris Journal belum tersedia pada audit tersimpan.';
+                container.appendChild(empty);
+            }
+
+            journals.forEach(function (journal) {
+                var panel = document.createElement('div');
+                panel.className = 'panel panel-default';
+                var heading = document.createElement('div');
+                heading.className = 'panel-heading clearfix';
+                var title = document.createElement('strong');
+                title.textContent = 'Journal ' + (journal.number ? '#' + journal.number : 'sumber');
+                heading.appendChild(title);
+                if (journal.date) {
+                    var date = document.createElement('span');
+                    date.className = 'text-muted';
+                    date.textContent = ' · ' + journal.date;
+                    heading.appendChild(date);
+                }
+                if (review.can_edit_journal && journal.edit_url && journal.id) {
+                    var edit = document.createElement('a');
+                    edit.className = 'btn btn-xs btn-primary pull-right';
+                    edit.href = journal.edit_url;
+                    edit.target = '_blank';
+                    edit.rel = 'noopener';
+                    edit.textContent = 'Edit Journal';
+                    heading.appendChild(edit);
+                }
+                panel.appendChild(heading);
+
+                var body = document.createElement('div');
+                body.className = 'panel-body';
+                if (journal.note) {
+                    var note = document.createElement('p');
+                    note.textContent = journal.note;
+                    body.appendChild(note);
+                }
+                if (journal.snapshot_summary) {
+                    var summary = document.createElement('p');
+                    summary.textContent = 'Nilai GL hasil audit: '
+                        + (journal.amount === null ? '—' : formatMoney(journal.amount, currencySymbol))
+                        + ' · VAT Journal: ' + (journal.vat === null ? '—' : formatMoney(journal.vat, currencySymbol));
+                    body.appendChild(summary);
+                }
+                if (!journal.id) {
+                    var snapshot = document.createElement('p');
+                    snapshot.className = 'text-warning';
+                    snapshot.textContent = 'Rincian ini berasal dari snapshot audit; mapping Journal yang dapat diedit tidak ditemukan.';
+                    body.appendChild(snapshot);
+                }
+
+                var tableWrap = document.createElement('div');
+                tableWrap.className = 'table-responsive';
+                var table = document.createElement('table');
+                table.className = 'table table-condensed table-striped';
+                var thead = document.createElement('thead');
+                var headerRow = document.createElement('tr');
+                ['Akun', 'Kode', 'Debit', 'Kredit', 'Keterangan'].forEach(function (label) {
+                    var th = document.createElement('th');
+                    th.textContent = label;
+                    headerRow.appendChild(th);
+                });
+                thead.appendChild(headerRow);
+                table.appendChild(thead);
+                var tbody = document.createElement('tbody');
+                (journal.lines || []).forEach(function (line) {
+                    var row = document.createElement('tr');
+                    addCell(row, line.account);
+                    addCell(row, line.account_code);
+                    addCell(row, formatMoney(line.debit, currencySymbol), 'text-right');
+                    addCell(row, formatMoney(line.credit, currencySymbol), 'text-right');
+                    addCell(row, line.note);
+                    tbody.appendChild(row);
+                });
+                if (!tbody.children.length) {
+                    var noLines = document.createElement('tr');
+                    var noLinesCell = document.createElement('td');
+                    noLinesCell.colSpan = 5;
+                    noLinesCell.className = 'text-muted';
+                    noLinesCell.textContent = 'Baris akun GL belum tersedia.';
+                    noLines.appendChild(noLinesCell);
+                    tbody.appendChild(noLines);
+                }
+                table.appendChild(tbody);
+                tableWrap.appendChild(table);
+                body.appendChild(tableWrap);
+                panel.appendChild(body);
+                container.appendChild(panel);
+            });
+
+            if (review.journal_totals && (review.journal_totals.debit !== null || review.journal_totals.credit !== null)) {
+                var debit = review.journal_totals.debit === null ? '—' : formatMoney(review.journal_totals.debit, currencySymbol);
+                var credit = review.journal_totals.credit === null ? '—' : formatMoney(review.journal_totals.credit, currencySymbol);
+                var totals = document.createElement('p');
+                totals.className = 'text-muted';
+                totals.textContent = 'Total audit — Debit: ' + debit + ' · Kredit: ' + credit;
+                container.appendChild(totals);
+            }
+        }
+
+        function renderSourceReview(payload) {
+            var review = payload.source_review || {};
+            document.getElementById('finding_source_review').classList.remove('hidden');
+            renderOperationalReview(review, payload.currency_symbol);
+            renderJournalReview(review, payload.currency_symbol);
         }
 
         function loadPage(pageNumber) {
@@ -173,21 +396,16 @@
         }
 
         function reviewSource(findingId) {
-            resetActionModal('Tinjau sumber dan usulan pajak');
-            setActionStatus('Memeriksa sumber transaksi dan bukti Journal…', 'info');
+            resetActionModal('Tinjau detail operasional dan Journal');
+            setActionStatus('Memuat detail transaksi dan baris Journal…', 'info');
             modalShow();
 
             requestJson(urlFor(page.dataset.previewUrlTemplate, findingId), {}).then(function (payload) {
+                renderSourceReview(payload);
                 if (!payload.supported) {
                     document.getElementById('finding_action_fallback').classList.remove('hidden');
                     document.getElementById('finding_action_reason').textContent = payload.reason || 'Koreksi tidak dapat dihitung dengan bukti yang tersedia.';
-                    if (payload.editor_url || payload.journal_url) {
-                        var link = document.getElementById('finding_action_editor_link');
-                        link.href = payload.editor_url || payload.journal_url;
-                        link.textContent = payload.editor_url ? 'Buka transaksi / daftar sumber' : 'Buka alur jurnal manual';
-                        link.classList.remove('hidden');
-                    }
-                    setActionStatus('Koreksi otomatis tidak tersedia untuk temuan ini.', 'warning');
+                    setActionStatus('Detail sumber dimuat. Koreksi pajak otomatis tidak tersedia untuk temuan ini.', 'warning');
                     return;
                 }
 
@@ -198,14 +416,14 @@
                 addProposalRow('VAT In', formatMoney(proposal.before.tax_amount, payload.currency_symbol), formatMoney(proposal.after.tax_amount, payload.currency_symbol) + ' (' + proposal.after.tax_rate_name + ')');
                 addProposalRow('Total sebelum pajak', formatMoney(proposal.before.total_before_tax, payload.currency_symbol), formatMoney(proposal.after.total_before_tax, payload.currency_symbol));
                 addProposalRow('Total transaksi', formatMoney(proposal.before.final_total, payload.currency_symbol), formatMoney(proposal.after.final_total, payload.currency_symbol));
-                document.getElementById('finding_action_journal').textContent = 'Journal: VAT In ' + formatMoney(proposal.journal_vat, payload.currency_symbol) + ', total ' + formatMoney(proposal.journal_total, payload.currency_symbol) + '. Journal legacy tidak diubah.';
+                document.getElementById('finding_action_journal').textContent = 'Koreksi pajak ini hanya mengubah transaksi operasional. Edit Journal, jika diperlukan, dilakukan terpisah melalui tombol Edit Journal.';
                 if (payload.can_confirm) {
                     document.getElementById('finding_action_confirm').classList.remove('hidden');
                 } else {
                     setActionStatus('Usulan tersedia, tetapi akun ini tidak memiliki izin expense.edit untuk menerapkannya.', 'warning');
                 }
                 if (payload.can_confirm) {
-                    setActionStatus('Periksa nilai sebelum mengonfirmasi perubahan pada transaksi sumber.', 'info');
+                    setActionStatus('Periksa detail operasional, baris Journal, dan usulan pajak sebelum mengonfirmasi.', 'info');
                 }
             }).catch(function (error) {
                 setActionStatus(error.message || 'Bukti sumber tidak dapat dimuat.', 'danger');

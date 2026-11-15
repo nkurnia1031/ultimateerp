@@ -142,6 +142,28 @@
             </div>
             <div class="modal-body">
                 <div id="finding_action_status" class="alert alert-info" role="status" aria-live="polite">Memuat bukti…</div>
+                <div id="finding_source_review" class="hidden">
+                    <section class="reconciliation-source-section" aria-labelledby="finding_operational_heading">
+                        <div class="clearfix">
+                            <h4 id="finding_operational_heading" class="pull-left">Detail operasional</h4>
+                            <a id="finding_action_operational_edit" class="btn btn-sm btn-primary pull-right hidden" target="_blank" rel="noopener">Edit operasional</a>
+                        </div>
+                        <dl id="finding_action_operational_meta" class="dl-horizontal"></dl>
+                        <p id="finding_action_operational_message" class="text-muted hidden"></p>
+                        <div class="table-responsive">
+                            <table class="table table-bordered table-striped">
+                                <thead><tr><th>Produk / kategori / keterangan</th><th class="text-right">Kuantitas</th><th class="text-right">Harga satuan</th><th class="text-right">Pajak satuan</th><th class="text-right">Nilai line</th></tr></thead>
+                                <tbody id="finding_action_operational_lines"></tbody>
+                            </table>
+                        </div>
+                    </section>
+                    <hr>
+                    <section class="reconciliation-source-section" aria-labelledby="finding_journal_heading">
+                        <h4 id="finding_journal_heading">Detail Journal</h4>
+                        <div id="finding_action_journals"></div>
+                    </section>
+                    <hr>
+                </div>
                 <div id="finding_action_proposal" class="hidden">
                     <p id="finding_action_source"></p>
                     <div class="table-responsive">
@@ -154,7 +176,6 @@
                 </div>
                 <div id="finding_action_fallback" class="hidden">
                     <p id="finding_action_reason"></p>
-                    <a id="finding_action_editor_link" class="btn btn-default hidden" target="_blank" rel="noopener">Buka transaksi sumber</a>
                 </div>
                 <div id="finding_accept_reason_wrap" class="hidden">
                     <label for="finding_accept_reason">Alasan menerima selisih <span class="text-danger">(wajib)</span></label>

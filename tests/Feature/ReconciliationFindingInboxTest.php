@@ -47,6 +47,23 @@ class ReconciliationFindingInboxTest extends TestCase
             $table->dateTime('deleted_at')->nullable();
             $table->longText('accounting_default_map')->nullable();
         });
+        Schema::create('contacts', function (Blueprint $table) {
+            $table->increments('id');
+            $table->unsignedInteger('business_id')->default(1);
+            $table->string('name');
+        });
+        Schema::create('accounts', function (Blueprint $table) {
+            $table->increments('id');
+            $table->unsignedInteger('business_id');
+            $table->string('name');
+        });
+        Schema::create('account_transactions', function (Blueprint $table) {
+            $table->increments('id');
+            $table->unsignedInteger('account_id')->nullable();
+            $table->unsignedInteger('transaction_id')->nullable();
+            $table->unsignedInteger('transaction_payment_id')->nullable();
+            $table->unsignedBigInteger('journal_import_row_id')->nullable();
+        });
         Schema::create('expense_categories', function (Blueprint $table) {
             $table->increments('id');
             $table->unsignedInteger('business_id');
@@ -75,8 +92,22 @@ class ReconciliationFindingInboxTest extends TestCase
             $table->unsignedInteger('tax_id')->nullable();
             $table->decimal('tax_amount', 22, 4)->default(0);
             $table->decimal('final_total', 22, 4)->default(0);
+            $table->unsignedInteger('contact_id')->nullable();
+            $table->unsignedInteger('location_id')->nullable();
+            $table->text('additional_notes')->nullable();
+            $table->text('staff_note')->nullable();
             $table->dateTime('deleted_at')->nullable();
             $table->dateTime('updated_at')->nullable();
+        });
+        Schema::create('expense_lines', function (Blueprint $table) {
+            $table->increments('id');
+            $table->unsignedInteger('transaction_id');
+            $table->unsignedInteger('category_id')->nullable();
+            $table->unsignedInteger('sub_category_id')->nullable();
+            $table->string('description')->nullable();
+            $table->string('note')->nullable();
+            $table->string('document')->nullable();
+            $table->decimal('amount', 15, 2)->default(0);
         });
         Schema::create('tax_rates', function (Blueprint $table) {
             $table->increments('id');
@@ -106,6 +137,7 @@ class ReconciliationFindingInboxTest extends TestCase
             $table->increments('id');
             $table->unsignedInteger('business_id');
             $table->string('name');
+            $table->string('gl_code')->nullable();
             $table->string('status')->default('active');
             $table->string('account_primary_type')->nullable();
         });
@@ -645,6 +677,130 @@ class ReconciliationFindingInboxTest extends TestCase
         $this->assertSame(100.0, (float) $history[0]['after']['tax_amount']);
     }
 
+    public function test_source_review_preview_returns_business_scoped_operational_and_journal_details_with_permission_actions(): void
+    {
+        $this->withoutReconciliationPageBootstrapMiddleware();
+        DB::table('contacts')->insert(['id' => 501, 'business_id' => 1, 'name' => 'Supplier Fixture']);
+        DB::table('business_locations')->insert(['id' => 501, 'business_id' => 1, 'name' => 'Gudang Utama']);
+        DB::table('expense_categories')->insert([
+            ['id' => 501, 'business_id' => 1, 'name' => 'Operasional'],
+            ['id' => 502, 'business_id' => 2, 'name' => 'Tenant Rahasia'],
+        ]);
+        DB::table('transactions')->insert([
+            'id' => 501, 'business_id' => 1, 'type' => 'expense', 'status' => 'final',
+            'ref_no' => 'EXP-REVIEW-1', 'transaction_date' => '2023-01-02 09:00:00',
+            'total_before_tax' => 1000, 'tax_amount' => 100, 'final_total' => 1100,
+            'contact_id' => 501, 'location_id' => 501, 'additional_notes' => 'Catatan transaksi',
+        ]);
+        DB::table('expense_lines')->insert([
+            'id' => 501, 'transaction_id' => 501, 'category_id' => 501,
+            'description' => 'Biaya servis', 'note' => 'Detail pekerjaan', 'document' => 'doc_berita-acara.pdf', 'amount' => 1000,
+        ]);
+        DB::table('accounting_acc_trans_mappings')->insert([
+            ['id' => 501, 'business_id' => 1, 'ref_no' => 'JRN-REVIEW-1', 'type' => 'journal_entry', 'created_by' => 1, 'operation_date' => '2023-01-02 09:00:00', 'note' => 'Posting biaya'],
+            ['id' => 502, 'business_id' => 2, 'ref_no' => 'JRN-SECRET', 'type' => 'journal_entry', 'created_by' => 2, 'operation_date' => '2023-01-02 09:00:00', 'note' => 'Tenant lain'],
+        ]);
+        DB::table('accounting_accounts')->insert([
+            ['id' => 501, 'business_id' => 1, 'name' => 'Biaya Servis', 'gl_code' => '6100', 'status' => 'active'],
+            ['id' => 502, 'business_id' => 2, 'name' => 'Akun Tenant Rahasia', 'gl_code' => '9999', 'status' => 'active'],
+        ]);
+        DB::table('accounting_accounts_transactions')->insert([
+            ['id' => 501, 'accounting_account_id' => 501, 'acc_trans_mapping_id' => 501, 'amount' => 1000, 'type' => 'debit', 'sub_type' => 'journal_entry'],
+            ['id' => 502, 'accounting_account_id' => 502, 'acc_trans_mapping_id' => 502, 'amount' => 1000, 'type' => 'credit', 'sub_type' => 'journal_entry'],
+        ]);
+        DB::table('accounting_journal_import_rows')->insert([
+            ['id' => 501, 'journal_import_id' => 1, 'journal_mapping_id' => 501, 'business_id' => 1, 'source_type' => 'Expense', 'source_number' => 'EXP-REVIEW-1', 'source_key' => 'expense-review-1', 'entry_data' => '{}'],
+            ['id' => 502, 'journal_import_id' => 1, 'journal_mapping_id' => 502, 'business_id' => 2, 'source_type' => 'Expense', 'source_number' => 'EXP-REVIEW-1', 'source_key' => 'expense-review-1', 'entry_data' => '{}'],
+        ]);
+        $findingId = $this->insertActionableExpenseVatFinding();
+        DB::table('accounting_legacy_reconciliation_findings')->where('id', $findingId)->update([
+            'source_number' => 'EXP-REVIEW-1',
+            'evidence' => json_encode([
+                'date' => '2023-01-02', 'source_type' => 'Expense', 'source_number' => 'EXP-REVIEW-1',
+                'journal_import_row_ids' => [501, 502], 'source_key' => 'expense-review-1',
+                'journal_debit' => 1000, 'journal_credit' => 1000, 'journal_total' => 1000,
+            ]),
+        ]);
+
+        $manager = $this->accountingManagerUser();
+        $response = $this->actingAs($manager)->withSession(['user' => ['business_id' => 1]])
+            ->postJson(route('accounting.reconciliation.findings.correctionPreview', ['findingId' => $findingId]));
+
+        $response->assertOk()
+            ->assertJsonPath('source_review.operational.found', true)
+            ->assertJsonPath('source_review.operational.transaction.contact', 'Supplier Fixture')
+            ->assertJsonPath('source_review.operational.transaction.location', 'Gudang Utama')
+            ->assertJsonPath('source_review.operational.lines.0.category', 'Operasional')
+            ->assertJsonPath('source_review.operational.lines.0.description', 'Biaya servis')
+            ->assertJsonPath('source_review.operational.lines.0.document', 'doc_berita-acara.pdf')
+            ->assertJsonPath('source_review.can_edit_operational', true)
+            ->assertJsonPath('source_review.can_edit_journal', false)
+            ->assertJsonPath('source_review.journals.0.id', 501)
+            ->assertJsonPath('source_review.journals.0.lines.0.account', 'Biaya Servis')
+            ->assertJsonPath('source_review.journals.0.lines.0.debit', 1000)
+            ->assertJsonPath('source_review.journals.0.edit_url', null);
+        $this->assertStringNotContainsString('Tenant Rahasia', $response->getContent());
+        $this->assertStringNotContainsString('Akun Tenant Rahasia', $response->getContent());
+
+        $journalEditor = $this->accountingManagerUser([
+            'accounting.view_reports', 'accounting.manage_accounts', 'accounting.add_journal', 'accounting.edit_journal',
+        ]);
+        $journalResponse = $this->actingAs($journalEditor)->withSession(['user' => ['business_id' => 1]])
+            ->postJson(route('accounting.reconciliation.findings.correctionPreview', ['findingId' => $findingId]));
+        $journalResponse->assertOk()
+            ->assertJsonPath('source_review.can_edit_operational', false)
+            ->assertJsonPath('source_review.operational.edit_url', null)
+            ->assertJsonPath('source_review.can_edit_journal', true)
+            ->assertJsonPath('source_review.journals.0.edit_url', route('journal-entry.edit', 501));
+    }
+
+    public function test_cash_bank_source_review_uses_saved_operational_snapshot_and_follows_its_journal_import_row(): void
+    {
+        $this->withoutReconciliationPageBootstrapMiddleware();
+        DB::table('accounts')->insert(['id' => 601, 'business_id' => 1, 'name' => 'Kas Operasional']);
+        DB::table('account_transactions')->insert([
+            'id' => 601, 'account_id' => 601, 'journal_import_row_id' => 601,
+        ]);
+        DB::table('accounting_acc_trans_mappings')->insert([
+            'id' => 601, 'business_id' => 1, 'ref_no' => 'JRN-CB-601', 'type' => 'journal_entry',
+            'created_by' => 1, 'operation_date' => '2023-01-02 00:00:00', 'note' => 'Posting pembayaran',
+        ]);
+        DB::table('accounting_accounts')->insert([
+            'id' => 601, 'business_id' => 1, 'name' => 'Kas Accounting', 'gl_code' => '1001', 'status' => 'active',
+        ]);
+        DB::table('accounting_accounts_transactions')->insert([
+            'id' => 601, 'accounting_account_id' => 601, 'acc_trans_mapping_id' => 601,
+            'amount' => 250, 'type' => 'debit', 'sub_type' => 'journal_entry',
+        ]);
+        DB::table('accounting_journal_import_rows')->insert([
+            'id' => 601, 'journal_import_id' => 1, 'journal_mapping_id' => 601, 'business_id' => 1,
+            'source_type' => 'Expense', 'source_number' => 'JRN-CB-601', 'entry_data' => json_encode(['date' => '2023-01-02']),
+        ]);
+        DB::table('accounting_legacy_reconciliation_findings')->insert($this->findingRow([
+            'type' => 'cash_bank', 'component' => 'movement', 'finding_key' => hash('sha256', 'cash-bank-review'),
+            'source_type' => 'expense', 'source_number' => 'EXP-CB-601', 'source_date' => '2023-01-02',
+            'expected_amount' => 250, 'actual_amount' => 240, 'variance' => 10,
+            'evidence' => json_encode([
+                'date' => '2023-01-02', 'source_type' => 'expense', 'source_number' => 'EXP-CB-601',
+                'description' => 'Pembayaran servis', 'category' => 'Operasional', 'payment_account' => 'Kas Operasional',
+                'operational_amount' => 250, 'accounting_amount' => 240, 'source_record_type' => 'App\\AccountTransaction',
+                'source_record_id' => 601, 'journal_source_number' => 'JRN-CB-601',
+            ]),
+        ]));
+        $findingId = (int) DB::table('accounting_legacy_reconciliation_findings')->where('finding_key', hash('sha256', 'cash-bank-review'))->value('id');
+
+        $response = $this->actingAs($this->accountingManagerUser())->withSession(['user' => ['business_id' => 1]])
+            ->postJson(route('accounting.reconciliation.findings.correctionPreview', ['findingId' => $findingId]));
+
+        $response->assertOk()
+            ->assertJsonPath('source_review.operational.found', true)
+            ->assertJsonPath('source_review.operational.match_status', 'audit_snapshot')
+            ->assertJsonPath('source_review.operational.lines.0.amount', 250)
+            ->assertJsonPath('source_review.operational.lines.0.journal_amount', 240)
+            ->assertJsonPath('source_review.journals.0.id', 601)
+            ->assertJsonPath('source_review.journals.0.lines.0.account', 'Kas Accounting');
+    }
+
     public function test_expense_vat_correction_keeps_and_refreshes_a_remaining_variance(): void
     {
         $this->withoutReconciliationPageBootstrapMiddleware();
@@ -1010,13 +1166,14 @@ class ReconciliationFindingInboxTest extends TestCase
         return (int) DB::table('accounting_legacy_reconciliation_findings')->where('finding_key', hash('sha256', 'actionable-vat'))->value('id');
     }
 
-    private function accountingManagerUser(): User
+    private function accountingManagerUser(?array $permissions = null): User
     {
         $user = Mockery::mock(User::class)->makePartial();
         $user->forceFill(['id' => 987654, 'business_id' => 1, 'username' => 'reconciliation-test']);
-        $user->shouldReceive('can')->andReturnUsing(fn (string $permission) => in_array($permission, [
+        $permissions ??= [
             'accounting.view_reports', 'accounting.manage_accounts', 'accounting.add_journal', 'expense.edit',
-        ], true));
+        ];
+        $user->shouldReceive('can')->andReturnUsing(fn (string $permission) => in_array($permission, $permissions, true));
         $this->app->instance(\App\Utils\ModuleUtil::class, Mockery::mock(\App\Utils\ModuleUtil::class, function ($mock): void {
             $mock->shouldReceive('hasThePermissionInSubscription')->andReturn(true);
         }));
