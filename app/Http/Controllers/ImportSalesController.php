@@ -826,15 +826,16 @@ class ImportSalesController extends Controller
     }
     public function revertSaleImport($batch)
     {
-        if (! auth()->user()->can('sell.delete')) {
-            abort(403, 'Unauthorized action.');
-        }
         $type = 'sell';
         if (request()->is('revert-pembelian-import/*')) {
             $type = 'purchase';
         }
         if (request()->is('revert-expense-import/*')) {
             $type = 'expense';
+        }
+        $deletePermission = $type === 'expense' ? 'expense.delete' : 'sell.delete';
+        if (! auth()->user()->can($deletePermission)) {
+            abort(403, 'Unauthorized action.');
         }
 
 

@@ -1114,6 +1114,7 @@ class ExpenseImportTaxTest extends TestCase
         $schema->create('expense_import_batches', function ($table) {
             $table->string('id')->primary();
             $table->string('file_name')->nullable();
+            $table->string('file_path')->nullable();
             $table->string('business_id')->nullable();
             $table->string('status')->nullable();
             $table->string('operation')->nullable();

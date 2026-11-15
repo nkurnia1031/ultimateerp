@@ -32,6 +32,11 @@
 
     var timers = {};
     var csrf = form.find('input[name="_token"]').val();
+    var referenceUrl = '';
+    var referenceSearchTimer = null;
+    var referenceRequest = null;
+    var referenceRequestId = 0;
+    var referencePage = 1;
 
     function route(template, id) {
         return String(template || '').replace('__BATCH__', encodeURIComponent(id));
@@ -57,6 +62,21 @@
         if (status.domain_status === 'imported' && status.state === 'completed') { return 'success'; }
         if (status.state === 'completed') { return 'info'; }
         return 'warning';
+    }
+
+    function importedActions(status, batchId) {
+        var actions = [];
+        var referenceCount = Number(status.reference_count || 0);
+        if (status.references_url && referenceCount > 0) {
+            actions.push('<button type="button" class="btn btn-xs btn-info expense-import-open-references" data-batch="' + escapeHtml(batchId) + '" data-references-url="' + escapeHtml(status.references_url) + '" data-reference-count="' + referenceCount + '"><i class="fa fa-list"></i> Referensi (' + referenceCount + ')</button>');
+        }
+        if (status.restore_url) {
+            actions.push('<a href="' + escapeHtml(status.restore_url) + '" class="btn btn-xs btn-success expense-import-restore-workbook"><i class="fa fa-file-excel-o"></i> Unduh Excel</a>');
+        }
+        if (status.revert_url) {
+            actions.push('<a href="' + escapeHtml(status.revert_url) + '" class="tw-dw-btn tw-dw-btn-outline tw-dw-btn-xs tw-dw-btn-error revert_import"><i class="fas fa-undo"></i> Revert import</a>');
+        }
+        return actions.length ? actions.join('') : '<span class="text-muted expense-import-done">Import selesai</span>';
     }
 
     function rowFor(id) {
@@ -130,22 +150,82 @@
         row.find('[data-role="progress-meta"]').text(progressMeta);
 
         var summary = status.summary || {};
-        if (summary.total !== undefined || summary.valid !== undefined || summary.errors !== undefined) {
+        var isImported = status.domain_status === 'imported' && status.operation === 'import' && status.state === 'completed';
+        if (isImported) {
+            var importBatchNumber = Number(status.batch_number || 0);
+            if (importBatchNumber > 0) {
+                row.children('td').first().text(importBatchNumber).attr('data-order', importBatchNumber);
+            }
+            row.find('[data-role="summary"]').text(
+                Number(summary.transactions || 0) + ' transaksi · ' + Number(summary.rows || 0) + ' baris workbook'
+            );
+            row.find('.expense-import-history-actions').html(importedActions(status, id));
+        } else if (summary.total !== undefined || summary.valid !== undefined || summary.errors !== undefined) {
             row.find('[data-role="summary"]').text(
                 Number(summary.valid || 0) + ' valid · ' + Number(summary.errors || 0) + ' error · ' + Number(summary.skipped || 0) + ' dilewati'
             );
         }
 
-        var ready = status.domain_status === 'preview' && (status.state === 'completed' || status.state === 'failed');
-        row.find('.expense-import-open-preview').toggle(ready);
-        row.find('.expense-import-cancel').toggle(status.state === 'queued');
-        row.find('.expense-import-done').toggle(status.domain_status === 'imported' || status.domain_status === 'cancelled');
+        if (!isImported) {
+            var ready = status.domain_status === 'preview'
+                && (status.state === 'completed' || (status.state === 'failed' && status.operation === 'import'));
+            row.find('.expense-import-open-preview').toggle(ready);
+            row.find('.expense-import-cancel').toggle(status.state === 'queued');
+            row.find('.expense-import-done').toggle(status.domain_status === 'cancelled');
+        }
         row.attr('data-process-state', status.state || '');
         if (dataTable) {
             dataTable.row(row[0]).invalidate('dom').draw(false);
             row = rowFor(id);
         }
         return row;
+    }
+
+    function loadReferences(page, append) {
+        if (!referenceUrl) { return; }
+        if (referenceRequest && referenceRequest.readyState !== 4) {
+            referenceRequest.abort();
+        }
+        var requestId = ++referenceRequestId;
+        var modal = $('#expense_import_references_modal');
+        var results = $('#expense_import_reference_results');
+        var status = $('#expense_import_references_status');
+        if (!append) {
+            results.empty();
+        }
+        status.text('Memuat nomor referensi...');
+        $('#expense_import_references_load_more').prop('disabled', true).hide();
+        referenceRequest = $.ajax({
+            url: referenceUrl,
+            dataType: 'json',
+            data: {
+                search: $('#expense_import_reference_search').val() || '',
+                page: page,
+                per_page: 50
+            },
+            headers: { Accept: 'application/json' }
+        }).done(function (response) {
+            if (requestId !== referenceRequestId || !modal.hasClass('in')) { return; }
+            var references = response.data || [];
+            references.forEach(function (reference) {
+                var button = $('<button>', {
+                    type: 'button',
+                    class: 'list-group-item expense-import-reference-item'
+                }).text(reference.reference_no || '-').attr('data-show-url', reference.show_url || '');
+                results.append(button);
+            });
+            referencePage = Number(response.current_page || page);
+            var hasMore = referencePage < Number(response.last_page || 1);
+            status.text(Number(response.total || 0) + ' nomor referensi');
+            $('#expense_import_references_load_more').toggle(hasMore).prop('disabled', false);
+            if (!references.length && !append) {
+                results.append($('<p>', { class: 'list-group-item-text text-muted expense-import-reference-empty' }).text('Tidak ada nomor referensi yang cocok.'));
+            }
+        }).fail(function (xhr, textStatus) {
+            if (textStatus === 'abort' || requestId !== referenceRequestId) { return; }
+            status.text((xhr.responseJSON && xhr.responseJSON.message) || 'Nomor referensi belum dapat dimuat. Coba lagi.');
+            $('#expense_import_references_load_more').prop('disabled', false).hide();
+        });
     }
 
     function scrollToHistory() {
@@ -270,6 +350,47 @@
         }).always(function () {
             button.prop('disabled', false);
         });
+    });
+
+    table.on('click', '.expense-import-open-references', function () {
+        referenceUrl = $(this).attr('data-references-url') || '';
+        referencePage = 1;
+        $('#expense_import_reference_search').val('');
+        $('#expense_import_reference_results').empty();
+        $('#expense_import_references_status').text('Memuat nomor referensi...');
+        $('#expense_import_references_modal').modal('show');
+        loadReferences(1, false);
+    });
+
+    $('#expense_import_reference_search').on('input', function () {
+        window.clearTimeout(referenceSearchTimer);
+        referenceSearchTimer = window.setTimeout(function () {
+            loadReferences(1, false);
+        }, 250);
+    });
+
+    $('#expense_import_references_load_more').on('click', function () {
+        loadReferences(referencePage + 1, true);
+    });
+
+    $('#expense_import_references_modal').on('click', '.expense-import-reference-item', function () {
+        var button = $(this);
+        var showUrl = button.attr('data-show-url');
+        if (!showUrl) { return; }
+        var status = $('#expense_import_references_status');
+        button.prop('disabled', true);
+        status.text('Memuat detail Expense...');
+        $.ajax({ url: showUrl, dataType: 'html', headers: { Accept: 'text/html' } })
+            .done(function (html) {
+                var referencesModal = $('#expense_import_references_modal');
+                referencesModal.one('hidden.bs.modal', function () {
+                    $('.payment_modal').html(html).modal('show');
+                }).modal('hide');
+            })
+            .fail(function (xhr) {
+                button.prop('disabled', false);
+                status.text((xhr.responseJSON && xhr.responseJSON.message) || 'Detail Expense tidak dapat dibuka.');
+            });
     });
 
     var initialBatchRows = dataTable ? dataTable.rows().nodes().to$().filter('[data-expense-import-batch]') : table.find('[data-expense-import-batch]');

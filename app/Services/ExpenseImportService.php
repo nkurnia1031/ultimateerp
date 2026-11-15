@@ -521,6 +521,7 @@ class ExpenseImportService
 
         $inserted = 0;
         $importBatchNumber = null;
+        $sourceFilePath = $batch->file_path;
         DB::transaction(function () use ($rows, $businessId, $userId, $batchId, &$inserted, &$importBatchNumber, $progress) {
             $groups = $rows->groupBy('group_key');
             // Each reference group becomes one transaction, but progress is
@@ -557,9 +558,20 @@ class ExpenseImportService
                     'rows' => $rows->count(),
                     'legacy_import_batch_number' => $importBatchNumber,
                 ], JSON_UNESCAPED_UNICODE),
+                'file_path' => null,
                 'updated_at' => now(),
             ]);
         });
+
+        if ($sourceFilePath) {
+            try {
+                if (! Storage::disk('local')->delete($sourceFilePath) && Storage::disk('local')->exists($sourceFilePath)) {
+                    \Log::warning('Completed Expense import source file could not be removed.', ['batch_id' => $batchId]);
+                }
+            } catch (\Throwable $exception) {
+                \Log::warning('Completed Expense import source file cleanup failed.', ['batch_id' => $batchId]);
+            }
+        }
 
         return ['transactions' => $inserted, 'rows' => $rows->count()];
     }

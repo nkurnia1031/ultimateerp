@@ -475,6 +475,9 @@ Route::middleware(['setData', 'auth', 'SetSessionData', 'language', 'timezone', 
     Route::get('import-expense', [ExpenseController::class, 'importExpense'])->name('expenses.import');
     Route::post('import-expense/upload', [ExpenseController::class, 'storeExpenseImport'])->name('expenses.import.upload');
     Route::get('import-expense/{batch}/status', [ExpenseController::class, 'expenseImportStatus'])->name('expenses.import.status');
+    Route::get('import-expense/{batch}/references', [ExpenseController::class, 'expenseImportReferences'])->name('expenses.import.references');
+    Route::get('import-expense/{batch}/transactions/{transaction}/show', [ExpenseController::class, 'expenseImportShowImportedExpense'])->name('expenses.import.imported-expense.show');
+    Route::get('import-expense/{batch}/restore-workbook', [ExpenseController::class, 'expenseImportRestoreWorkbook'])->name('expenses.import.restore-workbook');
     Route::get('import-expense/{batch}/preview-page', [ExpenseController::class, 'expenseImportPreviewPage'])->name('expenses.import.preview-page');
     Route::get('import-expense/{batch}/summary', [ExpenseController::class, 'expenseImportPreviewSummary'])->name('expenses.import.summary');
     Route::get('import-expense/{batch}/preview', [ExpenseController::class, 'expenseImportPreviewRows'])->name('expenses.import.preview');

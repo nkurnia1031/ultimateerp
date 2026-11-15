@@ -14,6 +14,8 @@
         #expense_import_history_table_wrapper .dataTables_paginate { white-space: normal; }
         .expense-import-progress { min-width: 90px; height: 16px; margin: 0 0 4px; }
         .expense-import-history-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+        #expense_import_references_modal .expense-import-reference-item { width: 100%; text-align: left; overflow-wrap: anywhere; }
+        #expense_import_reference_results { max-height: 50vh; overflow-y: auto; }
         @media (max-width: 767px) {
             #expense_import_history_table, #expense_import_history_table tbody, #expense_import_history_table tr, #expense_import_history_table td { display: block; width: 100%; }
             #expense_import_history_table thead { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
@@ -106,6 +108,30 @@
         </div>
 
         <div id="expense_import_index_config" data-status-template="{{ route('expenses.import.status', ['batch' => '__BATCH__']) }}" data-cancel-template="{{ route('expenses.import.cancel', ['batch' => '__BATCH__']) }}" data-preview-page-template="{{ route('expenses.import.preview-page', ['batch' => '__BATCH__']) }}"></div>
+
+        <div class="modal fade" id="expense_import_references_modal" tabindex="-1" role="dialog" aria-labelledby="expense_import_references_title" aria-hidden="true">
+            <div class="modal-dialog modal-md" role="document">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <button type="button" class="close" data-dismiss="modal" aria-label="Tutup"><span aria-hidden="true">&times;</span></button>
+                        <h4 class="modal-title" id="expense_import_references_title">Referensi Expense yang diimpor</h4>
+                    </div>
+                    <div class="modal-body">
+                        <div class="form-group">
+                            <label for="expense_import_reference_search">Cari nomor referensi</label>
+                            <input type="search" class="form-control" id="expense_import_reference_search" autocomplete="off" placeholder="Ketik nomor referensi...">
+                        </div>
+                        <p id="expense_import_references_status" class="text-muted" role="status" aria-live="polite"></p>
+                        <div id="expense_import_reference_results" class="list-group"></div>
+                        <button type="button" class="btn btn-default btn-block" id="expense_import_references_load_more" style="display:none">Muat referensi berikutnya</button>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="tw-dw-btn tw-dw-btn-neutral tw-text-white" data-dismiss="modal">Tutup</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="modal fade payment_modal" tabindex="-1" role="dialog" aria-labelledby="expense_import_expense_detail_title"></div>
 
         <div class="modal fade" id="expense_import_instructions_modal" tabindex="-1" role="dialog" aria-labelledby="expense_import_instructions_title">
             <div class="modal-dialog modal-lg" role="document">
@@ -240,6 +266,8 @@
                                         <td data-label="Aksi"><div class="expense-import-history-actions">
                                             @if($historyRow['can_preview'])<button type="button" class="btn btn-xs btn-success expense-import-open-preview" data-batch="{{ $historyRow['batch_id'] }}"><i class="fa fa-eye"></i> Periksa preview</button>@endif
                                             @if($historyRow['can_cancel'])<button type="button" class="btn btn-xs btn-warning expense-import-cancel" data-batch="{{ $historyRow['batch_id'] }}"><i class="fa fa-ban"></i> Batalkan</button>@endif
+                                            @if(($historyRow['can_view_references'] ?? false) && $historyRow['reference_count'] > 0)<button type="button" class="btn btn-xs btn-info expense-import-open-references" data-batch="{{ $historyRow['batch_id'] }}" data-references-url="{{ $historyRow['references_url'] }}" data-reference-count="{{ $historyRow['reference_count'] }}"><i class="fa fa-list"></i> Referensi ({{ $historyRow['reference_count'] }})</button>@endif
+                                            @if($historyRow['restore_url'] ?? false)<a href="{{ $historyRow['restore_url'] }}" class="btn btn-xs btn-success expense-import-restore-workbook"><i class="fa fa-file-excel-o"></i> Unduh Excel</a>@endif
                                             @if($historyRow['done'])<span class="text-muted expense-import-done">Selesai</span>@endif
                                             @can('expense.delete')
                                                 @if($historyRow['revert_url'])<a href="{{ $historyRow['revert_url'] }}" class="tw-dw-btn tw-dw-btn-outline tw-dw-btn-xs tw-dw-btn-error revert_import"><i class="fas fa-undo"></i> @lang('lang_v1.revert_import')</a>@endif

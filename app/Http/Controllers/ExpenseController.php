@@ -7,6 +7,7 @@ use App\AccountTransaction;
 use App\BusinessLocation;
 use App\Contact;
 use App\Exports\TransactionLineExport;
+use App\Exports\ExpenseImportRestoredWorkbookExport;
 use App\Events\ExpenseCreatedOrModified;
 use App\ExpenseCategory;
 use App\TaxRate;
@@ -1011,6 +1012,10 @@ class ExpenseController extends Controller
         foreach ($expense_import_batches as $batch) {
             $summary = json_decode((string) $batch->summary, true) ?: [];
             $legacyBatchNumber = $linkedLegacyBatches[$batch->id] ?? null;
+            $importBatchNumber = (int) ($summary['legacy_import_batch_number'] ?? $legacyBatchNumber ?? 0);
+            if ($legacyBatchNumber === null && $importBatchNumber > 0) {
+                $legacyBatchNumber = $importBatchNumber;
+            }
             $legacyImport = $legacyBatchNumber !== null ? ($imported_sales_array[$legacyBatchNumber] ?? null) : null;
             $processState = $batch->process_state ?: 'completed';
             $isImported = $batch->status === 'imported';
@@ -1031,7 +1036,7 @@ class ExpenseController extends Controller
             $expense_import_history[] = [
                 'type' => 'batch',
                 'id' => (string) $batch->id,
-                'batch_number' => $legacyBatchNumber,
+                'batch_number' => $importBatchNumber > 0 ? $importBatchNumber : $legacyBatchNumber,
                 'batch_id' => (string) $batch->id,
                 'file_name' => $batch->file_name,
                 'created_at' => $batch->created_at,
@@ -1046,11 +1051,14 @@ class ExpenseController extends Controller
                 'progress_meta' => $progressMeta,
                 'summary_text' => $summaryText,
                 'summary_detail' => $legacyImport ? implode(', ', $legacyImport['invoices']) : '',
-                'reference_count' => $invoiceCount,
+                'reference_count' => $isImported ? (int) ($summary['transactions'] ?? $invoiceCount) : $invoiceCount,
                 'can_preview' => $isReady,
                 'can_cancel' => $processState === 'queued',
                 'done' => $isImported || $batch->status === 'cancelled',
-                'revert_url' => $legacyBatchNumber !== null ? action([self::class, 'revertImport'], $legacyBatchNumber) : null,
+                'can_view_references' => $isImported,
+                'references_url' => $isImported ? route('expenses.import.references', $batch->id) : null,
+                'restore_url' => $isImported ? route('expenses.import.restore-workbook', $batch->id) : null,
+                'revert_url' => $importBatchNumber > 0 ? action([self::class, 'revertImport'], $importBatchNumber) : null,
                 'process_state' => $processState,
             ];
         }
@@ -1116,7 +1124,143 @@ class ExpenseController extends Controller
     public function expenseImportStatus(Request $request, string $batchId)
     {
         $businessId = $this->authorizeExpenseImport($request);
-        return response()->json($this->expenseImportProcessService->status($batchId, $businessId));
+        $status = $this->expenseImportProcessService->status($batchId, $businessId);
+
+        if (($status['domain_status'] ?? null) === 'imported' && ($status['operation'] ?? null) === 'import') {
+            $batch = DB::table('expense_import_batches')
+                ->where('id', $batchId)
+                ->where('business_id', $businessId)
+                ->first(['file_name', 'summary']);
+            $summary = json_decode((string) ($batch->summary ?? ''), true) ?: [];
+            $importBatchNumber = (int) ($summary['legacy_import_batch_number'] ?? 0);
+            $referenceQuery = $importBatchNumber > 0
+                ? $this->importedExpenseBatchTransactions($batch, $businessId, $importBatchNumber)
+                    ->whereNotNull('ref_no')
+                    ->where('ref_no', '<>', '')
+                : null;
+
+            $status['batch_number'] = $importBatchNumber > 0 ? $importBatchNumber : null;
+            $status['reference_count'] = $referenceQuery ? (clone $referenceQuery)->count() : 0;
+            $status['references_url'] = route('expenses.import.references', $batchId);
+            $status['restore_url'] = route('expenses.import.restore-workbook', $batchId);
+            $status['revert_url'] = $importBatchNumber > 0 && auth()->user()->can('expense.delete')
+                ? action([self::class, 'revertImport'], $importBatchNumber)
+                : null;
+        }
+
+        return response()->json($status);
+    }
+
+    public function expenseImportReferences(Request $request, string $batchId)
+    {
+        $businessId = $this->authorizeExpenseImport($request);
+        $batch = $this->importedExpenseImportBatch($batchId, $businessId);
+        $validated = $request->validate([
+            'search' => ['nullable', 'string', 'max:120'],
+            'page' => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
+        ]);
+        $summary = json_decode((string) $batch->summary, true) ?: [];
+        $importBatchNumber = (int) ($summary['legacy_import_batch_number'] ?? 0);
+        $query = $importBatchNumber > 0
+            ? $this->importedExpenseBatchTransactions($batch, $businessId, $importBatchNumber)
+                ->whereNotNull('ref_no')
+                ->where('ref_no', '<>', '')
+            : Transaction::query()->whereRaw('1 = 0');
+
+        $search = trim((string) ($validated['search'] ?? ''));
+        if ($search !== '') {
+            $query->where('ref_no', 'like', '%'.$search.'%');
+        }
+
+        $total = (clone $query)->count();
+        $perPage = (int) ($validated['per_page'] ?? 50);
+        $page = (int) ($validated['page'] ?? 1);
+        $references = $query
+            ->orderBy('ref_no')
+            ->orderBy('id')
+            ->skip(($page - 1) * $perPage)
+            ->take($perPage)
+            ->get(['id', 'ref_no'])
+            ->map(fn ($expense) => [
+                'id' => (int) $expense->id,
+                'reference_no' => (string) $expense->ref_no,
+                'show_url' => route('expenses.import.imported-expense.show', [$batchId, $expense->id]),
+            ])
+            ->values();
+
+        return response()->json([
+            'data' => $references,
+            'total' => $total,
+            'current_page' => $page,
+            'last_page' => max(1, (int) ceil($total / $perPage)),
+        ]);
+    }
+
+    public function expenseImportShowImportedExpense(Request $request, string $batchId, int $transactionId)
+    {
+        $businessId = $this->authorizeExpenseImport($request);
+        $batch = $this->importedExpenseImportBatch($batchId, $businessId);
+        $summary = json_decode((string) $batch->summary, true) ?: [];
+        $importBatchNumber = (int) ($summary['legacy_import_batch_number'] ?? 0);
+        abort_unless($importBatchNumber > 0, 404, 'Expense tidak ditemukan di batch import ini.');
+
+        $expense = $this->importedExpenseBatchTransactions($batch, $businessId, $importBatchNumber)
+            ->where('transactions.id', $transactionId)
+            ->first(['transactions.id']);
+        abort_if(! $expense, 404, 'Expense tidak ditemukan di batch import ini.');
+
+        return $this->show($transactionId);
+    }
+
+    public function expenseImportRestoreWorkbook(Request $request, string $batchId)
+    {
+        $businessId = $this->authorizeExpenseImport($request);
+        $batch = $this->importedExpenseImportBatch($batchId, $businessId);
+        $rawRows = DB::table('expense_import_preview_rows')
+            ->where('batch_id', $batchId)
+            ->where('business_id', $businessId)
+            ->whereNotNull('raw_payload')
+            ->orderBy('source_row')
+            ->pluck('raw_payload')
+            ->map(fn ($payload) => json_decode((string) $payload, true))
+            ->filter(fn ($payload) => is_array($payload))
+            ->values()
+            ->all();
+        abort_if($rawRows === [], 404, 'Data workbook upload tidak tersedia untuk dipulihkan.');
+
+        $baseName = pathinfo((string) ($batch->file_name ?? ''), PATHINFO_FILENAME);
+        $baseName = trim((string) preg_replace('/[^A-Za-z0-9._-]+/', '_', $baseName), '._-');
+        $fileName = ($baseName !== '' ? $baseName : 'expense-import-'.$batchId).'.xlsx';
+
+        return Excel::download(new ExpenseImportRestoredWorkbookExport($rawRows), $fileName);
+    }
+
+    private function importedExpenseImportBatch(string $batchId, int $businessId): object
+    {
+        $batch = DB::table('expense_import_batches')
+            ->where('id', $batchId)
+            ->where('business_id', $businessId)
+            ->first();
+
+        abort_if(! $batch, 404, 'Batch import Expense tidak ditemukan.');
+        abort_unless($batch->status === 'imported' && $batch->operation === 'import', 409, 'Batch Expense belum selesai diimpor.');
+
+        return $batch;
+    }
+
+    private function importedExpenseBatchTransactions(object $batch, int $businessId, int $importBatchNumber)
+    {
+        $query = Transaction::query()
+            ->where('transactions.business_id', $businessId)
+            ->where('transactions.type', 'expense')
+            ->where('transactions.import_batch', $importBatchNumber);
+
+        if (! empty($batch->file_name)) {
+            $query->where('transactions.import_file', $batch->file_name);
+        }
+
+        return $query;
     }
 
     public function expenseImportPreviewPage(Request $request, string $batchId)
