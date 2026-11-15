@@ -183,6 +183,170 @@ class ExpenseImportJournalLinkService
         ];
     }
 
+    public function synchronizeAmounts(
+        array $lockedJournal,
+        Transaction $transaction,
+        float $baseAmount,
+        float $taxAmount,
+        float $totalAmount,
+        string $date
+    ): array {
+        $mapping = $lockedJournal['mapping'] ?? null;
+        $row = $lockedJournal['row'] ?? null;
+        if (! $mapping || ! $row) {
+            throw new RuntimeException('Posting Journal yang dipilih tidak tersedia untuk sinkronisasi workbook.');
+        }
+
+        $totalAmount = round($totalAmount, 4);
+        $glRows = DB::table('accounting_accounts_transactions')
+            ->where('acc_trans_mapping_id', (int) $mapping->id)
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->get(['id', 'type', 'amount']);
+        $debitRows = $glRows->where('type', 'debit')->values();
+        $creditRows = $glRows->where('type', 'credit')->values();
+        if ($debitRows->isEmpty() || $creditRows->isEmpty()) {
+            throw new RuntimeException('Posting GL Journal tidak memiliki sisi debit dan kredit untuk disesuaikan dengan workbook.');
+        }
+        $oldDebit = (float) $debitRows->sum('amount');
+        $oldCredit = (float) $creditRows->sum('amount');
+        if ($oldDebit <= 0 || $oldCredit <= 0) {
+            throw new RuntimeException('Posting GL Journal harus memiliki baris debit dan kredit sebelum sinkronisasi.');
+        }
+
+        foreach ([['rows' => $debitRows], ['rows' => $creditRows]] as $side) {
+            $rows = $side['rows'];
+            $amounts = $this->scaledAmounts($rows->pluck('amount')->map(fn ($amount) => (float) $amount)->all(), $totalAmount);
+            foreach ($rows as $index => $glRow) {
+                DB::table('accounting_accounts_transactions')
+                    ->where('id', (int) $glRow->id)
+                    ->update(['amount' => $amounts[$index]]);
+            }
+        }
+
+        $entry = is_array($lockedJournal['entry'] ?? null) ? $lockedJournal['entry'] : [];
+        if (is_array($entry['lines'] ?? null)) {
+            $entry['lines'] = $this->scaleJournalEntryLines($entry['lines'], $totalAmount);
+        }
+        $entry['date'] = $date !== '' ? $date : ($entry['date'] ?? null);
+        $entry['debit_total'] = $totalAmount;
+        $entry['credit_total'] = $totalAmount;
+        if (array_key_exists('total_amount', $entry)) {
+            $entry['total_amount'] = $totalAmount;
+        }
+        if (array_key_exists('tax_amount', $entry)) {
+            $entry['tax_amount'] = round($taxAmount, 4);
+        }
+        $entry['source_link_group'] = [
+            'method' => 'single',
+            'members' => [[
+                'record_type' => Transaction::class,
+                'id' => (int) $transaction->id,
+                'reference' => (string) $transaction->ref_no,
+                'date' => $date,
+                'base_amount' => round($baseAmount, 4),
+                'tax_amount' => round($taxAmount, 4),
+                'amount' => $totalAmount,
+            ]],
+        ];
+
+        DB::table('accounting_journal_import_rows')
+            ->where('id', (int) $row->id)
+            ->where('business_id', (int) $row->business_id)
+            ->update([
+                'entry_data' => json_encode($entry, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                'updated_at' => now(),
+            ]);
+        if (Schema::hasColumn('accounting_acc_trans_mappings', 'operation_date')) {
+            DB::table('accounting_acc_trans_mappings')
+                ->where('id', (int) $mapping->id)
+                ->where('business_id', (int) $mapping->business_id)
+                ->update(['operation_date' => $date]);
+        }
+
+        $row->entry_data = json_encode($entry, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $lockedJournal['entry'] = $entry;
+        $lockedJournal['row'] = $row;
+
+        return $lockedJournal;
+    }
+
+    private function scaleJournalEntryLines(array $lines, float $totalAmount): array
+    {
+        $debitIndexes = [];
+        $debitValues = [];
+        $creditIndexes = [];
+        $creditValues = [];
+        foreach ($lines as $index => $line) {
+            if (! is_array($line)) {
+                continue;
+            }
+            $side = strtolower(trim((string) ($line['type'] ?? '')));
+            if ($side === 'debit') {
+                $debitIndexes[] = $index;
+                $debitValues[] = (float) ($line['amount'] ?? $line['debit'] ?? 0);
+            } elseif ($side === 'credit') {
+                $creditIndexes[] = $index;
+                $creditValues[] = (float) ($line['amount'] ?? $line['credit'] ?? 0);
+            } else {
+                if ((float) ($line['debit'] ?? 0) > 0) {
+                    $debitIndexes[] = $index;
+                    $debitValues[] = (float) $line['debit'];
+                }
+                if ((float) ($line['credit'] ?? 0) > 0) {
+                    $creditIndexes[] = $index;
+                    $creditValues[] = (float) $line['credit'];
+                }
+            }
+        }
+
+        $scaledDebits = $this->scaledAmounts($debitValues, $totalAmount);
+        foreach ($debitIndexes as $position => $index) {
+            if (strtolower(trim((string) ($lines[$index]['type'] ?? ''))) === 'debit'
+                && array_key_exists('amount', $lines[$index])) {
+                $lines[$index]['amount'] = $scaledDebits[$position];
+            } else {
+                $lines[$index]['debit'] = $scaledDebits[$position];
+            }
+        }
+        $scaledCredits = $this->scaledAmounts($creditValues, $totalAmount);
+        foreach ($creditIndexes as $position => $index) {
+            if (strtolower(trim((string) ($lines[$index]['type'] ?? ''))) === 'credit'
+                && array_key_exists('amount', $lines[$index])) {
+                $lines[$index]['amount'] = $scaledCredits[$position];
+            } else {
+                $lines[$index]['credit'] = $scaledCredits[$position];
+            }
+        }
+
+        return $lines;
+    }
+
+    private function scaledAmounts(array $sourceAmounts, float $targetAmount): array
+    {
+        if ($sourceAmounts === []) {
+            return [];
+        }
+        $targetUnits = max(0, (int) round($targetAmount * 10000, 0, PHP_ROUND_HALF_UP));
+        $weights = array_map(fn ($amount) => max(0, (int) round((float) $amount * 10000, 0, PHP_ROUND_HALF_UP)), $sourceAmounts);
+        $weightTotal = array_sum($weights);
+        $allocated = 0;
+        $scaled = [];
+        foreach ($weights as $index => $weight) {
+            if ($index === count($weights) - 1) {
+                $units = $targetUnits - $allocated;
+            } elseif ($weightTotal > 0) {
+                $units = (int) floor($targetUnits * $weight / $weightTotal);
+            } else {
+                $units = (int) floor($targetUnits / count($weights));
+            }
+            $allocated += $units;
+            $scaled[] = $units / 10000;
+        }
+
+        return $scaled;
+    }
+
     public function link(array $lockedJournal, Transaction $transaction, int $businessId): void
     {
         $row = $lockedJournal['row'];
@@ -206,6 +370,7 @@ class ExpenseImportJournalLinkService
             ->update([
                 'source_record_type' => Transaction::class,
                 'source_record_id' => $transactionId,
+                'entry_data' => json_encode($entry, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
                 'processing_message' => 'Expense ditautkan dari import Expense melalui referensi Journal yang unik.',
                 'updated_at' => now(),
             ]);

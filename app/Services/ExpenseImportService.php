@@ -83,10 +83,14 @@ class ExpenseImportService
     {
         $progress && $progress('reading', 'Membaca workbook Excel.', 10, 0, 0);
         $rows = $this->parseWorkbook($path, $businessId, $overrides, $progress);
+        $progress && $progress('matching_journal', 'Mencocokkan referensi dengan Journal tahun yang sama.', 66, 0, count($rows));
         $rows = $this->applyJournalMatches($rows, $businessId, $overrides);
-        $rows = $this->applyJournalExpenseAllocations($rows);
+        $progress && $progress('validating_tax', 'Memeriksa pajak dari workbook.', 67, count($rows), count($rows));
         $rows = $this->validateGroupTaxes($rows);
-        $rows = $this->applyExistingExpenseMatches($rows, $businessId, $overrides);
+        $progress && $progress('allocating_expense', 'Menghitung nilai Expense berdasarkan workbook.', 68, count($rows), count($rows));
+        $rows = $this->applyJournalExpenseAllocations($rows);
+        $progress && $progress('matching_expense', 'Mencocokkan Expense lama per nomor referensi dan tahun.', 69, 0, 0);
+        $rows = $this->applyExistingExpenseMatches($rows, $businessId, $overrides, $progress);
         $progress && $progress('matching', 'Memvalidasi kategori, lokasi, pembayaran, dan tanggal.', 70, count($rows), count($rows));
 
         DB::transaction(function () use ($batchId, $businessId, $rows, $progress) {
@@ -837,18 +841,13 @@ class ExpenseImportService
 
                 if (empty($candidate['ready'])) {
                     $row['errors'][] = (string) ($candidate['issue'] ?? 'Posting Journal belum siap untuk ditautkan.');
-                } elseif (! is_numeric($candidate['tax_amount'] ?? null)) {
-                    $row['errors'][] = (string) ($candidate['tax_issue'] ?? 'Pajak Journal tidak dapat ditentukan.');
                 } else {
                     $row['errors'] = array_values(array_filter($row['errors'], function ($error) {
                         return ! str_starts_with((string) $error, 'Tax ')
                             && ! str_contains((string) $error, 'satu TaxRate atau grup pajak');
                     }));
-                    $payload['tax_id'] = $candidate['tax_id'] ?? null;
-                    $payload['tax_name'] = $candidate['tax_name'] ?? null;
-                    $payload['applicable_tax'] = $candidate['tax_name'] ?? '';
-                    $payload['original_applicable_tax'] = '';
-                    $payload['tax_status'] = (float) $candidate['tax_amount'] > 0 ? 'journal_matched' : 'journal_no_tax';
+                    // The Journal selects the GL posting. Tax values remain sourced
+                    // from the workbook, which is authoritative for this import.
                 }
             }
 
@@ -862,7 +861,7 @@ class ExpenseImportService
         return $rows;
     }
 
-    private function applyExistingExpenseMatches(array $rows, int $businessId, array $overrides): array
+    private function applyExistingExpenseMatches(array $rows, int $businessId, array $overrides, ?callable $progress = null): array
     {
         $references = [];
         $groupTotals = [];
@@ -880,7 +879,7 @@ class ExpenseImportService
             $groupTotals[$normalizedReference]['excel'] = ($groupTotals[$normalizedReference]['excel'] ?? 0)
                 + (float) ($payload['total_amount'] ?? 0);
             $groupTotals[$normalizedReference]['base'] = ($groupTotals[$normalizedReference]['base'] ?? 0)
-                + $this->excelLineBaseAmount($payload);
+                + $this->excelExpenseLineBaseAmount($payload);
             $expenseDate = substr((string) ($payload['expense_date'] ?? ''), 0, 10);
             if ($expenseDate !== '') {
                 $groupDates[$normalizedReference][$expenseDate] = $expenseDate;
@@ -918,7 +917,19 @@ class ExpenseImportService
             }
         }
 
+        $processedReferences = 0;
+        $totalReferences = count($references);
         foreach ($references as $normalizedReference => $reference) {
+            $processedReferences++;
+            if ($progress && ($processedReferences === 1 || $processedReferences % 25 === 0 || $processedReferences === $totalReferences)) {
+                $progress(
+                    'matching_expense',
+                    "Mencocokkan referensi {$processedReferences} dari {$totalReferences}.",
+                    69,
+                    $processedReferences,
+                    $totalReferences
+                );
+            }
             $indexes = $groupTotals[$normalizedReference]['indexes'] ?? [];
             if ($indexes === []) {
                 continue;
@@ -955,8 +966,13 @@ class ExpenseImportService
             }
             $comparisonYear = (int) $referenceYears[0];
             $incomingLines = $this->expenseImportLineDetails($rows, $indexes);
+            $incomingDates = array_values($groupDates[$normalizedReference] ?? []);
+            sort($incomingDates);
+            $incomingDate = $incomingDates[0] ?? null;
 
             $candidates = collect($existingByReference[$normalizedReference] ?? [])->unique('id')->values();
+            $allCandidateCount = $candidates->count();
+            $candidateScope = 'business_reference_year';
             $firstPayload = $rows[$indexes[0]]['normalized_payload'];
             $journalMatch = $firstPayload['journal_match'] ?? [];
             $linkedTransactionIds = ($journalMatch['status'] ?? null) === 'matched'
@@ -965,9 +981,19 @@ class ExpenseImportService
             $linkedTransactionId = ($journalMatch['status'] ?? null) === 'matched'
                 ? (int) ($firstPayload['journal_source_transaction_id'] ?? 0)
                 : 0;
-            if (count($linkedTransactionIds) > 1) {
+            if ($linkedTransactionIds !== []) {
                 $candidates = $candidates->whereIn('id', $linkedTransactionIds)->values();
+                $candidateScope = 'journal_source_link';
+            } elseif (count($incomingDates) === 1) {
+                $sameDateCandidates = $candidates->filter(function ($candidate) use ($incomingDate) {
+                    return substr((string) ($candidate->transaction_date ?? ''), 0, 10) === $incomingDate;
+                })->values();
+                if ($sameDateCandidates->isNotEmpty()) {
+                    $candidates = $sameDateCandidates;
+                    $candidateScope = 'workbook_date';
+                }
             }
+            $excludedCandidateCount = max(0, $allCandidateCount - $candidates->count());
 
             if ($candidates->isEmpty()) {
                 $requestedAction = trim((string) ($overrides['expense_existing_action:'.$normalizedReference] ?? ''));
@@ -1010,20 +1036,12 @@ class ExpenseImportService
             }
 
             $hasMatchedJournal = ($journalMatch['status'] ?? null) === 'matched';
-            $journalTaxAmount = $hasMatchedJournal ? (float) ($journalMatch['selected']['tax_amount'] ?? 0) : 0.0;
             $journalAllocation = $firstPayload['journal_expense_allocation'] ?? [];
             $workbookBase = (float) ($groupTotals[$normalizedReference]['base'] ?? 0);
             $workbookTotal = (float) ($groupTotals[$normalizedReference]['excel'] ?? 0);
-            $incomingBase = $hasMatchedJournal
-                ? (float) ($journalAllocation['base_amount'] ?? $workbookBase)
-                : $workbookBase;
-            $incomingTax = $hasMatchedJournal ? $journalTaxAmount : round($workbookTotal - $workbookBase, 4);
-            $incomingTotal = $hasMatchedJournal
-                ? (float) ($journalMatch['selected']['journal_total'] ?? ($incomingBase + $incomingTax))
-                : $workbookTotal;
-            $incomingDates = array_values($groupDates[$normalizedReference] ?? []);
-            sort($incomingDates);
-            $incomingDate = $incomingDates[0] ?? null;
+            $incomingBase = (float) ($journalAllocation['base_amount'] ?? $workbookBase);
+            $incomingTax = (float) ($journalAllocation['tax_amount'] ?? round($workbookTotal - $incomingBase, 4));
+            $incomingTotal = $workbookTotal;
             $candidateDetails = $candidates->map(function ($candidate) use ($incomingDate, $incomingTotal, $linkedTransactionId) {
                 $existingDate = substr((string) ($candidate->transaction_date ?? ''), 0, 10);
                 $dateDifference = null;
@@ -1057,12 +1075,9 @@ class ExpenseImportService
                 ];
             })->values()->all();
 
-            $selectedJournalTotal = (float) ($journalMatch['selected']['journal_total'] ?? 0);
             $journalGroupIsExact = ($journalMatch['status'] ?? null) === 'matched'
                 && ($journalAllocation['status'] ?? null) === 'matched'
                 && count($incomingDates) === 1
-                && ($journalMatch['selected']['date'] ?? null) === $incomingDate
-                && abs($selectedJournalTotal - $incomingTotal) <= 0.01
                 && abs((float) ($journalAllocation['total_amount'] ?? -1) - $incomingTotal) <= 0.01;
             $workbookGroupIsExact = ($journalMatch['status'] ?? null) === 'none'
                 && count($incomingDates) === 1
@@ -1070,7 +1085,10 @@ class ExpenseImportService
             $sameDateCandidateDetails = array_values(array_filter($candidateDetails, function ($candidate) use ($incomingDate) {
                 return $incomingDate !== null && ($candidate['date'] ?? null) === $incomingDate;
             }));
-            $groupSuggestions = ($journalGroupIsExact || $workbookGroupIsExact)
+            $authoritativeCandidates = $hasMatchedJournal ? $candidateDetails : $sameDateCandidateDetails;
+            $authoritativeCandidateDates = collect($authoritativeCandidates)->pluck('date')->filter()->unique()->values();
+            $canBuildAuthoritativeGroup = count($authoritativeCandidates) > 1 && $authoritativeCandidateDates->count() === 1;
+            $groupSuggestions = ! $canBuildAuthoritativeGroup && ($journalGroupIsExact || $workbookGroupIsExact)
                 ? $this->findExistingExpenseGroups(
                     $sameDateCandidateDetails,
                     $incomingDate,
@@ -1101,7 +1119,8 @@ class ExpenseImportService
                         $businessId,
                         $reference,
                         $incomingDate,
-                        (float) ($group['total_amount'] ?? 0)
+                        (float) ($group['total_amount'] ?? 0),
+                        true
                     );
                     $group['consolidation_safe'] = (bool) ($assessment['safe'] ?? false);
                     $group['consolidation_issue'] = $assessment['reason'] ?? null;
@@ -1109,11 +1128,43 @@ class ExpenseImportService
                 $groupSuggestions['groups'][$groupIndex] = $group;
             }
 
+            if ($canBuildAuthoritativeGroup) {
+                $authoritativeGroup = $this->buildAuthoritativeExpenseGroup(
+                    $authoritativeCandidates,
+                    $businessId,
+                    $normalizedReference,
+                    $incomingBase,
+                    $incomingTax,
+                    $incomingTotal
+                );
+                $authoritativeGroup['consolidation_mode'] = $hasMatchedJournal ? 'journal' : 'same_year_expense';
+                $assessment = $hasMatchedJournal
+                    ? $this->consolidationService->assessJournalExpenseGroup(
+                        $authoritativeGroup['member_ids'],
+                        $businessId,
+                        $reference,
+                        (int) ($journalMatch['selected']['journal_row_id'] ?? 0),
+                        (int) ($journalMatch['selected']['mapping_id'] ?? 0)
+                    )
+                    : $this->consolidationService->assessSameYearExpenseGroup(
+                        $authoritativeGroup['member_ids'],
+                        $businessId,
+                        $reference,
+                        $incomingDate,
+                        (float) $authoritativeGroup['total_amount'],
+                        true
+                    );
+                $authoritativeGroup['consolidation_safe'] = (bool) ($assessment['safe'] ?? false);
+                $authoritativeGroup['consolidation_issue'] = $assessment['reason'] ?? null;
+                $groupSuggestions = ['status' => 'workbook_authoritative', 'groups' => [$authoritativeGroup]];
+            }
+
             $candidateIds = collect($candidateDetails)->pluck('id')->map(fn ($id) => (int) $id)->sort()->values()->all();
             $onlyExactGroup = count($groupSuggestions['groups'] ?? []) === 1
                 && collect($groupSuggestions['groups'][0]['member_ids'] ?? [])->map(fn ($id) => (int) $id)->sort()->values()->all() === $candidateIds;
             $exactGroupDatesMatch = $onlyExactGroup
-                && collect($groupSuggestions['groups'][0]['members'] ?? [])->every(fn ($member) => ($member['date'] ?? null) === $incomingDate);
+                && collect($groupSuggestions['groups'][0]['members'] ?? [])->pluck('date')->filter()->unique()->count() === 1
+                && ($hasMatchedJournal || collect($groupSuggestions['groups'][0]['members'] ?? [])->every(fn ($member) => ($member['date'] ?? null) === $incomingDate));
             $autoConsolidateGroup = $onlyExactGroup
                 && $exactGroupDatesMatch
                 && ! empty($groupSuggestions['groups'][0]['consolidation_safe']);
@@ -1125,7 +1176,6 @@ class ExpenseImportService
                 ->values()
                 ->all();
             $reviewRequired = ! $autoConsolidateGroup && (count($candidateDetails) > 1
-                || collect($candidateDetails)->contains(fn ($candidate) => ! empty($candidate['large_difference']))
                 || count($incomingDates) > 1);
             $actionKey = 'expense_existing_action:'.$normalizedReference;
             $requestedAction = trim((string) ($overrides[$actionKey] ?? ''));
@@ -1183,6 +1233,8 @@ class ExpenseImportService
                 'selected_group' => $selectedGroup,
                 'consolidation_issues' => $unsafeGroupReasons,
                 'group_linked' => count($linkedTransactionIds) > 1,
+                'candidate_scope' => $candidateScope,
+                'excluded_candidate_count' => $excludedCandidateCount,
                 'candidates' => $candidateDetails,
                 'groups' => $groupSuggestions['groups'] ?? [],
                 'group_status' => $groupSuggestions['status'] ?? 'none',
@@ -1223,13 +1275,18 @@ class ExpenseImportService
         return (float) $this->transactionUtil->calc_percentage_base($amount, $rate);
     }
 
+    private function excelExpenseLineBaseAmount(array $payload): float
+    {
+        return $this->hasExplicitExpenseTaxLabel($payload) ? 0.0 : $this->excelLineBaseAmount($payload);
+    }
+
     private function expenseImportLineDetails(array $rows, array $indexes): array
     {
         return array_values(array_map(function ($index) use ($rows) {
             $row = $rows[$index];
             $payload = $row['normalized_payload'] ?? [];
             $amount = (float) ($payload['total_amount'] ?? 0);
-            $base = $this->excelLineBaseAmount($payload);
+            $base = $this->excelExpenseLineBaseAmount($payload);
 
             return [
                 'source_row' => (int) ($row['source_row'] ?? 0),
@@ -1259,15 +1316,10 @@ class ExpenseImportService
                 continue;
             }
 
-            $selected = $journalMatch['selected'] ?? [];
-            $taxAmount = $selected['tax_amount'] ?? null;
-            $journalTotal = $selected['journal_total'] ?? null;
             $payloads = array_map(function ($index) use ($rows) {
                 return array_merge($rows[$index]['normalized_payload'], ['source_row' => (int) $rows[$index]['source_row']]);
             }, $indexes);
-            $allocation = is_numeric($taxAmount) && is_numeric($journalTotal)
-                ? $this->calculateJournalExpenseAllocation($payloads, (float) $taxAmount, (float) $journalTotal)
-                : ['status' => 'error', 'message' => 'Nilai pajak atau total Journal tidak tersedia.'];
+            $allocation = $this->calculateWorkbookExpenseAllocation($payloads);
 
             foreach ($indexes as $index) {
                 $payload = $rows[$index]['normalized_payload'];
@@ -1287,6 +1339,9 @@ class ExpenseImportService
                         'method' => $allocation['method'],
                         'tax_component_source_rows' => $allocation['tax_component_source_rows'],
                     ];
+                    $payload['journal_tax_amount'] = $allocation['tax_amount'];
+                    $payload['journal_tax_id'] = $payload['tax_id'] ?? null;
+                    $payload['journal_tax_name'] = $payload['tax_name'] ?? $payload['applicable_tax'] ?? null;
                     $payload['journal_expense_line_base_amount'] = (float) ($allocation['line_bases'][$sourceRow] ?? 0);
                     $payload['journal_expense_tax_component'] = in_array($sourceRow, $allocation['tax_component_source_rows'], true);
                 }
@@ -1399,6 +1454,44 @@ class ExpenseImportService
         return $this->journalAllocationResult($lineBases, [], $journalBase, $taxAmount, $journalTotal, 'inclusive_vat_allocation');
     }
 
+    private function calculateWorkbookExpenseAllocation(array $payloads): array
+    {
+        $lineBases = [];
+        $taxRows = [];
+        $total = 0.0;
+        $base = 0.0;
+
+        foreach ($payloads as $payload) {
+            $sourceRow = (int) ($payload['source_row'] ?? 0);
+            $amount = (float) ($payload['total_amount'] ?? 0);
+            if (! is_finite($amount) || $amount < 0) {
+                return ['status' => 'error', 'message' => 'Nominal baris workbook harus berupa angka nonnegatif.'];
+            }
+            $total += $amount;
+            if ($this->hasExplicitExpenseTaxLabel($payload)) {
+                $lineBases[$sourceRow] = 0.0;
+                $taxRows[] = $sourceRow;
+                continue;
+            }
+
+            $lineBase = $this->excelLineBaseAmount($payload);
+            if (! is_finite($lineBase) || $lineBase < 0 || $lineBase - $amount > 0.01) {
+                return ['status' => 'error', 'message' => 'Tarif pajak workbook menghasilkan basis Expense yang tidak valid.'];
+            }
+            $lineBases[$sourceRow] = round($lineBase, 4);
+            $base += $lineBase;
+        }
+
+        $total = round($total, 4);
+        $base = round($base, 4);
+        $tax = round($total - $base, 4);
+        if ($tax < -0.01) {
+            return ['status' => 'error', 'message' => 'Basis baris Expense melebihi total workbook. Periksa kembali pajak dan nominal.'];
+        }
+
+        return $this->journalAllocationResult($lineBases, $taxRows, $base, max(0, $tax), $total, 'workbook_authoritative');
+    }
+
     private function hasExplicitExpenseTaxLabel(array $payload): bool
     {
         $label = implode(' ', array_filter([
@@ -1406,6 +1499,10 @@ class ExpenseImportService
             (string) ($payload['sub_category_name'] ?? ''),
             (string) ($payload['description'] ?? ''),
         ]));
+
+        if (preg_match('/\b(?:no|without|tanpa)\s+(?:ppn|pajak|vat|tax)\b/iu', $label) === 1) {
+            return false;
+        }
 
         return preg_match('/\b(?:ppn|pajak|vat|tax)\b/iu', $label) === 1;
     }
@@ -1485,6 +1582,58 @@ class ExpenseImportService
             'total_amount' => round($total, 4),
             'method' => $method,
         ];
+    }
+
+    private function buildAuthoritativeExpenseGroup(
+        array $candidates,
+        int $businessId,
+        string $normalizedReference,
+        float $incomingBase,
+        float $incomingTax,
+        float $incomingTotal
+    ): array {
+        usort($candidates, fn ($left, $right) => (int) $left['id'] <=> (int) $right['id']);
+        $members = array_map(fn ($candidate) => [
+            'id' => (int) $candidate['id'],
+            'reference' => (string) $candidate['reference'],
+            'date' => (string) $candidate['date'],
+            'base_amount' => (float) $candidate['base'],
+            'tax_amount' => (float) $candidate['tax'],
+            'amount' => (float) $candidate['total'],
+            'additional_notes' => trim((string) ($candidate['additional_notes'] ?? '')),
+        ], $candidates);
+        $memberIds = array_column($members, 'id');
+        $base = round(array_sum(array_column($members, 'base_amount')), 4);
+        $tax = round(array_sum(array_column($members, 'tax_amount')), 4);
+        $total = round(array_sum(array_column($members, 'amount')), 4);
+        $group = [
+            'member_ids' => $memberIds,
+            'members' => $members,
+            'base_amount' => $base,
+            'tax_amount' => $tax,
+            'total_amount' => $total,
+            'journal_base_amount' => $incomingBase,
+            'journal_tax_amount' => $incomingTax,
+            'journal_total_amount' => $incomingTotal,
+        ];
+        $group['fingerprint'] = hash('sha256', json_encode([
+            'business_id' => $businessId,
+            'reference' => $normalizedReference,
+            'date' => $members[0]['date'] ?? null,
+            'member_ids' => $memberIds,
+            'members' => array_map(fn ($member) => [
+                'id' => $member['id'],
+                'base' => $member['base_amount'],
+                'tax' => $member['tax_amount'],
+                'total' => $member['amount'],
+                'additional_notes' => $member['additional_notes'],
+            ], $members),
+            'base' => $base,
+            'tax' => $tax,
+            'total' => $total,
+        ], JSON_UNESCAPED_SLASHES));
+
+        return $group;
     }
 
     private function findExistingExpenseGroups(
@@ -1698,15 +1847,9 @@ class ExpenseImportService
         $lockedJournal = $hasJournalMatch
             ? $this->journalLinkService->lockSelectedJournal($journalMatch, $businessId, $reference)
             : null;
-        if ($lockedJournal !== null
-            && substr((string) ($lockedJournal['entry']['date'] ?? ''), 0, 10) !== substr((string) ($payload['expense_date'] ?? ''), 0, 10)) {
-            throw new RuntimeException('Tanggal posting Journal berubah atau tidak sama dengan tanggal baris Expense. Muat ulang preview.');
-        }
-
         $existingMatch = $payload['existing_expense_match'] ?? [];
         $existingAction = (string) ($existingMatch['action'] ?? '');
         $transaction = $lockedJournal['transaction'] ?? null;
-        $preserveMergedPayments = false;
         $preserveExistingJournalLink = false;
         $preserved = [];
         if (str_starts_with($existingAction, 'group:')) {
@@ -1716,24 +1859,18 @@ class ExpenseImportService
                 throw new RuntimeException('Pilihan grup Expense berubah. Muat ulang preview.');
             }
             if ($hasJournalMatch && $lockedJournal) {
-                $journalTax = $journalMatch['selected']['tax_amount'] ?? null;
-                $journalTotal = $journalMatch['selected']['journal_total'] ?? null;
                 $journalAllocation = $payload['journal_expense_allocation'] ?? [];
-                if (! is_numeric($journalTax) || (float) $journalTax < 0
-                    || ! is_numeric($journalTotal)
-                    || ($journalAllocation['status'] ?? null) !== 'matched') {
-                    throw new RuntimeException('Rincian total atau pajak Journal tidak valid; Expense tidak digabung.');
+                if (($journalAllocation['status'] ?? null) !== 'matched') {
+                    throw new RuntimeException('Rincian workbook belum valid; Expense tidak digabung.');
                 }
                 $incomingTotal = (float) $journalAllocation['total_amount'];
-                if (abs($incomingTotal - (float) $journalTotal) > 0.01) {
-                    throw new RuntimeException('Total grup Expense tidak lagi cocok dengan posting Journal yang dipilih. Muat ulang preview.');
-                }
                 $transactions = $this->lockExistingExpenseGroup(
                     $selectedGroup,
                     $rows,
                     $businessId,
                     $reference,
-                    $incomingTotal
+                    $incomingTotal,
+                    true
                 );
                 $alreadyLinked = collect($lockedJournal['transactions'] ?? [])->pluck('id')->map(fn ($id) => (int) $id)->sort()->values()->all();
                 $selectedIds = collect($transactions)->pluck('id')->map(fn ($id) => (int) $id)->sort()->values()->all();
@@ -1750,7 +1887,8 @@ class ExpenseImportService
                     $reference,
                     $incomingTotal,
                     (int) $lockedJournal['row']->id,
-                    (int) $lockedJournal['mapping']->id
+                    (int) $lockedJournal['mapping']->id,
+                    true
                 );
                 $lockedJournal['transaction'] = $merged['transaction'];
                 $lockedJournal['transactions'] = collect([$merged['transaction']]);
@@ -1772,22 +1910,21 @@ class ExpenseImportService
 
                     return (float) ($item['total_amount'] ?? 0);
                 });
-                if (abs($incomingTotal - (float) ($selectedGroup['total_amount'] ?? -1)) > 0.01) {
-                    throw new RuntimeException('Total grup Expense tidak lagi sama dengan jumlah baris workbook. Muat ulang preview.');
-                }
                 $transactions = $this->lockExistingExpenseGroup(
                     $selectedGroup,
                     $rows,
                     $businessId,
                     $reference,
-                    $incomingTotal
+                    $incomingTotal,
+                    true
                 );
                 $merged = $this->consolidationService->consolidateSameYearExpenseGroup(
                     $transactions,
                     $businessId,
                     $reference,
                     $incomingTotal,
-                    (string) $incomingDates->first()
+                    (string) $incomingDates->first(),
+                    true
                 );
             } else {
                 throw new RuntimeException('Grup Expense memerlukan posting Journal yang cocok atau kandidat GL backfill tahun yang sama dan aman. Muat ulang preview.');
@@ -1810,7 +1947,6 @@ class ExpenseImportService
                     $preserved['tags']
                 ))));
             }
-            $preserveMergedPayments = (int) ($merged['payment_count'] ?? 0) > 0;
         }
 
         $categoryId = $this->validCategoryId($payload['category_id'] ?? null, $businessId)
@@ -2060,6 +2196,15 @@ class ExpenseImportService
         unset($line);
         ExpenseLine::insert($lineRows);
 
+        if ($lockedJournal === null) {
+            $this->consolidationService->synchronizeExpenseBackfill(
+                $transaction,
+                $businessId,
+                $total,
+                substr((string) ($payload['expense_date'] ?? ''), 0, 10)
+            );
+        }
+
         $firstDate = $payload['paid_on_date'] ?: $payload['expense_date'];
         $paymentMethod = $payload['payment_method'] ?: 'other';
         if ($paid > 0 || $isExistingTransaction) {
@@ -2077,9 +2222,7 @@ class ExpenseImportService
                     break;
                 }
             }
-            if (! $preserveMergedPayments) {
-                $this->transactionUtil->createOrUpdatePaymentLines($transaction, $paid > 0 ? [$paymentData] : [], $businessId, $userId, false);
-            }
+            $this->synchronizeExistingPaymentHistory($transaction, $paid, $paymentData, $businessId, $userId);
             $this->transactionUtil->updatePaymentStatus($transaction->id, $transaction->final_total);
         }
 
@@ -2089,18 +2232,72 @@ class ExpenseImportService
             $transaction->tags()->syncWithoutDetaching($tagIds);
         }
 
-        if ($lockedJournal !== null && ! $preserveExistingJournalLink) {
-            $this->journalLinkService->link($lockedJournal, $transaction, $businessId);
+        if ($lockedJournal !== null) {
+            $lockedJournal = $this->journalLinkService->synchronizeAmounts(
+                $lockedJournal,
+                $transaction,
+                $totalBeforeTax,
+                $taxAmount,
+                $total,
+                substr((string) ($payload['expense_date'] ?? ''), 0, 10)
+            );
+            if (! $preserveExistingJournalLink) {
+                $this->journalLinkService->link($lockedJournal, $transaction, $businessId);
+            }
+        }
+    }
+
+    private function synchronizeExistingPaymentHistory(
+        Transaction $transaction,
+        float $workbookPaidAmount,
+        array $newPayment,
+        int $businessId,
+        int $userId
+    ): void {
+        if (Schema::hasTable('transaction_payments')) {
+            $payments = DB::table('transaction_payments')
+                ->where('transaction_id', (int) $transaction->id)
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get(['id', 'amount']);
+
+            if ($payments->isNotEmpty()) {
+                $targetUnits = max(0, (int) round($workbookPaidAmount * 10000, 0, PHP_ROUND_HALF_UP));
+                $weights = $payments->map(fn ($payment) => max(0, (int) round((float) $payment->amount * 10000, 0, PHP_ROUND_HALF_UP)));
+                $weightTotal = (int) $weights->sum();
+                $allocated = 0;
+                foreach ($payments as $index => $payment) {
+                    if ($index === $payments->count() - 1) {
+                        $amountUnits = $targetUnits - $allocated;
+                    } elseif ($weightTotal > 0) {
+                        $amountUnits = (int) floor($targetUnits * $weights[$index] / $weightTotal);
+                    } else {
+                        $amountUnits = (int) floor($targetUnits / $payments->count());
+                    }
+                    $allocated += $amountUnits;
+                    DB::table('transaction_payments')
+                        ->where('id', (int) $payment->id)
+                        ->where('transaction_id', (int) $transaction->id)
+                        ->update(['amount' => $amountUnits / 10000]);
+                }
+
+                return;
+            }
+        }
+
+        if ($workbookPaidAmount > 0) {
+            $this->transactionUtil->createOrUpdatePaymentLines(
+                $transaction,
+                [$newPayment],
+                $businessId,
+                $userId,
+                false
+            );
         }
     }
 
     private function ensureJournalExpenseAllocation($rows, array $journalMatch): void
     {
-        $selected = $journalMatch['selected'] ?? [];
-        if (! is_numeric($selected['tax_amount'] ?? null) || ! is_numeric($selected['journal_total'] ?? null)) {
-            throw new RuntimeException('Nilai pajak atau total Journal tidak tersedia. Muat ulang preview sebelum import.');
-        }
-
         $payloads = [];
         $position = 0;
         foreach ($rows as $row) {
@@ -2110,11 +2307,7 @@ class ExpenseImportService
             $payloads[] = array_merge($payload, ['source_row' => $sourceRow > 0 ? $sourceRow : $position]);
         }
 
-        $allocation = $this->calculateJournalExpenseAllocation(
-            $payloads,
-            (float) $selected['tax_amount'],
-            (float) $selected['journal_total']
-        );
+        $allocation = $this->calculateWorkbookExpenseAllocation($payloads);
         if (($allocation['status'] ?? null) !== 'matched') {
             throw new RuntimeException((string) ($allocation['message'] ?? 'Rincian Expense tidak cocok dengan total Journal.'));
         }
@@ -2131,6 +2324,9 @@ class ExpenseImportService
                 'method' => $allocation['method'],
                 'tax_component_source_rows' => $allocation['tax_component_source_rows'],
             ];
+            $payload['journal_tax_amount'] = $allocation['tax_amount'];
+            $payload['journal_tax_id'] = $payload['tax_id'] ?? null;
+            $payload['journal_tax_name'] = $payload['tax_name'] ?? $payload['applicable_tax'] ?? null;
             $payload['journal_expense_line_base_amount'] = (float) ($allocation['line_bases'][$sourceRow] ?? 0);
             $payload['journal_expense_tax_component'] = in_array($sourceRow, $allocation['tax_component_source_rows'], true);
             $row->normalized_payload = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
@@ -2142,7 +2338,8 @@ class ExpenseImportService
         $rows,
         int $businessId,
         string $reference,
-        float $expectedTotal
+        float $expectedTotal,
+        bool $workbookAuthoritative = false
     ) {
         $memberIds = array_values(array_unique(array_map('intval', $group['member_ids'] ?? [])));
         sort($memberIds);
@@ -2189,14 +2386,17 @@ class ExpenseImportService
         $actualBase = (float) $transactions->sum(fn ($transaction) => (float) ($transaction->total_before_tax ?? 0));
         $actualTax = (float) $transactions->sum(fn ($transaction) => (float) ($transaction->tax_amount ?? 0));
         $actualTotal = (float) $transactions->sum(fn ($transaction) => (float) ($transaction->final_total ?? 0));
-        foreach ([
-            [$actualTotal, $expectedTotal],
+        $checks = [
             [$actualBase, (float) ($group['base_amount'] ?? -1)],
             [$actualTax, (float) ($group['tax_amount'] ?? -1)],
             [$actualTotal, (float) ($group['total_amount'] ?? -1)],
-        ] as [$actual, $expected]) {
+        ];
+        if (! $workbookAuthoritative) {
+            array_unshift($checks, [$actualTotal, $expectedTotal]);
+        }
+        foreach ($checks as [$actual, $expected]) {
             if (abs($actual - $expected) > 0.01) {
-                throw new RuntimeException('Nominal grup Expense berubah atau tidak lagi cocok dengan workbook/Journal. Muat ulang preview.');
+                throw new RuntimeException('Snapshot nominal anggota grup Expense berubah sejak preview. Muat ulang preview.');
             }
         }
 
@@ -2246,7 +2446,7 @@ class ExpenseImportService
             $subCategoryId = $line['sub_category_id'] ?? null;
             $amount = (float) ($line['amount'] ?? 0);
 
-            $candidates = $existingLines->filter(function ($existing, $index) use ($used, $categoryId, $subCategoryId, $amount) {
+            $candidates = $existingLines->filter(function ($existing, $index) use ($used, $categoryId, $subCategoryId) {
                 if (isset($used[$index])) {
                     return false;
                 }
@@ -2254,9 +2454,6 @@ class ExpenseImportService
                     return false;
                 }
                 if ($subCategoryId && (int) ($existing->sub_category_id ?? 0) !== (int) $subCategoryId) {
-                    return false;
-                }
-                if (abs((float) ($existing->amount ?? 0) - $amount) > 0.01) {
                     return false;
                 }
 
@@ -2275,43 +2472,50 @@ class ExpenseImportService
                     );
                     if ($legacyDescriptionMatches->isNotEmpty()) {
                         $candidates = $legacyDescriptionMatches;
+                    } else {
+                        $amountMatches = $candidates->filter(fn ($existing) => abs((float) ($existing->amount ?? 0) - $amount) <= 0.01);
+                        if ($amountMatches->isNotEmpty()) {
+                            $candidates = $amountMatches;
+                        }
                     }
                 }
-            }
-
-            $candidate = $candidates->first();
-            $candidateIndex = $candidate ? $existingLines->search(fn ($existing) => $existing === $candidate) : false;
-            if ($candidates->count() > 1) {
-                $metadata = $candidates->map(fn ($existing) => [
-                    trim((string) ($existing->note ?? '')),
-                    trim((string) ($existing->document ?? '')),
-                ])->unique(fn ($values) => json_encode($values))->count();
-
-                if ($metadata > 1) {
-                    throw new RuntimeException('Catatan atau lampiran pada baris Expense lama memiliki lebih dari satu pasangan yang mungkin. Tidak ada data sumber yang dihapus; periksa baris Expense sebelum mengimpor ulang.');
+            } else {
+                $amountMatches = $candidates->filter(fn ($existing) => abs((float) ($existing->amount ?? 0) - $amount) <= 0.01);
+                if ($amountMatches->isNotEmpty()) {
+                    $candidates = $amountMatches;
                 }
             }
 
-            if ($candidate && $candidateIndex !== false) {
-                $used[$candidateIndex] = true;
-                if (trim((string) ($line['note'] ?? '')) === '' && trim((string) ($candidate->note ?? '')) !== '') {
-                    $line['note'] = $candidate->note;
+            if ($candidates->isNotEmpty()) {
+                foreach ($candidates as $candidate) {
+                    $candidateIndex = $existingLines->search(fn ($existing) => $existing === $candidate);
+                    if ($candidateIndex !== false) {
+                        $used[$candidateIndex] = true;
+                    }
                 }
-                if (trim((string) ($line['document'] ?? '')) === '' && trim((string) ($candidate->document ?? '')) !== '') {
-                    $line['document'] = $candidate->document;
+                $oldNotes = $candidates->pluck('note')->map(fn ($note) => trim((string) $note))->filter()->unique()->values();
+                if (trim((string) ($line['note'] ?? '')) === '' && $oldNotes->isNotEmpty()) {
+                    $line['note'] = $oldNotes->implode("\n");
                 }
             }
         }
         unset($line);
 
         $unmatchedMetadata = $existingLines->filter(function ($existing, $index) use ($used) {
-            $hasMetadata = trim((string) ($existing->note ?? '')) !== '' || trim((string) ($existing->document ?? '')) !== '';
+            $hasMetadata = trim((string) ($existing->note ?? '')) !== '';
 
             return ! isset($used[$index])
                 && $hasMetadata;
         });
-        if ($unmatchedMetadata->isNotEmpty()) {
-            throw new RuntimeException('Catatan atau lampiran pada baris Expense lama tidak dapat dipasangkan dengan aman ke baris workbook. Tidak ada data sumber yang dihapus; periksa baris Expense sebelum mengimpor ulang.');
+        if ($unmatchedMetadata->isNotEmpty() && $lineRows !== []) {
+            $preservedNotes = collect(explode("\n", (string) ($lineRows[0]['note'] ?? '')))
+                ->map(fn ($note) => trim($note))->filter()->values();
+            foreach ($unmatchedMetadata->pluck('note')->map(fn ($note) => trim((string) $note))->filter()->unique() as $note) {
+                if (! $preservedNotes->contains($note)) {
+                    $preservedNotes->push($note);
+                }
+            }
+            $lineRows[0]['note'] = $preservedNotes->implode("\n");
         }
 
         return $lineRows;

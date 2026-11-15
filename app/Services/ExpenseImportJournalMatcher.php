@@ -15,6 +15,8 @@ class ExpenseImportJournalMatcher
 
     private $taxResolver;
 
+    private array $taxNamesByBusiness = [];
+
     public function __construct(
         JournalImportAccountComponentService $componentService,
         JournalImportTaxResolver $taxResolver
@@ -113,6 +115,20 @@ class ExpenseImportJournalMatcher
 
             $journalRows = $journalRowsQuery->get();
 
+            $mappingIds = $journalRows->pluck('journal_mapping_id')
+                ->filter()
+                ->map(fn ($id) => (int) $id)
+                ->unique()
+                ->values();
+            $glMappingIds = $mappingIds->isEmpty()
+                ? []
+                : array_fill_keys(DB::table('accounting_accounts_transactions')
+                    ->whereIn('acc_trans_mapping_id', $mappingIds->all())
+                    ->distinct()
+                    ->pluck('acc_trans_mapping_id')
+                    ->map(fn ($id) => (int) $id)
+                    ->all(), true);
+
             $sourceLinksByRow = [];
             if (Schema::hasTable('accounting_journal_import_source_links') && $journalRows->isNotEmpty()) {
                 DB::table('accounting_journal_import_source_links')
@@ -127,7 +143,7 @@ class ExpenseImportJournalMatcher
                     });
             }
 
-            $journalRows->each(function ($row) use (&$rowsByReference, $businessId, $taxableBases, $sourceLinksByRow) {
+            $journalRows->each(function ($row) use (&$rowsByReference, $businessId, $taxableBases, $sourceLinksByRow, $glMappingIds) {
                     $entry = json_decode((string) $row->entry_data, true);
                     $entry = is_array($entry) ? $entry : [];
                     $reference = trim((string) ($entry['source_number'] ?? $row->source_number ?? ''));
@@ -143,7 +159,8 @@ class ExpenseImportJournalMatcher
                         $entry,
                         $businessId,
                         (float) ($taxableBases[$normalized] ?? 0),
-                        $sourceLinksByRow[(int) $row->journal_row_id] ?? []
+                        $sourceLinksByRow[(int) $row->journal_row_id] ?? [],
+                        $mappingId !== null && isset($glMappingIds[$mappingId])
                     );
                     if (! isset($rowsByReference[$normalized][$candidateKey])
                         || ($rowsByReference[$normalized][$candidateKey]['ready'] === false && $candidate['ready'] === true)) {
@@ -222,7 +239,7 @@ class ExpenseImportJournalMatcher
         return null;
     }
 
-    private function candidate(object $row, array $entry, int $businessId, float $taxableBase, array $sourceLinks = []): array
+    private function candidate(object $row, array $entry, int $businessId, float $taxableBase, array $sourceLinks = [], bool $hasGlRows = false): array
     {
         $mappingId = empty($row->journal_mapping_id) ? null : (int) $row->journal_mapping_id;
         $ready = $row->processing_status === 'completed'
@@ -314,7 +331,7 @@ class ExpenseImportJournalMatcher
             }
         }
 
-        if ($ready && ! DB::table('accounting_accounts_transactions')->where('acc_trans_mapping_id', $mappingId)->exists()) {
+        if ($ready && ! $hasGlRows) {
             $issue = 'Posting Journal tidak memiliki baris General Ledger.';
             $ready = false;
         }
@@ -327,10 +344,6 @@ class ExpenseImportJournalMatcher
             ? (float) $journalSourceTotals['base']
             : $taxableBase;
         $tax = $this->journalTax($entry, $businessId, $taxableBase, $components);
-        if ($issue === null && $tax['issue'] !== null) {
-            $issue = $tax['issue'];
-            $ready = false;
-        }
         if ($issue === null && $confirmedSourceGroup !== null) {
             foreach ([
                 [(float) $confirmedSourceGroup['total_amount'], $debitTotal],
@@ -498,7 +511,13 @@ class ExpenseImportJournalMatcher
                 $resolvedTax = $this->taxResolver->resolveForEntry($entry, $businessId, $taxableBase);
                 if (($resolvedTax['direction'] ?? null) === 'input') {
                     $taxId = (int) $resolvedTax['id'];
-                    $taxName = DB::table('tax_rates')->where('business_id', $businessId)->where('id', $taxId)->value('name');
+                    if (! array_key_exists($businessId, $this->taxNamesByBusiness)) {
+                        $this->taxNamesByBusiness[$businessId] = DB::table('tax_rates')
+                            ->where('business_id', $businessId)
+                            ->pluck('name', 'id')
+                            ->all();
+                    }
+                    $taxName = $this->taxNamesByBusiness[$businessId][$taxId] ?? null;
                 }
             } catch (\Throwable $exception) {
                 // Keep the exact Journal amount. A TaxRate is only metadata and

@@ -8,6 +8,8 @@ class JournalImportTaxResolver
 {
     private const RATE_TOLERANCE = 0.01;
 
+    private array $taxRatesByBusiness = [];
+
     public function resolveForEntry(array $entry, int $businessId, ?float $taxableBase = null): ?array
     {
         $components = (new JournalImportAccountComponentService())->groupJournalLines($entry, $businessId);
@@ -32,10 +34,13 @@ class JournalImportTaxResolver
             throw new \RuntimeException('Basis kena pajak tidak tersedia dari detail transaksi atau komponen Journal.');
         }
 
-        $taxRates = TaxRate::where('business_id', $businessId)
-            ->whereNull('deleted_at')
-            ->with('sub_taxes')
-            ->get();
+        if (! array_key_exists($businessId, $this->taxRatesByBusiness)) {
+            $this->taxRatesByBusiness[$businessId] = TaxRate::where('business_id', $businessId)
+                ->whereNull('deleted_at')
+                ->with('sub_taxes')
+                ->get();
+        }
+        $taxRates = $this->taxRatesByBusiness[$businessId];
         $simpleRates = $taxRates->filter(fn ($taxRate) => ! $taxRate->is_tax_group);
         $componentRateIds = [];
         $taxAmount = 0.0;

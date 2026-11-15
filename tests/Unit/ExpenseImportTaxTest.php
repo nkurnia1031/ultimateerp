@@ -19,6 +19,8 @@ class ExpenseImportTaxTest extends TestCase
 {
     private Capsule $database;
 
+    private Container $container;
+
     private ExpenseImportService $service;
 
     private ReflectionMethod $validateRow;
@@ -40,8 +42,8 @@ class ExpenseImportTaxTest extends TestCase
             $this->markTestSkipped('PDO SQLite tidak tersedia pada PHP runtime ini.');
         }
 
-        $container = new Container();
-        $this->database = new Capsule($container);
+        $this->container = new Container();
+        $this->database = new Capsule($this->container);
         $this->database->addConnection([
             'driver' => 'sqlite',
             'database' => ':memory:',
@@ -49,15 +51,21 @@ class ExpenseImportTaxTest extends TestCase
         ]);
         $this->database->setAsGlobal();
         EloquentModel::setConnectionResolver($this->database->getDatabaseManager());
-        $container->instance('db', $this->database->getDatabaseManager());
-        $container->instance('db.schema', $this->database->schema());
-        $container->instance('date', new DateFactory());
-        Facade::setFacadeApplication($container);
+        $this->container->instance('db', $this->database->getDatabaseManager());
+        $this->container->instance('db.schema', $this->database->schema());
+        $this->container->instance('date', new DateFactory());
+        Facade::setFacadeApplication($this->container);
 
         $this->createSchema();
         $this->createMasterData();
         $this->service = new ExpenseImportService(
-            new TransactionUtil(),
+            new class extends TransactionUtil
+            {
+                public function payment_types($location_id = null, $show_advance = false, $business_id = null)
+                {
+                    return [];
+                }
+            },
             new ExpenseImportJournalMatcher(
                 new \Modules\Accounting\Services\JournalImportAccountComponentService(),
                 new \Modules\Accounting\Services\JournalImportTaxResolver()
@@ -283,33 +291,32 @@ class ExpenseImportTaxTest extends TestCase
         $this->assertStringContainsString('lebih dari satu relasi', $conflicting['issue']);
     }
 
-    public function test_expense_import_uses_journal_vat_when_workbook_tax_is_zero_and_links_existing_gl(): void
+    public function test_expense_import_uses_workbook_zero_tax_and_links_existing_gl(): void
     {
         $this->insertJournalExpense(100, 10, 25, 'REF-JOURNAL', 10);
         $validated = $this->validate('0', 'REF-JOURNAL', 100, 'Expense from Excel');
         $matchedRows = $this->applyJournalMatches->invoke($this->service, [$validated], 1, []);
 
         $this->assertTrue($matchedRows[0]['is_importable'], implode(' | ', $matchedRows[0]['errors']));
-        $this->assertSame('journal_matched', $matchedRows[0]['normalized_payload']['tax_status']);
-        $this->assertSame(10.0, (float) $matchedRows[0]['normalized_payload']['journal_tax_amount']);
+        $this->assertSame('none', $matchedRows[0]['normalized_payload']['tax_status']);
 
         $this->importGroup->invoke($this->service, collect([$this->previewRow($matchedRows[0])]), 1, 9, 'batch-1', 1);
 
         $transaction = Transaction::where('business_id', 1)->where('type', 'expense')->first();
         $this->assertNotNull($transaction);
         $this->assertSame(100.0, (float) $transaction->total_before_tax);
-        $this->assertSame(10.0, (float) $transaction->tax_amount);
-        $this->assertSame(110.0, (float) $transaction->final_total);
+        $this->assertSame(0.0, (float) $transaction->tax_amount);
+        $this->assertSame(100.0, (float) $transaction->final_total);
         $mapping = DB::table('accounting_acc_trans_mappings')->where('id', 25)->first();
         $journalRow = DB::table('accounting_journal_import_rows')->where('id', 100)->first();
         $this->assertSame(\App\Transaction::class, $mapping->source_record_type);
         $this->assertSame((int) $transaction->id, (int) $mapping->source_record_id);
         $this->assertSame((int) $transaction->id, (int) $journalRow->source_record_id);
         $this->assertSame(1, DB::table('accounting_journal_import_source_links')->count());
-        $this->assertSame(1, DB::table('accounting_accounts_transactions')->count(), 'Expense import must reuse the existing Journal GL posting.');
+        $this->assertSame(2, DB::table('accounting_accounts_transactions')->count(), 'Expense import must reuse the existing Journal GL posting.');
     }
 
-    public function test_journal_without_tax_preserves_excel_total_as_non_taxable_amount(): void
+    public function test_journal_without_tax_preserves_workbook_tax_and_total(): void
     {
         $this->insertJournalExpense(100, 10, 25, 'REF-NO-TAX', 0);
         $validated = $this->validate('VAT', 'REF-NO-TAX', 110, 'No tax in Journal');
@@ -319,8 +326,8 @@ class ExpenseImportTaxTest extends TestCase
         $this->importGroup->invoke($this->service, collect([$this->previewRow($matchedRows[0])]), 1, 9, 'batch-1', 1);
 
         $transaction = Transaction::where('business_id', 1)->where('type', 'expense')->first();
-        $this->assertSame(110.0, (float) $transaction->total_before_tax);
-        $this->assertSame(0.0, (float) $transaction->tax_amount);
+        $this->assertSame(100.0, (float) $transaction->total_before_tax);
+        $this->assertSame(10.0, (float) $transaction->tax_amount);
         $this->assertSame(110.0, (float) $transaction->final_total);
     }
 
@@ -518,7 +525,7 @@ class ExpenseImportTaxTest extends TestCase
         $this->importGroup->invoke($this->service, collect([$this->previewRow($preview[0])]), 1, 9, 'batch-1', 5);
     }
 
-    public function test_large_existing_reference_difference_requires_action_and_supports_skip_merge_or_new(): void
+    public function test_large_existing_reference_difference_uses_the_workbook_without_a_review_gate(): void
     {
         DB::table('transactions')->insert([
             'id' => 78,
@@ -538,9 +545,9 @@ class ExpenseImportTaxTest extends TestCase
         $row = $this->validate('', 'REF-LARGE-DIFF', 1200000, 'Large difference');
         $pending = $this->applyExistingExpenseMatches->invoke($this->service, [$row], 1, []);
 
-        $this->assertFalse($pending[0]['is_importable']);
-        $this->assertTrue($pending[0]['normalized_payload']['existing_expense_match']['review_required']);
-        $this->assertNull($pending[0]['normalized_payload']['existing_expense_match']['action']);
+        $this->assertTrue($pending[0]['is_importable']);
+        $this->assertFalse($pending[0]['normalized_payload']['existing_expense_match']['review_required']);
+        $this->assertSame('merge:78', $pending[0]['normalized_payload']['existing_expense_match']['action']);
 
         $merged = $this->applyExistingExpenseMatches->invoke($this->service, [$row], 1, [
             'expense_existing_action:ref-large-diff' => 'merge:78',
@@ -558,6 +565,281 @@ class ExpenseImportTaxTest extends TestCase
         $this->assertSame('new', $created[0]['normalized_payload']['existing_expense_match']['action']);
         $this->assertFalse($skipped[0]['is_importable']);
         $this->assertSame('skipped', $skipped[0]['status']);
+    }
+
+    public function test_public_preview_uses_the_linked_expense_and_leaves_same_reference_on_other_date_alone(): void
+    {
+        $this->insertExistingExpense(77, 'REF-AUTHORITY', '2026-10-21 00:00:00', 110);
+        $this->insertExistingExpense(78, 'REF-AUTHORITY', '2026-10-22 00:00:00', 900);
+        $this->insertJournalExpense(101, 11, 26, 'REF-AUTHORITY', 0, 100);
+        DB::table('accounting_acc_trans_mappings')->where('id', 26)->update([
+            'source_record_type' => Transaction::class,
+            'source_record_id' => 77,
+        ]);
+        DB::table('accounting_journal_import_rows')->where('id', 101)->update([
+            'source_record_type' => Transaction::class,
+            'source_record_id' => 77,
+        ]);
+        DB::table('accounting_journal_import_source_links')->insert([
+            'business_id' => 1,
+            'journal_import_id' => 11,
+            'journal_import_row_id' => 101,
+            'journal_source_type' => 'Expense',
+            'source_record_type' => Transaction::class,
+            'source_record_id' => 77,
+            'source_reference' => 'REF-AUTHORITY',
+            'source_date' => '2026-10-21',
+            'base_amount' => 110,
+            'tax_amount' => 0,
+            'total_amount' => 110,
+            'link_method' => 'single',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $this->container->instance('excel', new class
+        {
+            public function toArray($import, $path, $disk = null, $readerType = null): array
+            {
+                return [[
+                    ['LOCATION', 'CATEGORY', 'SUB-CATEGORY', 'REFERENCE NO', 'EXPENSE DATE', 'EXPENSE FOR', 'EXPENSE FOR CONTACT ID', 'ATTACH DOCUMENT', 'APPLICABLE TAX', 'EXPENSE NOTE', 'TOTAL AMOUNT', 'PAID AMOUNT', 'PAID ON DATE', 'PAYMENT METHOD', 'PAYMENT ACCOUNT', 'PAYMENT NOTE'],
+                    ['Main Location', 'Office', '', 'REF-AUTHORITY', '2026-10-21', '', '', '', 0, 'Workbook is authoritative', 125, 0, '', '', '', ''],
+                ]];
+            }
+        });
+        DB::table('expense_import_batches')->where('id', 'batch-1')->update([
+            'business_id' => 1,
+            'status' => 'preview',
+            'operation' => 'import',
+            'process_state' => 'completed',
+        ]);
+
+        $summary = $this->service->preview('batch-1', 1, 'ignored.xlsx');
+
+        $this->assertSame(1, $summary['valid']);
+        $this->assertSame(0, $summary['errors']);
+        $previewRow = DB::table('expense_import_preview_rows')->where('batch_id', 'batch-1')->first();
+        $payload = json_decode((string) $previewRow->normalized_payload, true);
+        $this->assertSame('merge:77', $payload['existing_expense_match']['action']);
+        $this->assertSame([77], array_column($payload['existing_expense_match']['candidates'], 'id'));
+        $this->assertSame(125.0, (float) $payload['journal_expense_allocation']['total_amount']);
+        $this->assertSame(900.0, (float) Transaction::find(78)->final_total);
+    }
+
+    public function test_public_preview_auto_consolidates_same_date_expenses_with_proven_backfill_gl(): void
+    {
+        $this->insertExistingExpense(77, 'REF-DUPLICATE-BACKFILL', '2026-10-21 00:00:00', 110);
+        $this->insertExistingExpense(78, 'REF-DUPLICATE-BACKFILL', '2026-10-21 00:00:00', 90);
+        $this->insertBackfillExpenseMapping(27, 77, 'REF-DUPLICATE-BACKFILL', '2026-10-21', 110);
+        $this->insertBackfillExpenseMapping(28, 78, 'REF-DUPLICATE-BACKFILL', '2026-10-21', 90);
+        $this->insertJournalExpense(101, 11, 26, 'REF-DUPLICATE-BACKFILL', 0, 100);
+        DB::table('transaction_payments')->insert([
+            [
+                'id' => 501,
+                'transaction_id' => 77,
+                'business_id' => 1,
+                'amount' => 110,
+                'paid_on' => '2026-10-21 00:00:00',
+                'method' => 'cash',
+                'created_by' => 9,
+            ],
+            [
+                'id' => 502,
+                'transaction_id' => 78,
+                'business_id' => 1,
+                'amount' => 90,
+                'paid_on' => '2026-10-21 00:00:00',
+                'method' => 'bank_transfer',
+                'created_by' => 9,
+            ],
+        ]);
+        $this->container->instance('excel', new class
+        {
+            public function toArray($import, $path, $disk = null, $readerType = null): array
+            {
+                return [[
+                    ['LOCATION', 'CATEGORY', 'SUB-CATEGORY', 'REFERENCE NO', 'EXPENSE DATE', 'EXPENSE FOR', 'EXPENSE FOR CONTACT ID', 'ATTACH DOCUMENT', 'APPLICABLE TAX', 'EXPENSE NOTE', 'TOTAL AMOUNT', 'PAID AMOUNT', 'PAID ON DATE', 'PAYMENT METHOD', 'PAYMENT ACCOUNT', 'PAYMENT NOTE'],
+                    ['Main Location', 'Office', '', 'REF-DUPLICATE-BACKFILL', '2026-10-21', '', '', '', 0, 'Workbook owns the amount', 125, 120, '2026-10-21', '', '', 'Workbook payment note'],
+                ]];
+            }
+        });
+        DB::table('expense_import_batches')->where('id', 'batch-1')->update([
+            'business_id' => 1,
+            'status' => 'preview',
+            'operation' => 'import',
+            'process_state' => 'completed',
+        ]);
+
+        $summary = $this->service->preview('batch-1', 1, 'ignored.xlsx');
+
+        $this->assertSame(1, $summary['valid']);
+        $this->assertSame(0, $summary['errors']);
+        $previewRow = DB::table('expense_import_preview_rows')->where('batch_id', 'batch-1')->first();
+        $payload = json_decode((string) $previewRow->normalized_payload, true);
+        $match = $payload['existing_expense_match'];
+        $this->assertStringStartsWith('group:', $match['action']);
+        $this->assertSame([77, 78], $match['selected_group']['member_ids']);
+        $this->assertTrue($match['selected_group']['consolidation_safe']);
+
+        $this->service = new ExpenseImportService(
+            new class extends TransactionUtil
+            {
+                public function payment_types($location_id = null, $show_advance = false, $business_id = null)
+                {
+                    return [];
+                }
+
+                public function createOrUpdatePaymentLines($transaction, $payments, $business_id = null, $user_id = null, $uf_data = true)
+                {
+                    return true;
+                }
+
+                public function updatePaymentStatus($transaction_id, $final_amount = null)
+                {
+                    return 'partial';
+                }
+            },
+            new ExpenseImportJournalMatcher(
+                new \Modules\Accounting\Services\JournalImportAccountComponentService(),
+                new \Modules\Accounting\Services\JournalImportTaxResolver()
+            ),
+            new \App\Services\ExpenseImportJournalLinkService()
+        );
+        $result = $this->service->import('batch-1', 1, 9);
+
+        $this->assertSame(['transactions' => 1, 'rows' => 1], $result);
+        $this->assertSame(125.0, (float) Transaction::find(77)->final_total);
+        $this->assertNull(Transaction::find(78));
+        $this->assertSame(2, DB::table('transaction_payments')->where('transaction_id', 77)->count());
+        $this->assertSame(501, (int) DB::table('transaction_payments')->where('transaction_id', 77)->orderBy('id')->value('id'));
+        $this->assertSame(120.0, (float) DB::table('transaction_payments')->where('transaction_id', 77)->sum('amount'));
+        $this->assertSame(125.0, (float) DB::table('accounting_accounts_transactions')->where('acc_trans_mapping_id', 26)->where('type', 'debit')->sum('amount'));
+        $this->assertSame(125.0, (float) DB::table('accounting_accounts_transactions')->where('acc_trans_mapping_id', 26)->where('type', 'credit')->sum('amount'));
+        $this->assertSame(0, DB::table('accounting_acc_trans_mappings')->whereIn('id', [27, 28])->count());
+    }
+
+    public function test_public_import_updates_expense_journal_and_existing_payment_history_from_workbook(): void
+    {
+        $this->insertExistingExpense(77, 'REF-IMPORT-AUTHORITY', '2026-10-21 00:00:00', 100);
+        $this->insertJournalExpense(101, 11, 26, 'REF-IMPORT-AUTHORITY', 0, 100);
+        DB::table('accounting_acc_trans_mappings')->where('id', 26)->update([
+            'source_record_type' => Transaction::class,
+            'source_record_id' => 77,
+        ]);
+        DB::table('accounting_journal_import_rows')->where('id', 101)->update([
+            'source_record_type' => Transaction::class,
+            'source_record_id' => 77,
+        ]);
+        DB::table('accounting_journal_import_source_links')->insert([
+            'business_id' => 1,
+            'journal_import_id' => 11,
+            'journal_import_row_id' => 101,
+            'journal_source_type' => 'Expense',
+            'source_record_type' => Transaction::class,
+            'source_record_id' => 77,
+            'source_reference' => 'REF-IMPORT-AUTHORITY',
+            'source_date' => '2026-10-21',
+            'base_amount' => 100,
+            'tax_amount' => 0,
+            'total_amount' => 100,
+            'link_method' => 'single',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('transaction_payments')->insert([
+            [
+                'id' => 501,
+                'transaction_id' => 77,
+                'business_id' => 1,
+                'amount' => 30,
+                'paid_on' => '2026-10-20 00:00:00',
+                'method' => 'cash',
+                'account_id' => 9,
+                'note' => 'First historical payment',
+                'created_by' => 9,
+            ],
+            [
+                'id' => 502,
+                'transaction_id' => 77,
+                'business_id' => 1,
+                'amount' => 50,
+                'paid_on' => '2026-10-21 00:00:00',
+                'method' => 'bank_transfer',
+                'account_id' => 9,
+                'note' => 'Second historical payment',
+                'created_by' => 9,
+            ],
+        ]);
+        $this->container->instance('excel', new class
+        {
+            public function toArray($import, $path, $disk = null, $readerType = null): array
+            {
+                return [[
+                    ['LOCATION', 'CATEGORY', 'SUB-CATEGORY', 'REFERENCE NO', 'EXPENSE DATE', 'EXPENSE FOR', 'EXPENSE FOR CONTACT ID', 'ATTACH DOCUMENT', 'APPLICABLE TAX', 'EXPENSE NOTE', 'TOTAL AMOUNT', 'PAID AMOUNT', 'PAID ON DATE', 'PAYMENT METHOD', 'PAYMENT ACCOUNT', 'PAYMENT NOTE'],
+                    ['Main Location', 'Office', '', 'REF-IMPORT-AUTHORITY', '2026-10-22', '', '', '', 0, 'Workbook line description', 125, 120, '2026-10-21', '', '', 'Workbook payment note'],
+                ]];
+            }
+        });
+        DB::table('expense_import_batches')->where('id', 'batch-1')->update([
+            'business_id' => 1,
+            'status' => 'preview',
+            'operation' => 'import',
+            'process_state' => 'completed',
+        ]);
+        $summary = $this->service->preview('batch-1', 1, 'ignored.xlsx');
+        $this->assertSame(1, $summary['valid']);
+        $this->assertSame(0, $summary['errors']);
+
+        $this->service = new ExpenseImportService(
+            new class extends TransactionUtil
+            {
+                public function payment_types($location_id = null, $show_advance = false, $business_id = null)
+                {
+                    return [];
+                }
+
+                public function createOrUpdatePaymentLines($transaction, $payments, $business_id = null, $user_id = null, $uf_data = true)
+                {
+                    foreach ($payments as $payment) {
+                        if (! empty($payment['payment_id'])) {
+                            DB::table('transaction_payments')->where('id', $payment['payment_id'])->update([
+                                'amount' => $payment['amount'],
+                            ]);
+                        }
+                    }
+
+                    return true;
+                }
+
+                public function updatePaymentStatus($transaction_id, $final_amount = null)
+                {
+                    return 'partial';
+                }
+            },
+            new ExpenseImportJournalMatcher(
+                new \Modules\Accounting\Services\JournalImportAccountComponentService(),
+                new \Modules\Accounting\Services\JournalImportTaxResolver()
+            ),
+            new \App\Services\ExpenseImportJournalLinkService()
+        );
+
+        $result = $this->service->import('batch-1', 1, 9);
+
+        $this->assertSame(['transactions' => 1, 'rows' => 1], $result);
+        $this->assertSame(125.0, (float) Transaction::find(77)->final_total);
+        $this->assertSame('2026-10-22', substr((string) Transaction::find(77)->transaction_date, 0, 10));
+        $this->assertSame('Workbook line description', DB::table('expense_lines')->where('transaction_id', 77)->value('description'));
+        $this->assertSame(2, DB::table('transaction_payments')->where('transaction_id', 77)->count());
+        $this->assertSame(501, (int) DB::table('transaction_payments')->where('transaction_id', 77)->value('id'));
+        $this->assertSame(45.0, (float) DB::table('transaction_payments')->where('id', 501)->value('amount'));
+        $this->assertSame(75.0, (float) DB::table('transaction_payments')->where('id', 502)->value('amount'));
+        $this->assertSame(120.0, (float) DB::table('transaction_payments')->where('transaction_id', 77)->sum('amount'));
+        $this->assertSame(125.0, (float) DB::table('accounting_accounts_transactions')->where('acc_trans_mapping_id', 26)->where('type', 'debit')->sum('amount'));
+        $this->assertSame(125.0, (float) DB::table('accounting_accounts_transactions')->where('acc_trans_mapping_id', 26)->where('type', 'credit')->sum('amount'));
+        $journal = DB::table('accounting_journal_import_rows')->where('id', 101)->value('entry_data');
+        $journalEntry = json_decode((string) $journal, true);
+        $this->assertSame('2026-10-22', $journalEntry['date']);
+        $this->assertSame(125.0, (float) $journalEntry['debit_total']);
+        $this->assertSame(125.0, (float) $journalEntry['credit_total']);
     }
 
     private function validate(string $taxName, string $reference = 'REF-1', float $total = 110, string $description = 'Test expense', array $overrides = []): array
@@ -589,8 +871,8 @@ class ExpenseImportTaxTest extends TestCase
         $location = (object) ['id' => 1, 'name' => 'Main Location'];
         $category = (object) ['id' => 1, 'name' => 'Office', 'parent_id' => null];
         $taxes = collect([
-            (object) ['id' => 2, 'name' => 'VAT'],
-            (object) ['id' => 3, 'name' => 'Reduced VAT'],
+            (object) ['id' => 2, 'name' => 'VAT', 'amount' => 10, 'is_tax_group' => false],
+            (object) ['id' => 3, 'name' => 'Reduced VAT', 'amount' => 5, 'is_tax_group' => false],
         ]);
 
         return [
@@ -613,6 +895,58 @@ class ExpenseImportTaxTest extends TestCase
         ];
     }
 
+    private function insertExistingExpense(int $id, string $reference, string $date, float $total): void
+    {
+        DB::table('transactions')->insert([
+            'id' => $id,
+            'business_id' => 1,
+            'location_id' => 1,
+            'ref_no' => $reference,
+            'transaction_date' => $date,
+            'type' => 'expense',
+            'status' => 'final',
+            'payment_status' => 'due',
+            'total_before_tax' => $total,
+            'tax_amount' => 0,
+            'final_total' => $total,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('expense_lines')->insert([
+            'transaction_id' => $id,
+            'category_id' => 1,
+            'amount' => $total,
+            'description' => 'Old app value',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    private function insertBackfillExpenseMapping(int $mappingId, int $transactionId, string $reference, string $date, float $amount): void
+    {
+        DB::table('accounting_acc_trans_mappings')->insert([
+            'id' => $mappingId,
+            'business_id' => 1,
+            'source_record_type' => Transaction::class,
+            'source_record_id' => $transactionId,
+            'source_link_status' => 'matched',
+            'ref_no' => $reference,
+            'type' => 'general_ledger_backfill',
+            'operation_date' => $date,
+        ]);
+        foreach (['debit', 'credit'] as $type) {
+            DB::table('accounting_accounts_transactions')->insert([
+                'acc_trans_mapping_id' => $mappingId,
+                'transaction_id' => $transactionId,
+                'transaction_payment_id' => null,
+                'amount' => $amount,
+                'type' => $type,
+                'sub_type' => 'expense',
+                'map_type' => 'general_ledger_backfill',
+            ]);
+        }
+    }
+
     private function createSchema(): void
     {
         $schema = $this->database->schema();
@@ -620,6 +954,16 @@ class ExpenseImportTaxTest extends TestCase
             $table->increments('id');
             $table->unsignedInteger('business_id');
             $table->string('name');
+        });
+        $schema->create('contacts', function ($table) {
+            $table->increments('id');
+            $table->unsignedInteger('business_id');
+            $table->timestamp('deleted_at')->nullable();
+        });
+        $schema->create('users', function ($table) {
+            $table->increments('id');
+            $table->unsignedInteger('business_id');
+            $table->timestamp('deleted_at')->nullable();
         });
         $schema->create('expense_categories', function ($table) {
             $table->increments('id');
@@ -675,7 +1019,21 @@ class ExpenseImportTaxTest extends TestCase
             $table->text('description')->nullable();
             $table->text('note')->nullable();
             $table->decimal('amount', 22, 4);
+            $table->string('document')->nullable();
             $table->timestamps();
+        });
+        $schema->create('transaction_payments', function ($table) {
+            $table->increments('id');
+            $table->unsignedInteger('transaction_id');
+            $table->unsignedInteger('business_id')->nullable();
+            $table->decimal('amount', 22, 4);
+            $table->dateTime('paid_on')->nullable();
+            $table->string('method')->nullable();
+            $table->unsignedInteger('account_id')->nullable();
+            $table->text('note')->nullable();
+            $table->string('payment_ref_no')->nullable();
+            $table->unsignedInteger('created_by')->nullable();
+            $table->string('transaction_no')->nullable();
         });
         $schema->create('transaction_tags', function ($table) {
             $table->unsignedInteger('transaction_id');
@@ -692,6 +1050,29 @@ class ExpenseImportTaxTest extends TestCase
             $table->string('id')->primary();
             $table->string('file_name')->nullable();
             $table->string('business_id')->nullable();
+            $table->string('status')->nullable();
+            $table->string('operation')->nullable();
+            $table->string('process_state')->nullable();
+            $table->unsignedInteger('progress_total')->default(0);
+            $table->unsignedInteger('progress_current')->default(0);
+            $table->text('summary')->nullable();
+            $table->dateTime('confirmed_at')->nullable();
+            $table->timestamps();
+        });
+        $schema->create('expense_import_preview_rows', function ($table) {
+            $table->increments('id');
+            $table->string('batch_id');
+            $table->unsignedInteger('business_id');
+            $table->unsignedInteger('source_row')->nullable();
+            $table->string('group_key')->nullable();
+            $table->string('status')->nullable();
+            $table->text('errors')->nullable();
+            $table->text('raw_payload')->nullable();
+            $table->text('normalized_payload')->nullable();
+            $table->boolean('is_importable')->default(false);
+            $table->string('skip_reason')->nullable();
+            $table->timestamps();
+            $table->unique(['batch_id', 'source_row']);
         });
         $schema->create('accounting_journal_imports', function ($table) {
             $table->increments('id');
@@ -721,6 +1102,8 @@ class ExpenseImportTaxTest extends TestCase
             $table->unsignedInteger('source_record_id')->nullable();
             $table->string('source_link_status')->nullable();
             $table->text('source_link_note')->nullable();
+            $table->string('ref_no')->nullable();
+            $table->dateTime('operation_date')->nullable();
         });
         $schema->create('accounting_accounts_transactions', function ($table) {
             $table->increments('id');
@@ -811,6 +1194,9 @@ class ExpenseImportTaxTest extends TestCase
         if ($mappingId !== null) {
             DB::table('accounting_accounts_transactions')->insert([
                 'acc_trans_mapping_id' => $mappingId, 'amount' => $baseAmount + $taxAmount, 'type' => 'debit',
+            ]);
+            DB::table('accounting_accounts_transactions')->insert([
+                'acc_trans_mapping_id' => $mappingId, 'amount' => $baseAmount + $taxAmount, 'type' => 'credit',
             ]);
         }
     }
