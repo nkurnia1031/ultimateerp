@@ -15,6 +15,18 @@ class LegacyAttachmentImporter
         'Expense' => ['expense', 'expense_refund'],
         'Purchase Invoice' => ['purchase'],
         'Sales Invoice' => ['sell'],
+        'Purchase Order' => ['purchase_order'],
+    ];
+
+    private const PAYMENT_SOURCE_TYPES = [
+        'Purchase Payment' => 'purchase',
+        'Receive Payment' => 'sell',
+    ];
+
+    private const ACCOUNT_TRANSACTION_SOURCE_TYPES = [
+        'Bank Deposit' => ['credit', 'deposit'],
+        'Bank Transfer' => ['debit', 'fund_transfer'],
+        'Bank Withdrawal' => ['debit', 'withdrawal'],
     ];
 
     public function import(
@@ -63,7 +75,9 @@ class LegacyAttachmentImporter
         $allowRemoteDownloads = $allowRemoteDownloads ?? app()->environment('production');
         $crosswalkIndex = $this->crosswalkIndex($runId, $businessId);
         $transactionIndex = $this->transactionIndex($businessId, $crosswalkIndex);
+        $attachmentReferenceIndex = $this->attachmentReferenceIndex($businessId, $records);
         $mediaIndex = $this->mediaIndex($businessId, $records);
+        $timestampedDocumentFiles = $this->timestampedDocumentFileIndex($documentsDirectory);
 
         foreach ($records as $record) {
             $outcome = $this->importRecord(
@@ -74,8 +88,10 @@ class LegacyAttachmentImporter
                 $documentsDirectory,
                 $allowRemoteDownloads,
                 $collisionInfo['counts'],
+                $timestampedDocumentFiles,
                 $crosswalkIndex,
                 $transactionIndex,
+                $attachmentReferenceIndex,
                 $mediaIndex
             );
             if (isset($summary[$outcome['status']])) {
@@ -96,8 +112,10 @@ class LegacyAttachmentImporter
         string $documentsDirectory,
         bool $allowRemoteDownloads,
         array $collisionCounts,
+        array $timestampedDocumentFiles,
         array $crosswalkIndex,
         array $transactionIndex,
+        array $attachmentReferenceIndex,
         array &$mediaIndex
     ): array {
         $attachmentId = $this->scalarId($record['id'] ?? null);
@@ -106,8 +124,7 @@ class LegacyAttachmentImporter
         }
         $entry = is_array($record['entry'] ?? null) ? $record['entry'] : [];
         $legacyTransactionId = $this->scalarId($record['transaction_id'] ?? ($entry['id'] ?? null));
-        $entryNumber = trim((string) ($entry['number'] ?? ''));
-        [$sourceType, $sourceNumber] = $this->parseEntryNumber($entryNumber);
+        [$sourceType, $sourceNumber] = $this->sourceIdentity($record);
         $file = is_array($record['file'] ?? null) ? $record['file'] : [];
         $url = trim((string) ($file['url'] ?? ''));
         $fileInfo = $this->validateSourceUrl($url, $attachmentId);
@@ -130,7 +147,11 @@ class LegacyAttachmentImporter
             'original_file_name' => $originalName,
             'destination_file_name' => $destinationName,
             'target_transaction_id' => null,
+            'target_record_type' => null,
+            'target_record_id' => null,
             'media_id' => null,
+            'media_model_type' => null,
+            'media_model_id' => null,
             'match_method' => null,
             'file_action' => null,
             'status' => 'review',
@@ -141,12 +162,16 @@ class LegacyAttachmentImporter
         if ($fileInfo['valid'] !== true) {
             return $this->storeOutcome($base, 'rejected', null, null, 'rejected', (string) $fileInfo['reason']);
         }
-        if (! isset(self::OPERATIONAL_TYPES[$sourceType])) {
-            return $this->storeOutcome($base, 'review', null, null, null, 'Tipe transaksi lampiran tidak didukung untuk Media transaksi operasional.');
-        }
-
-        $match = $this->resolveTransaction($legacyTransactionId, $sourceType, $sourceNumber, $crosswalkIndex, $transactionIndex);
-        if ($match['transaction'] === null) {
+        $match = $this->resolveTarget(
+            $legacyTransactionId,
+            $sourceType,
+            $sourceNumber,
+            $originalName,
+            $crosswalkIndex,
+            $transactionIndex,
+            $attachmentReferenceIndex
+        );
+        if ($match['target'] === null) {
             return $this->storeOutcome(
                 $base,
                 'review',
@@ -157,14 +182,17 @@ class LegacyAttachmentImporter
             );
         }
 
-        /** @var Transaction $transaction */
-        $transaction = $match['transaction'];
-        $base['target_transaction_id'] = (int) $transaction->id;
+        $target = $match['target'];
+        $base['target_transaction_id'] = $target['target_transaction_id'];
+        $base['target_record_type'] = $target['target_record_type'];
+        $base['target_record_id'] = $target['target_record_id'];
+        $base['media_model_type'] = $target['media_model_type'];
+        $base['media_model_id'] = $target['media_model_id'];
         $base['match_method'] = $match['method'];
 
         $existingMedia = $mediaIndex[$attachmentId] ?? null;
-        if ($existingMedia && ((string) $existingMedia->model_type !== Transaction::class
-            || (int) $existingMedia->model_id !== (int) $transaction->id)) {
+        if ($existingMedia && ((string) $existingMedia->model_type !== $target['media_model_type']
+            || (int) $existingMedia->model_id !== (int) $target['media_model_id'])) {
             return $this->storeOutcome($base, 'review', null, $match['method'], null, 'ID lampiran sudah tertaut ke transaksi lain; tautan tidak diubah.');
         }
 
@@ -174,6 +202,16 @@ class LegacyAttachmentImporter
                 return $this->storeOutcome($base, 'review', (int) $existingMedia->id, $match['method'], null, 'Media lampiran yang sudah ada memakai lokasi atau nama file yang tidak sesuai.');
             }
             $destinationName = $existingName;
+        } else {
+            $referencedName = $this->existingDocumentReferenceName($target, $documentsDirectory);
+            if ($referencedName !== null) {
+                $destinationName = $referencedName;
+            } elseif ((int) ($collisionCounts[mb_strtolower((string) $originalName, 'UTF-8')] ?? 0) <= 1) {
+                $matchingNames = $timestampedDocumentFiles[$this->normalizeFileName((string) $originalName)] ?? [];
+                if (count($matchingNames) === 1) {
+                    $destinationName = $matchingNames[0];
+                }
+            }
         }
         if (! $this->isSafeFileName((string) $destinationName)) {
             return $this->storeOutcome($base, 'rejected', null, $match['method'], null, 'Nama tujuan lampiran tidak aman.');
@@ -209,8 +247,8 @@ class LegacyAttachmentImporter
         $media->storage_location = 'documents';
         $media->legacy_source_attachment_id = $attachmentId;
         $media->model_media_type = 'legacy_document';
-        $media->model_type = Transaction::class;
-        $media->model_id = (int) $transaction->id;
+        $media->model_type = $target['media_model_type'];
+        $media->model_id = (int) $target['media_model_id'];
         $media->uploaded_by = null;
 
         try {
@@ -221,8 +259,8 @@ class LegacyAttachmentImporter
                 ->where('business_id', $businessId)
                 ->where('legacy_source_attachment_id', $attachmentId)
                 ->first();
-            if (! $concurrentMedia || (int) $concurrentMedia->model_id !== (int) $transaction->id
-                || (string) $concurrentMedia->model_type !== Transaction::class) {
+            if (! $concurrentMedia || (int) $concurrentMedia->model_id !== (int) $target['media_model_id']
+                || (string) $concurrentMedia->model_type !== $target['media_model_type']) {
                 return $this->storeOutcome($base, 'failed', null, $match['method'], $fileAction['action'], 'Media tidak dapat disimpan: '.$exception->getMessage());
             }
             $media = $concurrentMedia;
@@ -232,42 +270,263 @@ class LegacyAttachmentImporter
         return $this->storeOutcome($base, 'linked', (int) $media->id, $match['method'], $fileAction['action'], null);
     }
 
-    private function resolveTransaction(
+    private function resolveTarget(
         string $legacyTransactionId,
-        string $sourceType,
+        ?string $sourceType,
         ?string $sourceNumber,
+        ?string $originalName,
         array $crosswalkIndex,
-        array $transactionIndex
+        array $transactionIndex,
+        array $attachmentReferenceIndex
     ): array {
-        $targetIds = [];
+        $fileKey = $originalName !== null ? $this->normalizeFileName($originalName) : null;
+        $fileCandidates = $fileKey !== null
+            ? $this->uniqueAttachmentReferences($attachmentReferenceIndex['file_name']['*'][$fileKey] ?? [])
+            : [];
+
         if ($legacyTransactionId !== '') {
-            $targetIds = array_keys($crosswalkIndex['legacy'][$sourceType][$legacyTransactionId] ?? []);
-            if (count($targetIds) > 1) {
-                return ['transaction' => null, 'method' => 'legacy_record_id', 'reason' => 'ID transaksi legacy memiliki lebih dari satu target crosswalk.'];
-            }
-            if (count($targetIds) === 1) {
-                $transaction = $this->validTransactionFromIndex((int) $targetIds[0], $sourceType, $transactionIndex);
-                if ($transaction) {
-                    return ['transaction' => $transaction, 'method' => 'legacy_record_id', 'reason' => null];
+            $targetIds = [];
+            if ($sourceType !== null) {
+                $targetIds = array_keys($crosswalkIndex['legacy'][$sourceType][$legacyTransactionId] ?? []);
+            } else {
+                foreach ((array) ($crosswalkIndex['legacy'] ?? []) as $bySourceType) {
+                    foreach (array_keys($bySourceType[$legacyTransactionId] ?? []) as $targetId) {
+                        $targetIds[(int) $targetId] = true;
+                    }
                 }
+                $targetIds = array_keys($targetIds);
+            }
+
+            $crosswalkCandidates = [];
+            foreach ($targetIds as $targetId) {
+                $transaction = $transactionIndex[(int) $targetId] ?? null;
+                if (! $transaction || ($sourceType === null
+                    ? ! $this->isSupportedTransactionType((string) $transaction->type)
+                    : $this->validTransactionFromIndex((int) $targetId, $sourceType, $transactionIndex) === null)) {
+                    continue;
+                }
+                $crosswalkCandidates[] = $this->transactionReference($transaction);
+            }
+            $crosswalkCandidates = $this->uniqueAttachmentReferences($crosswalkCandidates);
+            if (count($crosswalkCandidates) > 1) {
+                $matchingCandidates = array_values(array_filter(
+                    $crosswalkCandidates,
+                    fn (array $candidate) => $this->matchesFileCandidate($candidate, $fileCandidates)
+                ));
+                if (count($matchingCandidates) === 1) {
+                    return ['target' => $matchingCandidates[0], 'method' => 'legacy_record_id_file_name', 'reason' => null];
+                }
+
+                return ['target' => null, 'method' => 'legacy_record_id', 'reason' => 'ID transaksi legacy memiliki lebih dari satu target crosswalk.'];
+            }
+            if (count($crosswalkCandidates) === 1) {
+                $target = $this->refineTransactionReferenceWithFile($crosswalkCandidates[0], $fileCandidates);
+
+                return ['target' => $target, 'method' => 'legacy_record_id', 'reason' => null];
             }
         }
 
-        if ($sourceNumber !== null && $sourceNumber !== '') {
+        if ($sourceType !== null && $sourceNumber !== null && $sourceNumber !== '') {
             $numberKey = $this->normalizeNumber($sourceNumber);
             $targetIds = array_keys($crosswalkIndex['number'][$sourceType][$numberKey] ?? []);
             if (count($targetIds) > 1) {
-                return ['transaction' => null, 'method' => 'source_number', 'reason' => 'Nomor sumber memiliki beberapa transaksi tujuan; tautan lampiran perlu ditinjau.'];
+                $crosswalkCandidates = [];
+                foreach ($targetIds as $targetId) {
+                    $transaction = $this->validTransactionFromIndex((int) $targetId, $sourceType, $transactionIndex);
+                    if ($transaction) {
+                        $crosswalkCandidates[] = $this->transactionReference($transaction);
+                    }
+                }
+                $crosswalkCandidates = $this->uniqueAttachmentReferences($crosswalkCandidates);
+                if (count($crosswalkCandidates) === 1) {
+                    $target = $this->refineTransactionReferenceWithFile($crosswalkCandidates[0], $fileCandidates);
+
+                    return ['target' => $target, 'method' => 'source_number', 'reason' => null];
+                }
+                $matchingCandidates = array_values(array_filter(
+                    $crosswalkCandidates,
+                    fn (array $candidate) => $this->matchesFileCandidate($candidate, $fileCandidates)
+                ));
+                if (count($matchingCandidates) === 1) {
+                    return ['target' => $matchingCandidates[0], 'method' => 'source_number_file_name', 'reason' => null];
+                }
+
+                return ['target' => null, 'method' => 'source_number', 'reason' => 'Nomor sumber memiliki beberapa transaksi tujuan; tautan lampiran perlu ditinjau.'];
             }
             if (count($targetIds) === 1) {
                 $transaction = $this->validTransactionFromIndex((int) $targetIds[0], $sourceType, $transactionIndex);
                 if ($transaction) {
-                    return ['transaction' => $transaction, 'method' => 'source_number', 'reason' => null];
+                    $target = $this->transactionReference($transaction);
+                    $target = $this->refineTransactionReferenceWithFile($target, $fileCandidates);
+
+                    return ['target' => $target, 'method' => 'source_number', 'reason' => null];
                 }
+            }
+
+            $numberCandidates = $this->uniqueAttachmentReferences(
+                $attachmentReferenceIndex['number'][$sourceType][$numberKey] ?? []
+            );
+            if (count($numberCandidates) > 1) {
+                $matchingCandidates = array_values(array_filter(
+                    $numberCandidates,
+                    fn (array $candidate) => $this->matchesFileCandidate($candidate, $fileCandidates)
+                ));
+                if (count($matchingCandidates) === 1) {
+                    return ['target' => $matchingCandidates[0], 'method' => 'source_number_file_name', 'reason' => null];
+                }
+
+                return ['target' => null, 'method' => 'source_number', 'reason' => 'Nomor sumber memiliki beberapa record operasional; noref dan nama file belum menunjuk ke satu record yang sama.'];
+            }
+            if (count($numberCandidates) === 1) {
+                $target = $this->refineTransactionReferenceWithFile($numberCandidates[0], $fileCandidates);
+
+                return ['target' => $target, 'method' => 'source_number', 'reason' => null];
             }
         }
 
-        return ['transaction' => null, 'method' => null, 'reason' => 'Transaksi tujuan belum ditemukan pada crosswalk legacy tersimpan.'];
+        if (count($fileCandidates) === 1) {
+            return ['target' => $fileCandidates[0], 'method' => 'file_name', 'reason' => null];
+        }
+        if (count($fileCandidates) > 1) {
+            return ['target' => null, 'method' => 'file_name', 'reason' => 'Nama file yang sama ditemukan pada beberapa record operasional; tautan lampiran perlu ditinjau.'];
+        }
+
+        return ['target' => null, 'method' => null, 'reason' => 'Record operasional belum ditemukan lewat crosswalk, nomor referensi, atau nama file.'];
+    }
+
+    private function transactionReference(Transaction $transaction): array
+    {
+        return [
+            'media_model_type' => Transaction::class,
+            'media_model_id' => (int) $transaction->id,
+            'target_transaction_id' => (int) $transaction->id,
+            'target_record_type' => Transaction::class,
+            'target_record_id' => (int) $transaction->id,
+            'parent_ref_no' => (string) ($transaction->ref_no ?? ''),
+            'parent_transaction_type' => (string) $transaction->type,
+            'document_references' => [],
+        ];
+    }
+
+    private function existingDocumentReferenceName(array $target, string $documentsDirectory): ?string
+    {
+        $names = array_values(array_unique(array_filter(array_map(
+            fn (array $reference) => basename(str_replace('\\', '/', (string) ($reference['value'] ?? ''))),
+            (array) ($target['document_references'] ?? [])
+        ))));
+        if (count($names) !== 1 || ! $this->isSafeFileName($names[0]) || is_link($documentsDirectory)) {
+            return null;
+        }
+
+        $directory = realpath($documentsDirectory);
+        if ($directory === false) {
+            return null;
+        }
+        $path = $directory.DIRECTORY_SEPARATOR.$names[0];
+
+        return is_file($path) && ! is_link($path) ? $names[0] : null;
+    }
+
+    private function timestampedDocumentFileIndex(string $documentsDirectory): array
+    {
+        if (! is_dir($documentsDirectory) || is_link($documentsDirectory)) {
+            return [];
+        }
+
+        $index = [];
+        foreach (scandir($documentsDirectory) ?: [] as $fileName) {
+            if (! $this->isSafeFileName((string) $fileName)
+                || preg_match('/^\d{9,13}_(?:[A-Za-z0-9]{20}_)?(.+)$/u', (string) $fileName, $matches) !== 1
+                || ! is_file($documentsDirectory.DIRECTORY_SEPARATOR.$fileName)
+                || is_link($documentsDirectory.DIRECTORY_SEPARATOR.$fileName)) {
+                continue;
+            }
+            $index[$this->normalizeFileName($matches[1])][] = (string) $fileName;
+        }
+
+        return $index;
+    }
+
+    private function refineTransactionReferenceWithFile(array $target, array $fileCandidates): array
+    {
+        $related = array_values(array_filter($fileCandidates, function (array $candidate) use ($target): bool {
+            return (string) $candidate['media_model_type'] === (string) $target['media_model_type']
+                && (int) $candidate['media_model_id'] === (int) $target['media_model_id'];
+        }));
+
+        if (count($related) === 1) {
+            return $related[0];
+        }
+        if (count($related) > 1) {
+            $documentReferences = [];
+            foreach ($related as $candidate) {
+                $documentReferences = array_merge($documentReferences, (array) ($candidate['document_references'] ?? []));
+            }
+            $documentNames = array_values(array_unique(array_filter(array_map(
+                fn (array $reference) => basename(str_replace('\\', '/', (string) ($reference['value'] ?? ''))),
+                $documentReferences
+            ))));
+            if (count($documentNames) === 1) {
+                $target['document_references'] = $documentReferences;
+            }
+        }
+
+        return $target;
+    }
+
+    private function matchesFileCandidate(array $numberCandidate, array $fileCandidates): bool
+    {
+        foreach ($fileCandidates as $fileCandidate) {
+            if ((string) $numberCandidate['target_record_type'] === (string) $fileCandidate['target_record_type']
+                && (int) $numberCandidate['target_record_id'] === (int) $fileCandidate['target_record_id']) {
+                return true;
+            }
+
+            if (($fileCandidate['target_record_type'] ?? null) === 'expense_lines'
+                && in_array((string) ($numberCandidate['parent_transaction_type'] ?? ''), ['expense', 'expense_refund'], true)
+                && (int) ($fileCandidate['target_transaction_id'] ?? 0) === (int) ($numberCandidate['target_transaction_id'] ?? 0)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function uniqueAttachmentReferences(array $references): array
+    {
+        $unique = [];
+        foreach ($references as $reference) {
+            $identity = implode('|', [
+                (string) ($reference['target_record_type'] ?? ''),
+                (string) ($reference['target_record_id'] ?? ''),
+                (string) ($reference['media_model_type'] ?? ''),
+                (string) ($reference['media_model_id'] ?? ''),
+            ]);
+            if (! isset($unique[$identity])) {
+                $unique[$identity] = $reference;
+                continue;
+            }
+
+            $current = $unique[$identity];
+            $current['document_references'] = array_merge(
+                (array) ($current['document_references'] ?? []),
+                (array) ($reference['document_references'] ?? [])
+            );
+            $unique[$identity] = $current;
+        }
+
+        return array_values($unique);
+    }
+
+    private function isSupportedTransactionType(string $transactionType): bool
+    {
+        foreach (self::OPERATIONAL_TYPES as $types) {
+            if (in_array($transactionType, $types, true)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function crosswalkIndex(int $runId, int $businessId): array
@@ -327,6 +586,401 @@ class LegacyAttachmentImporter
         }
 
         return $transactions;
+    }
+
+    private function attachmentReferenceIndex(int $businessId, array $records): array
+    {
+        $index = ['number' => [], 'file_name' => ['*' => []]];
+        $numbersByType = [];
+        $fileNames = [];
+
+        foreach ($records as $record) {
+            [$sourceType, $sourceNumber] = $this->sourceIdentity($record);
+            if ($sourceType !== null && $sourceNumber !== null) {
+                $numbersByType[$sourceType][$this->normalizeNumber($sourceNumber)] = $sourceNumber;
+            }
+
+            $file = is_array($record['file'] ?? null) ? $record['file'] : [];
+            $url = trim((string) ($file['url'] ?? ''));
+            $fileInfo = $this->validateSourceUrl($url, $this->scalarId($record['id'] ?? null));
+            $fileName = $fileInfo['original_name'] ?? null;
+            if (is_string($fileName) && $fileName !== '') {
+                $fileNames[$this->normalizeFileName($fileName)] = true;
+            }
+        }
+
+        if (Schema::hasTable('transactions')
+            && Schema::hasColumn('transactions', 'business_id')
+            && Schema::hasColumn('transactions', 'type')
+            && Schema::hasColumn('transactions', 'ref_no')) {
+            foreach (self::OPERATIONAL_TYPES as $sourceType => $transactionTypes) {
+                $numbers = array_values($numbersByType[$sourceType] ?? []);
+                foreach (array_chunk($numbers, 400) as $chunk) {
+                    $rows = DB::table('transactions')
+                        ->where('business_id', $businessId)
+                        ->whereIn('type', $transactionTypes)
+                        ->whereIn('ref_no', $chunk)
+                        ->whereNotNull('ref_no')
+                        ->when(Schema::hasColumn('transactions', 'deleted_at'), fn ($query) => $query->whereNull('deleted_at'))
+                        ->get(['id', 'type', 'ref_no']);
+
+                    foreach ($rows as $row) {
+                        $this->addAttachmentReference($index, 'number', $sourceType, $this->normalizeNumber((string) $row->ref_no), [
+                            'media_model_type' => Transaction::class,
+                            'media_model_id' => (int) $row->id,
+                            'target_transaction_id' => (int) $row->id,
+                            'target_record_type' => Transaction::class,
+                            'target_record_id' => (int) $row->id,
+                            'parent_ref_no' => (string) $row->ref_no,
+                            'parent_transaction_type' => (string) $row->type,
+                            'document_references' => [],
+                        ]);
+                    }
+                }
+            }
+        }
+
+        if (Schema::hasTable('transaction_payments')
+            && Schema::hasColumn('transaction_payments', 'transaction_id')
+            && Schema::hasColumn('transaction_payments', 'payment_ref_no')
+            && Schema::hasTable('transactions')
+            && Schema::hasColumn('transactions', 'business_id')
+            && Schema::hasColumn('transactions', 'type')) {
+            foreach (self::PAYMENT_SOURCE_TYPES as $sourceType => $transactionType) {
+                $numbers = array_values($numbersByType[$sourceType] ?? []);
+                foreach (array_chunk($numbers, 400) as $chunk) {
+                    $select = [
+                        'payment.id as payment_id',
+                        'payment.payment_ref_no',
+                        'payment.transaction_id',
+                        'transaction.type as parent_transaction_type',
+                    ];
+                    if (Schema::hasColumn('transaction_payments', 'document')) {
+                        $select[] = 'payment.document';
+                    }
+                    if (Schema::hasColumn('transactions', 'ref_no')) {
+                        $select[] = 'transaction.ref_no as parent_ref_no';
+                    }
+
+                    $rows = DB::table('transaction_payments as payment')
+                        ->join('transactions as transaction', 'transaction.id', '=', 'payment.transaction_id')
+                        ->where('transaction.business_id', $businessId)
+                        ->where('transaction.type', $transactionType)
+                        ->whereIn('payment.payment_ref_no', $chunk)
+                        ->whereNotNull('payment.payment_ref_no')
+                        ->when(Schema::hasColumn('transactions', 'deleted_at'), fn ($query) => $query->whereNull('transaction.deleted_at'))
+                        ->get($select);
+
+                    foreach ($rows as $row) {
+                        $paymentId = (int) $row->payment_id;
+                        $transactionId = (int) $row->transaction_id;
+                        $documentReferences = [];
+                        if (isset($row->document) && trim((string) $row->document) !== '') {
+                            $documentReferences = $this->documentReferencesForFile($fileNames, 'transaction_payments', $paymentId, $transactionId, (string) $row->document);
+                        }
+
+                        $this->addAttachmentReference($index, 'number', $sourceType, $this->normalizeNumber((string) $row->payment_ref_no), [
+                            'media_model_type' => \App\Transaction::class,
+                            'media_model_id' => $transactionId,
+                            'target_transaction_id' => $transactionId,
+                            'target_record_type' => \App\TransactionPayment::class,
+                            'target_record_id' => $paymentId,
+                            'parent_ref_no' => (string) ($row->parent_ref_no ?? ''),
+                            'parent_transaction_type' => (string) $row->parent_transaction_type,
+                            'document_references' => $documentReferences,
+                        ]);
+                    }
+                }
+            }
+        }
+
+        if (Schema::hasTable('account_transactions')
+            && Schema::hasTable('accounts')
+            && Schema::hasColumn('account_transactions', 'account_id')
+            && Schema::hasColumn('account_transactions', 'type')
+            && Schema::hasColumn('account_transactions', 'sub_type')
+            && Schema::hasColumn('account_transactions', 'reff_no')
+            && Schema::hasColumn('accounts', 'business_id')) {
+            foreach (self::ACCOUNT_TRANSACTION_SOURCE_TYPES as $sourceType => [$accountType, $subType]) {
+                $numbers = array_values($numbersByType[$sourceType] ?? []);
+                foreach (array_chunk($numbers, 400) as $chunk) {
+                    $query = DB::table('account_transactions as account_transaction')
+                        ->join('accounts as account', 'account.id', '=', 'account_transaction.account_id')
+                        ->where('account.business_id', $businessId)
+                        ->where('account_transaction.type', $accountType)
+                        ->where('account_transaction.sub_type', $subType)
+                        ->whereIn('account_transaction.reff_no', $chunk)
+                        ->whereNotNull('account_transaction.reff_no')
+                        ->when(Schema::hasColumn('account_transactions', 'deleted_at'), fn ($builder) => $builder->whereNull('account_transaction.deleted_at'))
+                        ->when(Schema::hasColumn('accounts', 'deleted_at'), fn ($builder) => $builder->whereNull('account.deleted_at'));
+                    $select = ['account_transaction.id', 'account_transaction.reff_no'];
+                    if (Schema::hasColumn('account_transactions', 'transaction_id')) {
+                        $select[] = 'account_transaction.transaction_id';
+                    }
+
+                    foreach ($query->get($select) as $row) {
+                        $this->addAttachmentReference($index, 'number', $sourceType, $this->normalizeNumber((string) $row->reff_no), [
+                            'media_model_type' => \App\AccountTransaction::class,
+                            'media_model_id' => (int) $row->id,
+                            'target_transaction_id' => isset($row->transaction_id) ? (int) $row->transaction_id : null,
+                            'target_record_type' => \App\AccountTransaction::class,
+                            'target_record_id' => (int) $row->id,
+                            'parent_ref_no' => null,
+                            'parent_transaction_type' => null,
+                            'document_references' => [],
+                        ]);
+                    }
+                }
+            }
+        }
+
+        if ($fileNames === []) {
+            return $index;
+        }
+
+        $transactionTypes = array_values(array_unique(array_merge(...array_values(self::OPERATIONAL_TYPES))));
+        if (Schema::hasTable('transactions')
+            && Schema::hasColumn('transactions', 'business_id')
+            && Schema::hasColumn('transactions', 'type')
+            && Schema::hasColumn('transactions', 'document')) {
+            $transactionSelect = ['id', 'type', 'document'];
+            if (Schema::hasColumn('transactions', 'ref_no')) {
+                $transactionSelect[] = 'ref_no';
+            }
+            DB::table('transactions')
+                ->where('business_id', $businessId)
+                ->whereIn('type', $transactionTypes)
+                ->whereNotNull('document')
+                ->where('document', '<>', '')
+                ->select($transactionSelect)
+                ->orderBy('id')
+                ->chunkById(500, function ($rows) use (&$index, $fileNames): void {
+                    foreach ($rows as $row) {
+                        $reference = [
+                            'media_model_type' => Transaction::class,
+                            'media_model_id' => (int) $row->id,
+                            'target_transaction_id' => (int) $row->id,
+                            'target_record_type' => Transaction::class,
+                            'target_record_id' => (int) $row->id,
+                            'parent_ref_no' => (string) ($row->ref_no ?? ''),
+                            'parent_transaction_type' => (string) $row->type,
+                            'document_references' => $this->documentReferencesForFile($fileNames, 'transactions', (int) $row->id, (int) $row->id, (string) $row->document),
+                        ];
+                        $this->addStoredFileReferences($index, $fileNames, (string) $row->document, $reference);
+                    }
+                }, 'id');
+        }
+
+        if (Schema::hasTable('transactions')
+            && Schema::hasColumn('transactions', 'business_id')
+            && Schema::hasColumn('transactions', 'type')
+            && Schema::hasColumn('transactions', 'ref_no')
+            && Schema::hasTable('expense_lines')
+            && Schema::hasColumn('expense_lines', 'transaction_id')
+            && Schema::hasColumn('expense_lines', 'document')
+            && Schema::hasColumn('transactions', 'ref_no')) {
+            DB::table('expense_lines as expense_line')
+                ->join('transactions as transaction', 'transaction.id', '=', 'expense_line.transaction_id')
+                ->where('transaction.business_id', $businessId)
+                ->whereIn('transaction.type', ['expense', 'expense_refund'])
+                ->whereNotNull('expense_line.document')
+                ->where('expense_line.document', '<>', '')
+                ->select([
+                    'expense_line.id as row_id',
+                    'expense_line.transaction_id',
+                    'expense_line.document',
+                    'transaction.ref_no as parent_ref_no',
+                ])
+                ->orderBy('expense_line.id')
+                ->chunkById(500, function ($rows) use (&$index, $fileNames): void {
+                    foreach ($rows as $row) {
+                        $transactionId = (int) $row->transaction_id;
+                        $reference = [
+                            'media_model_type' => Transaction::class,
+                            'media_model_id' => $transactionId,
+                            'target_transaction_id' => $transactionId,
+                            'target_record_type' => 'expense_lines',
+                            'target_record_id' => (int) $row->row_id,
+                            'parent_ref_no' => (string) $row->parent_ref_no,
+                            'parent_transaction_type' => 'expense',
+                            'document_references' => $this->documentReferencesForFile($fileNames, 'expense_lines', (int) $row->row_id, $transactionId, (string) $row->document),
+                        ];
+                        $this->addStoredFileReferences($index, $fileNames, (string) $row->document, $reference);
+                    }
+                }, 'expense_line.id', 'row_id');
+        }
+
+        if (Schema::hasTable('transaction_payments')
+            && Schema::hasColumn('transaction_payments', 'transaction_id')
+            && Schema::hasColumn('transaction_payments', 'document')
+            && Schema::hasTable('transactions')
+            && Schema::hasColumn('transactions', 'business_id')
+            && Schema::hasColumn('transactions', 'type')) {
+            $select = [
+                'payment.id as row_id',
+                'payment.transaction_id',
+                'payment.document',
+                'transaction.type as parent_transaction_type',
+            ];
+            if (Schema::hasColumn('transactions', 'ref_no')) {
+                $select[] = 'transaction.ref_no as parent_ref_no';
+            }
+            DB::table('transaction_payments as payment')
+                ->join('transactions as transaction', 'transaction.id', '=', 'payment.transaction_id')
+                ->where('transaction.business_id', $businessId)
+                ->whereIn('transaction.type', $transactionTypes)
+                ->whereNotNull('payment.document')
+                ->where('payment.document', '<>', '')
+                ->select($select)
+                ->orderBy('payment.id')
+                ->chunkById(500, function ($rows) use (&$index, $fileNames): void {
+                    foreach ($rows as $row) {
+                        $transactionId = (int) $row->transaction_id;
+                        $reference = [
+                            'media_model_type' => Transaction::class,
+                            'media_model_id' => $transactionId,
+                            'target_transaction_id' => $transactionId,
+                            'target_record_type' => \App\TransactionPayment::class,
+                            'target_record_id' => (int) $row->row_id,
+                            'parent_ref_no' => (string) ($row->parent_ref_no ?? ''),
+                            'parent_transaction_type' => (string) $row->parent_transaction_type,
+                            'document_references' => $this->documentReferencesForFile($fileNames, 'transaction_payments', (int) $row->row_id, $transactionId, (string) $row->document),
+                        ];
+                        $this->addStoredFileReferences($index, $fileNames, (string) $row->document, $reference);
+                    }
+                }, 'payment.id', 'row_id');
+        }
+
+        $this->indexExistingTransactionMedia($index, $businessId, $fileNames, $transactionTypes);
+        $this->indexExistingAccountTransactionMedia($index, $businessId, $fileNames);
+
+        return $index;
+    }
+
+    private function documentReferencesForFile(array $fileNames, string $table, int $id, int $transactionId, string $storedName): array
+    {
+        foreach ($this->storedFileNameKeys($storedName) as $fileKey) {
+            if (isset($fileNames[$fileKey])) {
+                return [[
+                    'table' => $table,
+                    'id' => $id,
+                    'transaction_id' => $transactionId,
+                    'value' => $storedName,
+                ]];
+            }
+        }
+
+        return [];
+    }
+
+    private function addStoredFileReferences(array &$index, array $fileNames, string $storedName, array $reference): void
+    {
+        foreach ($this->storedFileNameKeys($storedName) as $fileKey) {
+            if (isset($fileNames[$fileKey])) {
+                $this->addAttachmentReference($index, 'file_name', null, $fileKey, $reference);
+            }
+        }
+    }
+
+    private function indexExistingTransactionMedia(array &$index, int $businessId, array $fileNames, array $transactionTypes): void
+    {
+        if (! Schema::hasTable('media') || ! Schema::hasColumn('media', 'business_id')
+            || ! Schema::hasColumn('media', 'model_type') || ! Schema::hasColumn('media', 'model_id')
+            || ! Schema::hasColumn('media', 'file_name') || ! Schema::hasTable('transactions')
+            || ! Schema::hasColumn('transactions', 'id') || ! Schema::hasColumn('transactions', 'business_id')
+            || ! Schema::hasColumn('transactions', 'type')) {
+            return;
+        }
+
+        $select = ['media.id as media_row_id', 'media.model_id', 'media.file_name', 'transaction.type'];
+        if (Schema::hasColumn('media', 'original_name')) {
+            $select[] = 'media.original_name';
+        }
+        if (Schema::hasColumn('transactions', 'ref_no')) {
+            $select[] = 'transaction.ref_no as parent_ref_no';
+        }
+        DB::table('media')
+            ->join('transactions as transaction', 'transaction.id', '=', 'media.model_id')
+            ->where('media.business_id', $businessId)
+            ->where('media.model_type', Transaction::class)
+            ->where('transaction.business_id', $businessId)
+            ->whereIn('transaction.type', $transactionTypes)
+            ->when(Schema::hasColumn('transactions', 'deleted_at'), fn ($query) => $query->whereNull('transaction.deleted_at'))
+            ->select($select)
+            ->orderBy('media.id')
+            ->chunkById(500, function ($rows) use (&$index, $fileNames): void {
+                foreach ($rows as $row) {
+                    $transactionId = (int) $row->model_id;
+                    $reference = [
+                        'media_model_type' => Transaction::class,
+                        'media_model_id' => $transactionId,
+                        'target_transaction_id' => $transactionId,
+                        'target_record_type' => Transaction::class,
+                        'target_record_id' => $transactionId,
+                        'parent_ref_no' => (string) ($row->parent_ref_no ?? ''),
+                        'parent_transaction_type' => (string) $row->type,
+                        'document_references' => [],
+                    ];
+                    $this->addStoredFileReferences($index, $fileNames, (string) $row->file_name, $reference);
+                    if (isset($row->original_name) && trim((string) $row->original_name) !== '') {
+                        $this->addStoredFileReferences($index, $fileNames, (string) $row->original_name, $reference);
+                    }
+                }
+            }, 'media.id', 'media_row_id');
+    }
+
+    private function indexExistingAccountTransactionMedia(array &$index, int $businessId, array $fileNames): void
+    {
+        if (! Schema::hasTable('media') || ! Schema::hasTable('account_transactions') || ! Schema::hasTable('accounts')
+            || ! Schema::hasColumn('media', 'business_id') || ! Schema::hasColumn('media', 'model_type')
+            || ! Schema::hasColumn('media', 'model_id') || ! Schema::hasColumn('media', 'file_name')
+            || ! Schema::hasColumn('account_transactions', 'account_id')) {
+            return;
+        }
+
+        $accountModelTypes = [\App\AccountTransaction::class, \Modules\Accounting\Entities\AccountTransaction::class];
+        $select = ['media.id as media_row_id', 'media.model_type', 'media.model_id', 'media.file_name'];
+        if (Schema::hasColumn('media', 'original_name')) {
+            $select[] = 'media.original_name';
+        }
+        if (Schema::hasColumn('account_transactions', 'transaction_id')) {
+            $select[] = 'account_transaction.transaction_id';
+        }
+
+        DB::table('media')
+            ->join('account_transactions as account_transaction', 'account_transaction.id', '=', 'media.model_id')
+            ->join('accounts as account', 'account.id', '=', 'account_transaction.account_id')
+            ->where('media.business_id', $businessId)
+            ->whereIn('media.model_type', $accountModelTypes)
+            ->where('account.business_id', $businessId)
+            ->when(Schema::hasColumn('account_transactions', 'deleted_at'), fn ($query) => $query->whereNull('account_transaction.deleted_at'))
+            ->when(Schema::hasColumn('accounts', 'deleted_at'), fn ($query) => $query->whereNull('account.deleted_at'))
+            ->select($select)
+            ->orderBy('media.id')
+            ->chunkById(500, function ($rows) use (&$index, $fileNames): void {
+                foreach ($rows as $row) {
+                    $accountTransactionId = (int) $row->model_id;
+                    $reference = [
+                        'media_model_type' => (string) $row->model_type,
+                        'media_model_id' => $accountTransactionId,
+                        'target_transaction_id' => isset($row->transaction_id) ? (int) $row->transaction_id : null,
+                        'target_record_type' => (string) $row->model_type,
+                        'target_record_id' => $accountTransactionId,
+                        'parent_ref_no' => null,
+                        'parent_transaction_type' => null,
+                        'document_references' => [],
+                    ];
+                    $this->addStoredFileReferences($index, $fileNames, (string) $row->file_name, $reference);
+                    if (isset($row->original_name) && trim((string) $row->original_name) !== '') {
+                        $this->addStoredFileReferences($index, $fileNames, (string) $row->original_name, $reference);
+                    }
+                }
+            }, 'media.id', 'media_row_id');
+    }
+
+    private function addAttachmentReference(array &$index, string $kind, ?string $sourceType, string $key, array $reference): void
+    {
+        $index[$kind][$sourceType ?? '*'][$key][] = $reference;
     }
 
     private function validTransactionFromIndex(int $transactionId, string $sourceType, array $transactions): ?Transaction
@@ -507,7 +1161,7 @@ class LegacyAttachmentImporter
 
     private function parseEntryNumber(string $entryNumber): array
     {
-        if (preg_match('/^(Expense|Purchase Invoice|Sales Invoice)\s*#\s*(.+)$/i', $entryNumber, $matches) !== 1) {
+        if (preg_match('/^\s*(Expense|Purchase Invoice|Sales Invoice|Purchase Order|Purchase Payment|Receive Payment|Bank Transfer|Bank Withdrawal|Bank Deposit)\s*#\s*(.+?)\s*$/i', $entryNumber, $matches) !== 1) {
             return [null, null];
         }
 
@@ -515,10 +1169,63 @@ class LegacyAttachmentImporter
             'expense' => 'Expense',
             'purchase invoice' => 'Purchase Invoice',
             'sales invoice' => 'Sales Invoice',
+            'purchase order' => 'Purchase Order',
+            'purchase payment' => 'Purchase Payment',
+            'receive payment' => 'Receive Payment',
+            'bank transfer' => 'Bank Transfer',
+            'bank withdrawal' => 'Bank Withdrawal',
+            'bank deposit' => 'Bank Deposit',
         ][strtolower(trim($matches[1]))] ?? null;
         $sourceNumber = trim($matches[2]);
 
         return [$sourceType, $sourceNumber !== '' ? $sourceNumber : null];
+    }
+
+    private function sourceIdentity(array $record): array
+    {
+        $entry = is_array($record['entry'] ?? null) ? $record['entry'] : [];
+        $reference = '';
+        foreach ([$entry, $record] as $source) {
+            foreach (['number', 'noref', 'no_ref', 'ref_no', 'reference_no', 'reference_number', 'source_number', 'reference'] as $field) {
+                $value = $source[$field] ?? null;
+                if (is_scalar($value) && trim((string) $value) !== '') {
+                    $reference = trim((string) $value);
+                    break 2;
+                }
+            }
+        }
+
+        [$sourceType, $sourceNumber] = $this->parseEntryNumber($reference);
+        if ($sourceType !== null) {
+            return [$sourceType, $sourceNumber];
+        }
+
+        $typeValue = $entry['type'] ?? $record['source_type'] ?? $record['transaction_type'] ?? $record['type'] ?? null;
+        $sourceType = $this->canonicalSourceType(is_scalar($typeValue) ? (string) $typeValue : '');
+
+        return [$sourceType, $reference !== '' ? $reference : null];
+    }
+
+    private function canonicalSourceType(string $value): ?string
+    {
+        $key = strtolower(trim((string) preg_replace('/\s+/u', ' ', $value)));
+        $types = [
+            'expense' => 'Expense',
+            'expense_refund' => 'Expense',
+            'purchase' => 'Purchase Invoice',
+            'purchase invoice' => 'Purchase Invoice',
+            'purchase_order' => 'Purchase Order',
+            'purchase order' => 'Purchase Order',
+            'purchase payment' => 'Purchase Payment',
+            'receive payment' => 'Receive Payment',
+            'sell' => 'Sales Invoice',
+            'sales invoice' => 'Sales Invoice',
+            'bank transfer' => 'Bank Transfer',
+            'bank withdrawal' => 'Bank Withdrawal',
+            'bank deposit' => 'Bank Deposit',
+        ];
+
+        return $types[$key] ?? null;
     }
 
     private function collisionInfo(array $records): array
@@ -609,6 +1316,28 @@ class LegacyAttachmentImporter
         return mb_strtoupper(trim((string) preg_replace('/\s+/u', ' ', $value)), 'UTF-8');
     }
 
+    private function normalizeFileName(string $value): string
+    {
+        $fileName = basename(str_replace('\\', '/', trim($value)));
+
+        return mb_strtolower($fileName, 'UTF-8');
+    }
+
+    private function storedFileNameKeys(string $value): array
+    {
+        $fileName = basename(str_replace('\\', '/', trim($value)));
+        if ($fileName === '') {
+            return [];
+        }
+
+        $keys = [$this->normalizeFileName($fileName)];
+        if (preg_match('/^\d{9,13}_(?:[A-Za-z0-9]{20}_)?(.+)$/u', $fileName, $matches) === 1 && $matches[1] !== '') {
+            $keys[] = $this->normalizeFileName($matches[1]);
+        }
+
+        return array_values(array_unique($keys));
+    }
+
     private function storeOutcome(array $base, string $status, ?int $mediaId, ?string $matchMethod, ?string $fileAction, ?string $reason): array
     {
         $base['status'] = $status;
@@ -618,14 +1347,20 @@ class LegacyAttachmentImporter
         $base['reason'] = $reason;
         $base['created_at'] = now();
 
+        static $availableColumns = null;
+        $availableColumns = $availableColumns ?? array_flip(Schema::getColumnListing('accounting_legacy_import_attachments'));
+        $base = array_intersect_key($base, $availableColumns);
+        $updateColumns = array_values(array_intersect([
+            'legacy_import_source_id', 'business_id', 'legacy_transaction_id', 'source_type', 'source_number',
+            'source_url', 'original_file_name', 'destination_file_name', 'target_transaction_id', 'target_record_type',
+            'target_record_id', 'media_id', 'media_model_type', 'media_model_id', 'match_method', 'file_action',
+            'status', 'reason', 'updated_at',
+        ], array_keys($availableColumns)));
+
         DB::table('accounting_legacy_import_attachments')->upsert(
             [$base],
             ['legacy_import_run_id', 'legacy_source_attachment_id'],
-            [
-                'legacy_import_source_id', 'business_id', 'legacy_transaction_id', 'source_type', 'source_number',
-                'source_url', 'original_file_name', 'destination_file_name', 'target_transaction_id', 'media_id',
-                'match_method', 'file_action', 'status', 'reason', 'updated_at',
-            ]
+            $updateColumns
         );
 
         return ['status' => $status];
@@ -650,7 +1385,8 @@ class LegacyAttachmentImporter
             }
             fputcsv($handle, [
                 'legacy_attachment_id', 'legacy_transaction_id', 'source_type', 'source_number', 'source_url',
-                'original_file_name', 'destination_file_name', 'transaction_id', 'media_id', 'status', 'match_method', 'reason',
+                'original_file_name', 'destination_file_name', 'transaction_id', 'target_record_type', 'target_record_id',
+                'media_model_type', 'media_model_id', 'media_id', 'status', 'match_method', 'reason',
             ]);
             DB::table('accounting_legacy_import_attachments')
                 ->where('legacy_import_run_id', $runId)
@@ -666,6 +1402,10 @@ class LegacyAttachmentImporter
                             $row->original_file_name,
                             $row->destination_file_name,
                             $row->target_transaction_id,
+                            $row->target_record_type ?? null,
+                            $row->target_record_id ?? null,
+                            $row->media_model_type ?? null,
+                            $row->media_model_id ?? null,
                             $row->media_id,
                             $row->status,
                             $row->match_method,

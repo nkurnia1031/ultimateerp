@@ -34,6 +34,11 @@ DEFAULT_DESTINATION = Path("public/uploads/documents")
 DEFAULT_ALLOWED_HOSTS = {"jurnal-quickbook.jurnal.id"}
 CHUNK_SIZE = 1024 * 1024
 INVALID_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+SOURCE_NUMBER_PATTERN = re.compile(
+    r"^\s*(Expense|Purchase Invoice|Sales Invoice|Purchase Order|Purchase Payment|Receive Payment|Bank Transfer|Bank Withdrawal|Bank Deposit)\s*#\s*(.*?)\s*$",
+    re.IGNORECASE,
+)
+TIMESTAMPED_FILENAME_PATTERN = re.compile(r"^\d{9,13}_(?:[A-Za-z0-9]{20}_)?(.+)$")
 WINDOWS_RESERVED_NAMES = {
     "CON", "PRN", "AUX", "NUL",
     *(f"COM{i}" for i in range(1, 10)),
@@ -46,6 +51,8 @@ class Attachment:
     row_number: int
     attachment_id: str
     transaction_id: str
+    source_type: str
+    source_number: str
     url: str
     host: str
     original_name: str
@@ -186,6 +193,52 @@ def validated_host(url: str, allowed_hosts: set[str]) -> str:
     return host
 
 
+def source_identity(row: dict[str, Any]) -> tuple[str, str]:
+    entry = row.get("entry") if isinstance(row.get("entry"), dict) else {}
+    fields = ("number", "noref", "no_ref", "ref_no", "reference_no", "reference_number", "source_number", "reference")
+    reference = ""
+    for source in (entry, row):
+        for field in fields:
+            value = source.get(field)
+            if isinstance(value, (str, int, float)) and str(value).strip():
+                reference = str(value).strip()
+                break
+        if reference:
+            break
+
+    number_match = SOURCE_NUMBER_PATTERN.match(reference)
+    if number_match:
+        source_type = {
+            "expense": "Expense",
+            "purchase invoice": "Purchase Invoice",
+            "sales invoice": "Sales Invoice",
+            "purchase order": "Purchase Order",
+            "purchase payment": "Purchase Payment",
+            "receive payment": "Receive Payment",
+            "bank transfer": "Bank Transfer",
+            "bank withdrawal": "Bank Withdrawal",
+            "bank deposit": "Bank Deposit",
+        }.get(number_match.group(1).casefold(), number_match.group(1).strip())
+        return source_type, number_match.group(2).strip()
+
+    type_value = entry.get("type") or row.get("source_type") or row.get("transaction_type") or row.get("type") or ""
+    source_type = {
+        "expense": "Expense",
+        "expense_refund": "Expense",
+        "purchase": "Purchase Invoice",
+        "purchase_invoice": "Purchase Invoice",
+        "purchase_order": "Purchase Order",
+        "purchase payment": "Purchase Payment",
+        "receive payment": "Receive Payment",
+        "sell": "Sales Invoice",
+        "sales_invoice": "Sales Invoice",
+        "bank transfer": "Bank Transfer",
+        "bank withdrawal": "Bank Withdrawal",
+        "bank deposit": "Bank Deposit",
+    }.get(str(type_value).strip().casefold(), "")
+    return source_type, reference
+
+
 def extract_attachments(rows: Iterable[dict[str, Any]], allowed_hosts: set[str]) -> tuple[list[Attachment], list[str]]:
     attachments: list[Attachment] = []
     invalid: list[str] = []
@@ -201,11 +254,15 @@ def extract_attachments(rows: Iterable[dict[str, Any]], allowed_hosts: set[str])
         except ValueError as exc:
             invalid.append(f"baris {row_number}: {exc}")
             continue
+        entry = row.get("entry") if isinstance(row.get("entry"), dict) else {}
+        source_type, source_number = source_identity(row)
         attachments.append(
             Attachment(
                 row_number=row_number,
                 attachment_id=str(row.get("id") or row_number),
-                transaction_id=str(row.get("transaction_id") or ""),
+                transaction_id=str(row.get("transaction_id") or entry.get("id") or ""),
+                source_type=source_type,
+                source_number=source_number,
                 url=url,
                 host=host,
                 original_name=filename,
@@ -265,7 +322,7 @@ def write_report(path: Path, rows: list[Attachment], invalid: list[str], mode: s
         writer = csv.DictWriter(
             handle,
             fieldnames=[
-                "mode", "manifest_row", "attachment_id", "transaction_id", "expected_filename",
+                "mode", "manifest_row", "attachment_id", "transaction_id", "source_type", "source_number", "expected_filename",
                 "output_filename", "collision_count", "source_host", "status", "detail",
             ],
         )
@@ -277,6 +334,8 @@ def write_report(path: Path, rows: list[Attachment], invalid: list[str], mode: s
                     "manifest_row": item.row_number,
                     "attachment_id": item.attachment_id,
                     "transaction_id": item.transaction_id,
+                    "source_type": item.source_type,
+                    "source_number": item.source_number,
                     "expected_filename": item.original_name,
                     "output_filename": item.output_name,
                     "collision_count": item.collision_count,
@@ -293,11 +352,31 @@ def unique_download_items(attachments: list[Attachment], destination: Path) -> l
     unique: dict[str, Attachment] = {}
     for item in attachments:
         unique.setdefault(item.output_name.casefold(), item)
+
+    timestamped_files: dict[str, list[str]] = defaultdict(list)
+    if destination.is_dir():
+        for path in destination.iterdir():
+            if path.is_symlink() or not path.is_file():
+                continue
+            match = TIMESTAMPED_FILENAME_PATTERN.match(path.name)
+            if match:
+                timestamped_files[match.group(1).casefold()].append(path.name)
+
     for item in unique.values():
         target = destination / item.output_name
         if target.is_file():
             item.status = "already_present"
             item.detail = "File dengan nama tujuan sudah ada; tidak ditimpa."
+        elif item.collision_count == 1 and len(timestamped_files[item.original_name.casefold()]) == 1:
+            existing_name = timestamped_files[item.original_name.casefold()][0]
+            item.status = "already_present"
+            item.detail = f"File tersedia dengan prefix timestamp: {existing_name}; tidak diunduh ulang."
+        elif item.collision_count == 1 and len(timestamped_files[item.original_name.casefold()]) > 1:
+            item.status = "review_existing_ambiguous"
+            item.detail = "Ada beberapa file ber-prefix timestamp dengan nama dasar yang sama; tidak dipilih otomatis."
+        elif item.collision_count > 1 and timestamped_files[item.original_name.casefold()]:
+            item.status = "review_existing_collision"
+            item.detail = "Nama ini bertabrakan pada manifest dan memiliki file ber-prefix timestamp; perlu pencocokan record/noref sebelum dipakai."
         else:
             item.status = "would_download"
             item.detail = "File tidak ditemukan di folder tujuan."
@@ -418,6 +497,9 @@ def main() -> int:
     present_count = sum(item.status == "already_present" for item in items)
     missing_count = sum(item.status == "would_download" for item in items)
     rows_with_collisions = sum(item.collision_count > 1 for item in attachments)
+    ambiguous_existing_count = sum(
+        item.status in {"review_existing_ambiguous", "review_existing_collision"} for item in items
+    )
     existing_files = sum(path.is_file() for path in destination.iterdir()) if destination.is_dir() else 0
 
     print(f"Mode: {mode.upper()}")
@@ -425,7 +507,8 @@ def main() -> int:
     print(f"Valid attachment rows: {len(attachments)}")
     print(f"Unique destination files: {len(items)}")
     print(f"Files currently in destination: {existing_files}")
-    print(f"Already present (by planned filename): {present_count}")
+    print(f"Already present (exact or unambiguous timestamp prefix): {present_count}")
+    print(f"Ambiguous timestamp-prefix matches: {ambiguous_existing_count}")
     print(f"Missing / planned downloads: {missing_count}")
     print(f"Distinct filenames with source collisions: {len(collisions)}")
     print(f"Manifest rows in collision groups: {rows_with_collisions}")
@@ -532,7 +615,7 @@ def main() -> int:
         failed = sum(item.status == "failed" for item in items)
         capacity_limited = sum(item.status == "capacity_limit" for item in items)
         print(f"Download result: {downloaded} downloaded, {failed} failed, {capacity_limited} stopped by disk reserve, {present_count} already present.")
-        return 1 if failed or capacity_limited or invalid else 0
+        return 1 if failed or capacity_limited or invalid or ambiguous_existing_count else 0
     return 0
 
 

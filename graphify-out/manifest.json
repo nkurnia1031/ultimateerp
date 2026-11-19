@@ -14910,10 +14910,10 @@
     "semantic_hash": "d2e06290bb131ae8f1cebe03f484e3f4"
   },
   "Modules/Accounting/Services/LegacyAttachmentImporter.php": {
-    "mtime": 1793619056.291161,
-    "seen": 1793685076.817267,
-    "ast_hash": "28904e792f7cf5f4b1b388365f91bf7c",
-    "semantic_hash": "28904e792f7cf5f4b1b388365f91bf7c"
+    "mtime": 1795101916.7792482,
+    "seen": 1795102121.714312,
+    "ast_hash": "b1295e5a9c09e59030e9beb8b54b7ab4",
+    "semantic_hash": ""
   },
   "config/legacy_import.php": {
     "mtime": 1793561589.4005203,
@@ -15165,6 +15165,12 @@
     "mtime": 1794756774.4095407,
     "seen": 1794759343.9832666,
     "ast_hash": "459f8ece8d8bce4879bffb8c97c42813",
+    "semantic_hash": ""
+  },
+  "Modules/Accounting/Database/Migrations/2026_11_19_000001_add_target_record_to_legacy_import_attachments.php": {
+    "mtime": 1795101060.965393,
+    "seen": 1795101395.4643726,
+    "ast_hash": "ba251d52503725ced96920d5a025ff3c",
     "semantic_hash": ""
   }
 }
