@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""Audit and optionally restore files referenced by import-legacy/json/lampiran.json.
+"""Audit and optionally restore legacy attachments and match them to operations.
 
-Dry-run is the default and never makes network requests. Pass --download explicitly
-to fetch files that are not present in the destination directory.
+Dry-run is the default and never makes network requests or writes to the database.
+Pass --business-id to inspect local operational records. --apply-links is a
+separate explicit action that creates Media rows only for matched local files.
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
+import datetime as dt
 import hashlib
 import json
 import os
@@ -50,6 +52,7 @@ WINDOWS_RESERVED_NAMES = {
 class Attachment:
     row_number: int
     attachment_id: str
+    source_id_present: bool
     transaction_id: str
     source_type: str
     source_number: str
@@ -60,6 +63,18 @@ class Attachment:
     collision_count: int = 1
     status: str = ""
     detail: str = ""
+    database_status: str = "not_checked"
+    database_match_method: str = ""
+    database_target_type: str = ""
+    database_target_id: str = ""
+    database_media_model_type: str = ""
+    database_media_model_id: str = ""
+    database_reference: str = ""
+    database_attachment_source: str = ""
+    database_detail: str = ""
+    existing_media_id: str = ""
+    database_link_action: str = "not_requested"
+    local_file_name: str = ""
 
 
 class CapacityLimitError(Exception):
@@ -96,10 +111,17 @@ def resolve_path(value: str | Path) -> Path:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Periksa lampiran di folder documents dan unduh file yang hilang."
+        description="Periksa lampiran, cocokkan dengan database operasional, dan unduh file yang hilang."
     )
     parser.add_argument("--manifest", default=str(DEFAULT_MANIFEST), help="Lokasi lampiran.json")
     parser.add_argument("--destination", default=str(DEFAULT_DESTINATION), help="Folder tujuan file")
+    parser.add_argument("--business-id", type=int, help="Cocokkan lampiran dengan operasional pada business ini memakai .env")
+    parser.add_argument("--run-id", type=int, help="Gunakan crosswalk legacy import run ini sebagai pencocokan utama")
+    parser.add_argument(
+        "--apply-links",
+        action="store_true",
+        help="Tulis Media untuk lampiran yang cocok, tidak ambigu, dan file lokalnya sudah tersedia.",
+    )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument(
         "--download",
@@ -141,6 +163,16 @@ def parse_args() -> argparse.Namespace:
         parser.error("--workers harus antara 1 dan 8")
     if args.limit is not None and args.limit < 1:
         parser.error("--limit harus minimal 1")
+    if args.business_id is not None and args.business_id < 1:
+        parser.error("--business-id harus minimal 1")
+    if args.run_id is not None and args.run_id < 1:
+        parser.error("--run-id harus minimal 1")
+    if args.run_id is not None and args.business_id is None:
+        parser.error("--run-id memerlukan --business-id")
+    if args.apply_links and args.business_id is None:
+        parser.error("--apply-links memerlukan --business-id")
+    if args.apply_links and args.dry_run:
+        parser.error("--apply-links menulis ke database; jangan gabungkan dengan --dry-run")
     if args.delay < 0 or args.timeout <= 0 or args.retries < 0 or args.max_mib_per_file <= 0:
         parser.error("delay/retries tidak boleh negatif; timeout dan batas ukuran harus lebih dari nol")
     return args
@@ -260,6 +292,7 @@ def extract_attachments(rows: Iterable[dict[str, Any]], allowed_hosts: set[str])
             Attachment(
                 row_number=row_number,
                 attachment_id=str(row.get("id") or row_number),
+                source_id_present=bool(str(row.get("id") or "").strip()),
                 transaction_id=str(row.get("transaction_id") or entry.get("id") or ""),
                 source_type=source_type,
                 source_number=source_number,
@@ -306,6 +339,706 @@ def legacy_import_destination_name(original_name: str, attachment_id: str, is_co
     return f"legacy-{safe_id}__{stem}{suffix}"
 
 
+def load_database_config() -> dict[str, str]:
+    env_path = PROJECT_ROOT / ".env"
+    if not env_path.is_file():
+        raise ValueError("File .env tidak ditemukan; koneksi database tidak dapat dibuka.")
+
+    values: dict[str, str] = {}
+    for line in env_path.read_text(encoding="utf-8-sig").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[7:].lstrip()
+        match = re.match(r"^([A-Z_]+)=(.*)$", line)
+        if not match:
+            continue
+        value = match.group(2).strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        else:
+            value = re.split(r"\s+#", value, maxsplit=1)[0].strip()
+        values[match.group(1)] = value
+
+    if values.get("DB_CONNECTION", "mysql").casefold() != "mysql":
+        raise ValueError("Pencocokan database Python saat ini memerlukan DB_CONNECTION=mysql.")
+    return values
+
+
+def connect_database(read_only: bool):
+    try:
+        import mysql.connector
+    except ImportError as exc:
+        raise ValueError(
+            "Driver MySQL Python belum terpasang. Jalankan: python -m pip install -r scripts/requirements-audit-lampiran.txt"
+        ) from exc
+
+    config = load_database_config()
+    options: dict[str, Any] = {
+        "host": config.get("DB_HOST", "127.0.0.1"),
+        "port": int(config.get("DB_PORT", "3306") or "3306"),
+        "user": config.get("DB_USERNAME", "root"),
+        "password": config.get("DB_PASSWORD", ""),
+        "database": config.get("DB_DATABASE", ""),
+        "connection_timeout": 10,
+        "autocommit": False,
+        "charset": "utf8mb4",
+    }
+    if config.get("DB_SOCKET"):
+        options.pop("host", None)
+        options.pop("port", None)
+        options["unix_socket"] = config["DB_SOCKET"]
+    try:
+        connection = mysql.connector.connect(**options)
+    except Exception as exc:
+        raise ValueError(f"Koneksi database gagal: {str(exc).splitlines()[0][:240]}") from exc
+    if read_only:
+        cursor = connection.cursor()
+        try:
+            cursor.execute("SET SESSION TRANSACTION READ ONLY")
+        finally:
+            cursor.close()
+    return connection
+
+
+def normalize_database_number(value: str) -> str:
+    return re.sub(r"\s+", " ", value.strip()).upper()
+
+
+def database_filename_keys(value: str) -> list[str]:
+    name = Path(value.replace("\\", "/").strip()).name
+    if not name:
+        return []
+    keys = [name.casefold()]
+    timestamp = TIMESTAMPED_FILENAME_PATTERN.match(name)
+    if timestamp:
+        keys.append(timestamp.group(1).casefold())
+    return list(dict.fromkeys(keys))
+
+
+def database_candidate_identity(candidate: dict[str, Any]) -> tuple[str, str, str, str]:
+    return (
+        candidate["target_type"],
+        str(candidate["target_id"]),
+        candidate["media_model_type"],
+        str(candidate["media_model_id"]),
+    )
+
+
+class OperationalDatabaseMatcher:
+    """Read-only lookup of legacy attachment references in business-scoped records."""
+
+    OPERATIONAL_TYPES = {
+        "Expense": ("expense", "expense_refund"),
+        "Purchase Invoice": ("purchase",),
+        "Sales Invoice": ("sell",),
+        "Purchase Order": ("purchase_order",),
+    }
+    PAYMENT_TYPES = {"Purchase Payment": "purchase", "Receive Payment": "sell"}
+    ACCOUNT_TYPES = {
+        "Bank Deposit": ("credit", "deposit"),
+        "Bank Transfer": ("debit", "fund_transfer"),
+        "Bank Withdrawal": ("debit", "withdrawal"),
+    }
+    TRANSACTION_MODEL = "App\\Transaction"
+    PAYMENT_MODEL = "App\\TransactionPayment"
+    ACCOUNT_MODEL_TYPES = ("App\\AccountTransaction", "Modules\\Accounting\\Entities\\AccountTransaction")
+
+    def __init__(self, connection: Any, business_id: int, run_id: int | None, attachments: list[Attachment]) -> None:
+        self.connection = connection
+        self.business_id = business_id
+        self.cursor = connection.cursor(dictionary=True, buffered=True)
+        self.columns = self._load_columns()
+        self.number_index: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+        self.file_index: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        self.crosswalk_index: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+        self.media_by_attachment_id: dict[str, dict[str, Any]] = {}
+        self.source_media_candidates: dict[str, dict[str, Any]] = {}
+        self._build_indexes(attachments, run_id)
+
+    def close(self) -> None:
+        self.cursor.close()
+
+    def _load_columns(self) -> dict[str, set[str]]:
+        self.cursor.execute(
+            "SELECT TABLE_NAME AS table_name, COLUMN_NAME AS column_name "
+            "FROM information_schema.columns WHERE table_schema = DATABASE()"
+        )
+        columns: dict[str, set[str]] = defaultdict(set)
+        for row in self.cursor.fetchall():
+            columns[row["table_name"]].add(row["column_name"])
+        return columns
+
+    def has_table(self, name: str) -> bool:
+        return name in self.columns
+
+    def has_column(self, table: str, column: str) -> bool:
+        return column in self.columns.get(table, set())
+
+    @staticmethod
+    def placeholders(count: int) -> str:
+        return ",".join(["%s"] * count)
+
+    def _rows(self, sql: str, params: Iterable[Any] = ()) -> list[dict[str, Any]]:
+        self.cursor.execute(sql, tuple(params))
+        return list(self.cursor.fetchall())
+
+    def _add_number(self, source_type: str, number: str, candidate: dict[str, Any]) -> None:
+        key = (source_type, normalize_database_number(number))
+        if key[1]:
+            self.number_index[key].append(candidate)
+
+    def _add_file(self, filename: str, candidate: dict[str, Any]) -> None:
+        for key in database_filename_keys(filename):
+            self.file_index[key].append(candidate)
+
+    @staticmethod
+    def _unique(candidates: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+        unique: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+        for candidate in candidates:
+            unique.setdefault(database_candidate_identity(candidate), candidate)
+        return list(unique.values())
+
+    def _transaction_candidate(self, row: dict[str, Any], field: str = "transactions.ref_no") -> dict[str, Any]:
+        transaction_id = int(row["id"])
+        return {
+            "target_type": self.TRANSACTION_MODEL,
+            "target_id": transaction_id,
+            "media_model_type": self.TRANSACTION_MODEL,
+            "media_model_id": transaction_id,
+            "transaction_id": transaction_id,
+            "parent_type": str(row.get("type") or ""),
+            "reference": str(row.get("ref_no") or ""),
+            "attachment_source": field,
+        }
+
+    def _build_indexes(self, attachments: list[Attachment], run_id: int | None) -> None:
+        numbers_by_type: dict[str, dict[str, str]] = defaultdict(dict)
+        filename_keys: set[str] = set()
+        legacy_ids: set[str] = set()
+        for attachment in attachments:
+            if attachment.source_type and attachment.source_number:
+                numbers_by_type[attachment.source_type][normalize_database_number(attachment.source_number)] = attachment.source_number
+            filename_keys.update(database_filename_keys(attachment.original_name))
+            if attachment.transaction_id:
+                legacy_ids.add(attachment.transaction_id)
+
+        if self.has_table("transactions") and {"id", "business_id", "type", "ref_no"}.issubset(self.columns["transactions"]):
+            for source_type, transaction_types in self.OPERATIONAL_TYPES.items():
+                numbers = list(numbers_by_type.get(source_type, {}).values())
+                for offset in range(0, len(numbers), 400):
+                    chunk = numbers[offset : offset + 400]
+                    if not chunk:
+                        continue
+                    params: list[Any] = [self.business_id, *transaction_types, *chunk]
+                    sql = (
+                        "SELECT id, type, ref_no"
+                        + (", document" if self.has_column("transactions", "document") else "")
+                        + " FROM transactions WHERE business_id=%s AND type IN ("
+                        + self.placeholders(len(transaction_types))
+                        + ") AND ref_no IN ("
+                        + self.placeholders(len(chunk))
+                        + ") AND ref_no IS NOT NULL"
+                    )
+                    if self.has_column("transactions", "deleted_at"):
+                        sql += " AND deleted_at IS NULL"
+                    for row in self._rows(sql, params):
+                        candidate = self._transaction_candidate(row)
+                        self._add_number(source_type, str(row.get("ref_no") or ""), candidate)
+                        if str(row.get("document") or "").strip():
+                            candidate = dict(candidate, attachment_source="transactions.document")
+                            self._add_file(str(row["document"]), candidate)
+
+        self._index_payment_references(numbers_by_type)
+        self._index_bank_references(numbers_by_type)
+        self._index_document_fields(filename_keys)
+        self._index_existing_media(filename_keys)
+        self._index_crosswalks(run_id, legacy_ids)
+        self._load_media_for_attachment_ids(attachments)
+        self._index_source_media_owners()
+
+    def _index_payment_references(self, numbers_by_type: dict[str, dict[str, str]]) -> None:
+        if not (self.has_table("transaction_payments") and self.has_table("transactions")):
+            return
+        required = {"id", "transaction_id", "payment_ref_no"}
+        if not required.issubset(self.columns["transaction_payments"]) or not {"id", "business_id", "type"}.issubset(self.columns["transactions"]):
+            return
+        has_document = self.has_column("transaction_payments", "document")
+        has_ref = self.has_column("transactions", "ref_no")
+        for source_type, parent_type in self.PAYMENT_TYPES.items():
+            numbers = list(numbers_by_type.get(source_type, {}).values())
+            for offset in range(0, len(numbers), 400):
+                chunk = numbers[offset : offset + 400]
+                if not chunk:
+                    continue
+                select = ["payment.id AS payment_id", "payment.payment_ref_no", "payment.transaction_id", "parent.type AS parent_type"]
+                if has_document:
+                    select.append("payment.document")
+                if has_ref:
+                    select.append("parent.ref_no AS parent_ref_no")
+                sql = (
+                    "SELECT " + ", ".join(select) + " FROM transaction_payments AS payment "
+                    "JOIN transactions AS parent ON parent.id=payment.transaction_id "
+                    "WHERE parent.business_id=%s AND parent.type=%s AND payment.payment_ref_no IN ("
+                    + self.placeholders(len(chunk)) + ") AND payment.payment_ref_no IS NOT NULL"
+                )
+                if self.has_column("transactions", "deleted_at"):
+                    sql += " AND parent.deleted_at IS NULL"
+                for row in self._rows(sql, [self.business_id, parent_type, *chunk]):
+                    candidate = {
+                        "target_type": self.PAYMENT_MODEL,
+                        "target_id": int(row["payment_id"]),
+                        "media_model_type": self.TRANSACTION_MODEL,
+                        "media_model_id": int(row["transaction_id"]),
+                        "transaction_id": int(row["transaction_id"]),
+                        "parent_type": str(row.get("parent_type") or ""),
+                        "reference": str(row.get("parent_ref_no") or ""),
+                        "attachment_source": "transaction_payments.payment_ref_no",
+                    }
+                    self._add_number(source_type, str(row.get("payment_ref_no") or ""), candidate)
+                    if str(row.get("document") or "").strip():
+                        self._add_file(str(row["document"]), dict(candidate, attachment_source="transaction_payments.document"))
+
+    def _index_bank_references(self, numbers_by_type: dict[str, dict[str, str]]) -> None:
+        if not (self.has_table("account_transactions") and self.has_table("accounts")):
+            return
+        if not {"id", "account_id", "type", "sub_type", "reff_no"}.issubset(self.columns["account_transactions"]):
+            return
+        if not {"id", "business_id"}.issubset(self.columns["accounts"]):
+            return
+        has_transaction_id = self.has_column("account_transactions", "transaction_id")
+        for source_type, (account_type, subtype) in self.ACCOUNT_TYPES.items():
+            numbers = list(numbers_by_type.get(source_type, {}).values())
+            for offset in range(0, len(numbers), 400):
+                chunk = numbers[offset : offset + 400]
+                if not chunk:
+                    continue
+                select = ["entry.id", "entry.reff_no"]
+                if has_transaction_id:
+                    select.append("entry.transaction_id")
+                sql = (
+                    "SELECT " + ", ".join(select) + " FROM account_transactions AS entry "
+                    "JOIN accounts AS account ON account.id=entry.account_id "
+                    "WHERE account.business_id=%s AND entry.type=%s AND entry.sub_type=%s "
+                    "AND entry.reff_no IN (" + self.placeholders(len(chunk)) + ") AND entry.reff_no IS NOT NULL"
+                )
+                if self.has_column("account_transactions", "deleted_at"):
+                    sql += " AND entry.deleted_at IS NULL"
+                if self.has_column("accounts", "deleted_at"):
+                    sql += " AND account.deleted_at IS NULL"
+                for row in self._rows(sql, [self.business_id, account_type, subtype, *chunk]):
+                    entry_id = int(row["id"])
+                    candidate = {
+                        "target_type": "App\\AccountTransaction",
+                        "target_id": entry_id,
+                        "media_model_type": "App\\AccountTransaction",
+                        "media_model_id": entry_id,
+                        "transaction_id": int(row.get("transaction_id") or 0),
+                        "parent_type": "",
+                        "reference": str(row.get("reff_no") or ""),
+                        "attachment_source": "account_transactions.reff_no",
+                    }
+                    self._add_number(source_type, str(row.get("reff_no") or ""), candidate)
+
+    def _index_document_fields(self, filename_keys: set[str]) -> None:
+        del filename_keys  # Index only non-empty attachment fields, then compare locally to normalized keys.
+        transaction_types = sorted({value for values in self.OPERATIONAL_TYPES.values() for value in values})
+        if self.has_table("transactions") and self.has_column("transactions", "document") and self.has_column("transactions", "business_id"):
+            select = ["id", "type", "document"]
+            if self.has_column("transactions", "ref_no"):
+                select.append("ref_no")
+            sql = "SELECT " + ", ".join(select) + " FROM transactions WHERE business_id=%s AND type IN (" + self.placeholders(len(transaction_types)) + ") AND document IS NOT NULL AND document<>''"
+            if self.has_column("transactions", "deleted_at"):
+                sql += " AND deleted_at IS NULL"
+            for row in self._rows(sql, [self.business_id, *transaction_types]):
+                self._add_file(str(row["document"]), dict(self._transaction_candidate(row, "transactions.document")))
+
+        if self.has_table("expense_lines") and self.has_table("transactions") and {"id", "transaction_id", "document"}.issubset(self.columns["expense_lines"]):
+            expense_types = self.OPERATIONAL_TYPES["Expense"]
+            sql = (
+                "SELECT line.id AS line_id, line.transaction_id, line.document, parent.type AS parent_type, parent.ref_no AS parent_ref_no "
+                "FROM expense_lines AS line JOIN transactions AS parent ON parent.id=line.transaction_id "
+                "WHERE parent.business_id=%s AND parent.type IN (" + self.placeholders(len(expense_types)) + ") "
+                "AND line.document IS NOT NULL AND line.document<>''"
+            )
+            if self.has_column("transactions", "deleted_at"):
+                sql += " AND parent.deleted_at IS NULL"
+            for row in self._rows(sql, [self.business_id, *expense_types]):
+                transaction_id = int(row["transaction_id"])
+                candidate = {
+                    "target_type": "expense_lines",
+                    "target_id": int(row["line_id"]),
+                    "media_model_type": self.TRANSACTION_MODEL,
+                    "media_model_id": transaction_id,
+                    "transaction_id": transaction_id,
+                    "parent_type": str(row.get("parent_type") or ""),
+                    "reference": str(row.get("parent_ref_no") or ""),
+                    "attachment_source": "expense_lines.document",
+                }
+                self._add_file(str(row["document"]), candidate)
+
+        if self.has_table("transaction_payments") and self.has_table("transactions") and {"id", "transaction_id", "document"}.issubset(self.columns["transaction_payments"]):
+            if {"id", "business_id", "type"}.issubset(self.columns["transactions"]):
+                select = ["payment.id AS payment_id", "payment.transaction_id", "payment.document", "parent.type AS parent_type"]
+                if self.has_column("transactions", "ref_no"):
+                    select.append("parent.ref_no AS parent_ref_no")
+                sql = (
+                    "SELECT " + ", ".join(select) + " FROM transaction_payments AS payment "
+                    "JOIN transactions AS parent ON parent.id=payment.transaction_id "
+                    "WHERE parent.business_id=%s AND parent.type IN (" + self.placeholders(len(transaction_types)) + ") "
+                    "AND payment.document IS NOT NULL AND payment.document<>''"
+                )
+                if self.has_column("transactions", "deleted_at"):
+                    sql += " AND parent.deleted_at IS NULL"
+                for row in self._rows(sql, [self.business_id, *transaction_types]):
+                    transaction_id = int(row["transaction_id"])
+                    candidate = {
+                        "target_type": self.PAYMENT_MODEL,
+                        "target_id": int(row["payment_id"]),
+                        "media_model_type": self.TRANSACTION_MODEL,
+                        "media_model_id": transaction_id,
+                        "transaction_id": transaction_id,
+                        "parent_type": str(row.get("parent_type") or ""),
+                        "reference": str(row.get("parent_ref_no") or ""),
+                        "attachment_source": "transaction_payments.document",
+                    }
+                    self._add_file(str(row["document"]), candidate)
+
+    def _index_existing_media(self, filename_keys: set[str]) -> None:
+        if not self.has_table("media") or not {"id", "business_id", "file_name", "model_type", "model_id"}.issubset(self.columns["media"]):
+            return
+        transaction_types = sorted({value for values in self.OPERATIONAL_TYPES.values() for value in values})
+        has_original = self.has_column("media", "original_name")
+        media_names = ["media.file_name"] + (["media.original_name"] if has_original else [])
+        if self.has_table("transactions"):
+            select = ["media.model_id", "media.file_name", "parent.type AS parent_type"]
+            if has_original:
+                select.append("media.original_name")
+            if self.has_column("transactions", "ref_no"):
+                select.append("parent.ref_no AS parent_ref_no")
+            sql = (
+                "SELECT " + ", ".join(select) + " FROM media JOIN transactions AS parent ON parent.id=media.model_id "
+                "WHERE media.business_id=%s AND media.model_type=%s AND parent.business_id=%s AND parent.type IN ("
+                + self.placeholders(len(transaction_types)) + ")"
+            )
+            if self.has_column("transactions", "deleted_at"):
+                sql += " AND parent.deleted_at IS NULL"
+            for row in self._rows(sql, [self.business_id, self.TRANSACTION_MODEL, self.business_id, *transaction_types]):
+                transaction_id = int(row["model_id"])
+                candidate = {
+                    "target_type": self.TRANSACTION_MODEL,
+                    "target_id": transaction_id,
+                    "media_model_type": self.TRANSACTION_MODEL,
+                    "media_model_id": transaction_id,
+                    "transaction_id": transaction_id,
+                    "parent_type": str(row.get("parent_type") or ""),
+                    "reference": str(row.get("parent_ref_no") or ""),
+                    "attachment_source": "media.file_name",
+                }
+                for media_name in media_names:
+                    name = row.get(media_name.split(".")[-1])
+                    if str(name or "").strip():
+                        self._add_file(str(name), dict(candidate, attachment_source=media_name))
+
+        if not (self.has_table("account_transactions") and self.has_table("accounts")):
+            return
+        required = {"id", "account_id"}
+        if not required.issubset(self.columns["account_transactions"]) or not {"id", "business_id"}.issubset(self.columns["accounts"]):
+            return
+        account_sql = (
+            "SELECT media.model_type, media.model_id, media.file_name"
+            + (", media.original_name" if has_original else "")
+            + (", entry.transaction_id" if self.has_column("account_transactions", "transaction_id") else "")
+            + " FROM media JOIN account_transactions AS entry ON entry.id=media.model_id "
+            + "JOIN accounts AS account ON account.id=entry.account_id WHERE media.business_id=%s "
+            + "AND media.model_type IN (" + self.placeholders(len(self.ACCOUNT_MODEL_TYPES))
+            + ") AND account.business_id=%s"
+        )
+        for row in self._rows(account_sql, [self.business_id, *self.ACCOUNT_MODEL_TYPES, self.business_id]):
+            entry_id = int(row["model_id"])
+            candidate = {
+                "target_type": str(row["model_type"]),
+                "target_id": entry_id,
+                "media_model_type": str(row["model_type"]),
+                "media_model_id": entry_id,
+                "transaction_id": int(row.get("transaction_id") or 0),
+                "parent_type": "",
+                "reference": "",
+                "attachment_source": "media.file_name",
+            }
+            for name in [row.get("file_name"), row.get("original_name")]:
+                if str(name or "").strip():
+                    self._add_file(str(name), candidate)
+
+    def _index_crosswalks(self, run_id: int | None, legacy_ids: set[str]) -> None:
+        if (
+            run_id is None
+            or not legacy_ids
+            or not self.has_table("accounting_legacy_import_crosswalks")
+            or not self.has_table("transactions")
+            or not {"id", "business_id", "type", "ref_no"}.issubset(self.columns["transactions"])
+        ):
+            return
+        if not {"legacy_import_run_id", "business_id", "source_type", "legacy_record_id", "target_record_type", "target_record_id", "status"}.issubset(self.columns["accounting_legacy_import_crosswalks"]):
+            return
+        ids = sorted(legacy_ids)
+        for offset in range(0, len(ids), 400):
+            chunk = ids[offset : offset + 400]
+            sql = (
+                "SELECT crosswalk.source_type, crosswalk.legacy_record_id, crosswalk.target_record_id, parent.type AS parent_type, parent.ref_no "
+                "FROM accounting_legacy_import_crosswalks AS crosswalk "
+                "JOIN transactions AS parent ON parent.id=crosswalk.target_record_id "
+                "WHERE crosswalk.legacy_import_run_id=%s AND crosswalk.business_id=%s AND crosswalk.target_record_type=%s "
+                "AND crosswalk.target_record_id IS NOT NULL AND crosswalk.status IN ('matched','linked','posted','review') "
+                "AND crosswalk.legacy_record_id IN (" + self.placeholders(len(chunk)) + ") "
+                "AND parent.business_id=%s"
+            )
+            if self.has_column("transactions", "deleted_at"):
+                sql += " AND parent.deleted_at IS NULL"
+            for row in self._rows(sql, [run_id, self.business_id, self.TRANSACTION_MODEL, *chunk, self.business_id]):
+                source_type = str(row.get("source_type") or "")
+                if source_type not in self.OPERATIONAL_TYPES or row.get("parent_type") not in self.OPERATIONAL_TYPES[source_type]:
+                    continue
+                transaction_id = int(row["target_record_id"])
+                candidate = {
+                    "target_type": self.TRANSACTION_MODEL,
+                    "target_id": transaction_id,
+                    "media_model_type": self.TRANSACTION_MODEL,
+                    "media_model_id": transaction_id,
+                    "transaction_id": transaction_id,
+                    "parent_type": str(row.get("parent_type") or ""),
+                    "reference": str(row.get("ref_no") or ""),
+                    "attachment_source": "accounting_legacy_import_crosswalks.legacy_record_id",
+                }
+                self.crosswalk_index[(source_type, str(row["legacy_record_id"]))].append(candidate)
+
+    def _load_media_for_attachment_ids(self, attachments: list[Attachment]) -> None:
+        if not self.has_table("media") or not {"business_id", "legacy_source_attachment_id", "id", "model_type", "model_id"}.issubset(self.columns["media"]):
+            return
+        ids = sorted({item.attachment_id for item in attachments})
+        for offset in range(0, len(ids), 400):
+            chunk = ids[offset : offset + 400]
+            sql = (
+                "SELECT id, legacy_source_attachment_id, model_type, model_id, file_name FROM media "
+                "WHERE business_id=%s AND legacy_source_attachment_id IN (" + self.placeholders(len(chunk)) + ")"
+            )
+            for row in self._rows(sql, [self.business_id, *chunk]):
+                self.media_by_attachment_id[str(row["legacy_source_attachment_id"])] = row
+
+    def _index_source_media_owners(self) -> None:
+        """Use an existing source-ID Media link as a fallback after validating its owner."""
+        transaction_ids = sorted({
+            int(row["model_id"])
+            for row in self.media_by_attachment_id.values()
+            if row["model_type"] == self.TRANSACTION_MODEL
+        })
+        account_ids = sorted({
+            int(row["model_id"])
+            for row in self.media_by_attachment_id.values()
+            if row["model_type"] in self.ACCOUNT_MODEL_TYPES
+        })
+        transaction_owners: dict[int, dict[str, Any]] = {}
+        for offset in range(0, len(transaction_ids), 400):
+            chunk = transaction_ids[offset : offset + 400]
+            if not chunk or not self.has_table("transactions"):
+                continue
+            select = ["id", "type"]
+            if self.has_column("transactions", "ref_no"):
+                select.append("ref_no")
+            allowed_types = sorted({value for group in self.OPERATIONAL_TYPES.values() for value in group})
+            sql = (
+                "SELECT " + ", ".join(select) + " FROM transactions WHERE business_id=%s AND type IN ("
+                + self.placeholders(len(allowed_types))
+                + ") AND id IN (" + self.placeholders(len(chunk)) + ")"
+            )
+            if self.has_column("transactions", "deleted_at"):
+                sql += " AND deleted_at IS NULL"
+            for row in self._rows(sql, [self.business_id, *allowed_types, *chunk]):
+                transaction_owners[int(row["id"])] = row
+
+        account_owners: dict[int, dict[str, Any]] = {}
+        if account_ids and self.has_table("account_transactions") and self.has_table("accounts"):
+            for offset in range(0, len(account_ids), 400):
+                chunk = account_ids[offset : offset + 400]
+                if not chunk:
+                    continue
+                select = ["entry.id"]
+                if self.has_column("account_transactions", "transaction_id"):
+                    select.append("entry.transaction_id")
+                sql = (
+                    "SELECT " + ", ".join(select) + " FROM account_transactions AS entry "
+                    "JOIN accounts AS account ON account.id=entry.account_id "
+                    "WHERE account.business_id=%s AND entry.id IN (" + self.placeholders(len(chunk)) + ")"
+                )
+                if self.has_column("account_transactions", "deleted_at"):
+                    sql += " AND entry.deleted_at IS NULL"
+                if self.has_column("accounts", "deleted_at"):
+                    sql += " AND account.deleted_at IS NULL"
+                for row in self._rows(sql, [self.business_id, *chunk]):
+                    account_owners[int(row["id"])] = row
+
+        for attachment_id, media in self.media_by_attachment_id.items():
+            model_type = str(media["model_type"])
+            model_id = int(media["model_id"])
+            if model_type == self.TRANSACTION_MODEL:
+                owner = transaction_owners.get(model_id)
+                if not owner:
+                    continue
+                candidate = {
+                    "target_type": self.TRANSACTION_MODEL,
+                    "target_id": model_id,
+                    "media_model_type": self.TRANSACTION_MODEL,
+                    "media_model_id": model_id,
+                    "transaction_id": model_id,
+                    "parent_type": str(owner.get("type") or ""),
+                    "reference": str(owner.get("ref_no") or ""),
+                    "attachment_source": "media.legacy_source_attachment_id",
+                }
+            elif model_type in self.ACCOUNT_MODEL_TYPES and model_id in account_owners:
+                owner = account_owners[model_id]
+                candidate = {
+                    "target_type": model_type,
+                    "target_id": model_id,
+                    "media_model_type": model_type,
+                    "media_model_id": model_id,
+                    "transaction_id": int(owner.get("transaction_id") or 0),
+                    "parent_type": "",
+                    "reference": "",
+                    "attachment_source": "media.legacy_source_attachment_id",
+                }
+            else:
+                continue
+            self.source_media_candidates[attachment_id] = candidate
+
+    @staticmethod
+    def _file_matches_number(number_candidate: dict[str, Any], file_candidates: list[dict[str, Any]]) -> bool:
+        for file_candidate in file_candidates:
+            if (
+                number_candidate["target_type"] == file_candidate["target_type"]
+                and str(number_candidate["target_id"]) == str(file_candidate["target_id"])
+            ):
+                return True
+            if (
+                file_candidate["target_type"] == "expense_lines"
+                and number_candidate.get("parent_type") in {"expense", "expense_refund"}
+                and int(file_candidate.get("transaction_id") or 0) == int(number_candidate.get("transaction_id") or 0)
+            ):
+                return True
+        return False
+
+    @staticmethod
+    def _same_media_owner(left: dict[str, Any], right: dict[str, Any]) -> bool:
+        return left["media_model_type"] == right["media_model_type"] and str(left["media_model_id"]) == str(right["media_model_id"])
+
+    def _file_candidates(self, attachment: Attachment) -> list[dict[str, Any]]:
+        candidates: list[dict[str, Any]] = []
+        for key in database_filename_keys(attachment.original_name):
+            candidates.extend(self.file_index.get(key, []))
+        return self._unique(candidates)
+
+    def _resolve(self, attachment: Attachment) -> tuple[dict[str, Any] | None, str, str]:
+        file_candidates = self._file_candidates(attachment)
+        legacy_id = attachment.transaction_id
+        crosswalk_candidates: list[dict[str, Any]] = []
+        if legacy_id:
+            if attachment.source_type:
+                crosswalk_candidates.extend(self.crosswalk_index.get((attachment.source_type, legacy_id), []))
+            else:
+                for (source_type, record_id), candidates in self.crosswalk_index.items():
+                    if record_id == legacy_id:
+                        crosswalk_candidates.extend(candidates)
+        crosswalk_candidates = self._unique(crosswalk_candidates)
+        if len(crosswalk_candidates) > 1:
+            narrowed = [candidate for candidate in crosswalk_candidates if self._file_matches_number(candidate, file_candidates)]
+            if len(narrowed) == 1:
+                return narrowed[0], "legacy_record_id_file_name", "Crosswalk dan nama file menunjuk ke satu transaksi."
+            return None, "legacy_record_id", "ID transaksi legacy memiliki lebih dari satu target crosswalk."
+        if len(crosswalk_candidates) == 1:
+            target = crosswalk_candidates[0]
+            related = [candidate for candidate in file_candidates if self._same_media_owner(candidate, target)]
+            if len(related) == 1:
+                return related[0], "legacy_record_id", "Target crosswalk cocok; nama file juga ditemukan pada record terkait."
+            return target, "legacy_record_id", "Target ditemukan lewat crosswalk legacy."
+
+        if attachment.source_type and attachment.source_number:
+            key = (attachment.source_type, normalize_database_number(attachment.source_number))
+            number_candidates = self._unique(self.number_index.get(key, []))
+            if len(number_candidates) > 1:
+                narrowed = [candidate for candidate in number_candidates if self._file_matches_number(candidate, file_candidates)]
+                if len(narrowed) == 1:
+                    return narrowed[0], "source_number_file_name", "Noref memiliki beberapa kandidat; nama file memilih satu record."
+                return None, "source_number", "Noref ditemukan pada beberapa record; nama file belum memilih satu record."
+            if len(number_candidates) == 1:
+                target = number_candidates[0]
+                related = [candidate for candidate in file_candidates if self._same_media_owner(candidate, target)]
+                if len(related) == 1:
+                    return related[0], "source_number", "Noref cocok; record terkait juga memakai nama file ini."
+                return target, "source_number", "Noref cocok dengan satu record operasional."
+
+        existing_source_candidate = self.source_media_candidates.get(attachment.attachment_id)
+        if existing_source_candidate:
+            parent_type = existing_source_candidate.get("parent_type")
+            valid_transaction_type = (
+                attachment.source_type in self.OPERATIONAL_TYPES
+                and parent_type in self.OPERATIONAL_TYPES[attachment.source_type]
+            )
+            valid_payment_type = (
+                attachment.source_type in self.PAYMENT_TYPES
+                and parent_type == self.PAYMENT_TYPES[attachment.source_type]
+            )
+            valid_account_type = (
+                attachment.source_type in self.ACCOUNT_TYPES
+                and existing_source_candidate["media_model_type"] in self.ACCOUNT_MODEL_TYPES
+            )
+            if not attachment.source_type or valid_transaction_type or valid_payment_type or valid_account_type:
+                return existing_source_candidate, "source_attachment_id", "Media existing untuk ID sumber terhubung ke record aktif business ini."
+
+        if len(file_candidates) == 1:
+            return file_candidates[0], "file_name", "Tidak ada noref yang cocok; nama file unik pada database business ini."
+        if len(file_candidates) > 1:
+            return None, "file_name", "Nama file ditemukan pada beberapa record; perlu ditinjau."
+        return None, "", "Record tidak ditemukan melalui crosswalk, noref, atau kolom attachment database."
+
+    def match(self, attachments: list[Attachment]) -> None:
+        for item in attachments:
+            target, method, detail = self._resolve(item)
+            item.database_match_method = method
+            item.database_detail = detail
+            existing_media = self.media_by_attachment_id.get(item.attachment_id)
+            if target is None:
+                item.database_status = (
+                    "ambiguous"
+                    if method and ("beberapa" in detail or "lebih dari satu" in detail)
+                    else "not_found"
+                )
+                if existing_media:
+                    item.existing_media_id = str(existing_media["id"])
+                    item.database_status = "existing_media_review"
+                    item.database_detail += " ID lampiran sudah memiliki Media di database."
+                continue
+
+            item.database_target_type = str(target["target_type"])
+            item.database_target_id = str(target["target_id"])
+            item.database_media_model_type = str(target["media_model_type"])
+            item.database_media_model_id = str(target["media_model_id"])
+            item.database_reference = str(target.get("reference") or item.source_number or "")
+            item.database_attachment_source = str(target.get("attachment_source") or "")
+            item.database_status = "matched"
+            if existing_media:
+                item.existing_media_id = str(existing_media["id"])
+                same_target = (
+                    str(existing_media["model_type"]) == item.database_media_model_type
+                    and str(existing_media["model_id"]) == item.database_media_model_id
+                )
+                if same_target:
+                    item.database_status = "already_linked"
+                    item.database_detail += " Media untuk ID lampiran ini sudah tertaut ke target yang sama."
+                else:
+                    item.database_status = "existing_media_conflict"
+                    item.database_detail = "ID lampiran sudah tertaut ke Media target lain; tautan tidak diubah."
+
+
 class HostCheckedRedirectHandler(HTTPRedirectHandler):
     def __init__(self, allowed_hosts: set[str]) -> None:
         super().__init__()
@@ -323,7 +1056,10 @@ def write_report(path: Path, rows: list[Attachment], invalid: list[str], mode: s
             handle,
             fieldnames=[
                 "mode", "manifest_row", "attachment_id", "transaction_id", "source_type", "source_number", "expected_filename",
-                "output_filename", "collision_count", "source_host", "status", "detail",
+                "output_filename", "collision_count", "source_host", "status", "detail", "database_status",
+                "database_match_method", "database_target_type", "database_target_id", "database_media_model_type",
+                "database_media_model_id", "database_reference", "database_attachment_source", "existing_media_id",
+                "database_link_action", "database_detail", "local_file_name",
             ],
         )
         writer.writeheader()
@@ -342,6 +1078,18 @@ def write_report(path: Path, rows: list[Attachment], invalid: list[str], mode: s
                     "source_host": item.host,
                     "status": item.status,
                     "detail": item.detail,
+                    "database_status": item.database_status,
+                    "database_match_method": item.database_match_method,
+                    "database_target_type": item.database_target_type,
+                    "database_target_id": item.database_target_id,
+                    "database_media_model_type": item.database_media_model_type,
+                    "database_media_model_id": item.database_media_model_id,
+                    "database_reference": item.database_reference,
+                    "database_attachment_source": item.database_attachment_source,
+                    "existing_media_id": item.existing_media_id,
+                    "database_link_action": item.database_link_action,
+                    "database_detail": item.database_detail,
+                    "local_file_name": item.local_file_name,
                 }
             )
         for message in invalid:
@@ -366,10 +1114,12 @@ def unique_download_items(attachments: list[Attachment], destination: Path) -> l
         target = destination / item.output_name
         if target.is_file():
             item.status = "already_present"
+            item.local_file_name = item.output_name
             item.detail = "File dengan nama tujuan sudah ada; tidak ditimpa."
         elif item.collision_count == 1 and len(timestamped_files[item.original_name.casefold()]) == 1:
             existing_name = timestamped_files[item.original_name.casefold()][0]
             item.status = "already_present"
+            item.local_file_name = existing_name
             item.detail = f"File tersedia dengan prefix timestamp: {existing_name}; tidak diunduh ulang."
         elif item.collision_count == 1 and len(timestamped_files[item.original_name.casefold()]) > 1:
             item.status = "review_existing_ambiguous"
@@ -381,6 +1131,137 @@ def unique_download_items(attachments: list[Attachment], destination: Path) -> l
             item.status = "would_download"
             item.detail = "File tidak ditemukan di folder tujuan."
     return list(unique.values())
+
+
+def apply_media_links(attachments: list[Attachment], destination: Path, business_id: int) -> tuple[int, int, int, int]:
+    """Create or repair Media rows only for exact, unambiguous matches with a local file."""
+    expected_documents = (PROJECT_ROOT / DEFAULT_DESTINATION).resolve()
+    if destination.resolve() != expected_documents:
+        raise ValueError("--apply-links hanya dapat memakai folder public/uploads/documents agar link Media tidak rusak.")
+
+    connection = connect_database(read_only=False)
+    cursor = connection.cursor(dictionary=True, buffered=True)
+    try:
+        cursor.execute(
+            "SELECT COLUMN_NAME AS column_name FROM information_schema.columns "
+            "WHERE table_schema = DATABASE() AND table_name = 'media'"
+        )
+        columns = {row["column_name"] for row in cursor.fetchall()}
+        required = {"business_id", "file_name", "storage_location", "legacy_source_attachment_id", "model_type", "model_id"}
+        if not required.issubset(columns):
+            raise ValueError("Skema media belum mendukung link lampiran legacy; jalankan migrasi Accounting terlebih dahulu.")
+
+        linked = updated = skipped = conflicts = 0
+        for item in attachments:
+            if item.database_status not in {"matched", "already_linked"}:
+                item.database_link_action = "skipped_unmatched"
+                skipped += 1
+                continue
+            if not item.source_id_present:
+                item.database_link_action = "skipped_missing_source_id"
+                item.database_detail += " ID attachment sumber kosong; Media tidak dibuat."
+                skipped += 1
+                continue
+
+            local_name = item.local_file_name or item.output_name
+            file_path = destination / local_name
+            if file_path.is_symlink() or not file_path.is_file():
+                item.database_link_action = "skipped_file_missing"
+                item.database_detail += " File lokal belum tersedia; Media tidak dibuat."
+                skipped += 1
+                continue
+
+            cursor.execute(
+                "SELECT id, model_type, model_id, file_name, storage_location FROM media "
+                "WHERE business_id=%s AND legacy_source_attachment_id=%s LIMIT 1",
+                (business_id, item.attachment_id),
+            )
+            current = cursor.fetchone()
+            if current:
+                same_target = (
+                    str(current["model_type"]) == item.database_media_model_type
+                    and str(current["model_id"]) == item.database_media_model_id
+                )
+                if same_target:
+                    item.existing_media_id = str(current["id"])
+                    item.database_status = "already_linked"
+                    changes = []
+                    values = []
+                    if str(current.get("file_name") or "") != local_name:
+                        changes.append("file_name=%s")
+                        values.append(local_name)
+                    if str(current.get("storage_location") or "") != "documents":
+                        changes.append("storage_location=%s")
+                        values.append("documents")
+                    if changes:
+                        if "updated_at" in columns:
+                            changes.append("updated_at=%s")
+                            values.append(dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                        values.append(int(current["id"]))
+                        cursor.execute("UPDATE media SET " + ", ".join(changes) + " WHERE id=%s", values)
+                        connection.commit()
+                        item.database_link_action = "repointed"
+                        item.database_detail += " Media diperbarui ke file lokal yang tersedia."
+                        updated += 1
+                    else:
+                        item.database_link_action = "already_linked"
+                else:
+                    item.database_status = "existing_media_conflict"
+                    item.database_link_action = "skipped_conflict"
+                    item.database_detail = "ID lampiran sudah tertaut ke Media target lain; tautan tidak diubah."
+                    conflicts += 1
+                continue
+
+            now = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            values: dict[str, Any] = {
+                "business_id": business_id,
+                "file_name": local_name,
+                "storage_location": "documents",
+                "legacy_source_attachment_id": item.attachment_id,
+                "model_type": item.database_media_model_type,
+                "model_id": int(item.database_media_model_id),
+            }
+            optional_values = {
+                "original_name": item.original_name,
+                "model_media_type": "legacy_document",
+                "uploaded_by": None,
+                "created_at": now,
+                "updated_at": now,
+            }
+            values.update({key: value for key, value in optional_values.items() if key in columns})
+            field_list = list(values)
+            sql = (
+                "INSERT INTO media (" + ", ".join(f"`{field}`" for field in field_list) + ") VALUES ("
+                + ", ".join(["%s"] * len(field_list)) + ")"
+            )
+            try:
+                cursor.execute(sql, [values[field] for field in field_list])
+                connection.commit()
+                item.existing_media_id = str(cursor.lastrowid or "")
+                item.database_link_action = "linked"
+                item.database_status = "linked"
+                item.database_detail += " Media dibuat dan diarahkan ke file lokal."
+                linked += 1
+            except Exception as exc:
+                connection.rollback()
+                cursor.execute(
+                    "SELECT id, model_type, model_id FROM media "
+                    "WHERE business_id=%s AND legacy_source_attachment_id=%s LIMIT 1",
+                    (business_id, item.attachment_id),
+                )
+                current = cursor.fetchone()
+                if current and str(current["model_type"]) == item.database_media_model_type and str(current["model_id"]) == item.database_media_model_id:
+                    item.existing_media_id = str(current["id"])
+                    item.database_status = "already_linked"
+                    item.database_link_action = "already_linked"
+                    continue
+                item.database_link_action = "failed"
+                item.database_detail = f"Media tidak dapat disimpan: {str(exc).splitlines()[0][:200]}"
+                conflicts += 1
+        return linked, updated, skipped, conflicts
+    finally:
+        cursor.close()
+        connection.close()
 
 
 def download_one(
@@ -476,6 +1357,8 @@ def main() -> int:
     manifest = resolve_path(args.manifest)
     destination = resolve_path(args.destination)
     mode = "download" if args.download else "dry-run"
+    if args.apply_links:
+        mode = "download+apply-links" if args.download else "apply-links"
     report = resolve_path(args.report_csv) if args.report_csv else resolve_path(
         "storage/app/lampiran-download-report.csv" if args.download else "storage/app/lampiran-dry-run-report.csv"
     )
@@ -489,6 +1372,21 @@ def main() -> int:
 
     attachments, invalid = extract_attachments(source_rows, allowed_hosts)
     plan_output_names(attachments)
+    if args.business_id is not None:
+        try:
+            connection = connect_database(read_only=True)
+            matcher = OperationalDatabaseMatcher(connection, args.business_id, args.run_id, attachments)
+            try:
+                matcher.match(attachments)
+            finally:
+                matcher.close()
+                connection.close()
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        except Exception as exc:
+            print(f"Pencocokan database gagal: {str(exc).splitlines()[0][:240]}", file=sys.stderr)
+            return 2
     items = unique_download_items(attachments, destination)
     status_by_name = {item.output_name.casefold(): (item.status, item.detail) for item in items}
     for attachment in attachments:
@@ -513,10 +1411,24 @@ def main() -> int:
     print(f"Distinct filenames with source collisions: {len(collisions)}")
     print(f"Manifest rows in collision groups: {rows_with_collisions}")
     print(f"Invalid rows or URLs: {len(invalid)}")
+    if args.business_id is None:
+        print("Database matching: dilewati; gunakan --business-id <ID> untuk mencocokkan data operasional.")
+    else:
+        db_counts: dict[str, int] = defaultdict(int)
+        for attachment in attachments:
+            db_counts[attachment.database_status] += 1
+        print(f"Database business ID: {args.business_id}; run ID: {args.run_id or 'tidak dipakai'}")
+        print("Database match status: " + ", ".join(f"{status}={count}" for status, count in sorted(db_counts.items())))
+        print("`already_linked` berarti baris Media sudah ada di database; status file lokal dihitung terpisah.")
+        if args.apply_links:
+            print("Media akan ditulis hanya untuk target unik dengan file lokal yang tersedia.")
     if collisions:
         print("Collision policy: colliding files use legacy-<id>__<filename>, matching the Laravel Media importer.")
     if not args.download:
-        print("Dry-run makes no network requests and does not create or change files in the destination.")
+        if args.apply_links:
+            print("No network requests; --apply-links may write Media rows for matched files already present locally.")
+        else:
+            print("Dry-run makes no network requests, writes no Media rows, and does not change files in the destination.")
     else:
         print(f"Download limits: {args.workers} workers, {args.timeout:g}s timeout, max {args.max_mib_per_file:g} MiB/file.")
 
@@ -573,6 +1485,8 @@ def main() -> int:
                 item = future_map[future]
                 try:
                     item.status, item.detail = future.result()
+                    if item.status in {"downloaded", "already_present"}:
+                        item.local_file_name = item.output_name
                 except Exception as exc:  # Keep the batch reportable if one worker fails unexpectedly.
                     item.status, item.detail = "failed", str(exc).splitlines()[0][:240]
                 if item.status == "downloaded":
@@ -592,6 +1506,8 @@ def main() -> int:
                 else:
                     try:
                         item.status, item.detail = future.result()
+                        if item.status in {"downloaded", "already_present"}:
+                            item.local_file_name = item.output_name
                     except Exception as exc:
                         item.status, item.detail = "failed", str(exc).splitlines()[0][:240]
             print("Download dihentikan; menulis laporan hasil parsial.", file=sys.stderr)
@@ -604,9 +1520,26 @@ def main() -> int:
             executor.shutdown(wait=True)
 
     if args.download:
-        result_by_name = {item.output_name.casefold(): (item.status, item.detail) for item in items}
+        result_by_name = {
+            item.output_name.casefold(): (item.status, item.detail, item.local_file_name) for item in items
+        }
         for attachment in attachments:
-            attachment.status, attachment.detail = result_by_name[attachment.output_name.casefold()]
+            attachment.status, attachment.detail, attachment.local_file_name = result_by_name[attachment.output_name.casefold()]
+
+    if args.apply_links:
+        try:
+            linked, updated, skipped, conflicts = apply_media_links(attachments, destination, args.business_id)
+            print(f"Database link result: {linked} dibuat, {updated} diperbarui, {skipped} dilewati, {conflicts} konflik/gagal.")
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            write_report(report, attachments, invalid, mode)
+            print(f"Report CSV: {report}")
+            return 2
+        except Exception as exc:
+            print(f"Penulisan Media gagal: {str(exc).splitlines()[0][:240]}", file=sys.stderr)
+            write_report(report, attachments, invalid, mode)
+            print(f"Report CSV: {report}")
+            return 2
 
     write_report(report, attachments, invalid, mode)
     print(f"Report CSV: {report}")
