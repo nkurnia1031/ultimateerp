@@ -166,6 +166,11 @@ class HeavyEquipmentVendorLoadingTicketsTest extends TestCase
             {
                 return false;
             }
+
+            public function hasAnyPermission(...$permissions): bool
+            {
+                return false;
+            }
         };
         $admin->forceFill([
             'id' => 999,
