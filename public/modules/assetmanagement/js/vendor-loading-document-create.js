@@ -32,12 +32,20 @@
 
     function field(index, name, type, classes, extra, value) {
         var initial = value == null ? '' : String(value);
-        return '<input type="' + type + '" name="lines[' + index + '][' + name + ']" class="form-control ' + classes + '" value="' + initial + '" ' + (extra || '') + '>';
+        return '<input id="vendor-line-' + index + '-' + name + '" type="' + type + '" name="lines[' + index + '][' + name + ']" class="form-control ' + classes + '" value="' + initial + '" ' + (extra || '') + '>';
+    }
+
+    function labeledField(index, name, label, type, classes, extra, value) {
+        return '<div class="vendor-line-field"><label for="vendor-line-' + index + '-' + name + '">' + label + '</label>' + field(index, name, type, classes, extra, value) + '</div>';
+    }
+
+    function calculatedField(index, name, label, className) {
+        return '<div class="vendor-line-field"><label for="vendor-line-' + index + '-' + name + '">' + label + '</label><input id="vendor-line-' + index + '-' + name + '" type="text" class="form-control ' + className + ' text-right" readonly tabindex="-1"></div>';
     }
 
     function projectOptions(index) {
         var projects = config.projects || {};
-        var html = '<select name="lines[' + index + '][project_id]" class="form-control"><option value="">Tidak terkait Project</option>';
+        var html = '<select id="vendor-line-' + index + '-project_id" name="lines[' + index + '][project_id]" class="form-control"><option value="">Tidak terkait project</option>';
         Object.keys(projects).forEach(function (id) {
             html += '<option value="' + id + '">' + $('<div>').text(projects[id]).html() + '</option>';
         });
@@ -46,37 +54,38 @@
 
     function appendLine() {
         var index = nextIndex++;
-        var row = $('<tr class="vendor-line-main" data-index="' + index + '">' +
-            '<td class="vendor-line-number"></td>' +
-            '<td>' + field(index, 'loading_date', 'date', 'vendor-loading-date', 'required', config.today) + '</td>' +
-            '<td>' + field(index, 'ticket_no', 'text', '', 'maxlength="100" placeholder="Nomor tiket"') + '</td>' +
-            '<td>' + field(index, 'vendor_unit_name', 'text', '', 'maxlength="191" placeholder="No. polisi / unit"') + '</td>' +
-            '<td>' + field(index, 'vendor_driver_name', 'text', '', 'maxlength="191" placeholder="Nama sopir"') + '</td>' +
-            '<td>' + field(index, 'gross_tons', 'number', 'vendor-gross', 'step="0.0001" min="0" placeholder="0,0000"') + '</td>' +
-            '<td>' + field(index, 'tare_tons', 'number', 'vendor-tare', 'step="0.0001" min="0" placeholder="0,0000"') + '</td>' +
-            '<td>' + field(index, 'net_tons', 'number', 'vendor-net', 'step="0.0001" readonly tabindex="-1"') + '</td>' +
-            '<td>' + field(index, 'billable_tons', 'number', 'vendor-billable', 'step="0.0001" min="0" placeholder="Ikuti Nett"') + '</td>' +
-            '<td><div class="input-group"><span class="input-group-addon">Rp</span>' + field(index, 'vendor_rate_per_ton', 'number', 'vendor-rate', 'step="0.01" min="0" placeholder="0"') + '</div></td>' +
-            '<td><div class="input-group"><span class="input-group-addon">Rp</span><input type="text" class="form-control vendor-line-total text-right" readonly tabindex="-1"></div></td>' +
-            '<td><button type="button" class="btn btn-default btn-xs vendor-line-toggle" aria-expanded="false">Rincian</button></td>' +
-            '<td><button type="button" class="btn btn-danger btn-xs vendor-line-remove" title="Hapus line"><i class="fas fa-trash"></i></button></td>' +
-            '</tr>' +
-            '<tr class="vendor-line-details" data-index="' + index + '" hidden><td colspan="13"><div class="vendor-line-detail-grid">' +
-            '<div><label>Tanggal Muat</label>' + field(index, 'load_date', 'date', '', '') + '</div>' +
-            '<div><label>Tanggal Bongkar</label>' + field(index, 'unload_date', 'date', '', '') + '</div>' +
-            '<div><label>Tonase Diterima</label>' + field(index, 'received_tons', 'number', 'vendor-received', 'step="0.0001" min="0"') + '</div>' +
-            '<div><label>Project</label>' + projectOptions(index) + '</div>' +
-            '<div><label>Kode Unit</label>' + field(index, 'vendor_unit_code', 'text', '', 'maxlength="100"') + '</div>' +
-            '<div><label>Kode Sopir</label>' + field(index, 'vendor_driver_code', 'text', '', 'maxlength="100"') + '</div>' +
-            '<div><label>Penyesuaian Klaim (Rp)</label>' + field(index, 'claim_adjustment', 'number', 'vendor-claim', 'step="0.01"') + '</div>' +
-            '<div><label>Potongan Lain (Rp)</label>' + field(index, 'other_deduction', 'number', 'vendor-deduction', 'step="0.01" min="0"') + '</div>' +
-            '<div style="grid-column:1 / -1"><label>Catatan</label>' + field(index, 'notes', 'text', '', 'maxlength="2000"') + '</div>' +
-            '</div></td></tr>');
+        var card = $('<article class="vendor-line-card" data-index="' + index + '">' +
+            '<div class="vendor-line-main" data-index="' + index + '">' +
+            '<div class="vendor-line-card-header"><h4 class="vendor-line-card-title">Line <span class="vendor-line-number"></span></h4>' +
+            '<div class="vendor-line-card-actions"><button type="button" class="btn btn-default vendor-line-toggle" aria-expanded="false">Tampilkan rincian</button><button type="button" class="btn btn-danger vendor-line-remove" aria-label="Hapus line"><i class="fas fa-trash" aria-hidden="true"></i> Hapus</button></div></div>' +
+            '<div class="vendor-line-fields">' +
+            labeledField(index, 'loading_date', 'Tanggal loading *', 'date', 'vendor-loading-date', 'required', config.today) +
+            labeledField(index, 'ticket_no', 'Nomor tiket', 'text', '', 'maxlength="100"') +
+            labeledField(index, 'vendor_unit_name', 'No. polisi / unit', 'text', '', 'maxlength="191"') +
+            labeledField(index, 'vendor_driver_name', 'Nama sopir', 'text', '', 'maxlength="191"') +
+            '</div><div class="vendor-line-fields vendor-line-fields--three">' +
+            labeledField(index, 'gross_tons', 'Gross (ton)', 'number', 'vendor-gross', 'step="0.0001" min="0" placeholder="0,0000"') +
+            labeledField(index, 'tare_tons', 'Tare (ton)', 'number', 'vendor-tare', 'step="0.0001" min="0" placeholder="0,0000"') +
+            labeledField(index, 'net_tons', 'Netto (ton)', 'number', 'vendor-net', 'step="0.0001" readonly tabindex="-1"') +
+            labeledField(index, 'billable_tons', 'Tonase tagihan', 'number', 'vendor-billable', 'step="0.0001" min="0" placeholder="Ikuti netto"') +
+            labeledField(index, 'vendor_rate_per_ton', 'Tarif per ton (Rp)', 'number', 'vendor-rate', 'step="0.01" min="0" placeholder="0"') +
+            calculatedField(index, 'line_total', 'Total biaya (Rp)', 'vendor-line-total') +
+            '</div></div>' +
+            '<div class="vendor-line-details" data-index="' + index + '" hidden><h5 class="vendor-line-details-title">Rincian tambahan</h5><div class="vendor-line-detail-grid">' +
+            labeledField(index, 'load_date', 'Tanggal muat', 'date', '', '') +
+            labeledField(index, 'unload_date', 'Tanggal bongkar', 'date', '', '') +
+            labeledField(index, 'received_tons', 'Tonase diterima', 'number', 'vendor-received', 'step="0.0001" min="0"') +
+            '<div class="vendor-line-field"><label for="vendor-line-' + index + '-project_id">Project</label>' + projectOptions(index) + '</div>' +
+            labeledField(index, 'vendor_unit_code', 'Kode unit', 'text', '', 'maxlength="100"') +
+            labeledField(index, 'vendor_driver_code', 'Kode sopir', 'text', '', 'maxlength="100"') +
+            labeledField(index, 'claim_adjustment', 'Penyesuaian klaim (Rp)', 'number', 'vendor-claim', 'step="0.01"') +
+            labeledField(index, 'other_deduction', 'Potongan lain (Rp)', 'number', 'vendor-deduction', 'step="0.01" min="0"') +
+            '<div class="vendor-line-field vendor-line-field--full"><label for="vendor-line-' + index + '-notes">Catatan line</label>' + field(index, 'notes', 'text', '', 'maxlength="2000"') + '</div>' +
+            '</div></div></article>');
 
-        $lines.append(row);
-        row.find('.select2').select2({ width: '100%', allowClear: true });
+        $lines.append(card);
         updateLineNumbers();
-        calculateLine(row);
+        calculateLine(card.find('.vendor-line-main').first());
     }
 
     function updateLineNumbers() {
@@ -94,10 +103,7 @@
     }
 
     function mainLineFor(element) {
-        var index = $(element).closest('tr').data('index');
-        return $lines.find('.vendor-line-main').filter(function () {
-            return String($(this).data('index')) === String(index);
-        }).first();
+        return $(element).closest('.vendor-line-card').find('.vendor-line-main').first();
     }
 
     function calculateLine(row) {
@@ -133,10 +139,10 @@
             var rate = row.find('.vendor-rate').val();
             if (rate !== '') totals.amount += number(row.find('.vendor-billable').val()) * number(rate) - number(lineField(row, '.vendor-deduction').val()) + number(lineField(row, '.vendor-claim').val());
         });
-        $('#vendor-total-gross').text(quantity(totals.gross));
-        $('#vendor-total-tare').text(quantity(totals.tare));
-        $('#vendor-total-net').text(quantity(totals.net));
-        $('#vendor-total-billable').text(quantity(totals.billable));
+        $('#vendor-total-gross').text(quantity(totals.gross) + ' ton');
+        $('#vendor-total-tare').text(quantity(totals.tare) + ' ton');
+        $('#vendor-total-net').text(quantity(totals.net) + ' ton');
+        $('#vendor-total-billable').text(quantity(totals.billable) + ' ton');
         $('#vendor-total-amount').text(money(totals.amount));
     }
 
@@ -183,15 +189,13 @@
         calculateLine(mainLineFor(this));
     });
     $lines.on('click', '.vendor-line-toggle', function () {
-        var $button = $(this), $row = $button.closest('tr').next('.vendor-line-details'), isOpen = !$row.prop('hidden');
-        $row.prop('hidden', isOpen);
-        $button.attr('aria-expanded', isOpen ? 'false' : 'true').text(isOpen ? 'Rincian' : 'Tutup rincian');
+        var $button = $(this), $details = $button.closest('.vendor-line-card').find('.vendor-line-details').first(), isOpen = !$details.prop('hidden');
+        $details.prop('hidden', isOpen);
+        $button.attr('aria-expanded', isOpen ? 'false' : 'true').text(isOpen ? 'Tampilkan rincian' : 'Tutup rincian');
     });
     $lines.on('click', '.vendor-line-remove', function () {
         if ($lines.find('.vendor-line-main').length <= 1) return;
-        var $row = $(this).closest('tr');
-        $row.next('.vendor-line-details').remove();
-        $row.remove();
+        $(this).closest('.vendor-line-card').remove();
         updateLineNumbers();
     });
 

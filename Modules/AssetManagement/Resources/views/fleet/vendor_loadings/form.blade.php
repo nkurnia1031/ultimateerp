@@ -19,33 +19,51 @@
     <form id="vendor-loading-form" method="POST" action="{{ $isEdit ? route('asset.fleet.vendor-loadings.update', $loading->id) : ($isDocumentLine ? route('asset.fleet.vendor-loadings.documents.lines.store', $loadingDocument->id) : route('asset.fleet.vendor-loadings.store')) }}">
         @csrf
         @if($isEdit)<input type="hidden" name="_method" value="PUT">@endif
-        <div class="box box-primary"><div class="box-header with-border"><h3 class="box-title">Informasi Loading</h3></div><div class="box-body">
-            <div class="row">
-                <div class="col-md-3 form-group"><label>Nomor Loading</label><input name="loading_no" class="form-control" value="{{ $value('loading_no') }}" placeholder="Otomatis jika kosong"></div>
-                <div class="col-md-3 form-group"><label>Nomor Tiket</label><input name="ticket_no" class="form-control" value="{{ $value('ticket_no') }}"></div>
-                <div class="col-md-3 form-group"><label>Tanggal Loading *</label><input type="date" name="loading_date" class="form-control" value="{{ $dateValue('loading_date', now()->format('Y-m-d')) }}" required></div>
-                <div class="col-md-3 form-group"><label>Tanggal Muat</label><input type="date" name="load_date" class="form-control" value="{{ $dateValue('load_date', now()->format('Y-m-d')) }}"></div>
+        <div class="box box-primary vendor-form-box">
+            <div class="box-header with-border">
+                <h3 class="box-title">Data {{ $isDocumentLine ? 'tiket angkutan' : 'loading vendor' }}</h3>
+                <p class="text-muted">Isi identitas perjalanan terlebih dahulu, lalu lengkapi unit, tonase, dan nilai vendor.</p>
             </div>
-            @unless($isDocumentLine)<div class="row">
-                <div class="col-md-3 form-group"><label>Nama Barang</label><input name="goods_name" class="form-control" maxlength="191" value="{{ $value('goods_name') }}" placeholder="Contoh: Loading Cangkang"></div>
-                <div class="col-md-3 form-group"><label>Jenis Barang</label><input name="goods_type" class="form-control" maxlength="191" value="{{ $value('goods_type') }}" placeholder="Opsional"></div>
-                <div class="col-md-3 form-group"><label>Nama Kapal</label><input name="vessel_name" class="form-control" maxlength="191" value="{{ $value('vessel_name') }}" placeholder="Contoh: MV. Bright King"></div>
-                <div class="col-md-3 form-group"><label>Tujuan</label><input name="destination" class="form-control" maxlength="191" value="{{ $value('destination') }}" placeholder="Contoh: Pelabuhan Pelindo"></div>
-            </div>@endunless
-            <div class="row">
-                <div class="col-md-3 form-group"><label>Tanggal Bongkar</label><input type="date" name="unload_date" class="form-control" value="{{ $dateValue('unload_date') }}"></div>
+            <div class="box-body">
+                <fieldset class="vendor-form-section">
+                    <legend>Jadwal dan nomor tiket</legend>
+                    <div class="vendor-form-grid vendor-form-grid--four">
+                        @unless($isDocumentLine)<div class="vendor-form-field"><label for="vendor-loading-no">Nomor loading</label><input id="vendor-loading-no" name="loading_no" class="form-control" value="{{ $value('loading_no') }}" placeholder="Otomatis jika kosong"></div>@endunless
+                        <div class="vendor-form-field"><label for="vendor-ticket-no">Nomor tiket</label><input id="vendor-ticket-no" name="ticket_no" class="form-control" value="{{ $value('ticket_no') }}"></div>
+                        <div class="vendor-form-field"><label for="vendor-loading-date">Tanggal loading *</label><input id="vendor-loading-date" type="date" name="loading_date" class="form-control" value="{{ $dateValue('loading_date', now()->format('Y-m-d')) }}" required></div>
+                        <div class="vendor-form-field"><label for="vendor-load-date">Tanggal muat</label><input id="vendor-load-date" type="date" name="load_date" class="form-control" value="{{ $dateValue('load_date') }}"></div>
+                        <div class="vendor-form-field"><label for="vendor-unload-date">Tanggal bongkar</label><input id="vendor-unload-date" type="date" name="unload_date" class="form-control" value="{{ $dateValue('unload_date') }}"></div>
+                    </div>
+                </fieldset>
+
                 @unless($isDocumentLine)
-                @php
-                    $selectedSupplierId = $value('supplier_id');
-                    $selectedSupplier = $isEdit && $loading->supplier_id == $selectedSupplierId ? $loading->supplier : null;
-                    $selectedSupplierLabel = $selectedSupplier ? \App\Contact::supplierDisplayName($selectedSupplier, true) : null;
-                @endphp
-                <div class="col-md-3 form-group"><label>Bendera / Supplier</label><select name="supplier_id" id="vendor_supplier_id" class="form-control"><option value="">Belum dipilih</option>@if($selectedSupplierId && $selectedSupplierLabel)<option value="{{ $selectedSupplierId }}" selected>{{ $selectedSupplierLabel }}</option>@endif</select><small class="text-muted">Cari supplier dari business aktif.</small>@if(auth()->user()->can('superadmin') || auth()->user()->can('supplier.create'))<button type="button" class="btn btn-link btn-xs vendor-add-supplier" data-toggle="modal" data-target="#vendor-minimal-supplier-modal"><i class="fas fa-plus"></i> Tambah supplier minimal</button>@endif</div>
+                <fieldset class="vendor-form-section">
+                    <legend>Barang dan tujuan</legend>
+                    <div class="vendor-form-grid vendor-form-grid--four">
+                        <div class="vendor-form-field"><label for="vendor-goods-name">Nama barang</label><input id="vendor-goods-name" name="goods_name" class="form-control" maxlength="191" value="{{ $value('goods_name') }}" placeholder="Contoh: Loading Cangkang"></div>
+                        <div class="vendor-form-field"><label for="vendor-goods-type">Jenis barang</label><input id="vendor-goods-type" name="goods_type" class="form-control" maxlength="191" value="{{ $value('goods_type') }}" placeholder="Opsional"></div>
+                        <div class="vendor-form-field"><label for="vendor-vessel-name">Nama kapal</label><input id="vendor-vessel-name" name="vessel_name" class="form-control" maxlength="191" value="{{ $value('vessel_name') }}" placeholder="Contoh: MV. Bright King"></div>
+                        <div class="vendor-form-field"><label for="vendor-destination">Tujuan</label><input id="vendor-destination" name="destination" class="form-control" maxlength="191" value="{{ $value('destination') }}" placeholder="Contoh: Pelabuhan Pelindo"></div>
+                    </div>
+                </fieldset>
                 @endunless
-                <div class="col-md-3 form-group"><label>Project</label><select name="project_id" class="form-control"><option value="">Tidak terkait Project</option>@foreach($projects as $id => $name)<option value="{{ $id }}" @selected($value('project_id') == $id)>{{ $name }}</option>@endforeach</select></div>
-            </div>
-            <div class="row">
-                @unless($isDocumentLine)<div class="col-md-3 form-group"><label>Customer</label><select name="customer_id" class="form-control"><option value="">Tidak terkait Customer</option>@foreach($customers as $id => $name)<option value="{{ $id }}" @selected($value('customer_id') == $id)>{{ $name }}</option>@endforeach</select></div>@endunless
+
+                <fieldset class="vendor-form-section">
+                    <legend>Pihak dan relasi</legend>
+                    <div class="vendor-form-grid vendor-form-grid--three">
+                        @unless($isDocumentLine)
+                        @php
+                            $selectedSupplierId = $value('supplier_id');
+                            $selectedSupplier = $isEdit && $loading->supplier_id == $selectedSupplierId ? $loading->supplier : null;
+                            $selectedSupplierLabel = $selectedSupplier ? \App\Contact::supplierDisplayName($selectedSupplier, true) : null;
+                        @endphp
+                        <div class="vendor-form-field"><label for="vendor_supplier_id">Bendera / supplier</label><select name="supplier_id" id="vendor_supplier_id" class="form-control"><option value="">Belum dipilih</option>@if($selectedSupplierId && $selectedSupplierLabel)<option value="{{ $selectedSupplierId }}" selected>{{ $selectedSupplierLabel }}</option>@endif</select><small class="text-muted">Cari supplier dari business aktif.</small>@if(auth()->user()->can('superadmin') || auth()->user()->can('supplier.create'))<button type="button" class="btn btn-link btn-xs vendor-add-supplier" data-toggle="modal" data-target="#vendor-minimal-supplier-modal"><i class="fas fa-plus"></i> Tambah supplier minimal</button>@endif</div>
+                        <div class="vendor-form-field"><label for="vendor-customer">Customer</label><select id="vendor-customer" name="customer_id" class="form-control"><option value="">Tidak terkait customer</option>@foreach($customers as $id => $name)<option value="{{ $id }}" @selected($value('customer_id') == $id)>{{ $name }}</option>@endforeach</select></div>
+                        @endunless
+                        <div class="vendor-form-field"><label for="vendor-project">Project</label><select id="vendor-project" name="project_id" class="form-control"><option value="">Tidak terkait project</option>@foreach($projects as $id => $name)<option value="{{ $id }}" @selected($value('project_id') == $id)>{{ $name }}</option>@endforeach</select></div>
+                    </div>
+                </fieldset>
+
                 @php
                     $unitOptions = $vendorUnits->values();
                     $driverOptions = $vendorDrivers->values();
@@ -56,31 +74,49 @@
                         $driverOptions->prepend($loading->vendor_driver_name);
                     }
                 @endphp
-                <div class="col-md-3 form-group"><label>Unit Vendor</label><select name="vendor_unit_name" class="form-control vendor-tag-select" data-placeholder="Ketik unit vendor">@foreach($unitOptions as $unit)<option value="{{ $unit }}" @selected($value('vendor_unit_name') == $unit)>{{ $unit }}</option>@endforeach</select><small class="text-muted">Ketik nama unit lalu tekan Enter.</small></div>
-                <div class="col-md-3 form-group"><label>Sopir Vendor</label><select name="vendor_driver_name" class="form-control vendor-tag-select" data-placeholder="Ketik nama sopir vendor">@foreach($driverOptions as $driver)<option value="{{ $driver }}" @selected($value('vendor_driver_name') == $driver)>{{ $driver }}</option>@endforeach</select><small class="text-muted">Ketik nama sopir lalu tekan Enter.</small></div>
-                <div class="col-md-3 form-group"><label>Kode Unit / Kode Sopir</label><div class="row"><div class="col-xs-6"><input name="vendor_unit_code" class="form-control" placeholder="Kode unit" value="{{ $value('vendor_unit_code') }}"></div><div class="col-xs-6"><input name="vendor_driver_code" class="form-control" placeholder="Kode sopir" value="{{ $value('vendor_driver_code') }}"></div></div></div>
+                <fieldset class="vendor-form-section">
+                    <legend>Unit dan sopir vendor</legend>
+                    <div class="vendor-form-grid vendor-form-grid--two">
+                        <div class="vendor-form-field"><label for="vendor-unit-name">Nama unit vendor</label><select id="vendor-unit-name" name="vendor_unit_name" class="form-control vendor-tag-select" data-placeholder="Ketik unit vendor">@foreach($unitOptions as $unit)<option value="{{ $unit }}" @selected($value('vendor_unit_name') == $unit)>{{ $unit }}</option>@endforeach</select><small class="text-muted">Ketik nama unit lalu tekan Enter.</small></div>
+                        <div class="vendor-form-field"><label for="vendor-driver-name">Nama sopir vendor</label><select id="vendor-driver-name" name="vendor_driver_name" class="form-control vendor-tag-select" data-placeholder="Ketik nama sopir vendor">@foreach($driverOptions as $driver)<option value="{{ $driver }}" @selected($value('vendor_driver_name') == $driver)>{{ $driver }}</option>@endforeach</select><small class="text-muted">Ketik nama sopir lalu tekan Enter.</small></div>
+                        <div class="vendor-form-field"><label for="vendor-unit-code">Kode unit</label><input id="vendor-unit-code" name="vendor_unit_code" class="form-control" placeholder="Kode unit" value="{{ $value('vendor_unit_code') }}"></div>
+                        <div class="vendor-form-field"><label for="vendor-driver-code">Kode sopir</label><input id="vendor-driver-code" name="vendor_driver_code" class="form-control" placeholder="Kode sopir" value="{{ $value('vendor_driver_code') }}"></div>
+                    </div>
+                </fieldset>
+
+                <fieldset class="vendor-form-section">
+                    <legend>Tonase perjalanan</legend>
+                    <div class="vendor-form-grid vendor-form-grid--three">
+                        <div class="vendor-form-field"><label for="vendor_gross_tons">Gross (ton)</label><input type="number" step="0.0001" min="0" id="vendor_gross_tons" name="gross_tons" class="form-control" value="{{ $value('gross_tons') }}"></div>
+                        <div class="vendor-form-field"><label for="vendor_tare_tons">Tare (ton)</label><input type="number" step="0.0001" min="0" id="vendor_tare_tons" name="tare_tons" class="form-control" value="{{ $value('tare_tons') }}"></div>
+                        <div class="vendor-form-field"><label for="vendor_net_tons">Netto (ton)</label><input type="number" step="0.0001" min="0" id="vendor_net_tons" name="net_tons" class="form-control" value="{{ $value('net_tons') }}" readonly><small class="text-muted">Dihitung dari gross dikurangi tare.</small></div>
+                        <div class="vendor-form-field"><label for="vendor-received-tons">Tonase diterima</label><input id="vendor-received-tons" type="number" step="0.0001" min="0" name="received_tons" class="form-control" value="{{ $value('received_tons') }}"></div>
+                        <div class="vendor-form-field"><label for="vendor_billable_tons">Tonase tagihan</label><input type="number" step="0.0001" min="0" id="vendor_billable_tons" name="billable_tons" class="form-control" value="{{ $value('billable_tons') }}"></div>
+                    </div>
+                </fieldset>
+
+                <fieldset class="vendor-form-section">
+                    <legend>Tarif dan nilai biaya</legend>
+                    <div class="vendor-form-grid vendor-form-grid--three">
+                        <div class="vendor-form-field"><label for="vendor_rate_per_ton">Tarif vendor per ton (Rp)</label><input type="number" step="0.01" min="0" id="vendor_rate_per_ton" name="vendor_rate_per_ton" class="form-control" value="{{ $value('vendor_rate_per_ton') }}"></div>
+                        <div class="vendor-form-field"><label for="vendor_claim_adjustment">Penyesuaian klaim (Rp)</label><input type="number" step="0.01" name="claim_adjustment" id="vendor_claim_adjustment" class="form-control" value="{{ $value('claim_adjustment', 0) }}"></div>
+                        <div class="vendor-form-field"><label for="vendor_other_deduction">Potongan lain (Rp)</label><input type="number" step="0.01" min="0" name="other_deduction" id="vendor_other_deduction" class="form-control" value="{{ $value('other_deduction', 0) }}"></div>
+                        <div class="vendor-form-field"><label for="vendor_base_amount_preview">Nilai dasar (Rp)</label><input type="text" id="vendor_base_amount_preview" class="form-control" readonly></div>
+                        <div class="vendor-form-field"><label for="vendor_total_amount_preview">Nilai akhir vendor (Rp)</label><input type="text" id="vendor_total_amount_preview" class="form-control" readonly></div>
+                    </div>
+                    <p class="text-muted vendor-form-hint">Nilai dihitung dari tonase tagihan, tarif, potongan, dan klaim.</p>
+                </fieldset>
+
+                <fieldset class="vendor-form-section">
+                    <legend>Catatan</legend>
+                    <div class="vendor-form-field"><label for="vendor-notes">Keterangan tambahan</label><textarea id="vendor-notes" name="notes" class="form-control" rows="3">{{ $value('notes') }}</textarea></div>
+                </fieldset>
             </div>
-        </div></div>
-        <div class="box box-info"><div class="box-header with-border"><h3 class="box-title">Tonase dan Nilai Biaya Vendor</h3></div><div class="box-body">
-            <div class="row">
-                <div class="col-md-2 form-group"><label>Gross (Ton)</label><input type="number" step="0.0001" min="0" id="vendor_gross_tons" name="gross_tons" class="form-control" value="{{ $value('gross_tons') }}"></div>
-                <div class="col-md-2 form-group"><label>Tare (Ton)</label><input type="number" step="0.0001" min="0" id="vendor_tare_tons" name="tare_tons" class="form-control" value="{{ $value('tare_tons') }}"></div>
-                <div class="col-md-2 form-group"><label>Netto (Ton)</label><input type="number" step="0.0001" min="0" id="vendor_net_tons" name="net_tons" class="form-control" value="{{ $value('net_tons') }}" readonly><small class="text-muted">Otomatis dari Gross - Tare.</small></div>
-                <div class="col-md-2 form-group"><label>Diterima (Ton)</label><input type="number" step="0.0001" min="0" name="received_tons" class="form-control" value="{{ $value('received_tons') }}"></div>
-                <div class="col-md-2 form-group"><label>Tonase Tagihan</label><input type="number" step="0.0001" min="0" id="vendor_billable_tons" name="billable_tons" class="form-control" value="{{ $value('billable_tons') }}"></div>
-                <div class="col-md-2 form-group"><label>Tarif Vendor/Ton (Rp)</label><input type="number" step="0.01" min="0" id="vendor_rate_per_ton" name="vendor_rate_per_ton" class="form-control" value="{{ $value('vendor_rate_per_ton') }}"></div>
+            <div class="box-footer vendor-form-actions">
+                <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> {{ $isEdit ? 'Simpan Perubahan' : ($isDocumentLine ? 'Tambahkan Tiket' : 'Simpan Loading Vendor') }}</button>
+                <a href="{{ $isDocumentLine ? route('asset.fleet.vendor-loadings.documents.show', $loadingDocument->id) : route('asset.fleet.vendor-loadings.index') }}" class="btn btn-default">Batal</a>
             </div>
-            <div class="row">
-                <div class="col-md-3 form-group"><label>Penyesuaian Klaim (Rp)</label><input type="number" step="0.01" name="claim_adjustment" id="vendor_claim_adjustment" class="form-control" value="{{ $value('claim_adjustment', 0) }}"></div>
-                <div class="col-md-3 form-group"><label>Potongan Lain (Rp)</label><input type="number" step="0.01" min="0" name="other_deduction" id="vendor_other_deduction" class="form-control" value="{{ $value('other_deduction', 0) }}"></div>
-                <div class="col-md-3 form-group"><label>Nilai Dasar (Rp)</label><input type="text" id="vendor_base_amount_preview" class="form-control" readonly></div>
-                <div class="col-md-3 form-group"><label>Nilai Akhir Vendor (Rp)</label><input type="text" id="vendor_total_amount_preview" class="form-control" readonly></div>
-            </div>
-            <div class="form-group"><label>Catatan</label><textarea name="notes" class="form-control" rows="3">{{ $value('notes') }}</textarea></div>
-            <div class="alert alert-info"><strong>Catatan:</strong> Nilai biaya dihitung dari tonase tagihan, tarif, potongan, dan klaim.</div>
-            <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> {{ $isEdit ? 'Simpan Perubahan' : ($isDocumentLine ? 'Tambahkan Tiket' : 'Simpan Loading Vendor') }}</button>
-            <a href="{{ $isDocumentLine ? route('asset.fleet.vendor-loadings.documents.show', $loadingDocument->id) : route('asset.fleet.vendor-loadings.index') }}" class="btn btn-default">Batal</a>
-        </div></div>
+        </div>
     </form>
     @if(!$isDocumentLine && (auth()->user()->can('superadmin') || auth()->user()->can('supplier.create')))
     <div class="modal fade" id="vendor-minimal-supplier-modal" tabindex="-1" role="dialog" aria-labelledby="vendor-minimal-supplier-title">
@@ -94,7 +130,22 @@
 </section>
 <style>
     .select2-container { width: 100% !important; }
+    .vendor-form-box .box-header p { margin: 6px 0 0; }
+    .vendor-form-section { min-width: 0; margin: 0; padding: 20px 0 2px; border: 0; border-top: 1px solid #e8edf1; }
+    .vendor-form-section:first-child { padding-top: 0; border-top: 0; }
+    .vendor-form-section legend { width: auto; margin: 0 0 14px; padding: 0; border: 0; color: #34495e; font-size: 16px; font-weight: 600; }
+    .vendor-form-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); column-gap: 18px; row-gap: 0; }
+    .vendor-form-grid--four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .vendor-form-grid--two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .vendor-form-field { min-width: 0; margin-bottom: 16px; }
+    .vendor-form-field label { display: block; margin-bottom: 6px; font-weight: 600; }
+    .vendor-form-field .form-control { width: 100%; min-height: 38px; }
+    .vendor-form-field textarea.form-control { min-height: 86px; }
     #vendor_base_amount_preview, #vendor_total_amount_preview { font-weight: 600; background: #f7fafb; }
+    .vendor-form-hint { margin: -2px 0 8px; }
+    .vendor-form-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    @media (max-width: 991px) { .vendor-form-grid--four { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    @media (max-width: 575px) { .vendor-form-grid, .vendor-form-grid--four, .vendor-form-grid--two { grid-template-columns: minmax(0, 1fr); } }
 </style>
 @push('scripts')
 <script>

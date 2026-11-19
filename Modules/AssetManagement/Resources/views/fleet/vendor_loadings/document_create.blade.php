@@ -14,7 +14,7 @@
     <form id="vendor-document-create-form" method="POST" action="{{ route('asset.fleet.vendor-loadings.store') }}">
         @csrf
         <div class="box box-primary">
-            <div class="box-header with-border"><h3 class="box-title">Informasi Wajib</h3><small class="text-muted pull-right">Sesuai identitas pada workbook</small></div>
+            <div class="box-header with-border"><h3 class="box-title">Informasi Wajib</h3><small class="text-muted vendor-header-note">Sesuai identitas pada workbook</small></div>
             <div class="box-body">
                 <div class="row">
                     <div class="col-md-4 form-group"><label for="vendor-goods-name">Nama Barang *</label><input id="vendor-goods-name" name="goods_name" class="form-control" maxlength="191" placeholder="Contoh: Loading Cangkang" required></div>
@@ -29,7 +29,7 @@
         </div>
 
         <div class="box box-default">
-            <div class="box-header with-border"><h3 class="box-title">Opsional / Relasi</h3><small class="text-muted pull-right">Tidak wajib untuk menyimpan dokumen</small></div>
+            <div class="box-header with-border"><h3 class="box-title">Opsional / Relasi</h3><small class="text-muted vendor-header-note">Tidak wajib untuk menyimpan dokumen</small></div>
             <div class="box-body">
                 <div class="row">
                     <div class="col-md-4 form-group"><label for="vendor-goods-type">Jenis Barang</label><input id="vendor-goods-type" name="goods_type" class="form-control" maxlength="191" placeholder="Opsional"></div>
@@ -39,15 +39,16 @@
         </div>
 
         <div class="box box-info">
-            <div class="box-header with-border"><h3 class="box-title">Line Angkutan</h3><button type="button" id="vendor-add-line" class="btn btn-primary btn-sm pull-right"><i class="fas fa-plus"></i> Tambah Line</button></div>
+            <div class="box-header with-border vendor-lines-header"><div><h3 class="box-title">Line Angkutan</h3><p class="text-muted">Setiap kartu mewakili satu tiket; rincian tambahan dapat dibuka bila diperlukan.</p></div><button type="button" id="vendor-add-line" class="btn btn-primary"><i class="fas fa-plus"></i> Tambah Line</button></div>
             <div class="box-body">
-                <p class="text-muted">Tanggal wajib. Nett dihitung dari Gross − Tare dan total biaya dihitung otomatis saat tarif tersedia.</p>
-                <div class="table-responsive vendor-lines-table-wrap">
-                    <table class="table table-bordered table-striped vendor-create-lines-table">
-                        <thead><tr><th>#</th><th>Tanggal *</th><th>No. Tiket</th><th>No. Polisi / Unit</th><th>Nama Sopir</th><th>Gross</th><th>Tare</th><th>Nett</th><th>Ton Tagihan</th><th>Tarif / Ton (Rp)</th><th>Total (Rp)</th><th>Detail</th><th>Aksi</th></tr></thead>
-                        <tbody id="vendor-create-lines"></tbody>
-                        <tfoot><tr class="active"><th colspan="5" class="text-right">SUBTOTAL DOKUMEN</th><th id="vendor-total-gross" class="text-right">0,0000</th><th id="vendor-total-tare" class="text-right">0,0000</th><th id="vendor-total-net" class="text-right">0,0000</th><th id="vendor-total-billable" class="text-right">0,0000</th><th></th><th id="vendor-total-amount" class="text-right">Rp 0</th><th colspan="2"></th></tr></tfoot>
-                    </table>
+                <p class="text-muted">Tanggal wajib. Netto dihitung dari gross dikurangi tare; nilai biaya mengikuti tonase tagihan dan tarif.</p>
+                <div id="vendor-create-lines" class="vendor-line-list" aria-live="polite"></div>
+                <div class="vendor-document-totals" aria-label="Subtotal seluruh line">
+                    <div class="vendor-total-item"><span>Total gross</span><strong id="vendor-total-gross">0,0000 ton</strong></div>
+                    <div class="vendor-total-item"><span>Total tare</span><strong id="vendor-total-tare">0,0000 ton</strong></div>
+                    <div class="vendor-total-item"><span>Total netto</span><strong id="vendor-total-net">0,0000 ton</strong></div>
+                    <div class="vendor-total-item"><span>Total tonase tagihan</span><strong id="vendor-total-billable">0,0000 ton</strong></div>
+                    <div class="vendor-total-item vendor-total-item--amount"><span>Subtotal dokumen</span><strong id="vendor-total-amount">Rp 0</strong></div>
                 </div>
             </div>
             <div class="box-footer">
@@ -69,15 +70,44 @@
     @endif
 </section>
 <style>
-    .vendor-create-lines-table { min-width: 1380px; }
-    .vendor-create-lines-table td, .vendor-create-lines-table th { vertical-align: middle !important; }
-    .vendor-create-lines-table .form-control { min-width: 95px; }
-    .vendor-create-lines-table .vendor-line-details td { background: #f7fafc; }
-    .vendor-create-lines-table input[readonly] { background: #edf2f5; font-weight: 600; }
-    .vendor-line-detail-grid { display: grid; grid-template-columns: repeat(4, minmax(150px, 1fr)); gap: 10px; }
-    .vendor-line-detail-grid label { display: block; margin-bottom: 4px; }
-    .vendor-create-lines-table tfoot { font-weight: 700; }
-    @media (max-width: 767px) { .vendor-line-detail-grid { grid-template-columns: repeat(2, minmax(140px, 1fr)); } .box-header small.pull-right { float: none !important; display: block; margin-top: 6px; } }
+    .vendor-header-note { float: right; margin-top: 3px; }
+    .vendor-lines-header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+    .vendor-lines-header p { margin: 6px 0 0; }
+    .vendor-line-list { display: grid; gap: 14px; }
+    .vendor-line-card { min-width: 0; border: 1px solid #dfe6eb; border-radius: 4px; background: #fff; }
+    .vendor-line-main { min-width: 0; padding: 16px; }
+    .vendor-line-card-header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 14px; }
+    .vendor-line-card-title { margin: 0; color: #34495e; font-size: 15px; font-weight: 700; }
+    .vendor-line-card-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    .vendor-line-fields { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0 16px; }
+    .vendor-line-fields--three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .vendor-line-field { min-width: 0; margin-bottom: 14px; }
+    .vendor-line-field label { display: block; margin-bottom: 6px; font-weight: 600; }
+    .vendor-line-field .form-control { width: 100%; min-height: 38px; }
+    .vendor-line-field input[readonly] { background: #f3f6f8; font-weight: 600; }
+    .vendor-line-detail-toggle { margin: 0; padding: 0; }
+    .vendor-line-details { border-top: 1px solid #e8edf1; padding: 16px; background: #f8fafb; }
+    .vendor-line-details[hidden] { display: none !important; }
+    .vendor-line-detail-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0 16px; }
+    .vendor-line-field--full { grid-column: 1 / -1; }
+    .vendor-document-totals { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin-top: 18px; }
+    .vendor-total-item { min-width: 0; padding: 12px; border: 1px solid #e3e9ee; border-radius: 4px; background: #f8fafb; }
+    .vendor-total-item span, .vendor-total-item strong { display: block; }
+    .vendor-total-item span { color: #687985; font-size: 12px; }
+    .vendor-total-item strong { margin-top: 4px; color: #263746; font-size: 15px; overflow-wrap: anywhere; }
+    .vendor-total-item--amount { background: #f0f7f2; border-color: #cfe4d4; }
+    @media (max-width: 991px) {
+        .vendor-line-fields, .vendor-line-fields--three { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .vendor-document-totals { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+        .vendor-line-detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 575px) {
+        .vendor-header-note { float: none; display: block; margin: 6px 0 0; }
+        .vendor-line-fields, .vendor-line-fields--three, .vendor-line-detail-grid { grid-template-columns: minmax(0, 1fr); }
+        .vendor-line-field--full { grid-column: auto; }
+        .vendor-document-totals { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .vendor-lines-header { align-items: flex-start; }
+    }
 </style>
 @push('scripts')
 <script>

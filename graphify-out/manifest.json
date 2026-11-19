@@ -13908,10 +13908,10 @@
     "semantic_hash": "2a9261df33cd1d1d292248ac84a12edb"
   },
   "Modules/AssetManagement/Resources/views/fleet/trips/create.blade.php": {
-    "mtime": 1789035829.9988666,
-    "seen": 1793685076.8542116,
-    "ast_hash": "6f137d3bd20651f0766a15e4841bd1f3",
-    "semantic_hash": "6f137d3bd20651f0766a15e4841bd1f3"
+    "mtime": 1795090038.5016718,
+    "seen": 1795090721.4479625,
+    "ast_hash": "625d76396f3e309f46aaa8cf3a2bd700",
+    "semantic_hash": ""
   },
   "Modules/AssetManagement/Resources/views/fleet/trips/index.blade.php": {
     "mtime": 1795077300.1649616,
@@ -14208,10 +14208,10 @@
     "semantic_hash": ""
   },
   "Modules/AssetManagement/Resources/views/fleet/vendor_loadings/form.blade.php": {
-    "mtime": 1790273875.5716715,
-    "seen": 1793685076.8542116,
-    "ast_hash": "aaf2fe417eab3573b239336a93f87f7a",
-    "semantic_hash": "aaf2fe417eab3573b239336a93f87f7a"
+    "mtime": 1795090162.3143451,
+    "seen": 1795090721.4479625,
+    "ast_hash": "e0824ed826a8922a9d4f0fea28e60bc3",
+    "semantic_hash": ""
   },
   "Modules/AssetManagement/Resources/views/fleet/vendor_loadings/import.blade.php": {
     "mtime": 1790269732.8584175,
@@ -14310,22 +14310,22 @@
     "semantic_hash": "78e6aea1b6d9189a94ea59c856e9f8df"
   },
   "Modules/AssetManagement/Resources/assets/js/vendor-loading-document-create.js": {
-    "mtime": 1790273842.5266404,
-    "seen": 1793685076.8461084,
-    "ast_hash": "a838155a241d1613f82a2d98d8b46b8f",
-    "semantic_hash": "a838155a241d1613f82a2d98d8b46b8f"
+    "mtime": 1795090443.0504186,
+    "seen": 1795090721.446949,
+    "ast_hash": "d23ca3911857411724aaec962439fce4",
+    "semantic_hash": ""
   },
   "Modules/AssetManagement/Resources/views/fleet/vendor_loadings/document_create.blade.php": {
-    "mtime": 1790269492.6773717,
-    "seen": 1793685076.8542116,
-    "ast_hash": "387507d5144e6dc3b11174833cd6d1ef",
-    "semantic_hash": "387507d5144e6dc3b11174833cd6d1ef"
+    "mtime": 1795090500.3072531,
+    "seen": 1795090721.4479625,
+    "ast_hash": "fc9b673992f6af81fd5c43acc6b4c922",
+    "semantic_hash": ""
   },
   "public/modules/assetmanagement/js/vendor-loading-document-create.js": {
-    "mtime": 1790273935.9048114,
-    "seen": 1793685077.4886374,
-    "ast_hash": "a838155a241d1613f82a2d98d8b46b8f",
-    "semantic_hash": "a838155a241d1613f82a2d98d8b46b8f"
+    "mtime": 1795090544.5864935,
+    "seen": 1795090721.456127,
+    "ast_hash": "d23ca3911857411724aaec962439fce4",
+    "semantic_hash": ""
   },
   "Modules/AssetManagement/Database/Migrations/2026_09_24_000004_normalize_vendor_loading_line_table.php": {
     "mtime": 1790260450.137207,
