@@ -27,6 +27,26 @@ class HeavyEquipmentTrip extends Model
         'final_revenue_total' => 'decimal:4',
     ];
 
+    public function canBeChanged(): bool
+    {
+        if (in_array($this->status, ['verified', 'cancelled'], true)
+            || ($this->invoice_status ?: 'unbilled') !== 'unbilled'
+            || ($this->payroll_status ?: 'unsettled') !== 'unsettled') {
+            return false;
+        }
+
+        $hasBilling = $this->relationLoaded('billing')
+            ? $this->getRelation('billing') !== null
+            : $this->billing()->exists();
+        $hasSettlement = $this->relationLoaded('settlements')
+            ? $this->getRelation('settlements')->isNotEmpty()
+            : (array_key_exists('settlements_count', $this->attributes)
+                ? (int) $this->settlements_count > 0
+                : $this->settlements()->exists());
+
+        return ! $hasBilling && ! $hasSettlement;
+    }
+
     public function route()
     {
         return $this->belongsTo(HeavyEquipmentRoute::class, 'route_id');

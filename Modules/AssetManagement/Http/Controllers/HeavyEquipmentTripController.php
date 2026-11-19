@@ -35,6 +35,7 @@ class HeavyEquipmentTripController extends Controller
         $businessId = $this->businessId();
         $query = HeavyEquipmentTrip::where('business_id', $businessId)
             ->with(['route', 'asset', 'driver', 'project', 'customer', 'billing'])
+            ->withCount('settlements')
             ->when($request->input('project_id'), fn ($q, $value) => $q->where('project_id', $value))
             ->when($request->input('asset_id'), fn ($q, $value) => $q->where('asset_id', $value))
             ->when($request->input('driver_id'), fn ($q, $value) => $q->where('driver_id', $value))
@@ -49,8 +50,9 @@ class HeavyEquipmentTripController extends Controller
         $drivers = User::where('business_id', $businessId)->where('user_type', 'user')->orderBy('first_name')->get()->mapWithKeys(fn ($user) => [$user->id => $user->user_full_name]);
         $projects = Project::where('business_id', $businessId)->orderBy('name')->pluck('name', 'id');
         $statuses = ['draft' => 'Draft', 'dispatched' => 'Dijadwalkan', 'loading' => 'Muat', 'in_transit' => 'Berjalan', 'completed' => 'Selesai', 'verified' => 'Verified', 'cancelled' => 'Dibatalkan'];
+        $canManageTrips = $this->canManageTrips();
 
-        return view('assetmanagement::fleet.trips.index', compact('trips', 'routes', 'assets', 'drivers', 'projects', 'statuses'));
+        return view('assetmanagement::fleet.trips.index', compact('trips', 'routes', 'assets', 'drivers', 'projects', 'statuses', 'canManageTrips'));
     }
 
     public function create(Request $request)
@@ -70,7 +72,7 @@ class HeavyEquipmentTripController extends Controller
     {
         $this->authorizeManage();
         $trip = $this->trip($id)->load(['route', 'asset', 'driver', 'project', 'customer']);
-        if ($trip->billing()->exists() || $trip->settlements()->exists() || $trip->invoice_status !== 'unbilled' || $trip->payroll_status !== 'unsettled' || in_array($trip->status, ['verified', 'cancelled'], true)) {
+        if (! $trip->canBeChanged()) {
             abort(422, 'SPB yang sudah ditagihkan, disettle, verified, atau dibatalkan tidak dapat diedit.');
         }
         $businessId = $this->businessId();
@@ -156,6 +158,27 @@ class HeavyEquipmentTripController extends Controller
             report($e);
 
             return back()->withInput()->with('status', ['success' => false, 'msg' => $e->getMessage()]);
+        }
+    }
+
+    public function destroy($id)
+    {
+        $this->authorizeManage();
+        $trip = $this->trip($id);
+        if (! $trip->canBeChanged()) {
+            abort(422, 'SPB yang sudah ditagihkan, masuk settlement, verified, atau dibatalkan tidak dapat dihapus.');
+        }
+
+        try {
+            $this->tripService->delete($trip, $this->businessId());
+
+            return redirect()->route('asset.fleet.trips.index')
+                ->with('status', ['success' => true, 'msg' => 'SPB berhasil dihapus.']);
+        } catch (\Throwable $e) {
+            report($e);
+
+            return redirect()->route('asset.fleet.trips.index')
+                ->with('status', ['success' => false, 'msg' => 'SPB gagal dihapus. Silakan coba lagi.']);
         }
     }
 
@@ -254,8 +277,9 @@ class HeavyEquipmentTripController extends Controller
     {
         $this->authorizeView();
         $trip = $this->trip($id)->load(['route', 'asset', 'driver', 'project', 'customer', 'rate.batch', 'billing.transaction', 'settlements']);
+        $canManageTrips = $this->canManageTrips();
 
-        return view('assetmanagement::fleet.trips.show', compact('trip'));
+        return view('assetmanagement::fleet.trips.show', compact('trip', 'canManageTrips'));
     }
 
     public function status(Request $request, $id)
@@ -451,9 +475,20 @@ class HeavyEquipmentTripController extends Controller
 
     private function authorizeManage(): void
     {
-        if (! auth()->user()->can('superadmin') && ! auth()->user()->can('asset.fleet_trips.manage') && ! auth()->user()->can('asset.fleet_trips.create') && ! auth()->user()->can('asset.create') && ! auth()->user()->can('asset.update')) {
+        if (! $this->canManageTrips()) {
             abort(403, 'Unauthorized action.');
         }
+    }
+
+    private function canManageTrips(): bool
+    {
+        $user = auth()->user();
+
+        return $user->can('superadmin')
+            || $user->can('asset.fleet_trips.manage')
+            || $user->can('asset.fleet_trips.create')
+            || $user->can('asset.create')
+            || $user->can('asset.update');
     }
 
     private function authorizeBilling(): void

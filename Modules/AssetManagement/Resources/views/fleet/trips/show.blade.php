@@ -4,7 +4,7 @@
 
 @section('content')
 @includeIf('assetmanagement::layouts.nav')
-<section class="content-header"><a href="{{ route('asset.fleet.trips.index') }}" class="btn btn-default pull-right">Kembali</a>@if($trip->status !== 'verified' && $trip->status !== 'cancelled' && $trip->invoice_status === 'unbilled' && $trip->payroll_status === 'unsettled')<a href="{{ route('asset.fleet.trips.edit', $trip->id) }}" class="btn btn-warning pull-right" style="margin-right:8px">Edit</a>@endif<h1>SPB {{ $trip->trip_no }}</h1></section>
+<section class="content-header"><a href="{{ route('asset.fleet.trips.index') }}" class="btn btn-default pull-right">Kembali</a>@if($canManageTrips && $trip->canBeChanged())<a href="{{ route('asset.fleet.trips.edit', $trip->id) }}" class="btn btn-warning pull-right" style="margin-right:8px">Edit</a>@endif<h1>SPB {{ $trip->trip_no }}</h1></section>
 <section class="content">
     <div class="box box-primary"><div class="box-body">
         <div class="row">

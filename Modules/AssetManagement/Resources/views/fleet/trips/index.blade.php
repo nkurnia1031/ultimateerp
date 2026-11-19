@@ -55,6 +55,14 @@
                             <td>@format_currency($trip->revenue_total)</td><td>@format_currency($trip->driver_pay_total)</td><td>@format_currency($trip->gross_contribution)</td>
                             <td>{{ $statuses[$trip->status] ?? $trip->status }}<br><small>{{ $trip->invoice_status }}</small></td>
                             <td>
+                                @if($canManageTrips && $trip->canBeChanged())
+                                    <a href="{{ route('asset.fleet.trips.edit', $trip->id) }}" class="btn btn-xs btn-warning">Edit</a>
+                                    <form method="POST" action="{{ route('asset.fleet.trips.destroy', $trip->id) }}" style="display:inline-block" onsubmit="return confirm('Hapus SPB ini?')">
+                                        @csrf
+                                        @method('DELETE')
+                                        <button type="submit" class="btn btn-xs btn-danger">Hapus</button>
+                                    </form>
+                                @endif
                                 @if($trip->status !== 'verified' && $trip->status !== 'cancelled')
                                     @php $next = $trip->status === 'completed' ? 'verified' : 'completed'; @endphp
                                     <form method="POST" action="{{ route('asset.fleet.trips.status', $trip->id) }}">@csrf<input type="hidden" name="status" value="{{ $next }}"><button type="submit" class="btn btn-xs btn-warning">{{ $next === 'verified' ? 'Verify' : 'Selesaikan' }}</button></form>

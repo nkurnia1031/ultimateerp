@@ -39,6 +39,7 @@ Route::middleware('web', 'authh', 'auth', 'SetSessionData', 'language', 'timezon
         Route::post('trips', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentTripController::class, 'store'])->name('trips.store');
         Route::get('trips/{id}/edit', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentTripController::class, 'edit'])->name('trips.edit');
         Route::put('trips/{id}', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentTripController::class, 'update'])->name('trips.update');
+        Route::delete('trips/{id}', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentTripController::class, 'destroy'])->name('trips.destroy');
         Route::get('trips/import', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentTripController::class, 'importForm'])->name('trips.import.form');
         Route::post('trips/import/preview', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentTripController::class, 'importPreview'])->name('trips.import.preview');
         Route::post('trips/import/confirm', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentTripController::class, 'importConfirm'])->name('trips.import.confirm');

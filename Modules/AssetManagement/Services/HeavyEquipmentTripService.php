@@ -180,16 +180,28 @@ class HeavyEquipmentTripService
         return $trip->fresh(['route', 'asset', 'driver', 'project', 'customer', 'billing']);
     }
 
+    public function delete(HeavyEquipmentTrip $trip, int $businessId): void
+    {
+        DB::transaction(function () use ($trip, $businessId) {
+            $lockedTrip = HeavyEquipmentTrip::where('business_id', $businessId)
+                ->lockForUpdate()
+                ->findOrFail($trip->id);
+
+            if (! $lockedTrip->canBeChanged()) {
+                throw new \RuntimeException('SPB yang sudah ditagihkan, masuk settlement, verified, atau dibatalkan tidak dapat dihapus.');
+            }
+
+            $lockedTrip->delete();
+        });
+    }
+
     public function update(HeavyEquipmentTrip $trip, array $input, int $businessId, int $userId): HeavyEquipmentTrip
     {
         if ((int) $trip->business_id !== $businessId) {
             throw new \RuntimeException('SPB tidak berada pada business aktif.');
         }
-        if ($trip->billing()->exists() || $trip->settlements()->exists() || ($trip->invoice_status ?: 'unbilled') !== 'unbilled' || ($trip->payroll_status ?: 'unsettled') !== 'unsettled') {
-            throw new \RuntimeException('SPB yang sudah ditagihkan atau masuk settlement tidak dapat diedit.');
-        }
-        if (in_array($trip->status, ['verified', 'cancelled'], true)) {
-            throw new \RuntimeException('SPB verified atau dibatalkan tidak dapat diedit.');
+        if (! $trip->canBeChanged()) {
+            throw new \RuntimeException('SPB yang sudah ditagihkan, masuk settlement, verified, atau dibatalkan tidak dapat diubah.');
         }
 
         $date = Carbon::parse($input['trip_date'] ?? $input['load_date'] ?? now())->startOfDay();
