@@ -56,6 +56,7 @@ class HeavyEquipmentTripActionsTest extends TestCase
             $table->string('last_name')->nullable();
             $table->string('surname')->nullable();
             $table->string('user_type')->nullable();
+            $table->softDeletes();
         });
         Schema::create('pjt_projects', function (Blueprint $table) {
             $table->increments('id');
