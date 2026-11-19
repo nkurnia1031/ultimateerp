@@ -31,18 +31,6 @@ class SecurityAuditService
         'server_handler_override',
     ];
 
-    public function shellExecAvailable(): bool
-    {
-        if (! function_exists('shell_exec') || ! is_callable('shell_exec')) {
-            return false;
-        }
-
-        $disabled = array_filter(array_map('trim', explode(',', (string) ini_get('disable_functions'))));
-        $blacklisted = array_filter(array_map('trim', explode(',', (string) ini_get('suhosin.executor.func.blacklist'))));
-
-        return ! in_array('shell_exec', array_merge($disabled, $blacklisted), true);
-    }
-
     public function importUpload(UploadedFile $file, int $businessId, int $userId, string $userName): array
     {
         if (! $file->isValid()) {
@@ -71,59 +59,6 @@ class SecurityAuditService
             'upload',
             $this->safeFileName($file->getClientOriginalName())
         );
-    }
-
-    public function runLiveAudit(int $days, int $businessId, int $userId, string $userName): array
-    {
-        if (! $this->shellExecAvailable()) {
-            throw new RuntimeException('shell_exec tidak tersedia. Unggah laporan JSON untuk melakukan review.');
-        }
-
-        $script = base_path('scripts/security-audit.php');
-        if (! is_file($script)) {
-            throw new RuntimeException('Script audit keamanan tidak ditemukan.');
-        }
-
-        $runDirectory = storage_path('app/security-audit/runs');
-        $this->ensureDirectory($runDirectory);
-        $outputPath = $runDirectory.DIRECTORY_SEPARATOR.Str::uuid().'.json';
-        $phpBinary = $this->phpCliBinary();
-        $since = max(1, min(365, $days)).' days ago';
-
-        $command = escapeshellarg($phpBinary)
-            .' '.escapeshellarg($script)
-            .' --root='.escapeshellarg(base_path())
-            .' --since='.escapeshellarg($since)
-            .' --json --output='.escapeshellarg($outputPath)
-            .' 2>&1';
-
-        try {
-            $commandOutput = @shell_exec($command);
-            if (! is_file($outputPath)) {
-                $message = trim((string) $commandOutput);
-                throw new RuntimeException($message !== ''
-                    ? 'Audit gagal dijalankan: '.$this->limit($message, 500)
-                    : 'Audit tidak menghasilkan laporan. Periksa izin PHP dan storage.');
-            }
-
-            $contents = @file_get_contents($outputPath);
-            if ($contents === false) {
-                throw new RuntimeException('Hasil audit selesai tetapi tidak dapat dibaca.');
-            }
-
-            return $this->storeReport(
-                $contents,
-                $businessId,
-                $userId,
-                $userName,
-                'live',
-                'security-audit-'.now()->format('Y-m-d-His').'.json'
-            );
-        } finally {
-            if (is_file($outputPath)) {
-                @unlink($outputPath);
-            }
-        }
     }
 
     public function listReports(int $businessId): array
@@ -275,7 +210,7 @@ class SecurityAuditService
             $decoded = $decoded['report'];
         }
         if (! is_array($decoded) || ! isset($decoded['root'], $decoded['generated_at'], $decoded['findings']) || ! is_array($decoded['findings'])) {
-            throw new RuntimeException('Struktur JSON bukan hasil dari script security-audit.php.');
+            throw new RuntimeException('Struktur JSON bukan hasil dari script audit keamanan.');
         }
         if (count($decoded['findings']) > self::MAX_FINDINGS) {
             throw new RuntimeException('Jumlah temuan melebihi batas aman 50.000 baris.');
@@ -581,30 +516,6 @@ class SecurityAuditService
         if (! is_dir($directory) && ! File::makeDirectory($directory, 0750, true, true)) {
             throw new RuntimeException('Folder storage audit tidak dapat dibuat.');
         }
-    }
-
-    private function phpCliBinary(): string
-    {
-        $executable = DIRECTORY_SEPARATOR === '\\' ? 'php.exe' : 'php';
-        $loadedIni = php_ini_loaded_file();
-        $extensionDirectory = (string) ini_get('extension_dir');
-        $candidates = [
-            defined('PHP_BINARY') ? PHP_BINARY : null,
-            $loadedIni ? dirname($loadedIni).DIRECTORY_SEPARATOR.$executable : null,
-            $extensionDirectory !== '' ? dirname($extensionDirectory).DIRECTORY_SEPARATOR.$executable : null,
-            defined('PHP_BINDIR') ? PHP_BINDIR.DIRECTORY_SEPARATOR.$executable : null,
-        ];
-
-        foreach (array_filter($candidates) as $candidate) {
-            $baseName = strtolower(pathinfo((string) $candidate, PATHINFO_BASENAME));
-            if (is_file($candidate) && str_starts_with($baseName, 'php') && is_executable($candidate)) {
-                return (string) $candidate;
-            }
-        }
-
-        // Let the operating system resolve PATH as a final fallback. The command
-        // remains fixed and every argument is escaped by runLiveAudit().
-        return $executable;
     }
 
     private function stringList($value, int $maxItems, int $maxLength): array

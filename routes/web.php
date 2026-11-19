@@ -106,7 +106,6 @@ Route::middleware(['setData', 'auth', 'SetSessionData', 'language', 'timezone', 
     Route::prefix('security-audit')->name('security-audit.')->group(function () {
         Route::get('/', [SecurityAuditController::class, 'index'])->name('index');
         Route::post('/reports', [SecurityAuditController::class, 'upload'])->name('upload');
-        Route::post('/run', [SecurityAuditController::class, 'run'])->name('run');
         Route::get('/reports/{report}/download', [SecurityAuditController::class, 'download'])->name('download');
         Route::post('/reports/{report}/cleanup', [SecurityAuditController::class, 'cleanup'])->name('cleanup');
     });

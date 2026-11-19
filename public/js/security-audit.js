@@ -87,38 +87,6 @@
             });
         });
 
-        $('#security-run-form').on('submit', function (event) {
-            event.preventDefault();
-            var $form = $(this);
-            var startedAt = Date.now();
-            var timer;
-            $form.find('.security-form-error').hide();
-            $form.find('.security-progress').show();
-            setBusy($form, true, 'Audit berjalan…');
-            timer = window.setInterval(function () {
-                var seconds = Math.floor((Date.now() - startedAt) / 1000);
-                $form.find('.security-progress-message').text('Memeriksa file aplikasi… ' + seconds + ' detik. Jangan tutup halaman ini.');
-            }, 1000);
-
-            $.ajax({
-                url: $page.data('run-url'),
-                method: 'POST',
-                data: $form.serialize(),
-                timeout: 0,
-                headers: { Accept: 'application/json' }
-            }).done(function (response) {
-                window.clearInterval(timer);
-                $form.find('.security-progress-message').text('Audit selesai. Membuka laporan…');
-                notify('success', response.message);
-                window.location.href = response.redirect;
-            }).fail(function (xhr) {
-                window.clearInterval(timer);
-                $form.find('.security-progress').hide();
-                showError($form, messageFrom(xhr, 'Audit gagal dijalankan.'));
-                setBusy($form, false);
-            });
-        });
-
         $('#security-cleanup-form').on('submit', function (event) {
             event.preventDefault();
             var $form = $(this);

@@ -52,8 +52,7 @@
     .security-cleanup-box { background: #fff; border: 1px solid #fecaca; border-radius: 14px; padding: 18px; }
     .security-cleanup-box h3 { color: #991b1b; font-size: 17px; font-weight: 900; margin: 0 0 7px; }
     .security-cleanup-box p { color: #6b7280; line-height: 1.5; }
-    .security-progress { display: none; margin-top: 14px; }
-    .security-progress .progress { height: 9px; border-radius: 99px; margin-bottom: 7px; }
+    .security-command { display: block; overflow-wrap: anywhere; padding: 12px; border-radius: 9px; background: #f3f4f6; color: #111827; }
     .security-history-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0; border-bottom: 1px solid #eef2f7; }
     .security-history-row:last-child { border-bottom: 0; }
     .security-history-name { font-weight: 800; color: #111827; word-break: break-word; }
@@ -74,30 +73,34 @@
 </section>
 
 <section class="content security-shell" id="security-audit-page"
-    data-upload-url="{{ route('security-audit.upload') }}"
-    data-run-url="{{ route('security-audit.run') }}">
+    data-upload-url="{{ route('security-audit.upload') }}">
     <div class="security-hero tw-mb-5">
         <div class="row tw-items-center">
             <div class="col-md-7">
                 <div class="security-eyebrow">Incident review console</div>
                 <h2 class="security-title">Satu tempat untuk memahami kondisi server</h2>
-                <p class="security-subtitle">Laporan hanya dibaca sebagai data—isinya tidak pernah dieksekusi. Audit langsung memakai root aplikasi aktif dan hanya tersedia ketika <code style="color:#c7d2fe">shell_exec</code> diizinkan.</p>
+                <p class="security-subtitle">Laporan hanya dibaca sebagai data—isinya tidak pernah dieksekusi. Jalankan scanner Python di terminal server, lalu unggah JSON untuk ditinjau di sini.</p>
             </div>
             <div class="col-md-5">
                 <div class="security-toolbar">
                     <button type="button" class="btn btn-default security-btn" data-toggle="modal" data-target="#upload-audit-modal">
                         <i class="fas fa-file-import tw-mr-1"></i> Baca JSON
                     </button>
-                    <button type="button" class="btn btn-primary security-btn" data-toggle="modal" data-target="#run-audit-modal" @disabled(!$shellExecAvailable)>
-                        <i class="fas fa-search tw-mr-1"></i> Audit Sekarang
-                    </button>
                 </div>
-                <div class="tw-text-right tw-mt-3 tw-text-xs md:tw-pr-1" style="color:#d1d5db">
-                    @if($shellExecAvailable)
-                        <span class="security-badge security-badge-success"><i class="fas fa-check-circle"></i> shell_exec tersedia</span>
-                    @else
-                        <span class="security-badge security-badge-warning"><i class="fas fa-lock"></i> shell_exec nonaktif — mode review</span>
-                    @endif
+            </div>
+        </div>
+    </div>
+
+    <div class="security-card">
+        <div class="security-card-body">
+            <div class="row tw-items-center">
+                <div class="col-md-4">
+                    <strong>Jalankan scanner di server target</strong>
+                    <p class="tw-text-sm tw-text-gray-500 tw-mt-1">Gunakan terminal atau SSH dari root instalasi yang sama dengan halaman ini.</p>
+                </div>
+                <div class="col-md-8">
+                    <code class="security-command">python3 scripts/security_audit.py --json --output=/tmp/security-audit.json</code>
+                    <p class="tw-text-xs tw-text-gray-500 tw-mt-2">Salin JSON ke komputer lalu unggah lewat tombol <strong>Baca JSON</strong>. Root laporan harus cocok dengan instalasi aktif agar aksi cleanup tersedia.</p>
                 </div>
             </div>
         </div>
@@ -108,7 +111,7 @@
             <div class="security-empty">
                 <div class="security-empty-icon"><i class="fas fa-shield-alt"></i></div>
                 <h3 class="tw-font-bold tw-text-xl tw-text-gray-900">Belum ada laporan audit</h3>
-                <p class="tw-text-gray-500 tw-mx-auto tw-mt-2" style="max-width:560px">Unggah JSON yang dibuat oleh <code>scripts/security-audit.php</code>. Jika shell tersedia, Anda juga bisa menjalankan audit langsung tanpa command line.</p>
+                <p class="tw-text-gray-500 tw-mx-auto tw-mt-2" style="max-width:560px">Unggah laporan JSON yang dihasilkan scanner Python. Isi JSON diperlakukan sebagai data dan tidak pernah dieksekusi.</p>
                 <button type="button" class="btn btn-primary security-btn tw-mt-3" data-toggle="modal" data-target="#upload-audit-modal">Pilih laporan JSON</button>
             </div>
         </div>
@@ -285,28 +288,10 @@
             <div class="modal-header"><button type="button" class="close" data-dismiss="modal">&times;</button><h4 class="modal-title tw-font-bold">Baca laporan audit JSON</h4></div>
             <div class="modal-body">
                 <p class="tw-text-gray-500">File diperlakukan sebagai data dan divalidasi; tidak ada isi JSON yang dijalankan sebagai perintah.</p>
-                <div class="form-group"><label>File JSON</label><input type="file" name="report" class="form-control" accept="application/json,.json" required><span class="help-block">Maksimal 15 MB, hasil dari <code>scripts/security-audit.php</code>.</span></div>
+                <div class="form-group"><label>File JSON</label><input type="file" name="report" class="form-control" accept="application/json,.json" required><span class="help-block">Maksimal 15 MB, hasil dari <code>scripts/security_audit.py</code>.</span></div>
                 <div class="alert alert-danger security-form-error" style="display:none"></div>
             </div>
             <div class="modal-footer"><button type="button" class="btn btn-default" data-dismiss="modal">Batal</button><button type="submit" class="btn btn-primary security-btn">Baca laporan</button></div>
-        </form>
-    </div></div>
-</div>
-
-<div class="modal fade" id="run-audit-modal" tabindex="-1" role="dialog">
-    <div class="modal-dialog" role="document"><div class="modal-content">
-        <form id="security-run-form">
-            <div class="modal-header"><button type="button" class="close" data-dismiss="modal">&times;</button><h4 class="modal-title tw-font-bold">Jalankan audit server</h4></div>
-            <div class="modal-body">
-                <p class="tw-text-gray-500">Audit bersifat read-only dan selalu memakai root instalasi aktif. Folder vendor dilewati untuk mengurangi false positive.</p>
-                <div class="form-group"><label>Perhatikan file yang berubah dalam</label><select name="days" class="form-control"><option value="7">7 hari terakhir</option><option value="30" selected>30 hari terakhir</option><option value="90">90 hari terakhir</option><option value="365">1 tahun terakhir</option></select></div>
-                <div class="alert alert-danger security-form-error" style="display:none"></div>
-                <div class="security-progress">
-                    <div class="progress"><div class="progress-bar progress-bar-striped active" style="width:100%"></div></div>
-                    <div class="tw-text-xs tw-text-gray-500 security-progress-message">Menyiapkan audit…</div>
-                </div>
-            </div>
-            <div class="modal-footer"><button type="button" class="btn btn-default" data-dismiss="modal">Batal</button><button type="submit" class="btn btn-primary security-btn">Mulai audit</button></div>
         </form>
     </div></div>
 </div>

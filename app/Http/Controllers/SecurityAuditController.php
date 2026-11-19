@@ -34,7 +34,6 @@ class SecurityAuditController extends Controller
         return view('security-audit.index', [
             'reports' => $reports,
             'report' => $report,
-            'shellExecAvailable' => $this->auditService->shellExecAvailable(),
         ]);
     }
 
@@ -61,40 +60,6 @@ class SecurityAuditController extends Controller
             ]);
         } catch (RuntimeException $exception) {
             return response()->json(['success' => false, 'message' => $exception->getMessage()], 422);
-        }
-    }
-
-    public function run(Request $request): JsonResponse
-    {
-        $this->authorizeAccess();
-        $validated = $request->validate([
-            'days' => ['nullable', 'integer', 'min:1', 'max:365'],
-        ]);
-
-        try {
-            $report = $this->auditService->runLiveAudit(
-                (int) ($validated['days'] ?? 30),
-                $this->businessId(),
-                (int) $request->user()->id,
-                $this->userName($request)
-            );
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Audit selesai dan laporan baru telah disimpan.',
-                'report_id' => $report['id'],
-                'redirect' => route('security-audit.index', ['report' => $report['id']]),
-            ]);
-        } catch (\Throwable $exception) {
-            Log::error('Security audit execution failed', [
-                'user_id' => optional($request->user())->id,
-                'message' => $exception->getMessage(),
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'message' => config('app.debug') ? $exception->getMessage() : 'Audit gagal dijalankan. Periksa konfigurasi PHP dan log aplikasi.',
-            ], 500);
         }
     }
 
