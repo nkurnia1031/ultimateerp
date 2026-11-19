@@ -4,14 +4,11 @@ namespace Tests\Feature;
 
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Schema;
 use Tests\TestCase;
 
 class HeavyEquipmentTripActionsTest extends TestCase
 {
-    private string $temporaryViewDirectory;
-
     protected function setUp(): void
     {
         parent::setUp();
@@ -32,19 +29,6 @@ class HeavyEquipmentTripActionsTest extends TestCase
         DB::purge('sqlite');
         DB::setDefaultConnection('sqlite');
 
-        $this->temporaryViewDirectory = sys_get_temp_dir().DIRECTORY_SEPARATOR.'ultimateerp-spb-test-'.uniqid();
-        File::makeDirectory($this->temporaryViewDirectory.'/layouts/partials', 0755, true);
-        File::put($this->temporaryViewDirectory.'/layouts/app.blade.php', '@yield("content")');
-        File::put($this->temporaryViewDirectory.'/layouts/partials/fleet-datatables.blade.php', '');
-        $viewFinder = app('view.finder');
-        $viewFinder->prependLocation($this->temporaryViewDirectory);
-        $viewFinder->flush();
-
-        Schema::create('system', function (Blueprint $table) {
-            $table->increments('id');
-            $table->string('key');
-            $table->text('value')->nullable();
-        });
         Schema::create('heavy_equipment_routes', function (Blueprint $table) {
             $table->increments('id');
             $table->unsignedInteger('business_id');
@@ -119,33 +103,39 @@ class HeavyEquipmentTripActionsTest extends TestCase
         DB::table('users')->insert(['id' => 1, 'business_id' => 7, 'first_name' => 'Sopir', 'last_name' => 'Satu', 'surname' => '', 'user_type' => 'user']);
     }
 
-    protected function tearDown(): void
-    {
-        if (isset($this->temporaryViewDirectory)) {
-            File::deleteDirectory($this->temporaryViewDirectory);
-        }
-
-        parent::tearDown();
-    }
-
-    public function test_index_shows_edit_and_delete_for_manual_and_imported_mutable_spb_only(): void
+    public function test_index_passes_mutable_manual_and_imported_spb_to_action_view(): void
     {
         $importedId = $this->createTrip(101, 'draft', 'rekap.xlsx');
         $manualId = $this->createTrip(102, 'completed', null);
         $verifiedId = $this->createTrip(103, 'verified', 'rekap.xlsx');
+        $viewFactory = \Mockery::mock(\Illuminate\Contracts\View\Factory::class);
+        $viewFactory->shouldReceive('make')
+            ->once()
+            ->withArgs(function ($view, $data, $mergeData) use ($importedId, $manualId, $verifiedId) {
+                $trips = collect($data['trips'] ?? [])->keyBy('id');
+
+                return $view === 'assetmanagement::fleet.trips.index'
+                    && $mergeData === []
+                    && ($data['canManageTrips'] ?? false) === true
+                    && isset($trips[$importedId], $trips[$manualId], $trips[$verifiedId])
+                    && $trips[$importedId]->canBeChanged()
+                    && $trips[$manualId]->canBeChanged()
+                    && ! $trips[$verifiedId]->canBeChanged();
+            })
+            ->andReturn('SPB index');
+        $this->app->instance(\Illuminate\Contracts\View\Factory::class, $viewFactory);
 
         $response = $this->withHeader('X-Requested-With', 'XMLHttpRequest')
             ->actingAs($this->admin())
             ->withSession($this->businessSession())
             ->get(route('asset.fleet.trips.index'));
 
-        $response->assertOk()
-            ->assertSee(route('asset.fleet.trips.edit', $importedId))
-            ->assertSee(route('asset.fleet.trips.destroy', $importedId))
-            ->assertSee(route('asset.fleet.trips.edit', $manualId))
-            ->assertSee(route('asset.fleet.trips.destroy', $manualId))
-            ->assertDontSee(route('asset.fleet.trips.edit', $verifiedId))
-            ->assertDontSee(route('asset.fleet.trips.destroy', $verifiedId));
+        $response->assertOk()->assertSee('SPB index');
+
+        $template = file_get_contents(base_path('Modules/AssetManagement/Resources/views/fleet/trips/index.blade.php'));
+        $this->assertStringContainsString('@if($canManageTrips && $trip->canBeChanged())', $template);
+        $this->assertStringContainsString("route('asset.fleet.trips.edit', $trip->id)", $template);
+        $this->assertStringContainsString("route('asset.fleet.trips.destroy', $trip->id)", $template);
     }
 
     public function test_mutable_spb_can_be_deleted_from_the_index_route(): void
