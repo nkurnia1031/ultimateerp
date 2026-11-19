@@ -4,6 +4,7 @@
 
 @section('content')
 @includeIf('assetmanagement::layouts.nav')
+@include('layouts.partials.fleet-datatables')
 <section class="content-header">
     <div class="pull-right">
         <a href="{{ route('asset.fleet.vendor-loadings.index') }}" class="btn btn-default">Kembali ke daftar</a>
@@ -56,22 +57,20 @@
 
     <div class="box box-solid">
         <div class="box-header with-border"><h3 class="box-title">Line Angkutan / Tiket</h3><span id="vendor-document-list-count" class="text-muted pull-right">{{ $document->lines->count() }} tiket</span></div>
-        <div class="box-body table-responsive">
-            <table class="table table-bordered table-striped vendor-document-lines">
+        <div class="box-body fleet-datatable-wrap">
+            <table id="vendor-document-lines" class="table table-bordered table-striped vendor-document-lines fleet-datatable" style="width:100%">
                 <thead><tr><th>No</th><th>No. Tiket</th><th>Tanggal</th><th>No. Polisi / Unit</th><th>Keterangan / Sopir</th><th>Gross</th><th>Tare</th><th>Nett</th><th>Ton tagihan</th><th>Harga / Ton (Rp)</th><th>Total (Rp)</th><th>Aksi</th></tr></thead>
                 <tbody>
-                @forelse($document->lines as $index => $line)
+                @foreach($document->lines as $index => $line)
                     <tr data-vendor-line data-gross="{{ (float) $line->gross_tons }}" data-tare="{{ (float) $line->tare_tons }}" data-net="{{ (float) $line->net_tons }}" data-billable="{{ (float) ($line->billable_tons ?: $line->net_tons) }}" data-amount="{{ (float) $line->vendor_total_amount }}">
-                        <td>{{ $index + 1 }}</td><td>{{ $line->ticket_no ?: $line->loading_no }}</td><td>{{ optional($line->loading_date)->format('d/m/Y') ?: '-' }}</td><td>{{ $line->vendor_unit_name ?: '-' }}</td><td>{{ $line->vendor_driver_name ?: '-' }}</td>
-                        <td class="text-right">{{ number_format((float) $line->gross_tons, 4, ',', '.') }}</td><td class="text-right">{{ number_format((float) $line->tare_tons, 4, ',', '.') }}</td><td class="text-right">{{ number_format((float) $line->net_tons, 4, ',', '.') }}</td><td class="text-right">{{ number_format((float) ($line->billable_tons ?: $line->net_tons), 4, ',', '.') }}</td>
-                        <td class="text-right">{{ $line->vendor_rate_per_ton === null ? '-' : 'Rp '.number_format((float) $line->vendor_rate_per_ton, 0, ',', '.') }}</td><td class="text-right">{{ $line->vendor_total_amount === null ? '-' : 'Rp '.number_format((float) $line->vendor_total_amount, 0, ',', '.') }}</td>
+                        <td>{{ $index + 1 }}</td><td>{{ $line->ticket_no ?: $line->loading_no }}</td><td data-order="{{ optional($line->loading_date)->format('Y-m-d') }}">{{ optional($line->loading_date)->format('d/m/Y') ?: '-' }}</td><td>{{ $line->vendor_unit_name ?: '-' }}</td><td>{{ $line->vendor_driver_name ?: '-' }}</td>
+                        <td class="text-right" data-order="{{ (float) $line->gross_tons }}">{{ number_format((float) $line->gross_tons, 4, ',', '.') }}</td><td class="text-right" data-order="{{ (float) $line->tare_tons }}">{{ number_format((float) $line->tare_tons, 4, ',', '.') }}</td><td class="text-right" data-order="{{ (float) $line->net_tons }}">{{ number_format((float) $line->net_tons, 4, ',', '.') }}</td><td class="text-right" data-order="{{ (float) ($line->billable_tons ?: $line->net_tons) }}">{{ number_format((float) ($line->billable_tons ?: $line->net_tons), 4, ',', '.') }}</td>
+                        <td class="text-right" data-order="{{ (float) $line->vendor_rate_per_ton }}">{{ $line->vendor_rate_per_ton === null ? '-' : 'Rp '.number_format((float) $line->vendor_rate_per_ton, 0, ',', '.') }}</td><td class="text-right" data-order="{{ (float) $line->vendor_total_amount }}">{{ $line->vendor_total_amount === null ? '-' : 'Rp '.number_format((float) $line->vendor_total_amount, 0, ',', '.') }}</td>
                         <td class="vendor-line-actions">
                             @if($canManage)<a class="btn btn-xs btn-warning" href="{{ route('asset.fleet.vendor-loadings.edit', $line->id) }}">Edit</a> <button type="button" class="btn btn-xs btn-danger vendor-line-delete" data-url="{{ route('asset.fleet.vendor-loadings.destroy', $line->id) }}" data-label="{{ $line->ticket_no ?: $line->loading_no }}">Hapus</button>@endif
                         </td>
                     </tr>
-                @empty
-                    <tr class="vendor-lines-empty"><td colspan="12" class="text-center text-muted">Belum ada line angkutan pada dokumen ini.</td></tr>
-                @endforelse
+                @endforeach
                 </tbody>
                 <tfoot><tr class="active"><th colspan="5" class="text-right">SUBTOTAL / TOTAL DOKUMEN</th><th id="vendor-subtotal-gross" class="text-right">{{ number_format((float) $document->lines->sum('gross_tons'), 4, ',', '.') }}</th><th id="vendor-subtotal-tare" class="text-right">{{ number_format((float) $document->lines->sum('tare_tons'), 4, ',', '.') }}</th><th id="vendor-subtotal-net" class="text-right">{{ number_format((float) $document->lines->sum('net_tons'), 4, ',', '.') }}</th><th id="vendor-subtotal-billable" class="text-right">{{ number_format((float) $document->lines->sum(fn ($line) => (float) ($line->billable_tons ?: $line->net_tons)), 4, ',', '.') }}</th><th></th><th id="vendor-subtotal-amount" class="text-right">Rp {{ number_format((float) $document->lines->sum('vendor_total_amount'), 0, ',', '.') }}</th><th></th></tr></tfoot>
             </table>
@@ -82,12 +81,31 @@
     .vendor-document-totals > div { padding: 8px 2px; border: 1px solid #e4eaed; }
     .vendor-line-actions { min-width: 160px; white-space: nowrap; }
     .vendor-line-actions .btn { margin: 2px; }
-    @media (max-width: 767px) { .content-header .pull-right { float: none !important; margin-bottom: 10px; } .vendor-document-lines { min-width: 1150px; } }
+    @media (max-width: 767px) { .content-header .pull-right { float: none !important; margin-bottom: 10px; } }
 </style>
 @push('scripts')
 <script>
 $(function () {
     var feedback = $('#vendor-document-feedback');
+    var lineTable = window.initFleetDataTable('#vendor-document-lines', {
+        searching: true,
+        paging: true,
+        ordering: true,
+        pageLength: 25,
+        columnDefs: [
+            { targets: [0, 11], orderable: false, searchable: false },
+            { targets: 1, className: 'all dtr-control' },
+            { targets: 11, className: 'all' }
+        ],
+        drawCallback: function () {
+            var api = this.api();
+            var page = api.page.info();
+            api.column(0, { page: 'current' }).nodes().each(function (cell, index) {
+                cell.textContent = page.start + index + 1;
+            });
+        },
+        language: { emptyTable: 'Belum ada line angkutan pada dokumen ini.' }
+    });
     function notify(success, text) {
         var message = text || 'Aksi gagal.';
         if (window.toastr && typeof window.toastr[success ? 'success' : 'error'] === 'function') { window.toastr[success ? 'success' : 'error'](message); return; }
@@ -100,7 +118,7 @@ $(function () {
     function formatted(value, decimals) { return Number(value || 0).toLocaleString('id-ID', { minimumFractionDigits: decimals, maximumFractionDigits: decimals }); }
     function refreshLineTotals() {
         var totals = { gross: 0, tare: 0, net: 0, billable: 0, amount: 0 };
-        var lines = $('[data-vendor-line]');
+        var lines = lineTable ? lineTable.rows().nodes().to$().filter('[data-vendor-line]') : $('[data-vendor-line]');
         lines.each(function (index) {
             var row = $(this);
             totals.gross += Number(row.data('gross') || 0);
@@ -108,16 +126,15 @@ $(function () {
             totals.net += Number(row.data('net') || 0);
             totals.billable += Number(row.data('billable') || 0);
             totals.amount += Number(row.data('amount') || 0);
-            row.children('td').first().text(index + 1);
         });
+        var lineCount = lineTable ? lineTable.rows().count() : lines.length;
         $('#vendor-subtotal-gross').text(formatted(totals.gross, 4));
         $('#vendor-subtotal-tare').text(formatted(totals.tare, 4));
         $('#vendor-subtotal-net').text(formatted(totals.net, 4));
         $('#vendor-subtotal-billable').text(formatted(totals.billable, 4));
         $('#vendor-subtotal-amount, #vendor-document-total-amount').text('Rp ' + formatted(totals.amount, 0));
-        $('#vendor-document-line-count').text(formatted(lines.length, 0));
-        $('#vendor-document-list-count').text(formatted(lines.length, 0) + ' tiket');
-        if (!lines.length) $('.vendor-document-lines tbody').html('<tr class="vendor-lines-empty"><td colspan="12" class="text-center text-muted">Belum ada line angkutan pada dokumen ini.</td></tr>');
+        $('#vendor-document-line-count').text(formatted(lineCount, 0));
+        $('#vendor-document-list-count').text(formatted(lineCount, 0) + ' tiket');
     }
     $('#document-supplier').select2({ width: '100%', placeholder: 'Pilih supplier', allowClear: true, ajax: { url: @json(route('asset.fleet.vendor-loadings.suppliers')), dataType: 'json', delay: 250, data: function (p) { return { term: p.term || '' }; }, processResults: function (data) { return data; } } });
     $('#document-customer').select2({ width: '100%', placeholder: 'Pilih customer', allowClear: true, ajax: { url: @json(route('asset.fleet.vendor-loadings.customers')), dataType: 'json', delay: 250, data: function (p) { return { term: p.term || '' }; }, processResults: function (data) { return data; } } });
@@ -127,12 +144,16 @@ $(function () {
         var button = $(form).find('[type="submit"]').prop('disabled', true);
         send(form.action, values, 'PUT').done(function (response) { notify(true, response.msg || 'Header diperbarui.'); }).fail(showError).always(function () { button.prop('disabled', false); });
     });
-    $('.vendor-line-delete').on('click', function () {
+    $('#vendor-document-lines').on('click', '.vendor-line-delete', function () {
         var button = $(this), row = button.closest('tr');
         if (!window.confirm('Hapus tiket ' + button.data('label') + '?')) return;
         button.prop('disabled', true);
         send(button.data('url'), { _method: 'DELETE' }).done(function (response) {
-            row.remove();
+            if (lineTable) {
+                lineTable.row(row.get(0)).remove().draw(false);
+            } else {
+                row.remove();
+            }
             refreshLineTotals();
             notify(true, response.msg || 'Line angkutan berhasil dihapus.');
         }).fail(function (xhr) { showError(xhr); button.prop('disabled', false); });

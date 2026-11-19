@@ -64,7 +64,22 @@ class HeavyEquipmentVendorLoadingController extends Controller
             $dataQuery->skip(max(0, (int) $request->input('start', 0)))->take(min($length, 100));
         }
 
-        $data = $dataQuery->get()->map(function (HeavyEquipmentVendorLoadingDocument $document) use ($canManage) {
+        $documents = $dataQuery->get();
+        $ticketDates = collect();
+        if ($documents->isNotEmpty()) {
+            $ticketDates = DB::table('heavy_equipment_vendor_loadings')
+                ->select('loading_document_id', 'loading_date')
+                ->whereIn('loading_document_id', $documents->pluck('id'))
+                ->whereNotNull('loading_date')
+                ->when($request->filled('start_date'), fn ($q) => $q->whereDate('loading_date', '>=', $request->input('start_date')))
+                ->when($request->filled('end_date'), fn ($q) => $q->whereDate('loading_date', '<=', $request->input('end_date')))
+                ->distinct()
+                ->orderBy('loading_date')
+                ->get()
+                ->groupBy('loading_document_id');
+        }
+
+        $data = $documents->map(function (HeavyEquipmentVendorLoadingDocument $document) use ($canManage, $ticketDates) {
             $actions = '<a class="btn btn-xs btn-info" href="'.route('asset.fleet.vendor-loadings.documents.show', $document->id).'">Buka Line</a> ';
             if ($canManage) {
                 $actions .= '<button type="button" class="btn btn-xs btn-danger vendor-loading-delete" data-id="'.$document->id.'" data-loading-no="'.e($document->document_no).'" data-url="'.route('asset.fleet.vendor-loadings.documents.destroy', $document->id).'">Hapus</button>';
@@ -76,10 +91,16 @@ class HeavyEquipmentVendorLoadingController extends Controller
                     $manifest[] = '<strong>'.$label.':</strong> '.e($value);
                 }
             }
+            $dateButtons = $ticketDates->get($document->id, collect())->map(function ($row) use ($document) {
+                $date = \Carbon\Carbon::parse($row->loading_date);
+
+                return '<button type="button" class="btn btn-xs btn-default vendor-loading-ticket-date" data-url="'.e(route('asset.fleet.vendor-loadings.documents.tickets', $document->id)).'" data-date="'.$date->format('Y-m-d').'" data-document-no="'.e($document->document_no).'">'.$date->format('d/m/Y').'</button>';
+            })->implode(' ');
 
             return [
                 'document_no' => e($document->document_no),
                 'source_sheet' => e($document->source_sheet ?: 'Manual'),
+                'ticket_dates' => $dateButtons ?: '-',
                 'supplier' => e($document->supplier_label),
                 'customer' => e($document->customer_label),
                 'manifest' => $manifest ? implode('<br>', $manifest) : '-',
@@ -96,6 +117,67 @@ class HeavyEquipmentVendorLoadingController extends Controller
             'recordsFiltered' => $recordsFiltered,
             'data' => $data,
             'summary' => $summary,
+        ]);
+    }
+
+    public function ticketsForDate(Request $request, $id)
+    {
+        $this->authorizeView();
+        $request->validate([
+            'date' => 'required|date_format:Y-m-d',
+            'draw' => 'nullable|integer|min:0',
+            'start' => 'nullable|integer|min:0',
+            'length' => 'nullable|integer|min:1|max:100',
+            'search.value' => 'nullable|string|max:191',
+        ]);
+
+        $document = $this->document($id);
+        $query = HeavyEquipmentVendorLoading::query()
+            ->where('loading_document_id', $document->id)
+            ->whereDate('loading_date', $request->input('date'));
+        $recordsTotal = (clone $query)->count();
+        $search = trim((string) data_get($request->input('search'), 'value', ''));
+        if ($search !== '') {
+            $like = '%'.$search.'%';
+            $query->where(function ($lineQuery) use ($like) {
+                $lineQuery->where('ticket_no', 'like', $like)
+                    ->orWhere('loading_no', 'like', $like)
+                    ->orWhere('vendor_unit_name', 'like', $like)
+                    ->orWhere('vendor_driver_name', 'like', $like);
+            });
+        }
+
+        $recordsFiltered = (clone $query)->count();
+        $length = min((int) $request->input('length', 25), 100);
+        $tickets = $query->orderBy('ticket_no')->orderBy('loading_no')->orderBy('id')
+            ->skip(max(0, (int) $request->input('start', 0)))
+            ->take($length)
+            ->get([
+                'ticket_no', 'loading_no', 'loading_date', 'load_date', 'unload_date',
+                'vendor_unit_name', 'vendor_driver_name', 'gross_tons', 'tare_tons',
+                'net_tons', 'billable_tons', 'vendor_total_amount',
+            ])
+            ->map(fn (HeavyEquipmentVendorLoading $ticket) => [
+                'ticket_no' => $ticket->ticket_no,
+                'loading_no' => $ticket->loading_no,
+                'loading_date' => $ticket->loading_date?->format('Y-m-d'),
+                'load_date' => $ticket->load_date?->format('Y-m-d'),
+                'unload_date' => $ticket->unload_date?->format('Y-m-d'),
+                'vendor_unit_name' => $ticket->vendor_unit_name,
+                'vendor_driver_name' => $ticket->vendor_driver_name,
+                'gross_tons' => (float) $ticket->gross_tons,
+                'tare_tons' => (float) $ticket->tare_tons,
+                'net_tons' => (float) $ticket->net_tons,
+                'billable_tons' => (float) $ticket->billable_tons,
+                'vendor_total_amount' => (float) $ticket->vendor_total_amount,
+            ])
+            ->values();
+
+        return response()->json([
+            'draw' => (int) $request->input('draw', 0),
+            'recordsTotal' => $recordsTotal,
+            'recordsFiltered' => $recordsFiltered,
+            'data' => $tickets,
         ]);
     }
 

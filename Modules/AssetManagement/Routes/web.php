@@ -53,6 +53,7 @@ Route::middleware('web', 'authh', 'auth', 'SetSessionData', 'language', 'timezon
 
         Route::get('vendor-loadings', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController::class, 'index'])->name('vendor-loadings.index');
         Route::get('vendor-loadings/data', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController::class, 'data'])->name('vendor-loadings.data');
+        Route::get('vendor-loadings/documents/{id}/tickets', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController::class, 'ticketsForDate'])->name('vendor-loadings.documents.tickets');
         Route::get('vendor-loadings/print', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController::class, 'print'])->name('vendor-loadings.print');
         Route::get('vendor-loadings/documents/{id}/print', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController::class, 'printDocument'])->name('vendor-loadings.documents.print');
         Route::get('vendor-loadings/documents/{id}', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController::class, 'showDocument'])->name('vendor-loadings.documents.show');

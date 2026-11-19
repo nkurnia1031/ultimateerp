@@ -41,14 +41,34 @@
         <div class="box-header with-border"><h3 class="box-title">Dokumen Loading Vendor per Sheet</h3></div>
         <div class="box-body table-responsive fleet-datatable-wrap">
             <table id="vendor-loadings-table" class="table table-bordered table-striped fleet-datatable" style="width:100%">
-                <thead><tr><th>No. Dokumen</th><th>Sheet sumber</th><th>Bendera / Supplier</th><th>Customer</th><th>Barang / Kapal / Tujuan</th><th class="text-right">Tiket</th><th>Gross / Tare / Nett</th><th class="text-right">Subtotal nilai (Rp)</th><th>Aksi</th></tr></thead>
+                <thead><tr><th>No. Dokumen</th><th>Sheet sumber</th><th>Tanggal tiket</th><th>Bendera / Supplier</th><th>Customer</th><th>Barang / Kapal / Tujuan</th><th class="text-right">Tiket</th><th>Gross / Tare / Nett</th><th class="text-right">Subtotal nilai (Rp)</th><th>Aksi</th></tr></thead>
             </table>
         </div>
     </div>
 </section>
+<div class="modal fade" id="vendor-loading-tickets-modal" tabindex="-1" role="dialog" aria-labelledby="vendor-loading-tickets-title">
+    <div class="modal-dialog modal-lg" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <button type="button" class="close" data-dismiss="modal" aria-label="Tutup"><span aria-hidden="true">&times;</span></button>
+                <h4 class="modal-title" id="vendor-loading-tickets-title">Tiket Vendor</h4>
+            </div>
+            <div class="modal-body">
+                <div class="table-responsive">
+                    <table id="vendor-loading-tickets-table" class="table table-bordered table-striped" style="width:100%">
+                        <thead><tr><th>No. Tiket</th><th>No. Loading</th><th>Unit</th><th>Supir</th><th class="text-right">Gross</th><th class="text-right">Tare</th><th class="text-right">Nett</th><th class="text-right">Ton tagihan</th><th class="text-right">Nilai (Rp)</th></tr></thead>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-footer"><button type="button" class="btn btn-default" data-dismiss="modal">Tutup</button></div>
+        </div>
+    </div>
+</div>
 <style>
     #vendor-loadings-table td { vertical-align: middle; }
     #vendor-loadings-table .btn { margin: 2px 0; white-space: nowrap; }
+    #vendor-loadings-table .vendor-loading-ticket-date { margin: 2px; white-space: nowrap; }
+    #vendor-loading-tickets-table td { vertical-align: middle; }
     .vendor-loading-summary-table th, .vendor-loading-summary-table td { vertical-align: middle !important; }
     .vendor-loading-summary-table .summary-total { font-weight: 700; background: #eaf1f5; }
     @media (max-width: 767px) { #vendor-loading-summary-box .box-header small { float: none !important; display: block; margin-top: 6px; } }
@@ -77,13 +97,48 @@ $(function () {
         order: [[0, 'desc']], pageLength: 25,
         language: { processing: 'Memuat data...', search: 'Cari:', searchPlaceholder: 'Dokumen, sheet, tiket, supplier, customer, barang...', lengthMenu: 'Tampilkan _MENU_ dokumen', info: 'Menampilkan _START_–_END_ dari _TOTAL_ dokumen', infoEmpty: 'Belum ada dokumen', infoFiltered: '(disaring dari _MAX_ dokumen)', zeroRecords: 'Dokumen tidak ditemukan', emptyTable: 'Belum ada Loading Vendor', paginate: { first: 'Awal', last: 'Akhir', next: 'Berikutnya', previous: 'Sebelumnya' } },
         columns: [
-            { data: 'document_no', name: 'document_no' }, { data: 'source_sheet', name: 'source_sheet' }, { data: 'supplier', name: 'supplier_name_snapshot' },
+            { data: 'document_no', name: 'document_no' }, { data: 'source_sheet', name: 'source_sheet' }, { data: 'ticket_dates', name: 'created_at', orderable: false, searchable: false }, { data: 'supplier', name: 'supplier_name_snapshot' },
             { data: 'customer', name: 'customer_name_snapshot' }, { data: 'manifest', name: 'goods_name', orderable: false },
             { data: 'line_count', name: 'created_at', className: 'text-right' }, { data: 'tons', name: 'created_at', orderable: false },
             { data: 'amount', name: 'created_at', className: 'text-right' }, { data: 'actions', orderable: false, searchable: false }
         ],
-        columnDefs: [{ targets: [0, 2, 8], className: 'all' }]
+        columnDefs: [{ targets: [0, 3, 9], className: 'all' }]
     }));
+    var ticketTable = null;
+    var $ticketModal = $('#vendor-loading-tickets-modal');
+    var activeTicketDate = '';
+    function escapeHtml(value) { return $('<div>').text(value == null || value === '' ? '-' : String(value)).html(); }
+    $('#vendor-loadings-table').on('click', '.vendor-loading-ticket-date', function () {
+        var button = $(this), rawDate = String(button.data('date') || ''), dateParts = rawDate.split('-');
+        activeTicketDate = rawDate;
+        var displayDate = dateParts.length === 3 ? dateParts.reverse().join('/') : rawDate;
+        $('#vendor-loading-tickets-title').text('Tiket Vendor — ' + String(button.data('document-no') || '') + ' — ' + displayDate);
+        $ticketModal.modal('show');
+        if (!ticketTable) {
+            ticketTable = $('#vendor-loading-tickets-table').DataTable($.extend(true, {}, {
+                processing: true, serverSide: true, responsive: false, scrollX: true, autoWidth: false, pageLength: 25,
+                ajax: {
+                    url: button.data('url'),
+                    data: function (d) { d.date = activeTicketDate; },
+                    error: function (xhr) { var body = xhr.responseJSON || {}; feedback(false, body.msg || body.message || 'Daftar tiket gagal dimuat.'); }
+                },
+                columns: [
+                    { data: 'ticket_no', render: escapeHtml }, { data: 'loading_no', render: escapeHtml },
+                    { data: 'vendor_unit_name', render: escapeHtml }, { data: 'vendor_driver_name', render: escapeHtml },
+                    { data: 'gross_tons', className: 'text-right', render: function (value) { return number(value, 2); } },
+                    { data: 'tare_tons', className: 'text-right', render: function (value) { return number(value, 2); } },
+                    { data: 'net_tons', className: 'text-right', render: function (value) { return number(value, 2); } },
+                    { data: 'billable_tons', className: 'text-right', render: function (value) { return number(value, 2); } },
+                    { data: 'vendor_total_amount', className: 'text-right', render: function (value) { return money(value); } }
+                ],
+                language: { processing: 'Memuat tiket...', search: 'Cari:', searchPlaceholder: 'Tiket, nomor loading, unit, supir...', lengthMenu: 'Tampilkan _MENU_ tiket', info: 'Menampilkan _START_–_END_ dari _TOTAL_ tiket', infoEmpty: 'Belum ada tiket', infoFiltered: '(disaring dari _MAX_ tiket)', zeroRecords: 'Tiket tidak ditemukan', emptyTable: 'Tidak ada tiket pada tanggal ini', paginate: { first: 'Awal', last: 'Akhir', next: 'Berikutnya', previous: 'Sebelumnya' } }
+            }));
+        } else {
+            ticketTable.search('');
+            ticketTable.ajax.url(button.data('url')).load(function () { ticketTable.columns.adjust(); });
+        }
+        $ticketModal.one('shown.bs.modal', function () { if (ticketTable) ticketTable.columns.adjust(); });
+    });
     function feedback(success, text, level) {
         var message = text || 'Aksi tidak dapat diselesaikan.';
         var type = level || (success ? 'success' : 'error');
