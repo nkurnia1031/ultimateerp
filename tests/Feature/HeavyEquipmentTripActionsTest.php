@@ -213,9 +213,15 @@ class HeavyEquipmentTripActionsTest extends TestCase
             {
                 return $ability === 'superadmin';
             }
+
+            public function hasRole($role): bool
+            {
+                return false;
+            }
         };
         $admin->forceFill([
             'id' => 999,
+            'business_id' => 7,
             'first_name' => 'Test',
             'last_name' => 'Admin',
             'surname' => 'Admin',
