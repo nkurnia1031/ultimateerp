@@ -125,7 +125,14 @@ class HeavyEquipmentTripActionsTest extends TestCase
         $manualId = $this->createTrip(102, 'completed', null);
         $verifiedId = $this->createTrip(103, 'verified', 'rekap.xlsx');
 
-        $response = $this->withoutMiddleware(['authh', 'SetSessionData', 'language', 'timezone', 'AdminSidebarMenu'])
+        $response = $this->withoutMiddleware([
+            \App\Http\Middleware\IsInstalled::class,
+            \App\Http\Middleware\SetSessionData::class,
+            \App\Http\Middleware\Language::class,
+            \App\Http\Middleware\Timezone::class,
+            \App\Http\Middleware\AdminSidebarMenu::class,
+            \App\Http\Middleware\CheckUserLogin::class,
+        ])
             ->actingAs($this->admin())
             ->withSession($this->businessSession())
             ->get(route('asset.fleet.trips.index'));
@@ -143,7 +150,14 @@ class HeavyEquipmentTripActionsTest extends TestCase
     {
         $tripId = $this->createTrip(201, 'draft', 'rekap.xlsx');
 
-        $response = $this->withoutMiddleware(['authh', 'SetSessionData', 'language', 'timezone', 'AdminSidebarMenu'])
+        $response = $this->withoutMiddleware([
+            \App\Http\Middleware\IsInstalled::class,
+            \App\Http\Middleware\SetSessionData::class,
+            \App\Http\Middleware\Language::class,
+            \App\Http\Middleware\Timezone::class,
+            \App\Http\Middleware\AdminSidebarMenu::class,
+            \App\Http\Middleware\CheckUserLogin::class,
+        ])
             ->actingAs($this->admin())
             ->withSession($this->businessSession())
             ->delete(route('asset.fleet.trips.destroy', $tripId));
@@ -166,7 +180,14 @@ class HeavyEquipmentTripActionsTest extends TestCase
         ]);
 
         foreach ([$billedTripId, $settledTripId] as $tripId) {
-            $this->withoutMiddleware(['authh', 'SetSessionData', 'language', 'timezone', 'AdminSidebarMenu'])
+            $this->withoutMiddleware([
+                \App\Http\Middleware\IsInstalled::class,
+                \App\Http\Middleware\SetSessionData::class,
+                \App\Http\Middleware\Language::class,
+                \App\Http\Middleware\Timezone::class,
+                \App\Http\Middleware\AdminSidebarMenu::class,
+                \App\Http\Middleware\CheckUserLogin::class,
+            ])
                 ->actingAs($this->admin())
                 ->withSession($this->businessSession())
                 ->delete(route('asset.fleet.trips.destroy', $tripId))
