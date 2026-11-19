@@ -127,7 +127,7 @@ class HeavyEquipmentTripActionsTest extends TestCase
         $manualId = $this->createTrip(102, 'completed', null);
         $verifiedId = $this->createTrip(103, 'verified', 'rekap.xlsx');
 
-        $response = $this->withoutMiddleware()
+        $response = $this->withHeader('X-Requested-With', 'XMLHttpRequest')
             ->actingAs($this->admin())
             ->withSession($this->businessSession())
             ->get(route('asset.fleet.trips.index'));
@@ -145,7 +145,7 @@ class HeavyEquipmentTripActionsTest extends TestCase
     {
         $tripId = $this->createTrip(201, 'draft', 'rekap.xlsx');
 
-        $response = $this->withoutMiddleware()
+        $response = $this->withHeader('X-Requested-With', 'XMLHttpRequest')
             ->actingAs($this->admin())
             ->withSession($this->businessSession())
             ->delete(route('asset.fleet.trips.destroy', $tripId));
@@ -168,7 +168,7 @@ class HeavyEquipmentTripActionsTest extends TestCase
         ]);
 
         foreach ([$billedTripId, $settledTripId] as $tripId) {
-            $this->withoutMiddleware()
+            $this->withHeader('X-Requested-With', 'XMLHttpRequest')
                 ->actingAs($this->admin())
                 ->withSession($this->businessSession())
                 ->delete(route('asset.fleet.trips.destroy', $tripId))
@@ -219,6 +219,8 @@ class HeavyEquipmentTripActionsTest extends TestCase
             'first_name' => 'Test',
             'last_name' => 'Admin',
             'surname' => 'Admin',
+            'user_type' => 'user',
+            'allow_login' => 1,
         ]);
 
         return $admin;
