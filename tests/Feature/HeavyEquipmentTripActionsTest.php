@@ -67,6 +67,7 @@ class HeavyEquipmentTripActionsTest extends TestCase
             $table->increments('id');
             $table->unsignedInteger('business_id');
             $table->string('name');
+            $table->softDeletes();
         });
         Schema::create('heavy_equipment_trips', function (Blueprint $table) {
             $table->increments('id');
