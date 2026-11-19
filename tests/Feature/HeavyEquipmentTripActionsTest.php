@@ -38,6 +38,11 @@ class HeavyEquipmentTripActionsTest extends TestCase
         File::put($this->temporaryViewDirectory.'/layouts/partials/fleet-datatables.blade.php', '');
         app('view.finder')->prependLocation($this->temporaryViewDirectory);
 
+        Schema::create('system', function (Blueprint $table) {
+            $table->increments('id');
+            $table->string('key');
+            $table->text('value')->nullable();
+        });
         Schema::create('heavy_equipment_routes', function (Blueprint $table) {
             $table->increments('id');
             $table->unsignedInteger('business_id');
