@@ -108,21 +108,19 @@ class HeavyEquipmentTripActionsTest extends TestCase
         $importedId = $this->createTrip(101, 'draft', 'rekap.xlsx');
         $manualId = $this->createTrip(102, 'completed', null);
         $verifiedId = $this->createTrip(103, 'verified', 'rekap.xlsx');
+        $viewName = null;
+        $viewData = [];
+        $mergeData = null;
         $viewFactory = \Mockery::mock(\Illuminate\Contracts\View\Factory::class);
         $viewFactory->shouldReceive('make')
             ->once()
-            ->withArgs(function ($view, $data, $mergeData) use ($importedId, $manualId, $verifiedId) {
-                $trips = collect($data['trips'] ?? [])->keyBy('id');
+            ->andReturnUsing(function ($view, $data, $extraData) use (&$viewName, &$viewData, &$mergeData) {
+                $viewName = $view;
+                $viewData = $data;
+                $mergeData = $extraData;
 
-                return $view === 'assetmanagement::fleet.trips.index'
-                    && $mergeData === []
-                    && ($data['canManageTrips'] ?? false) === true
-                    && isset($trips[$importedId], $trips[$manualId], $trips[$verifiedId])
-                    && $trips[$importedId]->canBeChanged()
-                    && $trips[$manualId]->canBeChanged()
-                    && ! $trips[$verifiedId]->canBeChanged();
-            })
-            ->andReturn('SPB index');
+                return 'SPB index';
+            });
         $this->app->instance(\Illuminate\Contracts\View\Factory::class, $viewFactory);
 
         $response = $this->withHeader('X-Requested-With', 'XMLHttpRequest')
@@ -131,6 +129,13 @@ class HeavyEquipmentTripActionsTest extends TestCase
             ->get(route('asset.fleet.trips.index'));
 
         $response->assertOk()->assertSee('SPB index');
+        $trips = collect($viewData['trips'] ?? [])->keyBy('id');
+        $this->assertSame('assetmanagement::fleet.trips.index', $viewName);
+        $this->assertSame([], $mergeData);
+        $this->assertTrue($viewData['canManageTrips']);
+        $this->assertTrue($trips[$importedId]->canBeChanged());
+        $this->assertTrue($trips[$manualId]->canBeChanged());
+        $this->assertFalse($trips[$verifiedId]->canBeChanged());
 
         $template = file_get_contents(base_path('Modules/AssetManagement/Resources/views/fleet/trips/index.blade.php'));
         $this->assertStringContainsString('@if($canManageTrips && $trip->canBeChanged())', $template);
