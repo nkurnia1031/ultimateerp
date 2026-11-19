@@ -34,6 +34,7 @@ class SecurityAuditController extends Controller
         return view('security-audit.index', [
             'reports' => $reports,
             'report' => $report,
+            'businessId' => $businessId,
         ]);
     }
 

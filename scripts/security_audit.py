@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Read-only filesystem audit for suspected webshells and persistence files.
 
-Run this script directly on the server, then upload the generated JSON through
-the Security Audit page. The Laravel application does not launch this process.
+Run this script directly on the server. With --store-in-app, it saves the report
+to the Laravel private audit directory so the Security Audit page can read it
+without an upload. The Laravel application does not launch this process.
 
 Examples:
   python3 scripts/security_audit.py --json --output=/tmp/security-audit.json
   python3 scripts/security_audit.py --root=/srv/ultimateerp --since="7 days ago" --json --output=/tmp/security-audit.json
+  python3 scripts/security_audit.py --store-in-app --business-id=2
 
 Exit codes:
   0 = no findings
@@ -17,6 +19,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import getpass
 import hashlib
 import json
 import os
@@ -24,6 +27,7 @@ import re
 import stat
 import subprocess
 import sys
+import uuid
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -37,9 +41,11 @@ PERSISTENCE_FILES = {".htaccess", ".user.ini", "web.config", "php.ini"}
 KNOWN_PUBLIC_ENTRYPOINTS = {"public/index.php", "public/install/index.php"}
 SKIPPED_DIRECTORIES = {
     ".git", "node_modules", "graphify-out", "storage/framework/cache",
-    "storage/framework/sessions", "storage/framework/views",
+    "storage/framework/sessions", "storage/framework/views", "storage/app/security-audit",
 }
 SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+MAX_REPORT_BYTES = 15_728_640
+MAX_FINDINGS = 50_000
 
 SIGNAL_PATTERNS = {
     "obfuscated_payload": re.compile(
@@ -422,6 +428,52 @@ def text_report(report: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def store_report_in_application(root: Path, report: dict[str, Any], business_id: int, operator: str | None) -> Path:
+    """Write a private wrapper understood by SecurityAuditService::listReports()."""
+    root = root.resolve()
+    if not (root / "artisan").is_file() or not (root / "app" / "Services" / "SecurityAuditService.php").is_file():
+        raise ValueError(f"Application root does not look like UltimateERP: {root}")
+    findings = report.get("findings")
+    if not isinstance(findings, list) or len(findings) > MAX_FINDINGS:
+        raise ValueError(f"Audit findings must be a list with at most {MAX_FINDINGS:,} entries.")
+
+    report_directory = root / "storage" / "app" / "security-audit" / "reports"
+    report_directory.mkdir(mode=0o770, parents=True, exist_ok=True)
+    os.chmod(report_directory, 0o770)
+    if not report_directory.is_dir():
+        raise ValueError("Security audit report path is not a directory.")
+
+    report_id = str(uuid.uuid4())
+    now = datetime.now().astimezone().isoformat(timespec="seconds")
+    wrapper = {
+        "id": report_id,
+        "business_id": business_id,
+        "source": "python_cli",
+        "original_name": f"security-audit-{datetime.now().astimezone().strftime('%Y%m%d-%H%M%S')}.json",
+        "imported_at": now,
+        "imported_by": {"id": None, "name": (operator or getpass.getuser() or "Python CLI")[:150]},
+        "cleanup_runs": [],
+        "report": report,
+    }
+    destination = report_directory / f"{report_id}.json"
+    temporary = report_directory / f".{report_id}.tmp"
+    payload = json.dumps(wrapper, ensure_ascii=False, indent=2) + "\n"
+    if len(payload.encode("utf-8")) > MAX_REPORT_BYTES:
+        raise ValueError("Audit report exceeds the 15 MB storage limit.")
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o660)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, destination)
+        os.chmod(destination, 0o660)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+    return destination
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Read-only filesystem audit for suspected webshells and persistence files.")
     parser.add_argument("--root", default=str(Path(__file__).resolve().parent.parent), help="Application root; defaults to this script's project root.")
@@ -430,7 +482,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-read", type=int, default=2097152, help="Maximum bytes read from one file (default: 2097152).")
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON instead of a text report.")
     parser.add_argument("--output", help="Write report to a file; otherwise print it to stdout.")
-    return parser.parse_args()
+    parser.add_argument("--store-in-app", action="store_true", help="Save directly to the private Laravel Security Audit report history.")
+    parser.add_argument("--business-id", type=int, help="Business that can view the report; required with --store-in-app.")
+    parser.add_argument("--operator", help="Name recorded as the SSH/CLI operator; defaults to the current OS user.")
+    args = parser.parse_args()
+    if args.store_in_app and not args.business_id:
+        parser.error("--store-in-app requires --business-id")
+    if args.business_id is not None and args.business_id < 1:
+        parser.error("--business-id must be greater than zero")
+    if args.business_id is not None and not args.store_in_app:
+        parser.error("--business-id can only be used with --store-in-app")
+    return args
 
 
 def main() -> int:
@@ -439,11 +501,14 @@ def main() -> int:
         audit = SecurityAudit(args.root, parse_since(args.since), args.max_read, args.include_vendor)
         report = audit.run()
         output = json.dumps(report, ensure_ascii=False, indent=2) + "\n" if args.json else text_report(report)
+        if args.store_in_app:
+            stored_path = store_report_in_application(audit.root, report, args.business_id, args.operator)
+            print(f"Report registered for Business #{args.business_id}: {stored_path}")
         if args.output:
             output_path = Path(args.output).expanduser()
             output_path.write_text(output, encoding="utf-8")
             print(f"Report written to {output_path}")
-        else:
+        elif not args.store_in_app:
             sys.stdout.write(output)
         return 1 if report["findings"] or report["git_changes"] else 0
     except (OSError, ValueError, subprocess.SubprocessError) as exc:

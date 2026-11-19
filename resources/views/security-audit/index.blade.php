@@ -65,6 +65,7 @@
 @php
     $riskLabels = ['critical' => 'Kritis', 'high' => 'Tinggi', 'medium' => 'Sedang', 'low' => 'Rendah'];
     $severityLabels = ['critical' => 'Kritis', 'high' => 'Tinggi', 'medium' => 'Sedang', 'low' => 'Rendah'];
+    $sourceLabels = ['live' => 'Audit langsung', 'upload' => 'Upload JSON lama', 'python_cli' => 'Scanner Python'];
     $currentAssessment = $report['assessment'] ?? null;
 @endphp
 <section class="content-header">
@@ -72,20 +73,19 @@
     <p class="tw-text-sm tw-text-gray-500 tw-mt-1">Baca hasil pemeriksaan, pisahkan indikasi kompromi dari noise, dan tangani artefak berbahaya secara terverifikasi.</p>
 </section>
 
-<section class="content security-shell" id="security-audit-page"
-    data-upload-url="{{ route('security-audit.upload') }}">
+<section class="content security-shell" id="security-audit-page">
     <div class="security-hero tw-mb-5">
         <div class="row tw-items-center">
             <div class="col-md-7">
                 <div class="security-eyebrow">Incident review console</div>
                 <h2 class="security-title">Satu tempat untuk memahami kondisi server</h2>
-                <p class="security-subtitle">Laporan hanya dibaca sebagai data—isinya tidak pernah dieksekusi. Jalankan scanner Python di terminal server, lalu unggah JSON untuk ditinjau di sini.</p>
+                <p class="security-subtitle">Jalankan scanner Python di server target. Hasil scan tersimpan langsung di riwayat privat dan dapat dibuka dari menu ini.</p>
             </div>
             <div class="col-md-5">
                 <div class="security-toolbar">
-                    <button type="button" class="btn btn-default security-btn" data-toggle="modal" data-target="#upload-audit-modal">
-                        <i class="fas fa-file-import tw-mr-1"></i> Baca JSON
-                    </button>
+                    <a href="{{ route('security-audit.index') }}" class="btn btn-success security-btn">
+                        <i class="fas fa-sync-alt tw-mr-1"></i> Muat ulang laporan
+                    </a>
                 </div>
             </div>
         </div>
@@ -99,8 +99,8 @@
                     <p class="tw-text-sm tw-text-gray-500 tw-mt-1">Gunakan terminal atau SSH dari root instalasi yang sama dengan halaman ini.</p>
                 </div>
                 <div class="col-md-8">
-                    <code class="security-command">python3 scripts/security_audit.py --json --output=/tmp/security-audit.json</code>
-                    <p class="tw-text-xs tw-text-gray-500 tw-mt-2">Salin JSON ke komputer lalu unggah lewat tombol <strong>Baca JSON</strong>. Root laporan harus cocok dengan instalasi aktif agar aksi cleanup tersedia.</p>
+                    <code class="security-command">python3 scripts/security_audit.py --store-in-app --business-id={{ $businessId }}</code>
+                    <p class="tw-text-xs tw-text-gray-500 tw-mt-2">Jalankan dari root instalasi ini melalui terminal/SSH dengan user atau grup yang sama seperti PHP agar aplikasi dapat membaca laporan. Setelah selesai, klik <strong>Muat ulang laporan</strong>. Berkas tersimpan di storage privat; laporan dari instalasi berbeda tidak dapat dipakai untuk cleanup di sini.</p>
                 </div>
             </div>
         </div>
@@ -111,8 +111,7 @@
             <div class="security-empty">
                 <div class="security-empty-icon"><i class="fas fa-shield-alt"></i></div>
                 <h3 class="tw-font-bold tw-text-xl tw-text-gray-900">Belum ada laporan audit</h3>
-                <p class="tw-text-gray-500 tw-mx-auto tw-mt-2" style="max-width:560px">Unggah laporan JSON yang dihasilkan scanner Python. Isi JSON diperlakukan sebagai data dan tidak pernah dieksekusi.</p>
-                <button type="button" class="btn btn-primary security-btn tw-mt-3" data-toggle="modal" data-target="#upload-audit-modal">Pilih laporan JSON</button>
+                <p class="tw-text-gray-500 tw-mx-auto tw-mt-2" style="max-width:560px">Jalankan perintah scanner di atas pada server aplikasi, lalu muat ulang halaman ini untuk membaca hasil scan terbaru.</p>
             </div>
         </div>
     @else
@@ -176,7 +175,7 @@
                             <dt>File diperiksa</dt><dd>{{ number_format($report['report']['files_scanned'], 0, ',', '.') }}</dd>
                             <dt>Total mentah</dt><dd>{{ number_format($currentAssessment['total'], 0, ',', '.') }} temuan</dd>
                             <dt>Root laporan</dt><dd>{{ $report['report']['root'] }}</dd>
-                            <dt>Sumber</dt><dd>{{ $report['source'] === 'live' ? 'Audit langsung' : 'Upload JSON' }}</dd>
+                            <dt>Sumber</dt><dd>{{ $sourceLabels[$report['source']] ?? ucfirst($report['source']) }}</dd>
                         </dl>
                         <a class="btn btn-default btn-sm tw-mt-4" href="{{ route('security-audit.download', ['report' => $report['id']]) }}"><i class="fas fa-download"></i> Unduh JSON asli</a>
                     </div>
@@ -273,7 +272,7 @@
             <div class="security-card-body">
                 @foreach(array_slice($reports, 0, 10) as $history)
                     <div class="security-history-row">
-                        <div><div class="security-history-name">{{ $history['original_name'] }}</div><div class="security-history-meta">{{ $history['imported_at'] }} · {{ $history['relevant_total'] }} relevan dari {{ $history['total'] }} temuan · {{ $history['source'] === 'live' ? 'audit langsung' : 'upload' }}</div></div>
+                        <div><div class="security-history-name">{{ $history['original_name'] }}</div><div class="security-history-meta">{{ $history['imported_at'] }} | {{ $history['relevant_total'] }} relevan dari {{ $history['total'] }} temuan | {{ $sourceLabels[$history['source']] ?? ucfirst($history['source']) }}</div></div>
                         <a href="{{ route('security-audit.index', ['report' => $history['id']]) }}" class="btn btn-default btn-sm">Buka</a>
                     </div>
                 @endforeach
@@ -281,20 +280,6 @@
         </div>
     @endif
 </section>
-
-<div class="modal fade" id="upload-audit-modal" tabindex="-1" role="dialog">
-    <div class="modal-dialog" role="document"><div class="modal-content">
-        <form id="security-upload-form" enctype="multipart/form-data">
-            <div class="modal-header"><button type="button" class="close" data-dismiss="modal">&times;</button><h4 class="modal-title tw-font-bold">Baca laporan audit JSON</h4></div>
-            <div class="modal-body">
-                <p class="tw-text-gray-500">File diperlakukan sebagai data dan divalidasi; tidak ada isi JSON yang dijalankan sebagai perintah.</p>
-                <div class="form-group"><label>File JSON</label><input type="file" name="report" class="form-control" accept="application/json,.json" required><span class="help-block">Maksimal 15 MB, hasil dari <code>scripts/security_audit.py</code>.</span></div>
-                <div class="alert alert-danger security-form-error" style="display:none"></div>
-            </div>
-            <div class="modal-footer"><button type="button" class="btn btn-default" data-dismiss="modal">Batal</button><button type="submit" class="btn btn-primary security-btn">Baca laporan</button></div>
-        </form>
-    </div></div>
-</div>
 
 @if(!empty($report))
 <div class="modal fade" id="cleanup-audit-modal" tabindex="-1" role="dialog" data-backdrop="static">

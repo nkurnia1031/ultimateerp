@@ -15,9 +15,6 @@
         return fallback;
     }
 
-    function showError($form, message) {
-        $form.find('.security-form-error').text(message).show();
-    }
 
     function setBusy($form, busy, busyText) {
         var $button = $form.find('button[type="submit"]');
@@ -65,28 +62,6 @@
             });
         }
 
-        $('#security-upload-form').on('submit', function (event) {
-            event.preventDefault();
-            var $form = $(this);
-            $form.find('.security-form-error').hide();
-            setBusy($form, true, 'Membaca…');
-
-            $.ajax({
-                url: $page.data('upload-url'),
-                method: 'POST',
-                data: new FormData(this),
-                processData: false,
-                contentType: false,
-                headers: { Accept: 'application/json' }
-            }).done(function (response) {
-                notify('success', response.message);
-                window.location.href = response.redirect;
-            }).fail(function (xhr) {
-                showError($form, messageFrom(xhr, 'Laporan gagal dibaca.'));
-                setBusy($form, false);
-            });
-        });
-
         $('#security-cleanup-form').on('submit', function (event) {
             event.preventDefault();
             var $form = $(this);
@@ -102,7 +77,7 @@
                 notify('success', response.message);
                 window.location.reload();
             }).fail(function (xhr) {
-                showError($form, messageFrom(xhr, 'Pembersihan gagal. Tidak ada file yang dihapus tanpa verifikasi.'));
+                $form.find('.security-form-error').text(messageFrom(xhr, 'Pembersihan gagal. Tidak ada file yang dihapus tanpa verifikasi.')).show();
                 setBusy($form, false);
             });
         });
