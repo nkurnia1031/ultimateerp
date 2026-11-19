@@ -2,7 +2,6 @@
 
 namespace Tests\Feature;
 
-use App\User;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
@@ -204,9 +203,9 @@ class HeavyEquipmentTripActionsTest extends TestCase
         return $id;
     }
 
-    private function admin(): User
+    private function admin(): \Illuminate\Foundation\Auth\User
     {
-        $admin = new class extends User
+        $admin = new class extends \Illuminate\Foundation\Auth\User
         {
             public function can($ability, $arguments = [])
             {
