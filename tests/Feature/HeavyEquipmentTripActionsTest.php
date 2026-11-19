@@ -36,7 +36,9 @@ class HeavyEquipmentTripActionsTest extends TestCase
         File::makeDirectory($this->temporaryViewDirectory.'/layouts/partials', 0755, true);
         File::put($this->temporaryViewDirectory.'/layouts/app.blade.php', '@yield("content")');
         File::put($this->temporaryViewDirectory.'/layouts/partials/fleet-datatables.blade.php', '');
-        app('view.finder')->prependLocation($this->temporaryViewDirectory);
+        $viewFinder = app('view.finder');
+        $viewFinder->prependLocation($this->temporaryViewDirectory);
+        $viewFinder->flush();
 
         Schema::create('system', function (Blueprint $table) {
             $table->increments('id');
