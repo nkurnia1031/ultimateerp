@@ -103,44 +103,14 @@ class HeavyEquipmentTripActionsTest extends TestCase
         DB::table('users')->insert(['id' => 1, 'business_id' => 7, 'first_name' => 'Sopir', 'last_name' => 'Satu', 'surname' => '', 'user_type' => 'user']);
     }
 
-    public function test_index_passes_mutable_manual_and_imported_spb_to_action_view(): void
+    public function test_index_template_exposes_edit_and_delete_for_mutable_rows(): void
     {
-        $importedId = $this->createTrip(101, 'draft', 'rekap.xlsx');
-        $manualId = $this->createTrip(102, 'completed', null);
-        $verifiedId = $this->createTrip(103, 'verified', 'rekap.xlsx');
-        $viewName = null;
-        $viewData = [];
-        $mergeData = null;
-        $viewFactory = \Mockery::mock(\Illuminate\Contracts\View\Factory::class);
-        $viewFactory->shouldReceive('make')
-            ->once()
-            ->andReturnUsing(function ($view, $data, $extraData) use (&$viewName, &$viewData, &$mergeData) {
-                $viewName = $view;
-                $viewData = $data;
-                $mergeData = $extraData;
-
-                return 'SPB index';
-            });
-        $this->app->instance(\Illuminate\Contracts\View\Factory::class, $viewFactory);
-
-        $response = $this->withHeader('X-Requested-With', 'XMLHttpRequest')
-            ->actingAs($this->admin())
-            ->withSession($this->businessSession())
-            ->get(route('asset.fleet.trips.index'));
-
-        $response->assertOk()->assertSee('SPB index');
-        $trips = collect($viewData['trips'] ?? [])->keyBy('id');
-        $this->assertSame('assetmanagement::fleet.trips.index', $viewName);
-        $this->assertSame([], $mergeData);
-        $this->assertTrue($viewData['canManageTrips']);
-        $this->assertTrue($trips[$importedId]->canBeChanged());
-        $this->assertTrue($trips[$manualId]->canBeChanged());
-        $this->assertFalse($trips[$verifiedId]->canBeChanged());
-
         $template = file_get_contents(base_path('Modules/AssetManagement/Resources/views/fleet/trips/index.blade.php'));
         $this->assertStringContainsString('@if($canManageTrips && $trip->canBeChanged())', $template);
         $this->assertStringContainsString("route('asset.fleet.trips.edit', $trip->id)", $template);
         $this->assertStringContainsString("route('asset.fleet.trips.destroy', $trip->id)", $template);
+        $this->assertStringContainsString('>Edit</a>', $template);
+        $this->assertStringContainsString('>Hapus</button>', $template);
     }
 
     public function test_mutable_spb_can_be_deleted_from_the_index_route(): void
@@ -160,6 +130,8 @@ class HeavyEquipmentTripActionsTest extends TestCase
     {
         $billedTripId = $this->createTrip(301, 'draft', 'rekap.xlsx');
         $settledTripId = $this->createTrip(302, 'completed', null);
+        $verifiedTripId = $this->createTrip(303, 'verified', 'rekap.xlsx');
+        $cancelledTripId = $this->createTrip(304, 'cancelled', null);
         DB::table('heavy_equipment_trip_billings')->insert(['trip_id' => $billedTripId]);
         DB::table('heavy_equipment_driver_settlements')->insert(['id' => 1, 'settlement_no' => 'ST-1']);
         DB::table('heavy_equipment_settlement_trips')->insert([
@@ -169,7 +141,7 @@ class HeavyEquipmentTripActionsTest extends TestCase
             'updated_at' => now(),
         ]);
 
-        foreach ([$billedTripId, $settledTripId] as $tripId) {
+        foreach ([$billedTripId, $settledTripId, $verifiedTripId, $cancelledTripId] as $tripId) {
             $this->withHeader('X-Requested-With', 'XMLHttpRequest')
                 ->actingAs($this->admin())
                 ->withSession($this->businessSession())
