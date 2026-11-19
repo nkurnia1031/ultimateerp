@@ -107,8 +107,8 @@ class HeavyEquipmentTripActionsTest extends TestCase
     {
         $template = file_get_contents(base_path('Modules/AssetManagement/Resources/views/fleet/trips/index.blade.php'));
         $this->assertStringContainsString('@if($canManageTrips && $trip->canBeChanged())', $template);
-        $this->assertStringContainsString("route('asset.fleet.trips.edit', $trip->id)", $template);
-        $this->assertStringContainsString("route('asset.fleet.trips.destroy', $trip->id)", $template);
+        $this->assertStringContainsString('route(\'asset.fleet.trips.edit\', $trip->id)', $template);
+        $this->assertStringContainsString('route(\'asset.fleet.trips.destroy\', $trip->id)', $template);
         $this->assertStringContainsString('>Edit</a>', $template);
         $this->assertStringContainsString('>Hapus</button>', $template);
     }
