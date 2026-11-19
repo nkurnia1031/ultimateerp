@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import os
 import re
@@ -214,48 +215,38 @@ def extract_attachments(rows: Iterable[dict[str, Any]], allowed_hosts: set[str])
 
 
 def plan_output_names(attachments: list[Attachment]) -> list[Attachment]:
-    by_url: dict[str, list[Attachment]] = defaultdict(list)
+    counts: dict[str, int] = defaultdict(int)
     for attachment in attachments:
-        by_url[attachment.url].append(attachment)
-
-    by_name: dict[str, list[str]] = defaultdict(list)
-    url_name: dict[str, str] = {}
-    for url, records in by_url.items():
-        name = records[0].original_name
-        url_name[url] = name
-        key = name.casefold()
-        if url not in by_name[key]:
-            by_name[key].append(url)
-
-    reserved_names = set(by_name)
-    allocated_names: set[str] = set()
-    output_by_url: dict[str, tuple[str, int]] = {}
-    for key, urls in by_name.items():
-        collision_count = len(urls)
-        for index, url in enumerate(urls):
-            original_name = url_name[url]
-            if index == 0:
-                output_name = original_name
-            else:
-                path = Path(original_name)
-                suffix = path.suffix
-                stem = path.name[: -len(suffix)] if suffix else path.name
-                attachment_id = re.sub(r"[^A-Za-z0-9_-]", "_", by_url[url][0].attachment_id)[:40]
-                marker = f"__lampiran_{attachment_id}"
-                max_stem_length = max(1, 180 - len(marker) - len(suffix))
-                output_name = f"{stem[:max_stem_length]}{marker}{suffix}"
-                counter = 2
-                while output_name.casefold() in reserved_names or output_name.casefold() in allocated_names:
-                    marker_with_counter = f"{marker}_{counter}"
-                    max_stem_length = max(1, 180 - len(marker_with_counter) - len(suffix))
-                    output_name = f"{stem[:max_stem_length]}{marker_with_counter}{suffix}"
-                    counter += 1
-            allocated_names.add(output_name.casefold())
-            output_by_url[url] = (output_name, collision_count)
+        counts[attachment.original_name.casefold()] += 1
 
     for attachment in attachments:
-        attachment.output_name, attachment.collision_count = output_by_url[attachment.url]
+        collision_count = counts[attachment.original_name.casefold()]
+        attachment.collision_count = collision_count
+        attachment.output_name = legacy_import_destination_name(
+            attachment.original_name,
+            attachment.attachment_id,
+            collision_count > 1,
+        )
     return attachments
+
+
+def legacy_import_destination_name(original_name: str, attachment_id: str, is_collision: bool) -> str:
+    """Mirror LegacyAttachmentImporter::destinationName for DB-linked files."""
+    if not is_collision:
+        return original_name
+
+    safe_id = re.sub(r"[^A-Za-z0-9_-]+", "-", attachment_id)
+    if not safe_id:
+        safe_id = hashlib.sha256(attachment_id.encode("utf-8")).hexdigest()[:16]
+
+    path = Path(original_name)
+    suffix = path.suffix
+    stem = path.name[: -len(suffix)] if suffix else path.name
+    max_stem_length = max(1, 220 - len(safe_id.encode("utf-8")) - len(suffix.encode("utf-8")))
+    stem_bytes = stem.encode("utf-8")[:max_stem_length]
+    stem = stem_bytes.decode("utf-8", errors="ignore") or stem[:1]
+
+    return f"legacy-{safe_id}__{stem}{suffix}"
 
 
 class HostCheckedRedirectHandler(HTTPRedirectHandler):
@@ -301,7 +292,7 @@ def write_report(path: Path, rows: list[Attachment], invalid: list[str], mode: s
 def unique_download_items(attachments: list[Attachment], destination: Path) -> list[Attachment]:
     unique: dict[str, Attachment] = {}
     for item in attachments:
-        unique.setdefault(item.url, item)
+        unique.setdefault(item.output_name.casefold(), item)
     for item in unique.values():
         target = destination / item.output_name
         if target.is_file():
@@ -420,9 +411,9 @@ def main() -> int:
     attachments, invalid = extract_attachments(source_rows, allowed_hosts)
     plan_output_names(attachments)
     items = unique_download_items(attachments, destination)
-    status_by_url = {item.url: (item.status, item.detail) for item in items}
+    status_by_name = {item.output_name.casefold(): (item.status, item.detail) for item in items}
     for attachment in attachments:
-        attachment.status, attachment.detail = status_by_url[attachment.url]
+        attachment.status, attachment.detail = status_by_name[attachment.output_name.casefold()]
     collisions = {item.original_name.casefold() for item in attachments if item.collision_count > 1}
     present_count = sum(item.status == "already_present" for item in items)
     missing_count = sum(item.status == "would_download" for item in items)
@@ -432,7 +423,7 @@ def main() -> int:
     print(f"Mode: {mode.upper()}")
     print(f"Manifest rows: {len(source_rows)}")
     print(f"Valid attachment rows: {len(attachments)}")
-    print(f"Unique source files: {len(items)}")
+    print(f"Unique destination files: {len(items)}")
     print(f"Files currently in destination: {existing_files}")
     print(f"Already present (by planned filename): {present_count}")
     print(f"Missing / planned downloads: {missing_count}")
@@ -440,7 +431,7 @@ def main() -> int:
     print(f"Manifest rows in collision groups: {rows_with_collisions}")
     print(f"Invalid rows or URLs: {len(invalid)}")
     if collisions:
-        print("Collision policy: first source keeps the original name; additional files get __lampiran_<id>.")
+        print("Collision policy: colliding files use legacy-<id>__<filename>, matching the Laravel Media importer.")
     if not args.download:
         print("Dry-run makes no network requests and does not create or change files in the destination.")
     else:
@@ -460,9 +451,9 @@ def main() -> int:
                 if item.status == "would_download":
                     item.status = "capacity_limit"
                     item.detail = "Ruang kosong di bawah cadangan 1 GiB."
-            status_by_url = {item.url: (item.status, item.detail) for item in items}
+            status_by_name = {item.output_name.casefold(): (item.status, item.detail) for item in items}
             for attachment in attachments:
-                attachment.status, attachment.detail = status_by_url[attachment.url]
+                attachment.status, attachment.detail = status_by_name[attachment.output_name.casefold()]
             write_report(report, attachments, invalid, mode)
             print(f"Report CSV: {report}")
             return 1
@@ -530,9 +521,9 @@ def main() -> int:
             executor.shutdown(wait=True)
 
     if args.download:
-        result_by_url = {item.url: (item.status, item.detail) for item in items}
+        result_by_name = {item.output_name.casefold(): (item.status, item.detail) for item in items}
         for attachment in attachments:
-            attachment.status, attachment.detail = result_by_url[attachment.url]
+            attachment.status, attachment.detail = result_by_name[attachment.output_name.casefold()]
 
     write_report(report, attachments, invalid, mode)
     print(f"Report CSV: {report}")
