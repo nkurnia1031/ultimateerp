@@ -161,6 +161,11 @@ class HeavyEquipmentVendorLoadingTicketsTest extends TestCase
             {
                 return $ability === 'superadmin';
             }
+
+            public function hasRole($role): bool
+            {
+                return false;
+            }
         };
         $admin->forceFill([
             'id' => 999,
