@@ -100,7 +100,8 @@ class HeavyEquipmentVendorLoadingTicketsTest extends TestCase
 
     public function test_index_returns_clickable_ticket_dates_for_each_document(): void
     {
-        $response = $this->actingAs($this->admin())
+        $response = $this->withHeader('X-Requested-With', 'XMLHttpRequest')
+            ->actingAs($this->admin())
             ->withSession($this->businessSession())
             ->get(route('asset.fleet.vendor-loadings.data'));
 
@@ -121,7 +122,8 @@ class HeavyEquipmentVendorLoadingTicketsTest extends TestCase
 
     public function test_ticket_list_is_limited_to_selected_document_date_and_business(): void
     {
-        $response = $this->actingAs($this->admin())
+        $response = $this->withHeader('X-Requested-With', 'XMLHttpRequest')
+            ->actingAs($this->admin())
             ->withSession($this->businessSession())
             ->get(route('asset.fleet.vendor-loadings.documents.tickets', ['id' => 10, 'date' => '2026-11-19', 'start' => 0, 'length' => 1]));
 
@@ -131,7 +133,8 @@ class HeavyEquipmentVendorLoadingTicketsTest extends TestCase
             ->assertJsonCount(1, 'data');
         $this->assertSame('TK-101', $response->json('data.0.ticket_no'));
 
-        $this->actingAs($this->admin())
+        $this->withHeader('X-Requested-With', 'XMLHttpRequest')
+            ->actingAs($this->admin())
             ->withSession($this->businessSession())
             ->get(route('asset.fleet.vendor-loadings.documents.tickets', ['id' => 20, 'date' => '2026-11-19']))
             ->assertNotFound();
