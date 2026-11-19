@@ -66,6 +66,7 @@ This section is the canonical starting point for a new coding session. Read it b
 4. Inspect existing routes, controllers, services, jobs, and views before adding a parallel implementation.
 5. For automated UI verification, use the GitHub Actions Playwright workflow. Use the local demo for a Playwright reproduction only when the user requests it or remote artifacts and logs cannot explain a failure.
 6. After code changes run the relevant lint/tests, publish module JavaScript when applicable, and finish with `graphify update .`.
+7. If the user asks to reset Codex sessions/cache, follow [`docs/agents/codex-cache-cleanup.md`](docs/agents/codex-cache-cleanup.md) and use `scripts/clear-codex-session-cache.ps1`. Run its `-Preview` first; the manual reset closes active Codex processes and preserves authentication and settings.
 
 ### Local demo and testing
 
