@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Audit and optionally restore legacy attachments and match them to operations.
 
-Dry-run is the default and never makes network requests or writes to the database.
-Pass --business-id to inspect local operational records. --apply-links is a
-separate explicit action that creates Media rows only for matched local files.
+    Dry-run is the default and never makes network requests or writes to the database.
+    Pass --business-id to inspect local operational records. --export-missing-xlsx
+    inventories every database attachment for that business without requiring the
+    legacy manifest. --apply-links is a separate explicit action.
 """
 
 from __future__ import annotations
@@ -78,6 +79,16 @@ class Attachment:
     local_file_name: str = ""
 
 
+@dataclass
+class OperationalAttachment:
+    transaction_id: int
+    reference: str
+    transaction_date: Any
+    transaction_type: str
+    file_name: str
+    storage_location: str = "documents"
+
+
 class CapacityLimitError(Exception):
     """Raised when a download would use the reserved free disk space."""
 
@@ -146,7 +157,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--export-missing-xlsx",
         action="store_true",
-        help="Buat workbook rapi di public/exports untuk lampiran yang hilang dari documents dan media, serta cocok ke transaksi database.",
+        help="Buat Excel di public/exports untuk semua lampiran database business ini yang hilang dari documents/media.",
     )
     parser.add_argument(
         "--public-base-url",
@@ -184,9 +195,11 @@ def parse_args() -> argparse.Namespace:
     if args.apply_links and args.dry_run:
         parser.error("--apply-links menulis ke database; jangan gabungkan dengan --dry-run")
     if args.export_missing_xlsx and args.business_id is None:
-        parser.error("--export-missing-xlsx memerlukan --business-id agar ID dan tanggal transaksi dapat dicocokkan.")
+        parser.error("--export-missing-xlsx memerlukan --business-id untuk menginventarisasi transaksi business tersebut.")
     if args.public_base_url and not args.export_missing_xlsx:
         parser.error("--public-base-url hanya dapat dipakai bersama --export-missing-xlsx.")
+    if args.export_missing_xlsx and (args.download or args.apply_links or args.run_id is not None):
+        parser.error("--export-missing-xlsx adalah inventaris baca-saja; jangan gabungkan dengan --download, --apply-links, atau --run-id.")
     if args.delay < 0 or args.timeout <= 0 or args.retries < 0 or args.max_mib_per_file <= 0:
         parser.error("delay/retries tidak boleh negatif; timeout dan batas ukuran harus lebih dari nol")
     return args
@@ -459,7 +472,14 @@ class OperationalDatabaseMatcher:
     PAYMENT_MODEL = "App\\TransactionPayment"
     ACCOUNT_MODEL_TYPES = ("App\\AccountTransaction", "Modules\\Accounting\\Entities\\AccountTransaction")
 
-    def __init__(self, connection: Any, business_id: int, run_id: int | None, attachments: list[Attachment]) -> None:
+    def __init__(
+        self,
+        connection: Any,
+        business_id: int,
+        run_id: int | None,
+        attachments: list[Attachment],
+        build_indexes: bool = True,
+    ) -> None:
         self.connection = connection
         self.business_id = business_id
         self.cursor = connection.cursor(dictionary=True, buffered=True)
@@ -469,7 +489,8 @@ class OperationalDatabaseMatcher:
         self.crosswalk_index: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
         self.media_by_attachment_id: dict[str, dict[str, Any]] = {}
         self.source_media_candidates: dict[str, dict[str, Any]] = {}
-        self._build_indexes(attachments, run_id)
+        if build_indexes:
+            self._build_indexes(attachments, run_id)
 
     def close(self) -> None:
         self.cursor.close()
@@ -1135,6 +1156,196 @@ class OperationalDatabaseMatcher:
             item.database_reference = str(row.get("ref_no") or item.database_reference or "")
             item.database_transaction_date = row.get("transaction_date") or ""
 
+    def load_all_business_attachments(self) -> list[OperationalAttachment]:
+        """Inventory attachment references on current operations, independent of legacy files."""
+        records: list[OperationalAttachment] = []
+        seen: set[tuple[int, str, str]] = set()
+
+        def transaction_columns(alias: str, reference_expression: str | None = None) -> list[str]:
+            return [
+                f"{alias}.id AS transaction_id",
+                reference_expression
+                or (f"{alias}.ref_no AS reference" if self.has_column("transactions", "ref_no") else "'' AS reference"),
+                f"{alias}.transaction_date AS transaction_date" if self.has_column("transactions", "transaction_date") else "NULL AS transaction_date",
+                f"{alias}.type AS transaction_type" if self.has_column("transactions", "type") else "'' AS transaction_type",
+            ]
+
+        def add_rows(
+            rows: list[dict[str, Any]],
+            default_location: str,
+            type_suffix: str = "",
+            account_operation: bool = False,
+        ) -> None:
+            account_labels = {
+                ("credit", "deposit"): "Bank Deposit",
+                ("debit", "fund_transfer"): "Bank Transfer",
+                ("debit", "withdrawal"): "Bank Withdrawal",
+            }
+            for row in rows:
+                raw_name = str(row.get("file_name") or "").strip()
+                file_name = PurePosixPath(raw_name.replace("\\", "/")).name
+                try:
+                    transaction_id = int(row.get("transaction_id") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if not file_name or transaction_id < 1:
+                    continue
+
+                if account_operation:
+                    transaction_type = account_labels.get(
+                        (str(row.get("account_type") or "").casefold(), str(row.get("account_sub_type") or "").casefold()),
+                        "Account Transaction",
+                    )
+                else:
+                    raw_type = str(row.get("transaction_type") or "").strip()
+                    transaction_type = raw_type.replace("_", " ").title() if raw_type else "Transaction"
+                    transaction_type = transaction_type.removesuffix(" Payment")
+                    transaction_type += type_suffix
+
+                storage_location = str(row.get("storage_location") or default_location).casefold()
+                if storage_location not in {"documents", "media"}:
+                    storage_location = default_location
+                key = (transaction_id, transaction_type.casefold(), file_name.casefold())
+                if key in seen:
+                    continue
+                seen.add(key)
+                records.append(
+                    OperationalAttachment(
+                        transaction_id=transaction_id,
+                        reference=str(row.get("reference") or "").strip(),
+                        transaction_date=row.get("transaction_date") or "",
+                        transaction_type=transaction_type,
+                        file_name=file_name,
+                        storage_location=storage_location,
+                    )
+                )
+
+        if self.has_table("transactions") and {"id", "business_id", "document"}.issubset(self.columns["transactions"]):
+            sql = (
+                "SELECT " + ", ".join([*transaction_columns("transactions"), "transactions.document AS file_name"])
+                + " FROM transactions WHERE transactions.business_id=%s AND transactions.document IS NOT NULL "
+                "AND TRIM(transactions.document)<>''"
+            )
+            if self.has_column("transactions", "deleted_at"):
+                sql += " AND transactions.deleted_at IS NULL"
+            add_rows(self._rows(sql, [self.business_id]), "documents")
+
+        if (
+            self.has_table("expense_lines")
+            and self.has_table("transactions")
+            and {"transaction_id", "document"}.issubset(self.columns["expense_lines"])
+            and {"id", "business_id"}.issubset(self.columns["transactions"])
+        ):
+            sql = (
+                "SELECT " + ", ".join([*transaction_columns("parent"), "line.document AS file_name"])
+                + " FROM expense_lines AS line JOIN transactions AS parent ON parent.id=line.transaction_id "
+                "WHERE parent.business_id=%s AND line.document IS NOT NULL AND TRIM(line.document)<>''"
+            )
+            if self.has_column("transactions", "deleted_at"):
+                sql += " AND parent.deleted_at IS NULL"
+            add_rows(self._rows(sql, [self.business_id]), "documents")
+
+        if (
+            self.has_table("transaction_payments")
+            and self.has_table("transactions")
+            and {"transaction_id", "document"}.issubset(self.columns["transaction_payments"])
+            and {"id", "business_id"}.issubset(self.columns["transactions"])
+        ):
+            payment_reference = None
+            if self.has_column("transaction_payments", "payment_ref_no"):
+                payment_reference = (
+                    "COALESCE(NULLIF(payment.payment_ref_no, ''), parent.ref_no) AS reference"
+                    if self.has_column("transactions", "ref_no")
+                    else "payment.payment_ref_no AS reference"
+                )
+            sql = (
+                "SELECT " + ", ".join([*transaction_columns("parent", payment_reference), "payment.document AS file_name"])
+                + " FROM transaction_payments AS payment JOIN transactions AS parent ON parent.id=payment.transaction_id "
+                "WHERE parent.business_id=%s AND payment.document IS NOT NULL AND TRIM(payment.document)<>''"
+            )
+            if self.has_column("transactions", "deleted_at"):
+                sql += " AND parent.deleted_at IS NULL"
+            add_rows(self._rows(sql, [self.business_id]), "documents", " Payment")
+
+        if (
+            self.has_table("media")
+            and {"business_id", "model_type", "model_id", "file_name"}.issubset(self.columns["media"])
+            and self.has_table("transactions")
+            and {"id", "business_id"}.issubset(self.columns["transactions"])
+        ):
+            model_types = [self.TRANSACTION_MODEL]
+            select = ["parent.id AS transaction_id", "media.file_name"]
+            select.extend(transaction_columns("parent")[1:])
+            select.append("media.storage_location" if self.has_column("media", "storage_location") else "'media' AS storage_location")
+            sql = (
+                "SELECT " + ", ".join(select) + " FROM media JOIN transactions AS parent ON parent.id=media.model_id "
+                "WHERE media.business_id=%s AND parent.business_id=%s AND media.model_type IN ("
+                + self.placeholders(len(model_types)) + ") AND media.file_name IS NOT NULL AND TRIM(media.file_name)<>''"
+            )
+            if self.has_column("transactions", "deleted_at"):
+                sql += " AND parent.deleted_at IS NULL"
+            add_rows(self._rows(sql, [self.business_id, self.business_id, *model_types]), "media")
+
+        if (
+            self.has_table("media")
+            and self.has_table("transaction_payments")
+            and self.has_table("transactions")
+            and {"business_id", "model_type", "model_id", "file_name"}.issubset(self.columns["media"])
+            and {"id", "transaction_id"}.issubset(self.columns["transaction_payments"])
+            and {"id", "business_id"}.issubset(self.columns["transactions"])
+        ):
+            model_types = [self.PAYMENT_MODEL]
+            payment_reference = None
+            if self.has_column("transaction_payments", "payment_ref_no"):
+                payment_reference = (
+                    "COALESCE(NULLIF(payment.payment_ref_no, ''), parent.ref_no) AS reference"
+                    if self.has_column("transactions", "ref_no")
+                    else "payment.payment_ref_no AS reference"
+                )
+            select = ["parent.id AS transaction_id", "media.file_name"]
+            select.extend(transaction_columns("parent", payment_reference)[1:])
+            select.append("media.storage_location" if self.has_column("media", "storage_location") else "'media' AS storage_location")
+            sql = (
+                "SELECT " + ", ".join(select) + " FROM media "
+                "JOIN transaction_payments AS payment ON payment.id=media.model_id "
+                "JOIN transactions AS parent ON parent.id=payment.transaction_id "
+                "WHERE media.business_id=%s AND parent.business_id=%s AND media.model_type IN ("
+                + self.placeholders(len(model_types)) + ") AND media.file_name IS NOT NULL AND TRIM(media.file_name)<>''"
+            )
+            if self.has_column("transactions", "deleted_at"):
+                sql += " AND parent.deleted_at IS NULL"
+            add_rows(self._rows(sql, [self.business_id, self.business_id, *model_types]), "media", " Payment")
+
+        if (
+            self.has_table("media")
+            and self.has_table("account_transactions")
+            and self.has_table("accounts")
+            and {"business_id", "model_type", "model_id", "file_name"}.issubset(self.columns["media"])
+            and {"id", "account_id"}.issubset(self.columns["account_transactions"])
+            and {"id", "business_id"}.issubset(self.columns["accounts"])
+        ):
+            model_types = list(self.ACCOUNT_MODEL_TYPES)
+            select = ["entry.id AS transaction_id", "media.file_name"]
+            select.append("entry.reff_no AS reference" if self.has_column("account_transactions", "reff_no") else "'' AS reference")
+            select.append("entry.operation_date AS transaction_date" if self.has_column("account_transactions", "operation_date") else "NULL AS transaction_date")
+            select.append("entry.type AS account_type" if self.has_column("account_transactions", "type") else "'' AS account_type")
+            select.append("entry.sub_type AS account_sub_type" if self.has_column("account_transactions", "sub_type") else "'' AS account_sub_type")
+            select.append("media.storage_location" if self.has_column("media", "storage_location") else "'media' AS storage_location")
+            sql = (
+                "SELECT " + ", ".join(select) + " FROM media "
+                "JOIN account_transactions AS entry ON entry.id=media.model_id "
+                "JOIN accounts AS account ON account.id=entry.account_id "
+                "WHERE media.business_id=%s AND account.business_id=%s AND media.model_type IN ("
+                + self.placeholders(len(model_types)) + ") AND media.file_name IS NOT NULL AND TRIM(media.file_name)<>''"
+            )
+            if self.has_column("account_transactions", "deleted_at"):
+                sql += " AND entry.deleted_at IS NULL"
+            if self.has_column("accounts", "deleted_at"):
+                sql += " AND account.deleted_at IS NULL"
+            add_rows(self._rows(sql, [self.business_id, self.business_id, *model_types]), "media", account_operation=True)
+
+        return records
+
 
 class HostCheckedRedirectHandler(HTTPRedirectHandler):
     def __init__(self, allowed_hosts: set[str]) -> None:
@@ -1244,7 +1455,7 @@ def excel_date(value: Any) -> dt.date | str | None:
         return text
 
 
-def existing_storage_filenames(destination: Path) -> tuple[set[str], set[str]]:
+def existing_storage_filenames(destination: Path) -> set[str]:
     directories = [
         destination,
         PROJECT_ROOT / "public" / "uploads" / "documents",
@@ -1253,7 +1464,6 @@ def existing_storage_filenames(destination: Path) -> tuple[set[str], set[str]]:
         PROJECT_ROOT / "public" / "media",
     ]
     existing_names: set[str] = set()
-    timestamped_bases: set[str] = set()
     visited: set[Path] = set()
     for directory in directories:
         resolved = directory.resolve()
@@ -1264,25 +1474,12 @@ def existing_storage_filenames(destination: Path) -> tuple[set[str], set[str]]:
             if path.is_symlink() or not path.is_file():
                 continue
             existing_names.add(path.name.casefold())
-            match = TIMESTAMPED_FILENAME_PATTERN.match(path.name)
-            if match:
-                timestamped_bases.add(match.group(1).casefold())
-    return existing_names, timestamped_bases
-
-
-def attachment_exists_in_storage(
-    item: Attachment,
-    existing_names: set[str],
-    timestamped_bases: set[str],
-) -> bool:
-    if item.output_name.casefold() in existing_names or item.local_file_name.casefold() in existing_names:
-        return True
-    return item.collision_count == 1 and item.original_name.casefold() in timestamped_bases
+    return existing_names
 
 
 def write_missing_attachments_xlsx(
     path: Path,
-    attachments: list[Attachment],
+    attachments: list[OperationalAttachment],
     destination: Path,
     business_id: int,
     public_base_url: str,
@@ -1295,15 +1492,11 @@ def write_missing_attachments_xlsx(
             "Paket openpyxl belum terpasang. Jalankan: python -m pip install -r scripts/requirements-audit-lampiran.txt"
         ) from exc
 
-    matched_statuses = {"matched", "already_linked", "existing_media_conflict"}
-    existing_names, timestamped_bases = existing_storage_filenames(destination)
+    existing_names = existing_storage_filenames(destination)
     rows = [
         item
         for item in attachments
-        if item.status == "would_download"
-        and item.database_status in matched_statuses
-        and item.database_media_model_id.isdigit()
-        and not attachment_exists_in_storage(item, existing_names, timestamped_bases)
+        if item.file_name.casefold() not in existing_names
     ]
 
     public_root = (PROJECT_ROOT / "public").resolve()
@@ -1343,11 +1536,11 @@ def write_missing_attachments_xlsx(
     bottom_border = Side(style="hair", color="D9E5DC")
     for row_number, item in enumerate(rows, start=header_row + 1):
         values = [
-            excel_safe_text(item.source_number or item.database_reference),
-            int(item.database_media_model_id),
-            excel_date(item.database_transaction_date),
-            excel_safe_text(item.source_type),
-            excel_safe_text(f"public/uploads/documents/{item.output_name}"),
+            excel_safe_text(item.reference),
+            item.transaction_id,
+            excel_date(item.transaction_date),
+            excel_safe_text(item.transaction_type),
+            excel_safe_text(f"public/uploads/{item.storage_location}/{item.file_name}"),
         ]
         for column, value in enumerate(values, start=1):
             cell = sheet.cell(row=row_number, column=column, value=value)
@@ -1632,8 +1825,54 @@ def download_one(
     return "failed", "Gagal tanpa pesan error."
 
 
+def export_business_attachment_inventory(args: argparse.Namespace) -> int:
+    destination = resolve_path(args.destination)
+    try:
+        public_base_url = resolve_public_base_url(args.public_base_url)
+        connection = connect_database(read_only=True)
+        matcher: OperationalDatabaseMatcher | None = None
+        try:
+            matcher = OperationalDatabaseMatcher(
+                connection,
+                args.business_id,
+                None,
+                [],
+                build_indexes=False,
+            )
+            attachments = matcher.load_all_business_attachments()
+        finally:
+            if matcher is not None:
+                matcher.close()
+            connection.close()
+
+        timestamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+        xlsx_path = PROJECT_ROOT / "public" / "exports" / f"lampiran-missing-business-{args.business_id}-{timestamp}.xlsx"
+        missing_count, download_url = write_missing_attachments_xlsx(
+            xlsx_path,
+            attachments,
+            destination,
+            args.business_id,
+            public_base_url,
+        )
+        print(f"Business ID: {args.business_id}")
+        print(f"Lampiran transaksi dari database: {len(attachments)}")
+        print(f"Lampiran hilang dari documents/media: {missing_count}")
+        print(f"File Excel: {xlsx_path}")
+        print(f"Link unduh: {download_url}")
+        return 0
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    except Exception as exc:
+        print(f"Export Excel gagal: {str(exc).splitlines()[0][:240]}", file=sys.stderr)
+        return 2
+
+
 def main() -> int:
     args = parse_args()
+    if args.export_missing_xlsx:
+        return export_business_attachment_inventory(args)
+
     manifest = resolve_path(args.manifest)
     destination = resolve_path(args.destination)
     mode = "download" if args.download else "dry-run"
@@ -1672,23 +1911,6 @@ def main() -> int:
     status_by_name = {item.output_name.casefold(): (item.status, item.detail) for item in items}
     for attachment in attachments:
         attachment.status, attachment.detail = status_by_name[attachment.output_name.casefold()]
-    xlsx_export: tuple[Path, int, str] | None = None
-    if args.export_missing_xlsx:
-        try:
-            public_base_url = resolve_public_base_url(args.public_base_url)
-            timestamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-            xlsx_path = PROJECT_ROOT / "public" / "exports" / f"lampiran-missing-business-{args.business_id}-{timestamp}.xlsx"
-            exported_rows, download_url = write_missing_attachments_xlsx(
-                xlsx_path,
-                attachments,
-                destination,
-                args.business_id,
-                public_base_url,
-            )
-            xlsx_export = (xlsx_path, exported_rows, download_url)
-        except (OSError, ValueError) as exc:
-            print(f"Export Excel gagal: {str(exc).splitlines()[0][:240]}", file=sys.stderr)
-            return 2
     collisions = {item.original_name.casefold() for item in attachments if item.collision_count > 1}
     present_count = sum(item.status == "already_present" for item in items)
     missing_count = sum(item.status == "would_download" for item in items)
@@ -1720,11 +1942,6 @@ def main() -> int:
         print("`already_linked` berarti baris Media sudah ada di database; status file lokal dihitung terpisah.")
         if args.apply_links:
             print("Media akan ditulis hanya untuk target unik dengan file lokal yang tersedia.")
-    if xlsx_export:
-        xlsx_path, exported_rows, download_url = xlsx_export
-        print(f"Excel lampiran hilang: {exported_rows} baris")
-        print(f"File: {xlsx_path}")
-        print(f"Link unduh: {download_url}")
     if collisions:
         print("Collision policy: colliding files use legacy-<id>__<filename>, matching the Laravel Media importer.")
     if not args.download:
