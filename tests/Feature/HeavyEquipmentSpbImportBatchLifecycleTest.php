@@ -124,9 +124,13 @@ class HeavyEquipmentSpbImportBatchLifecycleTest extends TestCase
         });
         Schema::create('heavy_equipment_vendor_loadings', function (Blueprint $table) {
             $table->increments('id');
+            $table->unsignedInteger('loading_document_id');
+            $table->string('loading_no');
+        });
+        Schema::create('heavy_equipment_vendor_loading_documents', function (Blueprint $table) {
+            $table->increments('id');
             $table->unsignedInteger('business_id');
             $table->unsignedInteger('route_id')->nullable();
-            $table->string('loading_no');
         });
     }
 
@@ -299,9 +303,12 @@ class HeavyEquipmentSpbImportBatchLifecycleTest extends TestCase
         $trip->route_id = $route->id;
         $trip->save();
         $this->saveImportedResult($batch, $trip);
-        DB::table('heavy_equipment_vendor_loadings')->insert([
+        $documentId = DB::table('heavy_equipment_vendor_loading_documents')->insertGetId([
             'business_id' => 7,
             'route_id' => $route->id,
+        ]);
+        DB::table('heavy_equipment_vendor_loadings')->insert([
+            'loading_document_id' => $documentId,
             'loading_no' => 'LV-USED-1',
         ]);
 

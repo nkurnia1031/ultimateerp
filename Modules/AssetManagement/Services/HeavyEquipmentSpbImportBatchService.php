@@ -310,10 +310,11 @@ class HeavyEquipmentSpbImportBatchService
                 if ($otherTrips !== []) {
                     throw new \RuntimeException('Revert diblokir; rute impor sudah dipakai SPB lain: '.implode(', ', $otherTrips).'.');
                 }
-                $otherVendorLoadings = DB::table('heavy_equipment_vendor_loadings')
-                    ->where('business_id', $businessId)
-                    ->whereIn('route_id', $createdRouteIds)
-                    ->pluck('loading_no')->all();
+                $otherVendorLoadings = DB::table('heavy_equipment_vendor_loadings as loading')
+                    ->join('heavy_equipment_vendor_loading_documents as document', 'document.id', '=', 'loading.loading_document_id')
+                    ->where('document.business_id', $businessId)
+                    ->whereIn('document.route_id', $createdRouteIds)
+                    ->pluck('loading.loading_no')->all();
                 if ($otherVendorLoadings !== []) {
                     throw new \RuntimeException('Revert diblokir; rute impor sudah dipakai Loading Vendor: '.implode(', ', $otherVendorLoadings).'.');
                 }

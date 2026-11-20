@@ -26136,7 +26136,7 @@
       "file_type": "code",
       "norm_label": ".formatresulterrors()",
       "source_file": "Modules/AssetManagement/Services/HeavyEquipmentSpbImportBatchService.php",
-      "source_location": "L397"
+      "source_location": "L398"
     },
     {
       "id": "modules_assetmanagement_services_heavyequipmentspbimportbatchservice_heavyequipmentspbimportbatchservice_importedresult",
@@ -26148,7 +26148,7 @@
       "file_type": "code",
       "norm_label": ".importedresult()",
       "source_file": "Modules/AssetManagement/Services/HeavyEquipmentSpbImportBatchService.php",
-      "source_location": "L352"
+      "source_location": "L353"
     },
     {
       "id": "modules_assetmanagement_services_heavyequipmentspbimportbatchservice_heavyequipmentspbimportbatchservice_markfailed",
@@ -26196,7 +26196,7 @@
       "file_type": "code",
       "norm_label": ".readresults()",
       "source_file": "Modules/AssetManagement/Services/HeavyEquipmentSpbImportBatchService.php",
-      "source_location": "L343"
+      "source_location": "L344"
     },
     {
       "id": "modules_assetmanagement_services_heavyequipmentspbimportbatchservice_heavyequipmentspbimportbatchservice_revert",
@@ -26220,7 +26220,7 @@
       "file_type": "code",
       "norm_label": ".tripfingerprint()",
       "source_file": "Modules/AssetManagement/Services/HeavyEquipmentSpbImportBatchService.php",
-      "source_location": "L366"
+      "source_location": "L367"
     },
     {
       "id": "modules_assetmanagement_services_heavyequipmentspbimportbatchservice_heavyequipmentspbimportbatchservice_updateprogress",
@@ -26232,7 +26232,7 @@
       "file_type": "code",
       "norm_label": ".updateprogress()",
       "source_file": "Modules/AssetManagement/Services/HeavyEquipmentSpbImportBatchService.php",
-      "source_location": "L382"
+      "source_location": "L383"
     },
     {
       "id": "modules_assetmanagement_services_heavyequipmentspbimportservice_heavyequipmentspbimportservice_prepareforimport",
@@ -191398,7 +191398,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Modules/AssetManagement/Services/HeavyEquipmentSpbImportBatchService.php",
-      "source_location": "L362",
+      "source_location": "L363",
       "weight": 1.0
     },
     {
@@ -191614,7 +191614,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Modules/AssetManagement/Services/HeavyEquipmentSpbImportBatchService.php",
-      "source_location": "L386",
+      "source_location": "L387",
       "weight": 1.0
     },
     {
@@ -301270,7 +301270,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Modules/AssetManagement/Services/HeavyEquipmentSpbImportBatchService.php",
-      "source_location": "L352",
+      "source_location": "L353",
       "weight": 1.0
     },
     {
@@ -301282,7 +301282,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Modules/AssetManagement/Services/HeavyEquipmentSpbImportBatchService.php",
-      "source_location": "L343",
+      "source_location": "L344",
       "weight": 1.0
     },
     {
@@ -301294,7 +301294,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Modules/AssetManagement/Services/HeavyEquipmentSpbImportBatchService.php",
-      "source_location": "L366",
+      "source_location": "L367",
       "weight": 1.0
     },
     {
@@ -393726,7 +393726,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Modules/AssetManagement/Services/HeavyEquipmentSpbImportBatchService.php",
-      "source_location": "L343",
+      "source_location": "L344",
       "weight": 1.0
     },
     {
@@ -393737,7 +393737,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Modules/AssetManagement/Services/HeavyEquipmentSpbImportBatchService.php",
-      "source_location": "L352",
+      "source_location": "L353",
       "weight": 1.0
     },
     {
@@ -393748,7 +393748,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Modules/AssetManagement/Services/HeavyEquipmentSpbImportBatchService.php",
-      "source_location": "L366",
+      "source_location": "L367",
       "weight": 1.0
     },
     {
@@ -393759,7 +393759,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Modules/AssetManagement/Services/HeavyEquipmentSpbImportBatchService.php",
-      "source_location": "L382",
+      "source_location": "L383",
       "weight": 1.0
     },
     {
@@ -393770,7 +393770,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Modules/AssetManagement/Services/HeavyEquipmentSpbImportBatchService.php",
-      "source_location": "L397",
+      "source_location": "L398",
       "weight": 1.0
     },
     {
@@ -437596,7 +437596,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Modules/AssetManagement/Services/HeavyEquipmentSpbImportBatchService.php",
-      "source_location": "L345",
+      "source_location": "L346",
       "weight": 1.0
     },
     {
@@ -437644,7 +437644,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Modules/AssetManagement/Services/HeavyEquipmentSpbImportBatchService.php",
-      "source_location": "L384",
+      "source_location": "L385",
       "weight": 1.0
     },
     {
@@ -443139,5 +443139,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "2088244fd2ccc941e7f078f62f064e1bc9d39203"
+  "built_at_commit": "5413cd3ffc1b5bffecda3070eccd01c84b810791"
 }
