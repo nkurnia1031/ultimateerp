@@ -5,9 +5,11 @@ namespace Tests\Feature;
 use App\Services\UserImportBatchService;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Modules\AssetManagement\Jobs\AnalyzeHeavyEquipmentVendorLoadingImportJob;
+use Modules\AssetManagement\Jobs\ProcessHeavyEquipmentVendorLoadingImportJob;
 use Modules\AssetManagement\Http\Controllers\HeavyEquipmentVendorLoadingController;
 use Modules\AssetManagement\Services\HeavyEquipmentVendorLoadingDocumentService;
 use Modules\AssetManagement\Services\HeavyEquipmentVendorLoadingImportHistoryService;
@@ -179,6 +181,88 @@ class HeavyEquipmentVendorLoadingImportHistoryTest extends TestCase
         $this->assertNull(DB::table('heavy_equipment_vendor_loading_import_batches')->where('id', $legacyId)->value('file_path'));
         $this->assertNull($shared->fresh()->staging_path);
         $this->assertSame('failed', $shared->fresh()->status);
+    }
+
+    public function test_failed_vendor_import_can_be_retried_when_preview_exists_and_no_documents_were_created(): void
+    {
+        Queue::fake();
+        $previewPath = 'vendor-loading-imports/7/111/51.preview.json';
+        Storage::disk('local')->put($previewPath, json_encode(['sheets' => [['sheet_key' => 'sheet-a', 'rows' => []]]]));
+        $legacyId = $this->domainBatch([
+            'business_id' => 7,
+            'created_by' => 111,
+            'status' => 'failed',
+            'stage' => 'failed',
+            'imported_documents' => 0,
+            'imported_lines' => 0,
+            'preview_path' => $previewPath,
+            'results_json' => json_encode(['sheet-a' => ['status' => 'error']]),
+            'errors_json' => json_encode(['previous failure']),
+        ]);
+        $shared = app(HeavyEquipmentVendorLoadingImportHistoryService::class)
+            ->createForDomainBatch($legacyId, 7, 111, 'vendor-retry-fixture.xlsx');
+
+        $history = $this->actingAs($this->admin())
+            ->withSession($this->businessSession(7))
+            ->get(route('asset.fleet.vendor-loadings.import.batches.index'));
+        $history->assertOk()->assertJsonPath('data.0.can_retry', true);
+
+        $response = $this->actingAs($this->admin())
+            ->withSession($this->businessSession(7))
+            ->post(route('asset.fleet.vendor-loadings.import.batches.retry', $legacyId));
+
+        $response->assertStatus(202)->assertJsonPath('batch_id', $legacyId)
+            ->assertJsonPath('history_batch_id', $shared->id);
+        Queue::assertPushed(ProcessHeavyEquipmentVendorLoadingImportJob::class, fn ($job) => true);
+        $this->assertDatabaseHas('heavy_equipment_vendor_loading_import_batches', [
+            'id' => $legacyId,
+            'status' => 'queued_import',
+            'results_json' => '{}',
+            'errors_json' => '[]',
+        ]);
+        $this->assertSame('queued_import', $shared->fresh()->status);
+    }
+
+    public function test_vendor_import_retry_blocks_batches_with_documents_and_other_businesses(): void
+    {
+        Queue::fake();
+        $previewPath = 'vendor-loading-imports/7/111/52.preview.json';
+        Storage::disk('local')->put($previewPath, json_encode(['sheets' => []]));
+        $legacyId = $this->domainBatch([
+            'business_id' => 7,
+            'created_by' => 111,
+            'status' => 'failed',
+            'imported_documents' => 0,
+            'preview_path' => $previewPath,
+        ]);
+        DB::table('heavy_equipment_vendor_loading_documents')->insert([
+            'business_id' => 7,
+            'import_batch_id' => $legacyId,
+            'document_no' => 'LVD-RETRY-GUARD',
+            'status' => 'draft',
+            'expense_status' => 'not_linked',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $sameBusiness = $this->actingAs($this->admin())
+            ->withSession($this->businessSession(7))
+            ->get(route('asset.fleet.vendor-loadings.import.batches.index'));
+        $sameBusiness->assertOk()->assertJsonPath('data.0.can_retry', false);
+        $blocked = $this->actingAs($this->admin())
+            ->withSession($this->businessSession(7))
+            ->post(route('asset.fleet.vendor-loadings.import.batches.retry', $legacyId));
+        $blocked->assertStatus(409)->assertJsonPath('success', false);
+
+        $crossBusiness = $this->actingAs($this->admin())
+            ->withSession($this->businessSession(8))
+            ->post(route('asset.fleet.vendor-loadings.import.batches.retry', $legacyId));
+        $crossBusiness->assertNotFound();
+        Queue::assertNothingPushed();
+        $this->assertDatabaseHas('heavy_equipment_vendor_loading_import_batches', [
+            'id' => $legacyId,
+            'status' => 'failed',
+        ]);
     }
 
     public function test_reverse_is_business_scoped_and_refuses_verified_or_expense_linked_documents(): void

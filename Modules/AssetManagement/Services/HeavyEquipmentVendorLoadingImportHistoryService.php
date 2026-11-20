@@ -185,12 +185,22 @@ class HeavyEquipmentVendorLoadingImportHistoryService
             ->where('business_id', $businessId)
             ->whereIn('user_import_batch_id', $sharedIds)
             ->get()->keyBy('user_import_batch_id');
+        $domainIds = $domainBySharedId->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $domainBatchesWithDocuments = $domainIds === [] ? [] : DB::table('heavy_equipment_vendor_loading_documents')
+            ->where('business_id', $businessId)
+            ->whereIn('import_batch_id', $domainIds)
+            ->pluck('import_batch_id')->map(fn ($id) => (int) $id)->all();
 
-        $data['data'] = collect($data['data'])->map(function (array $row) use ($domainBySharedId, $canReverse) {
+        $data['data'] = collect($data['data'])->map(function (array $row) use ($domainBySharedId, $domainBatchesWithDocuments, $canReverse) {
             $domain = $domainBySharedId->get($row['id']);
             $row['domain_batch_id'] = (int) ($domain->id ?? 0);
             $row['can_preview'] = $domain && in_array($domain->status, ['preview_ready', 'queued_import', 'importing'], true);
-            $row['can_retry'] = false;
+            $row['can_retry'] = $domain
+                && $domain->status === 'failed'
+                && filled($domain->preview_path)
+                && Storage::disk('local')->exists($domain->preview_path)
+                && (int) $domain->imported_documents === 0
+                && ! in_array((int) $domain->id, $domainBatchesWithDocuments, true);
             $row['can_revert'] = $canReverse && $domain && in_array($domain->status, ['imported', 'partial'], true);
             $summary = $row['summary'] ?? [];
             $row['result_summary'] = $domain && $domain->status === 'reversed'

@@ -15,6 +15,8 @@ Isolated Vendor history route tests supply their business session and bypass the
 
 Vendor-specific identifiers and action eligibility are projected onto the paginated shared-history result rows. The Vendor domain batch remains authoritative for preview and reverse operations; the adapter explicitly returns mapped rows instead of mutating a Collection by reference.
 
+Vendor retry is limited to failed batches with a retained preview and no created document. Any existing document blocks retry, including a document that committed before a worker failure but whose result payload was not saved; this guard favors avoiding duplicate operational records over automatic partial recovery.
+
 **Status:** accepted for implementation, 2026-11-20.
 
 **Consequences:** importer adapters must expose business-scoped history, details, workbook restoration where a file was uploaded, and safe revert behavior. The rebuilt workbook preserves source values and sheet structure, not original formatting, macros, or exact binary identity. Snapshots live as long as their import history entry and are not automatically purged.

@@ -401,6 +401,9 @@
         if (row.has_snapshot) {
             html += '<a class="btn btn-xs btn-success" href="' + escapeHtml(batchUrl(config.downloadUrlTemplate, row.id)) + '"><i class="fas fa-file-excel"></i> Unduh ulang</a>';
         }
+        if (row.can_retry && row.domain_batch_id) {
+            html += '<button type="button" class="btn btn-xs btn-warning vendor-import-retry" data-batch-id="' + Number(row.domain_batch_id) + '"><i class="fas fa-redo"></i> Coba lagi</button>';
+        }
         if (row.can_revert && row.domain_batch_id) {
             html += '<button type="button" class="btn btn-xs btn-danger vendor-import-reverse" data-batch-id="' + Number(row.domain_batch_id) + '"><i class="fas fa-undo"></i> Reverse</button>';
         }
@@ -580,6 +583,27 @@
 
     $('#vendor-import-history').on('click', '.vendor-import-detail', function () {
         showBatchDetails($(this).data('id'));
+    });
+
+    $('#vendor-import-history').on('click', '.vendor-import-retry', function () {
+        var button = $(this), id = button.data('batch-id');
+        if (!id || !window.confirm('Coba ulang batch #' + id + '? Retry hanya tersedia jika belum ada dokumen yang dibuat.')) return;
+        button.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> Mengantrekan');
+        $.ajax({
+            url: batchUrl(config.retryUrlTemplate, id),
+            type: 'POST',
+            data: { _token: config.csrf },
+            headers: { Accept: 'application/json' }
+        }).done(function (response) {
+            message(true, response.msg || 'Retry import diterima.');
+            if (historyTable) historyTable.ajax.reload(null, false);
+            watchBatch(response.batch_id || id);
+        }).fail(function (xhr) {
+            var body = xhr.responseJSON || {};
+            button.prop('disabled', false).html('<i class="fas fa-redo"></i> Coba lagi');
+            message(false, body.msg || body.message || 'Retry batch gagal diproses.');
+            if (historyTable) historyTable.ajax.reload(null, false);
+        });
     });
 
     $('#vendor-import-apply-date').on('click', function () {

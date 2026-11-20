@@ -725,6 +725,78 @@ class HeavyEquipmentVendorLoadingController extends Controller
         return app(\App\Services\UserImportBatchService::class)->workbookDownload($batch);
     }
 
+    public function retryImportBatch(int $id)
+    {
+        $this->authorizeImport();
+        $batch = $this->ownedImportBatch($id);
+        if ($batch->status !== 'failed' || empty($batch->preview_path)
+            || ! \Illuminate\Support\Facades\Storage::disk('local')->exists($batch->preview_path)) {
+            return response()->json(['success' => false, 'msg' => 'Batch ini tidak memiliki preview gagal yang dapat dicoba ulang.'], 409);
+        }
+
+        try {
+            DB::transaction(function () use ($id) {
+                $locked = DB::table('heavy_equipment_vendor_loading_import_batches')
+                    ->where('id', $id)->where('business_id', $this->businessId())->lockForUpdate()->first();
+                if (! $locked || $locked->status !== 'failed' || empty($locked->preview_path)) {
+                    throw new \InvalidArgumentException('Batch sudah berubah status dan tidak dapat dicoba ulang.');
+                }
+                if (! \Illuminate\Support\Facades\Storage::disk('local')->exists($locked->preview_path)) {
+                    throw new \InvalidArgumentException('File preview batch sudah tidak tersedia. Upload ulang workbook untuk menjalankan import kembali.');
+                }
+                if ((int) $locked->imported_documents > 0
+                    || DB::table('heavy_equipment_vendor_loading_documents')->where('business_id', $this->businessId())->where('import_batch_id', $id)->exists()) {
+                    throw new \InvalidArgumentException('Retry diblokir karena batch sudah membuat dokumen. Periksa detail batch sebelum mengunggah ulang.');
+                }
+
+                DB::table('heavy_equipment_vendor_loading_import_batches')->where('id', $id)->update([
+                    'status' => 'queued_import',
+                    'stage' => 'queued',
+                    'processed_sheets' => 0,
+                    'processed_rows' => 0,
+                    'imported_documents' => 0,
+                    'imported_lines' => 0,
+                    'skipped_rows' => 0,
+                    'results_json' => '{}',
+                    'errors_json' => '[]',
+                    'error_message' => null,
+                    'last_message' => 'Retry diterima. Menunggu worker queue imports.',
+                    'started_at' => null,
+                    'finished_at' => null,
+                    'last_heartbeat_at' => now(),
+                    'updated_at' => now(),
+                ]);
+            });
+
+            \Modules\AssetManagement\Jobs\ProcessHeavyEquipmentVendorLoadingImportJob::dispatch($id);
+            $shared = $this->importHistoryService->syncFromDomainBatch($id);
+
+            return response()->json([
+                'success' => true,
+                'queued' => true,
+                'batch_id' => $id,
+                'history_batch_id' => (int) ($shared->id ?? 0),
+                'msg' => 'Retry import diterima dan berjalan di latar belakang.',
+            ], 202);
+        } catch (\InvalidArgumentException $exception) {
+            return response()->json(['success' => false, 'msg' => $exception->getMessage()], 409);
+        } catch (\Throwable $exception) {
+            report($exception);
+            DB::table('heavy_equipment_vendor_loading_import_batches')->where('id', $id)->where('status', 'queued_import')->update([
+                'status' => 'failed',
+                'stage' => 'failed',
+                'last_message' => 'Retry tidak dapat dimasukkan ke antrean import.',
+                'error_message' => $exception->getMessage(),
+                'finished_at' => now(),
+                'last_heartbeat_at' => now(),
+                'updated_at' => now(),
+            ]);
+            $this->importHistoryService->syncFromDomainBatch($id);
+
+            return response()->json(['success' => false, 'msg' => 'Retry tidak dapat dimasukkan ke antrean import.'], 409);
+        }
+    }
+
     public function importBatchStatus(int $id)
     {
         $this->authorizeImport();

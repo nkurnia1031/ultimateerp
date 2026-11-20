@@ -160,6 +160,7 @@ window.vendorLoadingImportConfig = {
     historyUrl: @json(route('asset.fleet.vendor-loadings.import.batches.index')),
     detailUrlTemplate: @json(route('asset.fleet.vendor-loadings.import.batches.details', ['id' => '__ID__'])),
     downloadUrlTemplate: @json(route('asset.fleet.vendor-loadings.import.batches.download', ['id' => '__ID__'])),
+    retryUrlTemplate: @json(route('asset.fleet.vendor-loadings.import.batches.retry', ['id' => '__ID__'])),
     reverseUrlTemplate: @json(route('asset.fleet.vendor-loadings.import.batches.reverse', ['id' => '__ID__'])),
     canReverseImports: @json($canReverseImports),
     resumeBatchId: @json($resumeBatchId),

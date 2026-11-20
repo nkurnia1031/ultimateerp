@@ -68,6 +68,7 @@ SPB driver matching normalizes honorifics, punctuation, spacing, and case, then 
 - D28 - Vendor history layout: use the shared responsive DataTable behavior and allow action controls and long workbook/error text to wrap, avoiding a forced minimum table width on narrow screens.
 - D29 - Vendor route-test context: isolated route tests provide the active business session directly and bypass only `SetSessionData` and `AdminSidebarMenu`, which need unrelated Business/Currency and CRM menu tables. Authentication, importer permissions, controller business scoping, and cross-business denial remain exercised.
 - D30 - Vendor history row projection: add legacy-batch identifiers and preview/reverse eligibility by mapping the already paginated shared-history rows. Keep the domain batch authoritative for Vendor actions and avoid relying on mutation by reference over a Collection.
+- D31 - Vendor retry safety: allow retry only for a failed batch with a retained preview and no created documents; reset prior failed sheet results before queueing. Refuse retries when any batch document exists, preventing a worker failure between document creation and result persistence from duplicating records.
 
 ## Testing Decisions
 
