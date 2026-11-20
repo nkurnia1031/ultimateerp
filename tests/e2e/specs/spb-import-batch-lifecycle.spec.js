@@ -34,10 +34,17 @@ test('SPB upload flows through preview, queued import, restore, details, and rev
             mimeType: 'text/csv',
             buffer: Buffer.from(csv),
         });
+        const uploadResponsePromise = page.waitForResponse((response) =>
+            response.request().method() === 'POST' && response.url().endsWith('/asset/fleet/trips/import/preview'),
+        );
         await page.getByRole('button', { name: 'Preview Workbook' }).click();
+        const uploadResponse = await uploadResponsePromise;
+        const uploadPayload = await uploadResponse.json();
+        expect(uploadResponse.status(), JSON.stringify(uploadPayload)).toBe(202);
+        expect(uploadPayload.batch.id).toBeTruthy();
 
         const historyRow = page.locator('#fleet-spb-import-history-table tbody tr').filter({ hasText: fileName });
-        await expect(historyRow).toBeVisible();
+        await expect(historyRow).toBeVisible({ timeout: 30_000 });
         await expect.poll(async () => historyRow.locator('td').nth(2).innerText(), {
             timeout: 90_000,
             intervals: [500, 1000, 2000],
