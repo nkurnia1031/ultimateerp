@@ -1,4 +1,5 @@
-const { spawn } = require('node:child_process');
+const { execFileSync, spawn } = require('node:child_process');
+const fs = require('node:fs');
 const path = require('node:path');
 const { expect, test } = require('@playwright/test');
 
@@ -6,8 +7,12 @@ const repoRoot = path.resolve(__dirname, '../../..');
 
 test('SPB upload flows through preview, queued import, restore, details, and revert', async ({ page }) => {
     const sourceId = `CI-SPB-${Date.now()}-${test.info().retry}`;
-    const fileName = `spb-e2e-${sourceId}.csv`;
-    const businessDate = new Date().toISOString().slice(0, 10);
+    const fixturePath = execFileSync(
+        'php',
+        ['tests/e2e/fixtures/create-spb-import-workbook.php', sourceId],
+        { cwd: repoRoot, encoding: 'utf8' },
+    ).trim();
+    const fileName = path.basename(fixturePath);
     let queueWorker;
 
     try {
@@ -25,15 +30,7 @@ test('SPB upload flows through preview, queued import, restore, details, and rev
             { cwd: repoRoot, stdio: 'ignore' },
         );
 
-        const csv = [
-            'No Polisi,No Tiket,Tanggal muat,Tanggal bongkar,Pks,Pabrik,Diterima,OA,Driver',
-            `CI-SPB-TRUCK,${sourceId},${businessDate},${businessDate},CI PKS,CI Pabrik,10,1000,CI SPB Driver`,
-        ].join('\n');
-        await page.locator('#spb-import-file').setInputFiles({
-            name: fileName,
-            mimeType: 'text/csv',
-            buffer: Buffer.from(csv),
-        });
+        await page.locator('#spb-import-file').setInputFiles(fixturePath);
         const uploadResponsePromise = page.waitForResponse((response) =>
             response.request().method() === 'POST' && response.url().endsWith('/asset/fleet/trips/import/preview'),
         );
@@ -83,5 +80,6 @@ test('SPB upload flows through preview, queued import, restore, details, and rev
         if (queueWorker && !queueWorker.killed) {
             queueWorker.kill('SIGTERM');
         }
+        fs.rmSync(fixturePath, { force: true });
     }
 });
