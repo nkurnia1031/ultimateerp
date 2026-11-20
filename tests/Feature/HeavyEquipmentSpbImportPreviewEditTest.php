@@ -74,11 +74,11 @@ class HeavyEquipmentSpbImportPreviewEditTest extends TestCase
             ['id' => 4, 'business_id' => 7, 'asset_code' => 'BM-9133', 'name' => 'BM 9133'],
         ]);
         DB::table('users')->insert([
-            ['id' => 1, 'business_id' => 7, 'first_name' => 'Sopir Lama', 'surname' => '', 'user_type' => 'user'],
-            ['id' => 2, 'business_id' => 7, 'first_name' => 'Nama Resmi', 'surname' => '', 'user_type' => 'user'],
-            ['id' => 3, 'business_id' => 8, 'first_name' => 'Private', 'surname' => '', 'user_type' => 'user'],
-            ['id' => 4, 'business_id' => 7, 'surname' => 'Mr', 'first_name' => 'Baginda Imom', 'last_name' => 'Nasution', 'user_type' => 'user'],
-            ['id' => 5, 'business_id' => 7, 'first_name' => 'Mr. Baginda Imom Nasution', 'user_type' => 'user'],
+            ['id' => 1, 'business_id' => 7, 'first_name' => 'Sopir Lama', 'last_name' => '', 'surname' => '', 'username' => '', 'user_type' => 'user'],
+            ['id' => 2, 'business_id' => 7, 'first_name' => 'Nama Resmi', 'last_name' => '', 'surname' => '', 'username' => '', 'user_type' => 'user'],
+            ['id' => 3, 'business_id' => 8, 'first_name' => 'Private', 'last_name' => '', 'surname' => '', 'username' => '', 'user_type' => 'user'],
+            ['id' => 4, 'business_id' => 7, 'first_name' => 'Baginda Imom', 'last_name' => 'Nasution', 'surname' => 'Mr', 'username' => '', 'user_type' => 'user'],
+            ['id' => 5, 'business_id' => 7, 'first_name' => 'Mr. Baginda Imom Nasution', 'last_name' => '', 'surname' => '', 'username' => '', 'user_type' => 'user'],
         ]);
     }
 
