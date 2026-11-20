@@ -103,6 +103,9 @@ class HeavyEquipmentSpbImportBatchLifecycleTest extends TestCase
             $table->increments('id');
             $table->unsignedInteger('trip_id');
         });
+        Schema::create('heavy_equipment_driver_settlements', function (Blueprint $table) {
+            $table->increments('id');
+        });
         Schema::create('heavy_equipment_settlement_trips', function (Blueprint $table) {
             $table->increments('id');
             $table->unsignedInteger('trip_id');
