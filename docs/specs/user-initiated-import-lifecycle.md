@@ -57,6 +57,7 @@ SPB driver matching normalizes honorifics, punctuation, spacing, and case, then 
 - D17 - SPB browser coverage: use an isolated CI business, unit, and driver with a real XLSX upload; start the imports queue worker inside Playwright so the browser test covers queued preview and import, source restoration, details, and safe revert without touching local or production records.
 - D18 - SPB E2E workbook fixture: generate a genuine XLSX with PhpSpreadsheet. The virtual CSV upload was rejected by the existing MIME validator as `text/plain` before creating a batch; keep this ticket's browser scenario focused on the workbook path and leave application validation unchanged.
 - D19 - SPB E2E confirmation dialog: attach the dialog listener, initiate the Revert click, accept the native confirmation, then await the click. Accepting only after awaiting the click deadlocks Playwright actionability while the browser dialog is open.
+- D20 - SPB E2E revert response: assert the revert POST's HTTP status and JSON result before waiting for the history table, so a server refusal is distinguishable from a stale table refresh.
 
 ## Testing Decisions
 

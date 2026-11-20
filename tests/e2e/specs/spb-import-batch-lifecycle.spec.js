@@ -70,10 +70,17 @@ test('SPB upload flows through preview, queued import, restore, details, and rev
         expect(download.suggestedFilename()).toBe(`${path.parse(fileName).name}_dipulihkan.xlsx`);
 
         const confirmRevertPromise = page.waitForEvent('dialog');
+        const revertResponsePromise = page.waitForResponse((response) =>
+            response.request().method() === 'POST' && response.url().endsWith(`/asset/fleet/trips/import/batches/${uploadPayload.batch.id}/revert`),
+        );
         const revertClickPromise = completedRow.getByRole('button', { name: 'Revert' }).click();
         const confirmRevert = await confirmRevertPromise;
         await confirmRevert.accept();
         await revertClickPromise;
+        const revertResponse = await revertResponsePromise;
+        const revertPayload = await revertResponse.json();
+        expect(revertResponse.status(), JSON.stringify(revertPayload)).toBe(200);
+        expect(revertPayload.success).toBe(true);
         await expect.poll(async () => {
             const currentRow = page.locator('#fleet-spb-import-history-table tbody tr').filter({ hasText: fileName });
             return currentRow.locator('td').nth(2).innerText();
