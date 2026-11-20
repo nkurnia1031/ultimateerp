@@ -25,9 +25,7 @@ class HeavyEquipmentSpbImportService
         $spreadsheet = IOFactory::load($file->getRealPath());
         $fileHash = @hash_file('sha256', $file->getRealPath()) ?: Str::random(64);
         $rows = [];
-        $errors = [];
         $sheets = 0;
-        $logicalRows = [];
 
         foreach ($spreadsheet->getWorksheetIterator() as $worksheet) {
             $sheets++;
@@ -66,38 +64,10 @@ class HeavyEquipmentSpbImportService
                 $candidate['asset_id'] = $this->resolveAssetId($businessId, $candidate['asset_label'] ?? '');
                 $candidate['driver_id'] = $this->resolveDriverId($businessId, $candidate['driver_label'] ?? '');
                 $candidate['route_id'] = $this->resolveRouteId($businessId, $candidate['route_name'] ?? '');
+                $candidate['source_asset_label'] = $candidate['asset_label'] ?? '';
+                $candidate['source_driver_label'] = $candidate['driver_label'] ?? '';
                 $candidate['row_errors'] = [];
-
-                if (HeavyEquipmentTrip::where('business_id', $businessId)
-                    ->where('source_fingerprint', $candidate['source_fingerprint'])
-                    ->exists()) {
-                    $candidate['row_errors'][] = 'Baris workbook ini sudah pernah diimpor berdasarkan fingerprint sumber.';
-                }
-                if (! empty($candidate['ticket_no']) && HeavyEquipmentTrip::where('business_id', $businessId)
-                    ->where('ticket_no', $candidate['ticket_no'])
-                    ->exists()) {
-                    $candidate['row_errors'][] = 'Nomor tiket ini sudah pernah digunakan pada SPB.';
-                }
-
-                $logicalKey = $this->logicalKey($candidate);
-                if (isset($logicalRows[$logicalKey]) && $logicalRows[$logicalKey]['sheet'] !== $worksheet->getTitle()) {
-                    $candidate['row_errors'][] = "Duplikat logis dari sheet {$logicalRows[$logicalKey]['sheet']} baris {$logicalRows[$logicalKey]['row']} tidak akan diimpor dua kali.";
-                } else {
-                    $logicalRows[$logicalKey] = ['sheet' => $worksheet->getTitle(), 'row' => $rowNumber];
-                }
-
-                if (empty($candidate['asset_id'])) {
-                    $candidate['row_errors'][] = 'Kendaraan/unit belum cocok dengan Assets.';
-                }
-                if (empty($candidate['driver_id'])) {
-                    $candidate['row_errors'][] = 'Nama sopir belum cocok dengan Users.';
-                }
-                if (empty($candidate['trip_date'])) {
-                    $candidate['row_errors'][] = 'Tanggal trip tidak terbaca.';
-                }
-                if (($candidate['actual_tons'] ?? 0) <= 0) {
-                    $candidate['row_errors'][] = 'Tonase aktual tidak valid.';
-                }
+                $candidate['row_error_fields'] = [];
                 $rows[] = $candidate;
             }
         }
@@ -106,22 +76,136 @@ class HeavyEquipmentSpbImportService
             throw new \InvalidArgumentException('Tidak ada baris SPB yang dapat dibaca dari workbook.');
         }
 
-        foreach ($rows as $row) {
+        return $this->refreshPreview($rows, $businessId, $sheets);
+    }
+
+    public function updatePreviewRow(array $rows, int $rowIndex, array $changes, int $businessId, int $sheetCount = 0): array
+    {
+        if (! array_key_exists($rowIndex, $rows)) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'row' => 'Baris preview tidak ditemukan. Muat ulang workbook dan coba lagi.',
+            ]);
+        }
+
+        foreach ($rows as &$row) {
+            $row['source_asset_label'] = $row['source_asset_label'] ?? ($row['asset_label'] ?? '');
+            $row['source_driver_label'] = $row['source_driver_label'] ?? ($row['driver_label'] ?? '');
+        }
+        unset($row);
+
+        $target = $rows[$rowIndex];
+        $assetGroup = $this->normalizeGroupLabel($target['source_asset_label'] ?? '');
+        $driverGroup = $this->normalizeGroupLabel($target['source_driver_label'] ?? '');
+        $editableFields = [
+            'ticket_no', 'trip_date', 'load_date', 'unload_date', 'gross_tons', 'tare_tons',
+            'actual_tons', 'received_tons', 'billable_tons', 'sale_rate_per_ton', 'origin',
+            'destination', 'route_name', 'variance_kg', 'tolerance_kg', 'claim_rate_per_kg',
+            'other_deduction_total', 'rate_override_reason',
+        ];
+        foreach ($editableFields as $field) {
+            if (array_key_exists($field, $changes)) {
+                $rows[$rowIndex][$field] = $changes[$field];
+            }
+        }
+
+        $assetId = $changes['asset_id'] ?? $this->resolveAssetId($businessId, (string) ($changes['asset_label'] ?? ''));
+        $driverId = $changes['driver_id'] ?? $this->resolveDriverId($businessId, (string) ($changes['driver_label'] ?? ''));
+        $assetLabel = trim((string) ($changes['asset_label'] ?? ''));
+        $driverLabel = trim((string) ($changes['driver_label'] ?? ''));
+
+        foreach ($rows as $index => &$row) {
+            $sameAssetSource = $assetGroup !== '' && $this->normalizeGroupLabel($row['source_asset_label'] ?? '') === $assetGroup;
+            $sameDriverSource = $driverGroup !== '' && $this->normalizeGroupLabel($row['source_driver_label'] ?? '') === $driverGroup;
+
+            if ($index === $rowIndex || $sameAssetSource) {
+                $row['asset_id'] = $assetId ? (int) $assetId : null;
+                $row['asset_label'] = $assetLabel;
+            }
+            if ($index === $rowIndex || $sameDriverSource) {
+                $row['driver_id'] = $driverId ? (int) $driverId : null;
+                $row['driver_label'] = $driverLabel;
+            }
+        }
+        unset($row);
+
+        return $this->refreshPreview($rows, $businessId, $sheetCount);
+    }
+
+    private function refreshPreview(array $rows, int $businessId, int $sheetCount = 0): array
+    {
+        $errors = [];
+        $logicalRows = [];
+        foreach ($rows as $index => &$row) {
+            $row['row_errors'] = [];
+            $row['row_error_fields'] = [];
+            $row['source_asset_label'] = $row['source_asset_label'] ?? ($row['asset_label'] ?? '');
+            $row['source_driver_label'] = $row['source_driver_label'] ?? ($row['driver_label'] ?? '');
+
+            if (HeavyEquipmentTrip::where('business_id', $businessId)
+                ->where('source_fingerprint', $row['source_fingerprint'] ?? null)
+                ->exists()) {
+                $this->addRowError($row, 'row', 'Baris workbook ini sudah pernah diimpor berdasarkan fingerprint sumber.');
+            }
+            if (! empty($row['ticket_no']) && HeavyEquipmentTrip::where('business_id', $businessId)
+                ->where('ticket_no', $row['ticket_no'])
+                ->exists()) {
+                $this->addRowError($row, 'ticket_no', 'Nomor tiket ini sudah pernah digunakan pada SPB.');
+            }
+
+            if (empty($row['asset_id']) || ! Asset::where('business_id', $businessId)->whereKey($row['asset_id'])->exists()) {
+                $row['asset_id'] = null;
+                $this->addRowError($row, 'asset_id', 'Kendaraan/unit belum cocok dengan Assets. Pilih unit yang tersedia atau tambahkan unit baru.');
+            }
+            if (empty($row['driver_id']) || ! DB::table('users')->where('business_id', $businessId)->where('user_type', 'user')->whereNull('deleted_at')->where('id', $row['driver_id'])->exists()) {
+                $row['driver_id'] = null;
+                $this->addRowError($row, 'driver_id', 'Nama sopir belum cocok dengan Users. Pilih sopir yang tersedia atau tambahkan sopir baru.');
+            }
+            if (empty($row['trip_date'])) {
+                $this->addRowError($row, 'trip_date', 'Tanggal trip tidak terbaca.');
+            }
+            if (($row['actual_tons'] ?? 0) <= 0) {
+                $this->addRowError($row, 'actual_tons', 'Tonase aktual tidak valid.');
+            }
+
+            $logicalKey = $this->logicalKey($row);
+            if (isset($logicalRows[$logicalKey]) && $logicalRows[$logicalKey]['sheet'] !== ($row['source_sheet'] ?? '')) {
+                $this->addRowError($row, 'row', "Duplikat logis dari sheet {$logicalRows[$logicalKey]['sheet']} baris {$logicalRows[$logicalKey]['row']} tidak akan diimpor dua kali.");
+            } else {
+                $logicalRows[$logicalKey] = [
+                    'sheet' => $row['source_sheet'] ?? '',
+                    'row' => $row['source_row'] ?? ($index + 1),
+                ];
+            }
+
             foreach ($row['row_errors'] as $error) {
                 $errors[] = "Sheet {$row['source_sheet']} baris {$row['source_row']}: {$error}";
             }
         }
+        unset($row);
 
         return [
-            'rows' => $rows,
+            'rows' => array_values($rows),
             'errors' => array_values(array_unique($errors)),
             'summary' => [
-                'sheets' => $sheets,
+                'sheets' => $sheetCount,
                 'source_rows' => count($rows),
                 'ready_rows' => count(array_filter($rows, fn ($row) => $row['row_errors'] === [])),
                 'error_rows' => count(array_filter($rows, fn ($row) => $row['row_errors'] !== [])),
             ],
         ];
+    }
+
+    private function addRowError(array &$row, string $field, string $message): void
+    {
+        $row['row_errors'][] = $message;
+        $row['row_error_fields'][$field][] = $message;
+    }
+
+    private function normalizeGroupLabel(?string $label): string
+    {
+        $normalized = strtolower(trim((string) preg_replace('/\s+/', ' ', (string) $label)));
+
+        return $normalized;
     }
 
     public function prepareForImport(array $row, int $businessId, ?int $defaultRouteId = null): array

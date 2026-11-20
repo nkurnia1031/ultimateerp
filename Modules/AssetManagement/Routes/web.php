@@ -42,6 +42,7 @@ Route::middleware('web', 'authh', 'auth', 'SetSessionData', 'language', 'timezon
         Route::delete('trips/{id}', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentTripController::class, 'destroy'])->name('trips.destroy');
         Route::get('trips/import', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentTripController::class, 'importForm'])->name('trips.import.form');
         Route::post('trips/import/preview', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentTripController::class, 'importPreview'])->name('trips.import.preview');
+        Route::post('trips/import/rows/{rowIndex}', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentTripController::class, 'updateImportPreviewRow'])->whereNumber('rowIndex')->name('trips.import.rows.update');
         Route::post('trips/import/confirm', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentTripController::class, 'importConfirm'])->name('trips.import.confirm');
         Route::get('trips/project-invoice/choose', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentTripController::class, 'projectInvoiceChooser'])->name('trips.project-invoice.choose');
         Route::get('trips/project-invoice', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentTripController::class, 'projectInvoiceForm'])->name('trips.project-invoice.form');

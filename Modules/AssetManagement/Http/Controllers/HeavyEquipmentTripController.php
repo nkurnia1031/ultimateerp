@@ -3,9 +3,12 @@
 namespace Modules\AssetManagement\Http\Controllers;
 
 use App\BusinessLocation;
+use App\Category;
 use App\Contact;
 use App\InvoiceScheme;
 use App\Product;
+use App\Utils\ModuleUtil;
+use App\Utils\Util;
 use App\User;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -13,18 +16,24 @@ use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 use Modules\AssetManagement\Entities\Asset;
 use Modules\AssetManagement\Entities\HeavyEquipmentRoute;
 use Modules\AssetManagement\Entities\HeavyEquipmentTrip;
 use Modules\AssetManagement\Services\HeavyEquipmentSpbImportService;
 use Modules\AssetManagement\Services\HeavyEquipmentTripService;
+use Modules\AssetManagement\Utils\AssetUtil;
 use Modules\Project\Entities\Project;
 
 class HeavyEquipmentTripController extends Controller
 {
     public function __construct(
         private HeavyEquipmentTripService $tripService,
-        private HeavyEquipmentSpbImportService $spbImportService
+        private HeavyEquipmentSpbImportService $spbImportService,
+        private ModuleUtil $moduleUtil,
+        private Util $commonUtil,
+        private AssetUtil $assetUtil
     )
     {
     }
@@ -182,13 +191,32 @@ class HeavyEquipmentTripController extends Controller
         }
     }
 
-    public function importForm()
+    public function importForm(Request $request)
     {
         $this->authorizeManage();
         $businessId = $this->businessId();
         $routes = HeavyEquipmentRoute::where('business_id', $businessId)->where('is_active', true)->orderBy('name')->pluck('name', 'id');
+        $token = trim((string) $request->query('token'));
+        $preview = null;
+        $viewData = [
+            'assets' => collect(),
+            'drivers' => collect(),
+            'assetCategories' => collect(),
+            'businessLocations' => collect(),
+            'canCreateAsset' => false,
+            'canCreateDriver' => false,
+        ];
 
-        return view('assetmanagement::fleet.trips.import', compact('routes'));
+        if ($token !== '') {
+            $payload = Cache::get($this->importCacheKey($token));
+            if (! $payload || (int) ($payload['business_id'] ?? 0) !== $businessId || (int) ($payload['user_id'] ?? 0) !== (int) auth()->id()) {
+                abort(404, 'Preview import SPB sudah kedaluwarsa atau tidak dapat diakses.');
+            }
+            $preview = $payload['preview'] ?? null;
+            $viewData = $this->importViewData($businessId);
+        }
+
+        return view('assetmanagement::fleet.trips.import', array_merge($viewData, compact('routes', 'preview', 'token')));
     }
 
     public function importPreview(Request $request)
@@ -205,13 +233,137 @@ class HeavyEquipmentTripController extends Controller
                 'preview' => $preview,
             ], now()->addMinutes(30));
             $routes = HeavyEquipmentRoute::where('business_id', $this->businessId())->where('is_active', true)->orderBy('name')->pluck('name', 'id');
+            $viewData = $this->importViewData($this->businessId());
 
-            return view('assetmanagement::fleet.trips.import', compact('routes', 'preview', 'token'));
+            return view('assetmanagement::fleet.trips.import', array_merge($viewData, compact('routes', 'preview', 'token')));
         } catch (\Throwable $e) {
             report($e);
 
             return back()->withInput()->with('status', ['success' => false, 'msg' => $e->getMessage()]);
         }
+    }
+
+    public function updateImportPreviewRow(Request $request, int $rowIndex)
+    {
+        $this->authorizeManage();
+        $businessId = $this->businessId();
+        $validated = $request->validate([
+            'token' => ['required', 'string', 'uuid'],
+            'ticket_no' => ['present', 'nullable', 'string', 'max:100'],
+            'asset_label' => ['present', 'nullable', 'string', 'max:255'],
+            'asset_id' => ['nullable', 'integer'],
+            'asset_mode' => ['required', 'in:existing,label,new'],
+            'driver_label' => ['present', 'nullable', 'string', 'max:255'],
+            'driver_id' => ['nullable', 'integer'],
+            'driver_mode' => ['required', 'in:existing,label,new'],
+            'trip_date' => ['present', 'nullable', 'date'],
+            'load_date' => ['present', 'nullable', 'date'],
+            'unload_date' => ['present', 'nullable', 'date', 'after_or_equal:load_date'],
+            'gross_tons' => ['present', 'nullable', 'numeric', 'min:0'],
+            'tare_tons' => ['present', 'nullable', 'numeric', 'min:0'],
+            'actual_tons' => ['present', 'nullable', 'numeric', 'min:0'],
+            'received_tons' => ['present', 'nullable', 'numeric', 'min:0'],
+            'billable_tons' => ['present', 'nullable', 'numeric', 'min:0'],
+            'sale_rate_per_ton' => ['present', 'nullable', 'numeric', 'min:0'],
+            'origin' => ['present', 'nullable', 'string', 'max:255'],
+            'destination' => ['present', 'nullable', 'string', 'max:255'],
+            'route_name' => ['present', 'nullable', 'string', 'max:255'],
+            'variance_kg' => ['present', 'nullable', 'numeric'],
+            'tolerance_kg' => ['present', 'nullable', 'numeric', 'min:0'],
+            'claim_rate_per_kg' => ['present', 'nullable', 'numeric', 'min:0'],
+            'other_deduction_total' => ['present', 'nullable', 'numeric', 'min:0'],
+            'rate_override_reason' => ['present', 'nullable', 'string', 'max:1000'],
+            'asset_new_name' => ['required_if:asset_mode,new', 'nullable', 'string', 'max:255'],
+            'asset_new_code' => [
+                'nullable', 'string', 'max:255',
+                Rule::unique('assets', 'asset_code')->where(fn ($query) => $query->where('business_id', $businessId)),
+            ],
+            'asset_new_location_id' => ['nullable', 'integer', Rule::exists('business_locations', 'id')->where(fn ($query) => $query->where('business_id', $businessId))],
+            'asset_new_category_id' => ['nullable', 'integer', Rule::exists('categories', 'id')->where(fn ($query) => $query->where('business_id', $businessId)->where('category_type', 'asset'))],
+            'asset_new_model' => ['nullable', 'string', 'max:255'],
+            'asset_new_serial_no' => ['nullable', 'string', 'max:255'],
+            'asset_new_quantity' => ['required_if:asset_mode,new', 'nullable', 'numeric', 'min:1'],
+            'asset_new_unit_price' => ['required_if:asset_mode,new', 'nullable', 'numeric', 'min:0'],
+            'asset_new_purchase_date' => ['nullable', 'date'],
+            'asset_new_purchase_type' => ['nullable', Rule::in(['owned', 'rented', 'leased'])],
+            'asset_new_depreciation' => ['nullable', 'numeric', 'min:0'],
+            'asset_new_description' => ['nullable', 'string', 'max:5000'],
+            'driver_new_name' => ['required_if:driver_mode,new', 'nullable', 'string', 'max:255'],
+        ]);
+
+        $token = $validated['token'];
+        $cacheKey = $this->importCacheKey($token);
+        $payload = Cache::get($cacheKey);
+        if (! $payload || (int) ($payload['business_id'] ?? 0) !== $businessId || (int) ($payload['user_id'] ?? 0) !== (int) auth()->id()) {
+            abort(422, 'Preview import SPB sudah kedaluwarsa atau tidak valid.');
+        }
+        if (! array_key_exists($rowIndex, $payload['preview']['rows'] ?? [])) {
+            throw ValidationException::withMessages(['row' => 'Baris preview tidak ditemukan. Muat ulang workbook dan coba lagi.']);
+        }
+
+        $oldPreview = $payload['preview'];
+        $oldRows = $oldPreview['rows'];
+        $newPreview = DB::transaction(function () use ($validated, $oldPreview, $oldRows, $rowIndex, $businessId) {
+            $changes = $validated;
+            unset($changes['token'], $changes['asset_mode'], $changes['driver_mode']);
+
+            if ($validated['asset_mode'] === 'existing' && ! empty($validated['asset_id'])) {
+                $asset = Asset::where('business_id', $businessId)->find($validated['asset_id']);
+                if (! $asset) {
+                    throw ValidationException::withMessages(['asset_id' => 'Unit yang dipilih tidak tersedia pada business ini.']);
+                }
+                $changes['asset_id'] = $asset->id;
+                $changes['asset_label'] = $asset->name;
+            } elseif ($validated['asset_mode'] === 'new') {
+                $this->authorizeNewAsset($businessId);
+                $asset = $this->createImportAsset($validated, $businessId);
+                $changes['asset_id'] = $asset->id;
+                $changes['asset_label'] = $asset->name;
+            } else {
+                $changes['asset_id'] = null;
+            }
+
+            if ($validated['driver_mode'] === 'existing' && ! empty($validated['driver_id'])) {
+                $driver = User::where('business_id', $businessId)->where('user_type', 'user')->find($validated['driver_id']);
+                if (! $driver) {
+                    throw ValidationException::withMessages(['driver_id' => 'Supir yang dipilih tidak tersedia pada business ini.']);
+                }
+                $changes['driver_id'] = $driver->id;
+                $changes['driver_label'] = trim((string) $driver->user_full_name);
+            } elseif ($validated['driver_mode'] === 'new') {
+                $this->authorizeNewDriver($businessId);
+                $driver = $this->createImportDriver($validated['driver_new_name'], $businessId);
+                $changes['driver_id'] = $driver->id;
+                $changes['driver_label'] = trim((string) $driver->user_full_name);
+            } else {
+                $changes['driver_id'] = null;
+            }
+
+            return $this->spbImportService->updatePreviewRow(
+                $oldRows,
+                $rowIndex,
+                $changes,
+                $businessId,
+                (int) ($oldPreview['summary']['sheets'] ?? 0)
+            );
+        });
+        $payload['preview'] = $newPreview;
+        Cache::put($cacheKey, $payload, now()->addMinutes(30));
+
+        $updatedRows = [];
+        foreach ($newPreview['rows'] as $index => $row) {
+            if (($oldRows[$index] ?? null) !== $row) {
+                $updatedRows[] = ['index' => $index, 'row' => $row];
+            }
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Koreksi preview disimpan. '.$this->affectedRowsMessage(count($updatedRows)),
+            'updated_rows' => $updatedRows,
+            'summary' => $newPreview['summary'],
+            'errors' => $newPreview['errors'],
+        ]);
     }
 
     public function importConfirm(Request $request)
@@ -260,7 +412,7 @@ class HeavyEquipmentTripController extends Controller
         } catch (\Throwable $e) {
             report($e);
 
-            return redirect()->route('asset.fleet.trips.import.form')
+            return redirect()->route('asset.fleet.trips.import.form', ['token' => $request->input('token')])
                 ->with('status', ['success' => false, 'msg' => $e->getMessage()]);
         }
 
@@ -459,6 +611,143 @@ class HeavyEquipmentTripController extends Controller
     private function businessId(): int
     {
         return (int) request()->session()->get('user.business_id');
+    }
+
+    private function importViewData(int $businessId): array
+    {
+        $assets = Asset::where('business_id', $businessId)
+            ->orderBy('name')
+            ->get(['id', 'name', 'asset_code'])
+            ->map(fn (Asset $asset) => [
+                'id' => (int) $asset->id,
+                'name' => (string) $asset->name,
+                'code' => (string) ($asset->asset_code ?? ''),
+                'label' => trim($asset->name.' '.($asset->asset_code ? '('.$asset->asset_code.')' : '')),
+            ])
+            ->values();
+        $drivers = User::where('business_id', $businessId)
+            ->where('user_type', 'user')
+            ->orderBy('first_name')
+            ->get(['id', 'surname', 'first_name', 'last_name', 'username'])
+            ->map(fn (User $driver) => [
+                'id' => (int) $driver->id,
+                'name' => trim((string) $driver->user_full_name),
+                'username' => (string) ($driver->username ?? ''),
+                'label' => trim((string) $driver->user_full_name).($driver->username ? ' ('.$driver->username.')' : ''),
+            ])
+            ->filter(fn (array $driver) => $driver['name'] !== '')
+            ->values();
+
+        $isSuperadmin = auth()->user()->can('superadmin');
+        $canCreateAsset = ($isSuperadmin || auth()->user()->can('asset.create'))
+            && $this->moduleUtil->hasThePermissionInSubscription($businessId, 'assetmanagement_module');
+        $canCreateDriver = ($isSuperadmin || auth()->user()->can('user.create'))
+            && $this->moduleUtil->isSubscribed($businessId)
+            && $this->moduleUtil->isQuotaAvailable('users', $businessId);
+
+        return [
+            'assets' => $assets,
+            'drivers' => $drivers,
+            'assetCategories' => Category::forDropdown($businessId, 'asset'),
+            'businessLocations' => BusinessLocation::forDropdown($businessId),
+            'canCreateAsset' => $canCreateAsset,
+            'canCreateDriver' => $canCreateDriver,
+        ];
+    }
+
+    private function authorizeNewAsset(int $businessId): void
+    {
+        if (! auth()->user()->can('superadmin') && ! auth()->user()->can('asset.create')) {
+            abort(403, 'Anda tidak memiliki izin untuk menambahkan Unit ke data Assets.');
+        }
+        if (! $this->moduleUtil->hasThePermissionInSubscription($businessId, 'assetmanagement_module')) {
+            throw ValidationException::withMessages(['asset_mode' => 'Modul Asset Management tidak aktif untuk business ini.']);
+        }
+    }
+
+    private function createImportAsset(array $input, int $businessId): Asset
+    {
+        $name = trim((string) $input['asset_new_name']);
+        $normalizedName = strtolower(trim((string) preg_replace('/\s+/', ' ', $name)));
+        $existing = Asset::where('business_id', $businessId)->get(['id', 'name', 'asset_code'])
+            ->filter(fn (Asset $asset) => strtolower(trim((string) preg_replace('/\s+/', ' ', $asset->name))) === $normalizedName);
+        if ($existing->count() > 1) {
+            throw ValidationException::withMessages(['asset_mode' => 'Ada beberapa unit dengan nama tersebut. Pilih salah satu dari daftar Unit yang tersedia.']);
+        }
+        if ($existing->isNotEmpty()) {
+            return $existing->first();
+        }
+
+        $assetCode = trim((string) ($input['asset_new_code'] ?? ''));
+        if ($assetCode === '') {
+            $referenceCount = $this->commonUtil->setAndGetReferenceCount('asset_code', $businessId);
+            $assetSettings = $this->assetUtil->getAssetSettings($businessId);
+            $assetCode = $this->commonUtil->generateReferenceNumber('asset_code', $referenceCount, null, $assetSettings['asset_code_prefix'] ?? null);
+        }
+
+        return Asset::create([
+            'business_id' => $businessId,
+            'asset_code' => $assetCode,
+            'name' => $name,
+            'quantity' => (float) $input['asset_new_quantity'],
+            'model' => $input['asset_new_model'] ?? null,
+            'serial_no' => $input['asset_new_serial_no'] ?? null,
+            'unit_price' => (float) $input['asset_new_unit_price'],
+            'category_id' => ! empty($input['asset_new_category_id']) ? (int) $input['asset_new_category_id'] : null,
+            'location_id' => ! empty($input['asset_new_location_id']) ? (int) $input['asset_new_location_id'] : null,
+            'purchase_date' => $input['asset_new_purchase_date'] ?? null,
+            'purchase_type' => $input['asset_new_purchase_type'] ?? 'owned',
+            'depreciation' => $input['asset_new_depreciation'] ?? null,
+            'description' => $input['asset_new_description'] ?? null,
+            'is_allocatable' => false,
+            'created_by' => (int) auth()->id(),
+        ]);
+    }
+
+    private function authorizeNewDriver(int $businessId): void
+    {
+        if (! auth()->user()->can('superadmin') && ! auth()->user()->can('user.create')) {
+            abort(403, 'Anda tidak memiliki izin untuk menambahkan User sopir.');
+        }
+        if (! $this->moduleUtil->isSubscribed($businessId) || ! $this->moduleUtil->isQuotaAvailable('users', $businessId)) {
+            throw ValidationException::withMessages(['driver_mode' => 'Kuota User business tidak tersedia untuk menambahkan sopir.']);
+        }
+    }
+
+    private function createImportDriver(string $name, int $businessId): User
+    {
+        $name = trim((string) preg_replace('/\s+/', ' ', $name));
+        $normalizedName = strtolower($name);
+        $existing = User::where('business_id', $businessId)
+            ->where('user_type', 'user')
+            ->get(['id', 'surname', 'first_name', 'last_name', 'username'])
+            ->filter(fn (User $driver) => strtolower(trim((string) $driver->user_full_name)) === $normalizedName);
+        if ($existing->count() > 1) {
+            throw ValidationException::withMessages(['driver_mode' => 'Ada beberapa User dengan nama tersebut. Pilih salah satu dari daftar Supir yang tersedia.']);
+        }
+        if ($existing->isNotEmpty()) {
+            return $existing->first();
+        }
+
+        return User::create([
+            'business_id' => $businessId,
+            'user_type' => 'user',
+            'surname' => '',
+            'first_name' => $name,
+            'last_name' => null,
+            'email' => null,
+            'username' => null,
+            'password' => null,
+            'allow_login' => false,
+            'status' => 'active',
+            'is_cmmsn_agnt' => false,
+            'selected_contacts' => false,
+        ]);
+    }
+
+    private function affectedRowsMessage(int $count): string
+    {
+        return $count === 1 ? '1 baris diperbarui.' : $count.' baris diperbarui.';
     }
 
     private function importCacheKey(string $token): string
