@@ -17,7 +17,7 @@ test('SPB upload flows through preview, queued import, restore, details, and rev
         await page.locator('#login-form button[type="submit"]').click();
         await page.waitForURL('**/home');
 
-        await page.goto('/asset/trips/import');
+        await page.goto('/asset/fleet/trips/import');
         await expect(page.getByRole('heading', { name: 'Import SPB Angkutan' })).toBeVisible();
         queueWorker = spawn(
             'php',
