@@ -365,6 +365,13 @@ class HeavyEquipmentSpbImportBatchService
 
     private function tripFingerprint(HeavyEquipmentTrip $trip): string
     {
+        // The freshly-created Eloquent instance may not contain database defaults.
+        // Revert later reads the persisted row, so fingerprint the same representation
+        // that the safety check will compare.
+        if ($trip->exists) {
+            $trip->refresh();
+        }
+
         $attributes = $trip->getAttributes();
         unset($attributes['created_at'], $attributes['updated_at']);
         ksort($attributes);

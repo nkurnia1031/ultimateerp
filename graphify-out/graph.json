@@ -26855,7 +26855,7 @@
       "file_type": "code",
       "norm_label": ".formatresulterrors()",
       "source_file": "Modules/AssetManagement/Services/HeavyEquipmentSpbImportBatchService.php",
-      "source_location": "L390"
+      "source_location": "L397"
     },
     {
       "id": "modules_assetmanagement_services_heavyequipmentspbimportbatchservice_heavyequipmentspbimportbatchservice_importedresult",
@@ -26951,7 +26951,7 @@
       "file_type": "code",
       "norm_label": ".updateprogress()",
       "source_file": "Modules/AssetManagement/Services/HeavyEquipmentSpbImportBatchService.php",
-      "source_location": "L375"
+      "source_location": "L382"
     },
     {
       "id": "app_services_contactbusinessimportservice_contactbusinessimportservice_addtoindex",
@@ -190968,7 +190968,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Modules/AssetManagement/Services/HeavyEquipmentSpbImportBatchService.php",
-      "source_location": "L379",
+      "source_location": "L386",
       "weight": 1.0
     },
     {
@@ -392435,7 +392435,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Modules/AssetManagement/Services/HeavyEquipmentSpbImportBatchService.php",
-      "source_location": "L375",
+      "source_location": "L382",
       "weight": 1.0
     },
     {
@@ -392446,7 +392446,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Modules/AssetManagement/Services/HeavyEquipmentSpbImportBatchService.php",
-      "source_location": "L390",
+      "source_location": "L397",
       "weight": 1.0
     },
     {
@@ -436116,7 +436116,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Modules/AssetManagement/Services/HeavyEquipmentSpbImportBatchService.php",
-      "source_location": "L377",
+      "source_location": "L384",
       "weight": 1.0
     },
     {
@@ -441503,5 +441503,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "13ae7a851b2ee7b14af7e44f4b574b084316ff4a"
+  "built_at_commit": "d418dc410f586948d28472b8407fa47c31a1e511"
 }
