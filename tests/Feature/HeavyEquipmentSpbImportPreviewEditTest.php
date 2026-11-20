@@ -230,6 +230,11 @@ class HeavyEquipmentSpbImportPreviewEditTest extends TestCase
             {
                 return $ability === 'superadmin';
             }
+
+            public function hasRole($roles, $guard = null): bool
+            {
+                return true;
+            }
         };
         $admin->forceFill([
             'id' => 999,
