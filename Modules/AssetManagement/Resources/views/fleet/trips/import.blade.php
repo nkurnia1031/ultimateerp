@@ -61,6 +61,14 @@
                         <p class="help-block">Dipakai hanya untuk baris yang belum memiliki nama rute.</p>
                     </div>
 
+                    <div class="spb-preview-tools">
+                        <label for="spb-import-status-filter">Filter status</label>
+                        <select id="spb-import-status-filter" class="form-control input-sm">
+                            <option value="">Semua status</option>
+                            <option value="Siap">Siap</option>
+                            <option value="Perlu koreksi">Perlu koreksi</option>
+                        </select>
+                    </div>
                     <div class="table-responsive fleet-datatable-wrap">
                         <table id="fleet-spb-import-preview-table" class="table table-bordered table-striped table-condensed fleet-datatable" style="width:100%">
                             <thead><tr><th>Sumber</th><th>Tiket</th><th>Unit</th><th>Sopir</th><th>Tanggal</th><th>Ton aktual</th><th>Tarif/ton</th><th>Status</th><th>Catatan</th><th>Aksi</th></tr></thead>
@@ -212,9 +220,13 @@
     .spb-import-summary-ready { border-color: #b8dec5; background: #f0faf3; }
     .spb-import-summary-error { border-color: #edc8c8; background: #fff6f5; }
     .spb-default-route { max-width: 520px; }
-    .spb-import-modal .modal-dialog { width: min(960px, calc(100% - 24px)); margin: 12px auto; }
-    .spb-import-modal .modal-content { max-height: calc(100vh - 24px); display: flex; flex-direction: column; }
-    .spb-import-modal .modal-body { overflow-y: auto; }
+    .spb-preview-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+    .spb-preview-tools label { margin: 0; }
+    .spb-preview-tools select { width: auto; min-width: 180px; }
+    .spb-import-modal .modal-dialog { width: min(960px, calc(100% - 24px)); height: calc(100vh - 24px); margin: 12px auto; }
+    .spb-import-modal .modal-content { height: 100%; max-height: 100%; overflow: hidden; }
+    .spb-import-modal #spb-import-edit-form { display: flex; flex-direction: column; height: 100%; min-height: 0; margin: 0; }
+    .spb-import-modal .modal-body { flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; }
     .spb-import-modal .modal-header { flex: 0 0 auto; }
     .spb-import-modal .modal-footer { flex: 0 0 auto; }
     .spb-import-modal .spb-edit-section { margin-bottom: 20px; padding-bottom: 14px; border-bottom: 1px solid #e6ebef; }
@@ -235,8 +247,7 @@
         .spb-import-page .spb-import-upload-form .form-group { margin-bottom: 12px; }
         .spb-import-page .spb-import-upload-form button,
         .spb-import-page .spb-import-upload-form a { margin: 0 5px 5px 0; }
-        .spb-import-modal .modal-dialog { width: calc(100% - 16px); margin: 8px; }
-        .spb-import-modal .modal-content { max-height: calc(100vh - 16px); }
+        .spb-import-modal .modal-dialog { width: calc(100% - 16px); height: calc(100vh - 16px); margin: 8px; }
     }
 </style>
 
@@ -283,6 +294,12 @@ $(function () {
             { data: null, orderable: false, searchable: false, render: function (data, type, row) { return type === 'display' ? '<button type="button" class="btn btn-xs btn-primary spb-edit-row" data-row-index="' + Number(row.preview_index) + '"><i class="fas fa-edit"></i> Edit</button>' : ''; } }
         ],
         columnDefs: [{ targets: [7, 8, 9], orderable: false }]
+    });
+
+    $('#spb-import-status-filter').on('change', function () {
+        var status = $(this).val();
+        var search = status ? '^' + $.fn.dataTable.util.escapeRegex(status) + '$' : '';
+        dataTable.column(7).search(search, true, false).draw();
     });
 
     function setField(name, value) {

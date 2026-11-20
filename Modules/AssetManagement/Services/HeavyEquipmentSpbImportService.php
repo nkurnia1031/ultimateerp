@@ -412,6 +412,8 @@ class HeavyEquipmentSpbImportService
         }
 
         $users = DB::table('users')->where('business_id', $businessId)
+            ->where('user_type', 'user')
+            ->whereNull('deleted_at')
             ->select('id', 'surname', 'first_name', 'last_name', 'username')->get();
         $matches = $users->filter(function ($user) use ($needle) {
             $fullName = trim(implode(' ', array_filter([$user->surname, $user->first_name, $user->last_name])));

@@ -83,11 +83,11 @@
             <div id="vendor-import-tabs" class="vendor-import-tabs" role="tablist"></div>
             <div id="vendor-import-sheet-header" class="vendor-import-sheet-header"></div>
             <div class="vendor-import-grid-tools">
-                <label for="vendor-import-filter">Tampilkan</label>
+                <label for="vendor-import-filter">Filter status</label>
                 <select id="vendor-import-filter" class="form-control input-sm">
-                    <option value="all">Semua baris</option>
+                    <option value="all">Semua status</option>
                     <option value="issues">Perlu diperiksa</option>
-                    <option value="ready">Siap diimpor</option>
+                    <option value="ready">Siap</option>
                 </select>
                 <span class="text-muted">Kolom Tanggal dengan tanda <i class="fas fa-pen"></i> bisa diedit dengan double klik.</span>
             </div>
