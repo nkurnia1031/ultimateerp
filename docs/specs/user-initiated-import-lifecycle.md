@@ -59,6 +59,13 @@ SPB driver matching normalizes honorifics, punctuation, spacing, and case, then 
 - D19 - SPB E2E confirmation dialog: attach the dialog listener, initiate the Revert click, accept the native confirmation, then await the click. Accepting only after awaiting the click deadlocks Playwright actionability while the browser dialog is open.
 - D20 - SPB E2E revert response: assert the revert POST's HTTP status and JSON result before waiting for the history table, so a server refusal is distinguishable from a stale table refresh.
 - D21 - SPB fingerprint source: calculate the post-import fingerprint from the persisted trip row after database defaults have been loaded. This keeps immediate revert comparisons consistent with the row later locked and read from the database.
+- D22 - Vendor batch ownership: keep `heavy_equipment_vendor_loading_import_batches` authoritative for Vendor parsing, progress, and guarded reverse. Link each row to the shared `user_import_batches` envelope; document provenance and reverse continue to use the Vendor batch ID.
+- D23 - Vendor workbook retention: snapshot each sheet's original cell values and headings into private immutable storage during queued analysis, then delete the staged workbook binary whether analysis succeeds or fails. Rebuild a logical `.xlsx` from that snapshot.
+- D24 - Vendor history access: any user with Vendor import permission may search, inspect, and download batches in the active business; only users with Vendor manage permission may reverse them. Vendor unit and driver remain workbook text snapshots.
+- D25 - Existing Vendor batches: preserve old domain batch rows in the shared history by creating a linked history envelope on first history read. Do not invent a source workbook snapshot when none was retained; show download only when a source snapshot exists.
+- D26 - Vendor document links: Vendor import permission is sufficient to inspect the batch and see document/line identifiers. Include a clickable document URL only when the user also has an existing permission to view Vendor Loading records.
+- D27 - Vendor staging cleanup: remove the original workbook after analysis in both normal and queue-failure paths, clear both domain and shared staging references, and keep any deletion failure visible in logs rather than silently claiming the binary was removed.
+- D28 - Vendor history layout: use the shared responsive DataTable behavior and allow action controls and long workbook/error text to wrap, avoiding a forced minimum table width on narrow screens.
 
 ## Testing Decisions
 

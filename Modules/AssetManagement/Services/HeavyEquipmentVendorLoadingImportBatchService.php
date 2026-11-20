@@ -16,7 +16,8 @@ class HeavyEquipmentVendorLoadingImportBatchService
     public function __construct(
         private HeavyEquipmentVendorLoadingImportService $importService,
         private HeavyEquipmentVendorLoadingService $loadingService,
-        private HeavyEquipmentVendorLoadingDocumentService $documentService
+        private HeavyEquipmentVendorLoadingDocumentService $documentService,
+        private HeavyEquipmentVendorLoadingImportHistoryService $historyService
     ) {
     }
 
@@ -36,6 +37,7 @@ class HeavyEquipmentVendorLoadingImportBatchService
             'last_heartbeat_at' => now(),
             'updated_at' => now(),
         ]);
+        $this->historyService->syncFromDomainBatch($batchId);
 
         try {
             $preview = json_decode(Storage::disk('local')->get($batch->preview_path), true, 512, JSON_THROW_ON_ERROR);
@@ -116,7 +118,9 @@ class HeavyEquipmentVendorLoadingImportBatchService
                         }
 
                         $preparedLines = [];
+                        $preparedLineSources = [];
                         $rowErrors = [];
+                        $lineResults = [];
                         $sheetRows = $sheet['rows'] ?? [];
                         foreach ($sheetRows as $rowIndex => $row) {
                             if ($rowIndex % 5 === 0 || $rowIndex + 1 === count($sheetRows)) {
@@ -162,6 +166,13 @@ class HeavyEquipmentVendorLoadingImportBatchService
                             if ($row['row_errors'] !== [] || empty($row['loading_date'])) {
                                 $reason = implode(' ', $row['row_errors']) ?: 'Tanggal loading kosong.';
                                 $rowErrors[] = "Sheet {$sheet['title']} baris {$row['source_row']}: {$reason}";
+                                $lineResults[] = [
+                                    'source_sheet' => $sheet['source_sheet'] ?? $sheet['title'],
+                                    'source_row' => $row['source_row'] ?? null,
+                                    'ticket_no' => $row['ticket_no'] ?? null,
+                                    'status' => 'skipped',
+                                    'error' => $reason,
+                                ];
                                 continue;
                             }
 
@@ -175,6 +186,11 @@ class HeavyEquipmentVendorLoadingImportBatchService
                             $row['vessel_name'] = $metadata['vessel_name'] ?? null;
                             $row['destination'] = $metadata['destination'] ?? null;
                             $preparedLines[] = $this->importService->prepareRow($row, $businessId, [], [], null, false, (int) $customer->id);
+                            $preparedLineSources[] = [
+                                'source_sheet' => $row['source_sheet'] ?? $sheet['title'],
+                                'source_row' => $row['source_row'] ?? null,
+                                'ticket_no' => $row['ticket_no'] ?? null,
+                            ];
                         }
 
                         if ($preparedLines === []) {
@@ -194,12 +210,43 @@ class HeavyEquipmentVendorLoadingImportBatchService
                             'source_file_hash' => $sheet['source_file_hash'] ?? null,
                         ]);
                         $document = $this->documentService->createImported($documentMetadata, $preparedLines, $businessId, $userId);
+                        $createdLines = $document->lines->values();
+                        foreach ($preparedLineSources as $lineIndex => $source) {
+                            $line = $createdLines->get($lineIndex);
+                            $lineResults[] = array_merge($source, [
+                                'status' => 'imported',
+                                'document_id' => (int) $document->id,
+                                'document_no' => $document->document_no,
+                                'line_id' => $line ? (int) $line->id : null,
+                            ]);
+                        }
+                        foreach ($lineResults as &$lineResult) {
+                            $lineResult['document_id'] = (int) $document->id;
+                            $lineResult['document_no'] = $document->document_no;
+                        }
+                        unset($lineResult);
+                        usort($lineResults, fn ($left, $right) => ((int) ($left['source_row'] ?? 0)) <=> ((int) ($right['source_row'] ?? 0)));
 
-                        return ['documents' => $document ? 1 : 0, 'lines' => count($preparedLines), 'skipped' => count($rowErrors), 'errors' => $rowErrors];
+                        return [
+                            'documents' => $document ? 1 : 0,
+                            'document_id' => (int) $document->id,
+                            'document_no' => $document->document_no,
+                            'lines' => count($preparedLines),
+                            'skipped' => count($rowErrors),
+                            'errors' => $rowErrors,
+                            'line_results' => $lineResults,
+                        ];
                     });
                 } catch (\Throwable $e) {
                     report($e);
                     $result = ['documents' => 0, 'lines' => 0, 'skipped' => count($sheet['rows'] ?? []), 'errors' => ['Sheet '.($sheet['title'] ?? $sheetKey).': '.$e->getMessage()]];
+                    $result['line_results'] = array_map(fn ($row) => [
+                        'source_sheet' => $row['source_sheet'] ?? $sheet['title'] ?? $sheetKey,
+                        'source_row' => $row['source_row'] ?? null,
+                        'ticket_no' => $row['ticket_no'] ?? null,
+                        'status' => 'error',
+                        'error' => $e->getMessage(),
+                    ], $sheet['rows'] ?? []);
                 }
                 $result['rows'] = count($sheet['rows'] ?? []);
 
@@ -238,6 +285,8 @@ class HeavyEquipmentVendorLoadingImportBatchService
                         'last_message' => 'Sheet '.($sheet['title'] ?? '—').' selesai: '.(int) ($result['lines'] ?? 0).' line disimpan, '.(int) ($result['skipped'] ?? 0).' dilewati.',
                     ], now()->addHours(3));
                 });
+                $this->historyService->storePayloadForDomainBatch($batchId, 'results', $results);
+                $this->historyService->syncFromDomainBatch($batchId);
                 $completedRows += count($sheet['rows'] ?? []);
             }
 
@@ -252,6 +301,7 @@ class HeavyEquipmentVendorLoadingImportBatchService
                 'last_heartbeat_at' => now(),
                 'updated_at' => now(),
             ]);
+            $this->historyService->syncFromDomainBatch($batchId);
             Cache::forget($this->progressKey($batchId));
         } catch (\Throwable $e) {
             report($e);
@@ -275,6 +325,7 @@ class HeavyEquipmentVendorLoadingImportBatchService
             'last_heartbeat_at' => now(),
             'updated_at' => now(),
         ]);
+        $this->historyService->syncFromDomainBatch($batchId);
         Cache::forget($this->progressKey($batchId));
     }
 

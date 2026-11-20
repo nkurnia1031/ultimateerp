@@ -15,7 +15,6 @@ class HeavyEquipmentVendorLoadingImportReverseService
             $batch = DB::table('heavy_equipment_vendor_loading_import_batches')
                 ->where('id', $batchId)
                 ->where('business_id', $businessId)
-                ->where('created_by', $userId)
                 ->lockForUpdate()
                 ->first();
 
@@ -43,6 +42,18 @@ class HeavyEquipmentVendorLoadingImportReverseService
                         'Dokumen batch lama tidak dapat dipetakan dengan aman. Preview sumber mungkin sudah kedaluwarsa atau workbook yang sama pernah diimpor lebih dari sekali; data tidak dihapus.'
                     );
                 }
+            }
+
+            $blockedDocuments = $documents->filter(function ($document) {
+                return ! empty($document->verified_at)
+                    || in_array((string) $document->status, ['verified', 'cancelled'], true)
+                    || ! empty($document->expense_transaction_id)
+                    || (string) ($document->expense_status ?: 'not_linked') !== 'not_linked';
+            })->pluck('document_no')->values()->all();
+            if ($blockedDocuments !== []) {
+                throw new \InvalidArgumentException(
+                    'Reverse diblokir; dokumen sudah diverifikasi, dibatalkan, atau terkait dengan Expense: '.implode(', ', $blockedDocuments).'.'
+                );
             }
 
             $documentIds = $documents->pluck('id')->all();

@@ -11,6 +11,7 @@ use Modules\AssetManagement\Entities\HeavyEquipmentRoute;
 use Modules\AssetManagement\Entities\HeavyEquipmentVendorLoading;
 use Modules\AssetManagement\Entities\HeavyEquipmentVendorLoadingDocument;
 use Modules\AssetManagement\Services\HeavyEquipmentVendorLoadingImportService;
+use Modules\AssetManagement\Services\HeavyEquipmentVendorLoadingImportHistoryService;
 use Modules\AssetManagement\Services\HeavyEquipmentVendorLoadingImportReverseService;
 use Modules\AssetManagement\Services\HeavyEquipmentVendorLoadingDocumentService;
 use Modules\AssetManagement\Services\HeavyEquipmentVendorLoadingService;
@@ -23,6 +24,7 @@ class HeavyEquipmentVendorLoadingController extends Controller
     public function __construct(
         private HeavyEquipmentVendorLoadingService $loadingService,
         private HeavyEquipmentVendorLoadingImportService $importService,
+        private HeavyEquipmentVendorLoadingImportHistoryService $importHistoryService,
         private HeavyEquipmentVendorLoadingDocumentService $documentService,
         private HeavyEquipmentVendorLoadingImportReverseService $importReverseService
     ) {
@@ -555,9 +557,6 @@ class HeavyEquipmentVendorLoadingController extends Controller
             'canCreateCustomer' => $this->canCreateMinimalCustomer(),
             'canReverseImports' => $this->canManage(),
             'routes' => HeavyEquipmentRoute::where('business_id', $this->businessId())->where('is_active', true)->orderBy('name')->pluck('name', 'id'),
-            'batches' => DB::table('heavy_equipment_vendor_loading_import_batches')
-                ->where('business_id', $this->businessId())->where('created_by', auth()->id())
-                ->orderByDesc('id')->limit(20)->get(),
             'resumeBatchId' => request()->query('batch_id'),
         ]);
     }
@@ -575,6 +574,7 @@ class HeavyEquipmentVendorLoadingController extends Controller
         $request->validate(['file' => 'required|file|mimes:xlsx,xls,csv|max:51200']);
 
         $batchId = null;
+        $storedPath = null;
         try {
             $file = $request->file('file');
             $businessId = $this->businessId();
@@ -592,34 +592,137 @@ class HeavyEquipmentVendorLoadingController extends Controller
                 'created_at' => now(),
                 'updated_at' => now(),
             ]);
+            $sharedBatch = $this->importHistoryService->createForDomainBatch(
+                (int) $batchId,
+                $businessId,
+                $userId,
+                $file->getClientOriginalName()
+            );
             $relativeDirectory = 'vendor-loading-imports/'.$businessId.'/'.$userId;
             $storedPath = \Illuminate\Support\Facades\Storage::disk('local')->putFileAs($relativeDirectory, $file, $batchId.'.'.$extension);
             if (! $storedPath) {
-                DB::table('heavy_equipment_vendor_loading_import_batches')->where('id', $batchId)->delete();
                 throw new \RuntimeException('File gagal disimpan di penyimpanan privat.');
             }
             DB::table('heavy_equipment_vendor_loading_import_batches')->where('id', $batchId)->update([
                 'file_path' => $storedPath,
                 'updated_at' => now(),
             ]);
+            $sharedBatch->forceFill(['staging_path' => $storedPath, 'updated_at' => now()])->save();
             \Modules\AssetManagement\Jobs\AnalyzeHeavyEquipmentVendorLoadingImportJob::dispatch($batchId);
 
             return response()->json([
                 'success' => true,
                 'msg' => 'Upload diterima. Analisis workbook sedang berjalan di latar belakang.',
                 'batch_id' => $batchId,
+                'history_batch_id' => (int) $sharedBatch->id,
                 'status_url' => route('asset.fleet.vendor-loadings.import.batches.status', $batchId),
             ], 202);
         } catch (\Throwable $e) {
             report($e);
+            if ($storedPath) {
+                \Illuminate\Support\Facades\Storage::disk('local')->delete($storedPath);
+            }
             if ($batchId) {
                 DB::table('heavy_equipment_vendor_loading_import_batches')->where('id', $batchId)->whereIn('status', ['queued_preview', 'analyzing'])->update([
                     'status' => 'failed', 'stage' => 'failed', 'last_message' => 'Batch tidak dapat dimasukkan ke antrean analisis.',
-                    'error_message' => $e->getMessage(), 'finished_at' => now(), 'last_heartbeat_at' => now(), 'updated_at' => now(),
+                    'file_path' => null, 'error_message' => $e->getMessage(), 'finished_at' => now(), 'last_heartbeat_at' => now(), 'updated_at' => now(),
                 ]);
+                if ($sharedBatch ?? null) {
+                    $sharedBatch->forceFill(['staging_path' => null, 'updated_at' => now()])->save();
+                }
+                $this->importHistoryService->syncFromDomainBatch((int) $batchId);
             }
             return response()->json(['success' => false, 'msg' => $e->getMessage()], 422);
         }
+    }
+
+    public function importBatchHistory(Request $request)
+    {
+        $this->authorizeImport();
+
+        return response()->json($this->importHistoryService->dataTable(
+            $request,
+            $this->businessId(),
+            $this->canManage()
+        ));
+    }
+
+    public function importBatchDetails(int $id)
+    {
+        $this->authorizeImport();
+        $shared = app(\App\Services\UserImportBatchService::class)->findForBusiness(
+            $id,
+            $this->businessId(),
+            HeavyEquipmentVendorLoadingImportHistoryService::IMPORTER_KEY
+        );
+        $domain = $this->importHistoryService->domainBatchForSharedBatch($id, $this->businessId());
+        $preview = $shared->preview_path
+            ? app(\App\Services\UserImportBatchService::class)->readPayload($shared, 'preview')
+            : ['sheets' => []];
+        $results = $domain->results_json ? (json_decode($domain->results_json, true) ?: []) : [];
+        $sheets = collect($preview['sheets'] ?? [])->keyBy('sheet_key');
+        $canViewDocuments = $this->canView();
+        $rows = [];
+
+        foreach ($results as $sheetKey => $result) {
+            $sheetMetadata = $sheets->get($sheetKey, []);
+            foreach (($result['line_results'] ?? []) as $lineResult) {
+                $documentId = $lineResult['document_id'] ?? $result['document_id'] ?? null;
+                $rows[] = [
+                    'sheet' => $lineResult['source_sheet'] ?? ($sheetMetadata['title'] ?? $result['title'] ?? $sheetKey),
+                    'source_row' => $lineResult['source_row'] ?? null,
+                    'ticket_no' => $lineResult['ticket_no'] ?? null,
+                    'status' => $lineResult['status'] ?? 'error',
+                    'document_id' => $documentId,
+                    'document_no' => $lineResult['document_no'] ?? $result['document_no'] ?? null,
+                    'document_url' => $documentId && $canViewDocuments ? route('asset.fleet.vendor-loadings.documents.show', $documentId) : null,
+                    'line_id' => $lineResult['line_id'] ?? null,
+                    'error' => $lineResult['error'] ?? null,
+                ];
+            }
+
+            if (empty($result['line_results'])) {
+                foreach (($sheetMetadata['rows'] ?? []) as $sourceRow) {
+                    $rows[] = [
+                        'sheet' => $sheetMetadata['title'] ?? $result['title'] ?? $sheetKey,
+                        'source_row' => $sourceRow['source_row'] ?? null,
+                        'ticket_no' => $sourceRow['ticket_no'] ?? null,
+                        'status' => 'legacy',
+                        'document_id' => null,
+                        'document_no' => null,
+                        'document_url' => null,
+                        'line_id' => null,
+                        'error' => implode(' ', $result['errors'] ?? []) ?: 'Detail line tidak tersimpan pada batch lama ini.',
+                    ];
+                }
+            }
+        }
+
+        return response()->json([
+            'batch' => [
+                'id' => (int) $shared->id,
+                'file_name' => $shared->file_name,
+                'status' => $shared->status,
+                'summary' => json_decode((string) $shared->summary_json, true) ?: [],
+                'message' => $shared->last_message,
+                'error' => $shared->error_message,
+                'created_at' => optional($shared->created_at)->format('Y-m-d H:i:s'),
+            ],
+            'rows' => $rows,
+        ]);
+    }
+
+    public function downloadImportBatch(int $id)
+    {
+        $this->authorizeImport();
+        $batch = app(\App\Services\UserImportBatchService::class)->findForBusiness(
+            $id,
+            $this->businessId(),
+            HeavyEquipmentVendorLoadingImportHistoryService::IMPORTER_KEY
+        );
+        abort_if(! $batch->hasSourceSnapshot(), 404, 'Snapshot workbook belum tersedia untuk batch lama ini.');
+
+        return app(\App\Services\UserImportBatchService::class)->workbookDownload($batch);
     }
 
     public function importBatchStatus(int $id)
@@ -638,6 +741,7 @@ class HeavyEquipmentVendorLoadingController extends Controller
         if (! empty($liveProgress['last_message'])) {
             $message = $liveProgress['last_message'];
         }
+        $sharedBatch = $this->importHistoryService->syncFromDomainBatch((int) $batch->id, $liveProgress);
         if ($stale && in_array($status, ['queued_preview', 'queued_import'], true)) {
             $message = 'Masih menunggu worker queue imports. Proses akan berjalan saat worker aktif.';
         } elseif ($stale && in_array($status, ['analyzing', 'importing'], true)) {
@@ -653,6 +757,7 @@ class HeavyEquipmentVendorLoadingController extends Controller
             'success' => true,
             'batch' => [
                 'id' => (int) $batch->id,
+                'history_batch_id' => (int) ($sharedBatch->id ?? 0),
                 'file_name' => $batch->file_name,
                 'status' => $status,
                 'stage' => $liveProgress['stage'] ?? $batch->stage,
@@ -688,10 +793,12 @@ class HeavyEquipmentVendorLoadingController extends Controller
 
         try {
             $result = $this->importReverseService->reverse($id, $this->businessId(), (int) auth()->id());
+            $sharedBatch = $this->importHistoryService->syncFromDomainBatch($id);
 
             return response()->json([
                 'success' => true,
                 'msg' => $result['msg'],
+                'history_batch_id' => (int) ($sharedBatch->id ?? 0),
                 'batch' => array_merge($result, [
                     'file_name' => $batch->file_name,
                     'progress' => 100,
@@ -845,6 +952,7 @@ class HeavyEquipmentVendorLoadingController extends Controller
                     'last_heartbeat_at' => now(),
                     'updated_at' => now(),
                 ]);
+                $this->importHistoryService->syncFromDomainBatch((int) $batch->id);
             });
             \Modules\AssetManagement\Jobs\ProcessHeavyEquipmentVendorLoadingImportJob::dispatch((int) $batch->id);
         } catch (\Throwable $e) {
@@ -852,6 +960,7 @@ class HeavyEquipmentVendorLoadingController extends Controller
                 'status' => 'failed', 'stage' => 'failed', 'last_message' => 'Batch tidak dapat dimasukkan ke antrean import.',
                 'error_message' => $e->getMessage(), 'finished_at' => now(), 'last_heartbeat_at' => now(), 'updated_at' => now(),
             ]);
+            $this->importHistoryService->syncFromDomainBatch((int) $batch->id);
             return response()->json(['success' => false, 'msg' => $e->getMessage()], 409);
         }
 
@@ -870,7 +979,6 @@ class HeavyEquipmentVendorLoadingController extends Controller
         $batch = DB::table('heavy_equipment_vendor_loading_import_batches')
             ->where('id', $id)
             ->where('business_id', $this->businessId())
-            ->where('created_by', auth()->id())
             ->first();
         abort_if(! $batch, 404, 'Batch import tidak ditemukan.');
 
@@ -1058,9 +1166,19 @@ class HeavyEquipmentVendorLoadingController extends Controller
 
     private function authorizeView(): void
     {
-        if (! auth()->user()->can('superadmin') && ! auth()->user()->can('asset.view') && ! auth()->user()->can('asset.fleet_vendor_loadings.view') && ! auth()->user()->can('asset.fleet_vendor_loadings.manage') && ! auth()->user()->can('asset.fleet_trips.manage') && ! auth()->user()->can('asset.fleet_trips.create')) {
+        if (! $this->canView()) {
             abort(403, 'Unauthorized action.');
         }
+    }
+
+    private function canView(): bool
+    {
+        return auth()->user()->can('superadmin')
+            || auth()->user()->can('asset.view')
+            || auth()->user()->can('asset.fleet_vendor_loadings.view')
+            || auth()->user()->can('asset.fleet_vendor_loadings.manage')
+            || auth()->user()->can('asset.fleet_trips.manage')
+            || auth()->user()->can('asset.fleet_trips.create');
     }
 
     private function authorizeManage(): void

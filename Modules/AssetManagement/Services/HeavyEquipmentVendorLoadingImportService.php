@@ -53,6 +53,7 @@ class HeavyEquipmentVendorLoadingImportService
         $fileHash = @hash_file('sha256', $file->getRealPath()) ?: Str::random(64);
         $rows = [];
         $sheetPreviews = [];
+        $sourceSheets = [];
         $errors = [];
         $sheets = 0;
         $ignoredSheets = 0;
@@ -74,6 +75,14 @@ class HeavyEquipmentVendorLoadingImportService
 
         foreach ($spreadsheet->getWorksheetIterator() as $worksheet) {
             $sheetRows = $worksheet->toArray(null, true, true, true);
+            $sourceSheets[] = [
+                'title' => $worksheet->getTitle(),
+                'rows' => array_map(function (array $sourceRow) {
+                    return array_map(function ($value) {
+                        return is_scalar($value) || $value === null ? $value : (string) $value;
+                    }, $sourceRow);
+                }, $sheetRows),
+            ];
             $legacyHeaderRow = $this->findLegacyHeaderRow($sheetRows);
             $legacyLayout = $legacyHeaderRow !== null;
             $metadata = $this->sheetMetadata($worksheet, $sheetRows, $legacyLayout);
@@ -282,9 +291,12 @@ class HeavyEquipmentVendorLoadingImportService
             }
         }
 
+        $spreadsheet->disconnectWorksheets();
+
         return [
             'rows' => $rows,
             'sheets' => $sheetPreviews,
+            'source_snapshot' => ['sheets' => $sourceSheets],
             'errors' => array_values(array_unique($errors)),
             'summary' => [
                 'sheets' => $sheets,

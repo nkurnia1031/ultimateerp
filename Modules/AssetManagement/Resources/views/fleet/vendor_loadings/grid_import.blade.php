@@ -4,6 +4,7 @@
 
 @section('content')
 @includeIf('assetmanagement::layouts.nav')
+@include('layouts.partials.fleet-datatables')
 <section class="content-header">
     <a href="{{ route('asset.fleet.vendor-loadings.index') }}" class="btn btn-default pull-right">Kembali</a>
     <h1><i class="fas fa-file-import"></i> Import Loading Vendor</h1>
@@ -40,41 +41,46 @@
     </div>
 
     <div class="box box-default" id="vendor-import-history">
-        <div class="box-header with-border"><h3 class="box-title"><i class="fas fa-history"></i> Riwayat Import Anda</h3></div>
-        <div class="box-body table-responsive">
+        <div class="box-header with-border"><h3 class="box-title"><i class="fas fa-history"></i> Riwayat Import Vendor</h3></div>
+        <div class="box-body">
             @if($canReverseImports)
-                <p class="text-muted">Batch yang selesai dapat di-reverse. Dokumen dan line Loading Vendor dari batch akan dihapus; transaksi Expense yang sudah ada tetap disimpan.</p>
+                <p class="text-muted">Reverse hanya tersedia selama dokumen belum diverifikasi dan belum tertaut ke transaksi Expense. Dokumen dan line Loading Vendor dari batch akan dihapus.</p>
             @endif
-            @if($batches->isEmpty())
-                <p class="text-muted">Belum ada batch import Loading Vendor.</p>
-            @else
-                <table class="table table-striped table-condensed vendor-import-history-table">
-                    <thead><tr><th>File</th><th>Status</th><th>Progress</th><th>Hasil</th><th>Diperbarui</th><th></th></tr></thead>
-                    <tbody>
-                    @foreach($batches as $batch)
-                        @php
-                            $batchStatusLabels = ['queued_preview' => 'Menunggu analisis', 'analyzing' => 'Menganalisis', 'preview_ready' => 'Preview siap', 'queued_import' => 'Menunggu import', 'importing' => 'Mengimpor', 'imported' => 'Selesai', 'partial' => 'Selesai sebagian', 'failed' => 'Gagal', 'expired' => 'Preview kedaluwarsa', 'reversed' => 'Data impor dihapus'];
-                        @endphp
-                        <tr data-import-batch-row="{{ $batch->id }}">
-                            <td>{{ $batch->file_name }}</td>
-                            <td><span class="label label-default">{{ $batchStatusLabels[$batch->status] ?? $batch->status }}</span></td>
-                            <td>{{ $batch->processed_sheets }}/{{ $batch->total_sheets }} sheet · {{ $batch->processed_rows }}/{{ $batch->total_rows }} baris</td>
-                            <td>@if($batch->status === 'reversed') {{ $batch->reversed_documents ?? 0 }} dokumen / {{ $batch->reversed_lines ?? 0 }} line dihapus @else {{ $batch->imported_lines }} line / {{ $batch->skipped_rows }} dilewati @endif</td>
-                            <td>{{ $batch->updated_at }}</td>
-                            <td>
-                                <a class="btn btn-xs btn-default" href="{{ route('asset.fleet.vendor-loadings.import.form', ['batch_id' => $batch->id]) }}">Pantau / Buka</a>
-                                @if($canReverseImports)
-                                    <button type="button" class="btn btn-xs btn-danger vendor-import-reverse" data-batch-id="{{ $batch->id }}" @if(!in_array($batch->status, ['imported', 'partial'], true)) style="display:none" @endif><i class="fas fa-undo"></i> Reverse import</button>
-                                @endif
-                            </td>
-                        </tr>
-                    @endforeach
-                    </tbody>
+            <div class="form-group vendor-import-history-filter">
+                <label for="vendor-import-history-status">Filter status</label>
+                <select id="vendor-import-history-status" class="form-control input-sm">
+                    <option value="">Semua status</option>
+                    <option value="queued_preview">Menunggu analisis</option>
+                    <option value="analyzing">Menganalisis</option>
+                    <option value="preview_ready">Preview siap</option>
+                    <option value="queued_import">Menunggu import</option>
+                    <option value="importing">Mengimpor</option>
+                    <option value="imported">Selesai</option>
+                    <option value="partial">Selesai sebagian</option>
+                    <option value="failed">Gagal</option>
+                    <option value="expired">Kedaluwarsa</option>
+                    <option value="reverted">Di-reverse</option>
+                </select>
+            </div>
+            <div class="table-responsive fleet-datatable-wrap">
+                <table id="vendor-import-history-table" class="table table-bordered table-striped table-condensed fleet-datatable vendor-import-history-table" style="width:100%">
+                    <thead><tr><th>Dibuat</th><th>Workbook</th><th>Status</th><th>Progres</th><th>Hasil</th><th>Pesan</th><th>Aksi</th></tr></thead>
+                    <tbody></tbody>
                 </table>
-            @endif
+            </div>
         </div>
     </div>
 
+    <div class="modal fade vendor-import-detail-modal" id="vendor-import-detail-modal" tabindex="-1" role="dialog" aria-labelledby="vendor-import-detail-title" aria-hidden="true">
+        <div class="modal-dialog modal-lg" role="document"><div class="modal-content">
+            <div class="modal-header"><button type="button" class="close" data-dismiss="modal" aria-label="Tutup"><span aria-hidden="true">&times;</span></button><h4 class="modal-title" id="vendor-import-detail-title">Detail batch import</h4></div>
+            <div class="modal-body">
+                <div id="vendor-import-detail-summary" class="alert alert-info" role="status"></div>
+                <div class="table-responsive fleet-datatable-wrap"><table id="vendor-import-detail-table" class="table table-bordered table-striped table-condensed fleet-datatable" style="width:100%"><thead><tr><th>Sheet</th><th>Baris</th><th>No. tiket</th><th>Status</th><th>Dokumen / line</th><th>Catatan</th></tr></thead><tbody></tbody></table></div>
+            </div>
+            <div class="modal-footer"><button type="button" class="btn btn-default" data-dismiss="modal">Tutup</button></div>
+        </div></div>
+    </div>
     <div id="vendor-import-preview-box" class="box box-info" hidden>
         <div class="box-header with-border"><h3 class="box-title">Preview per Sheet</h3></div>
         <div class="box-body">
@@ -128,7 +134,10 @@
     .vendor-import-grid-tools select { width: auto; min-width: 170px; }
     .vendor-import-editable-cell { background: #fff8d6 !important; border-left: 2px solid #d8a900 !important; }
     .vendor-import-editable-cell:after { content: ' ✎'; color: #997400; font-size: 11px; }
-    .vendor-import-history-table { min-width: 760px; }
+    .vendor-import-history-table { width: 100%; table-layout: fixed; }
+    .vendor-import-history-table th, .vendor-import-history-table td { overflow-wrap: anywhere; }
+    .vendor-import-history-actions { display: flex; flex-wrap: wrap; gap: 4px; }
+    .vendor-import-history-actions .btn { white-space: normal; }
     .vendor-import-row-issue { background-color: #fff4f0 !important; }
     .vendor-import-row-warning { background-color: #fffbea !important; }
     @media (max-width: 767px) {
@@ -143,10 +152,14 @@
 @push('scripts')
 <script>
 window.vendorLoadingImportConfig = {
+    formUrl: @json(route('asset.fleet.vendor-loadings.import.form')),
     previewUrl: @json(route('asset.fleet.vendor-loadings.import.preview')),
     confirmUrl: @json(route('asset.fleet.vendor-loadings.import.confirm')),
     statusUrlTemplate: @json(route('asset.fleet.vendor-loadings.import.batches.status', ['id' => '__ID__'])),
     batchPreviewUrlTemplate: @json(route('asset.fleet.vendor-loadings.import.batches.preview', ['id' => '__ID__'])),
+    historyUrl: @json(route('asset.fleet.vendor-loadings.import.batches.index')),
+    detailUrlTemplate: @json(route('asset.fleet.vendor-loadings.import.batches.details', ['id' => '__ID__'])),
+    downloadUrlTemplate: @json(route('asset.fleet.vendor-loadings.import.batches.download', ['id' => '__ID__'])),
     reverseUrlTemplate: @json(route('asset.fleet.vendor-loadings.import.batches.reverse', ['id' => '__ID__'])),
     canReverseImports: @json($canReverseImports),
     resumeBatchId: @json($resumeBatchId),

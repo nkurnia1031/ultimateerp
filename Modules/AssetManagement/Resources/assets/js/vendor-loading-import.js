@@ -12,6 +12,8 @@
     var sheetMissingDates = {};
     var activeFilter = 'all';
     var feedback = $('#vendor-import-feedback');
+    var historyTable = null;
+    var detailTable = null;
 
     function escapeHtml(value) {
         return $('<div>').text(value == null ? '' : String(value)).html();
@@ -341,6 +343,7 @@
     }
 
     function statusLabel(status) {
+        if (status === 'reverted') return 'Di-reverse';
         return ({ queued_preview: 'Menunggu analisis', analyzing: 'Menganalisis', preview_ready: 'Preview siap', queued_import: 'Menunggu import', importing: 'Mengimpor', imported: 'Selesai', partial: 'Selesai sebagian', failed: 'Gagal', expired: 'Preview kedaluwarsa', reversed: 'Data impor dihapus' })[status] || status;
     }
 
@@ -377,19 +380,81 @@
             if (items.length) html += '<ul>' + items.slice(0, 30).map(function (item) { return '<li>' + escapeHtml(item) + '</li>'; }).join('') + '</ul>';
             $('#vendor-import-batch-errors').removeAttr('hidden').html(html);
         }
-        var historyRow = $('[data-import-batch-row="' + batch.id + '"]');
-        if (historyRow.length) {
-            historyRow.find('td').eq(1).text(statusLabel(batch.status));
-            historyRow.find('td').eq(2).text((batch.processed_sheets || 0) + '/' + (batch.total_sheets || 0) + ' sheet · ' + (batch.processed_rows || 0) + '/' + (batch.total_rows || 0) + ' baris');
-            historyRow.find('td').eq(3).text(batch.status === 'reversed'
-                ? (batch.reversed_documents || 0) + ' dokumen · ' + (batch.reversed_lines || 0) + ' line dihapus'
-                : (batch.imported_lines || 0) + ' line · ' + (batch.skipped_rows || 0) + ' dilewati');
-            historyRow.find('td').eq(4).text(batch.updated_at || 'baru saja');
-            historyRow.find('.vendor-import-reverse').toggle(config.canReverseImports && ['imported', 'partial'].indexOf(batch.status) !== -1);
-        }
+        if (historyTable) historyTable.ajax.reload(null, false);
+    }
+    function batchUrl(template, id) { return String(template || '').replace('__ID__', encodeURIComponent(id)); }
+
+    function historyStatusClass(status) {
+        if (status === 'imported' || status === 'reverted') return 'label-success';
+        if (status === 'partial' || status === 'expired') return 'label-warning';
+        if (status === 'failed') return 'label-danger';
+        if (status === 'preview_ready') return 'label-primary';
+        return 'label-info';
     }
 
-    function batchUrl(template, id) { return String(template || '').replace('__ID__', encodeURIComponent(id)); }
+    function historyActions(row) {
+        var html = '<div class="vendor-import-history-actions">' +
+            '<button type="button" class="btn btn-xs btn-default vendor-import-detail" data-id="' + Number(row.id) + '"><i class="fas fa-eye"></i> Detail</button>';
+        if (row.can_preview && row.domain_batch_id) {
+            html += '<a class="btn btn-xs btn-primary" href="' + escapeHtml(config.formUrl + '?batch_id=' + encodeURIComponent(row.domain_batch_id)) + '"><i class="fas fa-search"></i> Preview</a>';
+        }
+        if (row.has_snapshot) {
+            html += '<a class="btn btn-xs btn-success" href="' + escapeHtml(batchUrl(config.downloadUrlTemplate, row.id)) + '"><i class="fas fa-file-excel"></i> Unduh ulang</a>';
+        }
+        if (row.can_revert && row.domain_batch_id) {
+            html += '<button type="button" class="btn btn-xs btn-danger vendor-import-reverse" data-batch-id="' + Number(row.domain_batch_id) + '"><i class="fas fa-undo"></i> Reverse</button>';
+        }
+        return html + '</div>';
+    }
+
+    function initializeHistoryTable() {
+        if (!$.fn.DataTable || !config.historyUrl) return;
+        historyTable = initFleetDataTable('#vendor-import-history-table', {
+            serverSide: true,
+            processing: true,
+            ordering: false,
+            pageLength: 25,
+            lengthMenu: [[10, 25, 50, 100], [10, 25, 50, 100]],
+            ajax: {
+                url: config.historyUrl,
+                data: function (request) { request.status = $('#vendor-import-history-status').val() || ''; }
+            },
+            columns: [
+                { data: 'created_at', defaultContent: '-', render: function (value, type) { return type === 'display' ? escapeHtml(value || '-') : (value || ''); } },
+                { data: 'file_name', defaultContent: '-', render: function (value, type) { return type === 'display' ? escapeHtml(value || '-') : (value || ''); } },
+                { data: 'status', render: function (value, type) { return type === 'display' ? '<span class="label ' + historyStatusClass(value) + '">' + escapeHtml(statusLabel(value)) + '</span>' : statusLabel(value); } },
+                { data: null, render: function (value, type, row) {
+                    var current = Number(row.progress_current || 0), total = Number(row.progress_total || 0), percent = Number(row.progress_percent || 0);
+                    if (type !== 'display') return percent + '%';
+                    return '<div class="progress"><div class="progress-bar" role="progressbar" aria-valuenow="' + percent + '" aria-valuemin="0" aria-valuemax="100" style="width:' + percent + '%"></div></div><small>' + current + ' / ' + total + ' Â· ' + percent + '%</small>';
+                } },
+                { data: 'result_summary', defaultContent: '-', render: function (value, type) { return type === 'display' ? escapeHtml(value || '-') : (value || ''); } },
+                { data: 'error_message', defaultContent: '', render: function (value, type, row) { var messageText = value || row.last_message || '-'; return type === 'display' ? '<span class="vendor-import-history-message">' + escapeHtml(messageText) + '</span>' : messageText; } },
+                { data: null, searchable: false, orderable: false, render: function (value, type, row) { return type === 'display' ? historyActions(row) : ''; } }
+            ]
+        });
+        $('#vendor-import-history-status').on('change', function () { if (historyTable) historyTable.ajax.reload(); });
+    }
+
+    function showBatchDetails(id) {
+        $.getJSON(batchUrl(config.detailUrlTemplate, id)).done(function (response) {
+            var batch = response.batch || {}, rows = response.rows || [];
+            $('#vendor-import-detail-title').text('Detail import: ' + (batch.file_name || ('Batch #' + id)));
+            $('#vendor-import-detail-summary').text((batch.message || statusLabel(batch.status)) + (batch.error ? ' ' + batch.error : ''));
+            if (detailTable && $.fn.DataTable.isDataTable('#vendor-import-detail-table')) detailTable.destroy();
+            var body = rows.map(function (row) {
+                var doc = row.document_url ? '<a href="' + escapeHtml(row.document_url) + '">' + escapeHtml(row.document_no || ('Dokumen #' + row.document_id)) + '</a>' : (row.document_no ? escapeHtml(row.document_no) : '-');
+                if (row.line_id) doc += '<br><small>Line #' + Number(row.line_id) + '</small>';
+                return '<tr><td>' + escapeHtml(row.sheet || '-') + '</td><td>' + escapeHtml(row.source_row || '-') + '</td><td>' + escapeHtml(row.ticket_no || '-') + '</td><td>' + escapeHtml(row.status || '-') + '</td><td>' + doc + '</td><td>' + escapeHtml(row.error || '-') + '</td></tr>';
+            }).join('');
+            $('#vendor-import-detail-table tbody').html(body);
+            detailTable = initFleetDataTable('#vendor-import-detail-table', { pageLength: 10, order: [[0, 'asc']], columnDefs: [{ targets: [4, 5], orderable: false }] });
+            $('#vendor-import-detail-modal').modal('show');
+        }).fail(function (xhr) {
+            var body = xhr.responseJSON || {};
+            message(false, body.message || body.msg || 'Detail batch tidak dapat dimuat.');
+        });
+    }
 
     function fetchPreview(id) {
         $.getJSON(batchUrl(config.batchPreviewUrlTemplate, id)).done(function (response) {
@@ -473,6 +538,8 @@
                 $('#vendor-import-upload-title').text('Upload selesai');
                 $('#vendor-import-upload-message').text(response.msg || 'Menunggu analisis workbook.');
                 message(true, response.msg || 'Upload diterima. Analisis berjalan di latar belakang.');
+                if (historyTable) historyTable.ajax.reload();
+                document.getElementById('vendor-import-history').scrollIntoView({ behavior: 'smooth', block: 'start' });
                 watchBatch(batchId);
             })
             .fail(function (xhr) { var body = xhr.responseJSON || {}; message(false, body.msg || body.message || 'File belum dapat dipreview.'); })
@@ -509,6 +576,10 @@
             button.prop('disabled', false).html('<i class="fas fa-undo"></i> Reverse import');
             message(false, body.msg || body.message || 'Reverse batch gagal diproses.');
         });
+    });
+
+    $('#vendor-import-history').on('click', '.vendor-import-detail', function () {
+        showBatchDetails($(this).data('id'));
     });
 
     $('#vendor-import-apply-date').on('click', function () {
@@ -557,6 +628,7 @@
         }, headers: { Accept: 'application/json' } }).done(function (response) {
             message(true, response.msg || 'Import sudah masuk antrean.');
             $('#vendor-import-confirm').html('<i class="fas fa-spinner fa-spin"></i> Import diproses di latar belakang…');
+            if (historyTable) historyTable.ajax.reload(null, false);
             watchBatch(response.batch_id || batchId);
         }).fail(function (xhr) {
             var body = xhr.responseJSON || {}, errors = body.errors || [];
@@ -566,6 +638,7 @@
         });
     });
 
+    initializeHistoryTable();
     if (config.resumeBatchId) watchBatch(config.resumeBatchId);
 
     if ($.fn.select2) {
