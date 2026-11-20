@@ -186,7 +186,7 @@ class HeavyEquipmentVendorLoadingImportHistoryService
             ->whereIn('user_import_batch_id', $sharedIds)
             ->get()->keyBy('user_import_batch_id');
 
-        foreach ($data['data'] as &$row) {
+        $data['data'] = collect($data['data'])->map(function (array $row) use ($domainBySharedId, $canReverse) {
             $domain = $domainBySharedId->get($row['id']);
             $row['domain_batch_id'] = (int) ($domain->id ?? 0);
             $row['can_preview'] = $domain && in_array($domain->status, ['preview_ready', 'queued_import', 'importing'], true);
@@ -196,8 +196,8 @@ class HeavyEquipmentVendorLoadingImportHistoryService
             $row['result_summary'] = $domain && $domain->status === 'reversed'
                 ? ($summary['reversed_documents'] ?? 0).' dokumen / '.($summary['reversed_lines'] ?? 0).' line dihapus'
                 : ($summary['imported_documents'] ?? 0).' dokumen / '.($summary['imported_lines'] ?? 0).' line / '.($summary['skipped_rows'] ?? 0).' dilewati';
-        }
-        unset($row);
+            return $row;
+        })->values();
 
         return $data;
     }

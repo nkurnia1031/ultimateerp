@@ -57,6 +57,7 @@ class HeavyEquipmentVendorLoadingImportHistoryTest extends TestCase
         $legacyId = $this->domainBatch(['business_id' => 7, 'created_by' => 111, 'status' => 'imported']);
         $shared = app(HeavyEquipmentVendorLoadingImportHistoryService::class)
             ->createForDomainBatch($legacyId, 7, 111, 'vendor-history-fixture.xlsx');
+        app(HeavyEquipmentVendorLoadingImportHistoryService::class)->syncFromDomainBatch($legacyId);
         app(UserImportBatchService::class)->storePayload($shared, 'source_snapshot', [
             'sheets' => [[
                 'title' => 'Bendera A',
@@ -196,6 +197,7 @@ class HeavyEquipmentVendorLoadingImportHistoryTest extends TestCase
         ]);
         $shared = app(HeavyEquipmentVendorLoadingImportHistoryService::class)
             ->createForDomainBatch($legacyId, 7, 111, 'vendor-reverse-fixture.xlsx');
+        app(HeavyEquipmentVendorLoadingImportHistoryService::class)->syncFromDomainBatch($legacyId);
 
         $this->actingAs($this->admin())
             ->withSession($this->businessSession(7))
