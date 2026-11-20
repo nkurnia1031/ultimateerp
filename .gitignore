@@ -43,3 +43,4 @@ graphify-out/.*.tmp
 /journal_*.xlsx
 /public/journal_*.xlsx
 /public/~$journal_*.xlsx
+/public/exports/lampiran-missing-*.xlsx

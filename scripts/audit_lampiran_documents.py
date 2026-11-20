@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable
 from urllib.error import HTTPError, URLError
-from urllib.parse import unquote, urlsplit
+from urllib.parse import quote, unquote, urlsplit, urlunsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 
@@ -70,6 +70,7 @@ class Attachment:
     database_media_model_type: str = ""
     database_media_model_id: str = ""
     database_reference: str = ""
+    database_transaction_date: Any = ""
     database_attachment_source: str = ""
     database_detail: str = ""
     existing_media_id: str = ""
@@ -143,6 +144,15 @@ def parse_args() -> argparse.Namespace:
         help="Lokasi laporan CSV. Default: storage/app/lampiran-dry-run-report.csv atau lampiran-download-report.csv.",
     )
     parser.add_argument(
+        "--export-missing-xlsx",
+        action="store_true",
+        help="Buat workbook rapi di public/exports untuk lampiran yang hilang dari documents dan media, serta cocok ke transaksi database.",
+    )
+    parser.add_argument(
+        "--public-base-url",
+        help="Awalan URL aplikasi untuk tautan unduh. Default memakai APP_URL; otomatis mengenali subfolder Laragon lokal.",
+    )
+    parser.add_argument(
         "--allow-host",
         action="append",
         default=[],
@@ -173,6 +183,10 @@ def parse_args() -> argparse.Namespace:
         parser.error("--apply-links memerlukan --business-id")
     if args.apply_links and args.dry_run:
         parser.error("--apply-links menulis ke database; jangan gabungkan dengan --dry-run")
+    if args.export_missing_xlsx and args.business_id is None:
+        parser.error("--export-missing-xlsx memerlukan --business-id agar ID dan tanggal transaksi dapat dicocokkan.")
+    if args.public_base_url and not args.export_missing_xlsx:
+        parser.error("--public-base-url hanya dapat dipakai bersama --export-missing-xlsx.")
     if args.delay < 0 or args.timeout <= 0 or args.retries < 0 or args.max_mib_per_file <= 0:
         parser.error("delay/retries tidak boleh negatif; timeout dan batas ukuran harus lebih dari nol")
     return args
@@ -1038,6 +1052,89 @@ class OperationalDatabaseMatcher:
                     item.database_status = "existing_media_conflict"
                     item.database_detail = "ID lampiran sudah tertaut ke Media target lain; tautan tidak diubah."
 
+    def load_matched_transaction_details(self, attachments: list[Attachment]) -> None:
+        """Load the current reference and date for each uniquely matched media owner."""
+        transaction_ids = sorted({
+            int(item.database_media_model_id)
+            for item in attachments
+            if item.database_media_model_type == self.TRANSACTION_MODEL
+            and item.database_media_model_id.isdigit()
+        })
+        account_transaction_ids = sorted({
+            int(item.database_media_model_id)
+            for item in attachments
+            if item.database_media_model_type in self.ACCOUNT_MODEL_TYPES
+            and item.database_media_model_id.isdigit()
+        })
+
+        transaction_details: dict[int, dict[str, Any]] = {}
+        if transaction_ids and self.has_table("transactions") and {"id", "business_id"}.issubset(self.columns["transactions"]):
+            allowed_types = sorted({value for values in self.OPERATIONAL_TYPES.values() for value in values})
+            for offset in range(0, len(transaction_ids), 400):
+                chunk = transaction_ids[offset : offset + 400]
+                select = ["id"]
+                if self.has_column("transactions", "ref_no"):
+                    select.append("ref_no")
+                if self.has_column("transactions", "transaction_date"):
+                    select.append("transaction_date")
+                type_filter = ""
+                params: list[Any] = [self.business_id]
+                if self.has_column("transactions", "type"):
+                    type_filter = " AND type IN (" + self.placeholders(len(allowed_types)) + ")"
+                    params.extend(allowed_types)
+                params.extend(chunk)
+                sql = (
+                    "SELECT " + ", ".join(select) + " FROM transactions WHERE business_id=%s"
+                    + type_filter + " AND id IN (" + self.placeholders(len(chunk)) + ")"
+                )
+                if self.has_column("transactions", "deleted_at"):
+                    sql += " AND deleted_at IS NULL"
+                for row in self._rows(sql, params):
+                    transaction_details[int(row["id"])] = row
+
+        account_details: dict[int, dict[str, Any]] = {}
+        if (
+            account_transaction_ids
+            and self.has_table("account_transactions")
+            and self.has_table("accounts")
+            and {"id", "account_id"}.issubset(self.columns["account_transactions"])
+            and {"id", "business_id"}.issubset(self.columns["accounts"])
+        ):
+            for offset in range(0, len(account_transaction_ids), 400):
+                chunk = account_transaction_ids[offset : offset + 400]
+                select = ["entry.id"]
+                if self.has_column("account_transactions", "reff_no"):
+                    select.append("entry.reff_no AS ref_no")
+                if self.has_column("account_transactions", "operation_date"):
+                    select.append("entry.operation_date AS transaction_date")
+                sql = (
+                    "SELECT " + ", ".join(select) + " FROM account_transactions AS entry "
+                    "JOIN accounts AS account ON account.id=entry.account_id "
+                    "WHERE account.business_id=%s AND entry.id IN (" + self.placeholders(len(chunk)) + ")"
+                )
+                params = [self.business_id, *chunk]
+                if self.has_column("account_transactions", "deleted_at"):
+                    sql += " AND entry.deleted_at IS NULL"
+                if self.has_column("accounts", "deleted_at"):
+                    sql += " AND account.deleted_at IS NULL"
+                for row in self._rows(sql, params):
+                    account_details[int(row["id"])] = row
+
+        for item in attachments:
+            model_id = item.database_media_model_id
+            if not model_id.isdigit():
+                continue
+            if item.database_media_model_type == self.TRANSACTION_MODEL:
+                row = transaction_details.get(int(model_id))
+            elif item.database_media_model_type in self.ACCOUNT_MODEL_TYPES:
+                row = account_details.get(int(model_id))
+            else:
+                row = None
+            if row is None:
+                continue
+            item.database_reference = str(row.get("ref_no") or item.database_reference or "")
+            item.database_transaction_date = row.get("transaction_date") or ""
+
 
 class HostCheckedRedirectHandler(HTTPRedirectHandler):
     def __init__(self, allowed_hosts: set[str]) -> None:
@@ -1058,7 +1155,7 @@ def write_report(path: Path, rows: list[Attachment], invalid: list[str], mode: s
                 "mode", "manifest_row", "attachment_id", "transaction_id", "source_type", "source_number", "expected_filename",
                 "output_filename", "collision_count", "source_host", "status", "detail", "database_status",
                 "database_match_method", "database_target_type", "database_target_id", "database_media_model_type",
-                "database_media_model_id", "database_reference", "database_attachment_source", "existing_media_id",
+                "database_media_model_id", "database_reference", "database_transaction_date", "database_attachment_source", "existing_media_id",
                 "database_link_action", "database_detail", "local_file_name",
             ],
         )
@@ -1085,6 +1182,7 @@ def write_report(path: Path, rows: list[Attachment], invalid: list[str], mode: s
                     "database_media_model_type": item.database_media_model_type,
                     "database_media_model_id": item.database_media_model_id,
                     "database_reference": item.database_reference,
+                    "database_transaction_date": item.database_transaction_date,
                     "database_attachment_source": item.database_attachment_source,
                     "existing_media_id": item.existing_media_id,
                     "database_link_action": item.database_link_action,
@@ -1094,6 +1192,188 @@ def write_report(path: Path, rows: list[Attachment], invalid: list[str], mode: s
             )
         for message in invalid:
             writer.writerow({"mode": mode, "status": "invalid", "detail": message})
+
+
+def resolve_public_base_url(override: str | None = None) -> str:
+    config = load_database_config()
+    base_url = (override or config.get("APP_URL") or "").strip().rstrip("/")
+    if not base_url:
+        raise ValueError("APP_URL tidak ditemukan di .env; berikan --public-base-url untuk membuat tautan unduh.")
+
+    parsed = urlsplit(base_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.query or parsed.fragment:
+        raise ValueError("URL dasar harus berupa URL http(s) tanpa query atau fragment.")
+
+    # Laragon commonly serves this repository from www/<subfolder>/public while
+    # its local .env still has APP_URL=http://localhost.
+    if (
+        override is None
+        and parsed.hostname in {"localhost", "127.0.0.1"}
+        and parsed.path in {"", "/"}
+    ):
+        document_root = next(
+            (parent for parent in (PROJECT_ROOT, *PROJECT_ROOT.parents) if parent.name.casefold() in {"www", "htdocs", "public_html"}),
+            None,
+        )
+        if document_root is not None:
+            app_path = PROJECT_ROOT.relative_to(document_root).as_posix().strip("/")
+            if app_path:
+                parsed = parsed._replace(path=f"/{app_path}/public")
+
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path.rstrip("/"), "", ""))
+
+
+def excel_safe_text(value: Any) -> str:
+    text = str(value or "")
+    if text.startswith(("=", "+", "-", "@", "\t", "\r")):
+        return "'" + text
+    return text
+
+
+def excel_date(value: Any) -> dt.date | str | None:
+    if isinstance(value, dt.datetime):
+        return value.date()
+    if isinstance(value, dt.date):
+        return value
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return dt.datetime.fromisoformat(text.replace("Z", "+00:00")).date()
+    except ValueError:
+        return text
+
+
+def existing_storage_filenames(destination: Path) -> tuple[set[str], set[str]]:
+    directories = [
+        destination,
+        PROJECT_ROOT / "public" / "uploads" / "documents",
+        PROJECT_ROOT / "public" / "uploads" / "media",
+        PROJECT_ROOT / "public" / "documents",
+        PROJECT_ROOT / "public" / "media",
+    ]
+    existing_names: set[str] = set()
+    timestamped_bases: set[str] = set()
+    visited: set[Path] = set()
+    for directory in directories:
+        resolved = directory.resolve()
+        if resolved in visited or not resolved.is_dir():
+            continue
+        visited.add(resolved)
+        for path in resolved.iterdir():
+            if path.is_symlink() or not path.is_file():
+                continue
+            existing_names.add(path.name.casefold())
+            match = TIMESTAMPED_FILENAME_PATTERN.match(path.name)
+            if match:
+                timestamped_bases.add(match.group(1).casefold())
+    return existing_names, timestamped_bases
+
+
+def attachment_exists_in_storage(
+    item: Attachment,
+    existing_names: set[str],
+    timestamped_bases: set[str],
+) -> bool:
+    if item.output_name.casefold() in existing_names or item.local_file_name.casefold() in existing_names:
+        return True
+    return item.collision_count == 1 and item.original_name.casefold() in timestamped_bases
+
+
+def write_missing_attachments_xlsx(
+    path: Path,
+    attachments: list[Attachment],
+    destination: Path,
+    business_id: int,
+    public_base_url: str,
+) -> tuple[int, str]:
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    except ImportError as exc:
+        raise ValueError(
+            "Paket openpyxl belum terpasang. Jalankan: python -m pip install -r scripts/requirements-audit-lampiran.txt"
+        ) from exc
+
+    matched_statuses = {"matched", "already_linked", "existing_media_conflict"}
+    existing_names, timestamped_bases = existing_storage_filenames(destination)
+    rows = [
+        item
+        for item in attachments
+        if item.status == "would_download"
+        and item.database_status in matched_statuses
+        and item.database_media_model_id.isdigit()
+        and not attachment_exists_in_storage(item, existing_names, timestamped_bases)
+    ]
+
+    public_root = (PROJECT_ROOT / "public").resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path = path.parent.resolve() / path.name
+    try:
+        path.relative_to(public_root)
+    except ValueError as exc:
+        raise ValueError("File Excel harus tetap berada di dalam folder public.") from exc
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Lampiran hilang"
+    sheet.sheet_view.showGridLines = False
+    sheet.freeze_panes = "A5"
+    sheet.merge_cells("A1:E1")
+    sheet["A1"] = "DAFTAR LAMPIRAN HILANG"
+    sheet["A1"].font = Font(name="Aptos Display", size=16, bold=True, color="FFFFFF")
+    sheet["A1"].fill = PatternFill("solid", fgColor="176B3A")
+    sheet["A1"].alignment = Alignment(vertical="center")
+    sheet.row_dimensions[1].height = 30
+    sheet.merge_cells("A2:E2")
+    sheet["A2"] = f"Business ID: {business_id}   •   Dibuat: {dt.datetime.now():%d/%m/%Y %H:%M}   •   Jumlah: {len(rows)}"
+    sheet["A2"].font = Font(name="Aptos", size=10, color="52645A", italic=True)
+    sheet["A2"].alignment = Alignment(vertical="center")
+    sheet.row_dimensions[2].height = 22
+
+    headers = ["Noref", "ID Transaksi", "Tanggal", "Jenis Transaksi", "Lampiran"]
+    header_row = 4
+    for column, value in enumerate(headers, start=1):
+        cell = sheet.cell(row=header_row, column=column, value=value)
+        cell.fill = PatternFill("solid", fgColor="217346")
+        cell.font = Font(name="Aptos", bold=True, color="FFFFFF")
+        cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    sheet.row_dimensions[header_row].height = 26
+
+    bottom_border = Side(style="hair", color="D9E5DC")
+    for row_number, item in enumerate(rows, start=header_row + 1):
+        values = [
+            excel_safe_text(item.source_number or item.database_reference),
+            int(item.database_media_model_id),
+            excel_date(item.database_transaction_date),
+            excel_safe_text(item.source_type),
+            excel_safe_text(f"public/uploads/documents/{item.output_name}"),
+        ]
+        for column, value in enumerate(values, start=1):
+            cell = sheet.cell(row=row_number, column=column, value=value)
+            cell.font = Font(name="Aptos", size=10, color="26352B")
+            cell.alignment = Alignment(vertical="top", wrap_text=(column in {1, 4, 5}))
+            cell.border = Border(bottom=bottom_border)
+            if row_number % 2:
+                cell.fill = PatternFill("solid", fgColor="F2F7F3")
+            if column == 2:
+                cell.number_format = "0"
+            elif column == 3:
+                cell.number_format = "dd/mm/yyyy"
+        sheet.row_dimensions[row_number].height = 30
+
+    widths = {"A": 24, "B": 17, "C": 15, "D": 23, "E": 64}
+    for column, width in widths.items():
+        sheet.column_dimensions[column].width = width
+    last_row = max(header_row, header_row + len(rows))
+    sheet.auto_filter.ref = f"A{header_row}:E{last_row}"
+    workbook.properties.title = "Daftar Lampiran Hilang"
+    workbook.properties.subject = "Lampiran yang belum tersedia dan cocok ke transaksi operasional"
+    workbook.save(path)
+
+    relative_path = path.relative_to(public_root).as_posix()
+    download_url = f"{public_base_url.rstrip('/')}/{quote(relative_path, safe='/')}"
+    return len(rows), download_url
 
 
 def unique_download_items(attachments: list[Attachment], destination: Path) -> list[Attachment]:
@@ -1378,6 +1658,7 @@ def main() -> int:
             matcher = OperationalDatabaseMatcher(connection, args.business_id, args.run_id, attachments)
             try:
                 matcher.match(attachments)
+                matcher.load_matched_transaction_details(attachments)
             finally:
                 matcher.close()
                 connection.close()
@@ -1391,6 +1672,23 @@ def main() -> int:
     status_by_name = {item.output_name.casefold(): (item.status, item.detail) for item in items}
     for attachment in attachments:
         attachment.status, attachment.detail = status_by_name[attachment.output_name.casefold()]
+    xlsx_export: tuple[Path, int, str] | None = None
+    if args.export_missing_xlsx:
+        try:
+            public_base_url = resolve_public_base_url(args.public_base_url)
+            timestamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+            xlsx_path = PROJECT_ROOT / "public" / "exports" / f"lampiran-missing-business-{args.business_id}-{timestamp}.xlsx"
+            exported_rows, download_url = write_missing_attachments_xlsx(
+                xlsx_path,
+                attachments,
+                destination,
+                args.business_id,
+                public_base_url,
+            )
+            xlsx_export = (xlsx_path, exported_rows, download_url)
+        except (OSError, ValueError) as exc:
+            print(f"Export Excel gagal: {str(exc).splitlines()[0][:240]}", file=sys.stderr)
+            return 2
     collisions = {item.original_name.casefold() for item in attachments if item.collision_count > 1}
     present_count = sum(item.status == "already_present" for item in items)
     missing_count = sum(item.status == "would_download" for item in items)
@@ -1407,7 +1705,7 @@ def main() -> int:
     print(f"Files currently in destination: {existing_files}")
     print(f"Already present (exact or unambiguous timestamp prefix): {present_count}")
     print(f"Ambiguous timestamp-prefix matches: {ambiguous_existing_count}")
-    print(f"Missing / planned downloads: {missing_count}")
+    print(f"Missing from download destination / planned downloads: {missing_count}")
     print(f"Distinct filenames with source collisions: {len(collisions)}")
     print(f"Manifest rows in collision groups: {rows_with_collisions}")
     print(f"Invalid rows or URLs: {len(invalid)}")
@@ -1422,6 +1720,11 @@ def main() -> int:
         print("`already_linked` berarti baris Media sudah ada di database; status file lokal dihitung terpisah.")
         if args.apply_links:
             print("Media akan ditulis hanya untuk target unik dengan file lokal yang tersedia.")
+    if xlsx_export:
+        xlsx_path, exported_rows, download_url = xlsx_export
+        print(f"Excel lampiran hilang: {exported_rows} baris")
+        print(f"File: {xlsx_path}")
+        print(f"Link unduh: {download_url}")
     if collisions:
         print("Collision policy: colliding files use legacy-<id>__<filename>, matching the Laravel Media importer.")
     if not args.download:
