@@ -28,3 +28,7 @@ Istilah domain untuk fitur penjualan dan import akuntansi.
 | Deskripsi expense-line | Teks pada `expense_lines.description` yang menjelaskan satu rincian Expense; workbook mengisi dari `EXPENSE NOTE` dengan fallback ke `DESCRIPTION`, terpisah dari catatan transaksi induk. |
 | Catatan expense-line | Catatan manual untuk satu rincian Expense pada `expense_lines.note`; nilainya terpisah dari deskripsi workbook dan dipertahankan saat baris diperbarui. |
 | Lampiran expense-line | Nama dokumen pada `expense_lines.document` yang terkait ke satu rincian; bila berkas fisik tidak tersedia saat import, nama tetap disimpan dengan peringatan preview. |
+| Import batch | Satu proses import yang memiliki identitas, business, pemilik, status, progres, hasil, dan histori tindakan sendiri. |
+| Snapshot sumber import | Data sheet dan baris asli yang disimpan agar isi workbook yang diunggah dapat dibuat ulang untuk diunduh setelah proses import selesai. |
+| Kandidat kecocokan | Record dalam business aktif yang mirip dengan identitas sumber dan ditampilkan beserta skor kemiripan untuk dipilih atau disetujui pengguna. |
+| Revert import | Pembatalan terkontrol atas perubahan yang dibuat satu import batch; record baru dapat dihapus dan record lama dipulihkan hanya bila tidak berubah atau digunakan setelah import. |

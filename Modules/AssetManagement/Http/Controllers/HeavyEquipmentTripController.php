@@ -637,6 +637,15 @@ class HeavyEquipmentTripController extends Controller
             ])
             ->filter(fn (array $driver) => $driver['name'] !== '')
             ->values();
+        $duplicateDriverNames = $drivers->countBy(fn (array $driver) => $this->spbImportService->canonicalDriverName($driver['name']));
+        $drivers = $drivers->map(function (array $driver) use ($duplicateDriverNames) {
+            $canonicalName = $this->spbImportService->canonicalDriverName($driver['name']);
+            if ($canonicalName !== '' && $duplicateDriverNames->get($canonicalName, 0) > 1 && $driver['username'] === '') {
+                $driver['label'] .= ' · User #'.$driver['id'];
+            }
+
+            return $driver;
+        });
 
         $isSuperadmin = auth()->user()->can('superadmin');
         $canCreateAsset = ($isSuperadmin || auth()->user()->can('asset.create'))

@@ -3,10 +3,12 @@
 namespace Tests\Feature;
 
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Modules\AssetManagement\Entities\HeavyEquipmentTrip;
+use Modules\AssetManagement\Services\HeavyEquipmentSpbImportService;
 use Modules\AssetManagement\Services\HeavyEquipmentTripService;
 use Tests\TestCase;
 
@@ -69,11 +71,14 @@ class HeavyEquipmentSpbImportPreviewEditTest extends TestCase
             ['id' => 1, 'business_id' => 7, 'asset_code' => 'UNIT-OLD', 'name' => 'Unit Lama'],
             ['id' => 2, 'business_id' => 7, 'asset_code' => 'UNIT-NEW', 'name' => 'Unit Resmi'],
             ['id' => 3, 'business_id' => 8, 'asset_code' => 'UNIT-PRIVATE', 'name' => 'Unit Business Lain'],
+            ['id' => 4, 'business_id' => 7, 'asset_code' => 'BM-9133', 'name' => 'BM 9133'],
         ]);
         DB::table('users')->insert([
             ['id' => 1, 'business_id' => 7, 'first_name' => 'Sopir Lama', 'surname' => '', 'user_type' => 'user'],
             ['id' => 2, 'business_id' => 7, 'first_name' => 'Nama Resmi', 'surname' => '', 'user_type' => 'user'],
             ['id' => 3, 'business_id' => 8, 'first_name' => 'Private', 'surname' => '', 'user_type' => 'user'],
+            ['id' => 4, 'business_id' => 7, 'surname' => 'Mr', 'first_name' => 'Baginda Imom', 'last_name' => 'Nasution', 'user_type' => 'user'],
+            ['id' => 5, 'business_id' => 7, 'first_name' => 'Mr. Baginda Imom Nasution', 'user_type' => 'user'],
         ]);
     }
 
@@ -142,11 +147,44 @@ class HeavyEquipmentSpbImportPreviewEditTest extends TestCase
         $this->assertSame(1, $payload['preview']['rows'][1]['asset_id']);
     }
 
+    public function test_preview_matches_honorific_variants_but_requires_explicit_choice_for_duplicate_users(): void
+    {
+        $preview = app(HeavyEquipmentSpbImportService::class)->preview($this->workbook('Baginda Imom Nasution'), 7);
+        $row = $preview['rows'][0];
+
+        $this->assertNull($row['driver_id']);
+        $this->assertSame(100, $row['driver_match']['confidence_percent']);
+        $this->assertFalse($row['driver_match']['requires_review']);
+        $this->assertSame([4, 5], array_slice(array_column($row['driver_match']['candidates'], 'id'), 0, 2));
+        $this->assertNotContains(3, array_column($row['driver_match']['candidates'], 'id'));
+        $this->assertStringContainsString('User #', $row['driver_match']['candidates'][0]['label']);
+        $this->assertContains('driver_id', array_keys($row['row_error_fields']));
+        $this->assertStringContainsString('Ditemukan 2 User', $row['row_error_fields']['driver_id'][0]);
+    }
+
+    public function test_low_similarity_is_flagged_for_manual_review_and_unique_exact_match_is_linked(): void
+    {
+        $service = app(HeavyEquipmentSpbImportService::class);
+        $lowConfidencePreview = $service->preview($this->workbook('Baginda'), 7);
+        $lowConfidenceRow = $lowConfidencePreview['rows'][0];
+
+        $this->assertNull($lowConfidenceRow['driver_id']);
+        $this->assertTrue($lowConfidenceRow['driver_match']['requires_review']);
+        $this->assertLessThan(60, $lowConfidenceRow['driver_match']['confidence_percent']);
+        $this->assertStringContainsString('di bawah 60%', $lowConfidenceRow['row_error_fields']['driver_id'][0]);
+
+        DB::table('users')->whereIn('id', [4, 5])->delete();
+        $uniqueExactPreview = $service->preview($this->workbook('Sopir Lama'), 7);
+
+        $this->assertSame(1, $uniqueExactPreview['rows'][0]['driver_id']);
+        $this->assertSame(100, $uniqueExactPreview['rows'][0]['driver_match']['confidence_percent']);
+    }
+
     private function rowsWithRepeatedLabels(): array
     {
         return [
-            $this->row(0, 'Truk Mentah A', 'Supir Mentah A', 'TK-A'),
-            $this->row(1, ' truk mentah a ', 'supir mentah a', 'TK-B'),
+            $this->row(0, 'Truk Mentah A', 'Mr. Baginda Imom Nasution', 'TK-A'),
+            $this->row(1, ' truk mentah a ', 'Baginda Imom Nasution', 'TK-B'),
             $this->row(2, 'Truk Lain', 'Supir Lain', 'TK-C'),
         ];
     }
@@ -221,6 +259,14 @@ class HeavyEquipmentSpbImportPreviewEditTest extends TestCase
     private function cacheKey(string $token): string
     {
         return 'heavy_equipment_spb_import:999:'.$token;
+    }
+
+    private function workbook(string $driverName): UploadedFile
+    {
+        $csv = "No Polisi,No Tiket,Tanggal,Netto,Harga,Keterangan\n"
+            .'BM 9133,TK-CSV,2026-11-01,10,1000,"'.$driverName.'"'."\n";
+
+        return UploadedFile::fake()->createWithContent('spb.csv', $csv);
     }
 
     private function admin(): \Illuminate\Foundation\Auth\User

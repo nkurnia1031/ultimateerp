@@ -1,0 +1,74 @@
+# User initiated import lifecycle
+
+## Problem Statement
+
+Import flows behave differently across the application. Some already analyze or import in the background and have batch history; others run in one request, keep preview state only in cache, or expose no durable detail, restore, or revert action. Users cannot reliably tell where an upload went, what each source row changed, or whether an import can be safely undone.
+
+The SPB workbook `06.  PT. JATIM PROPERTINDO JAYA CANGKANG (MV. EASTERN HOPE).xls` also exposes a matching failure: `Baginda Imom Nasution` and `Mr. Baginda Imom Nasution` are used in the same workbook. The local development database has duplicate active Users with the same canonical name in one business. The current resolver treats multiple matches as no match, and a period after `Mr.` prevents part of the workbook name from normalizing to the same identity.
+
+## Solution
+
+Every user initiated import gets a durable, business-scoped batch. File upload is submitted through AJAX; spreadsheet analysis and database writes run in a queue. The import page shows batch status and progress in a paginated history table, with row-level detail, a restored logical workbook download, and a safe revert action when the batch can still be reversed.
+
+SPB driver matching normalizes honorifics, punctuation, spacing, and case, then presents ranked same-business User candidates with a name-similarity percentage. A unique exact match can be linked automatically. Fuzzy candidates and duplicate exact candidates remain unapproved until a user chooses one. Approving a candidate applies it to every row with the same canonical source name and recalculates readiness.
+
+## User Stories
+
+1. As an import user, I want an upload to return a batch immediately and show progress while analysis continues, so I know the workbook was accepted.
+2. As an import user, I want file analysis and database writes to run in the background, so a large workbook does not wait on one long page request.
+3. As an import user, I want every batch to remain in a history table after I leave the preview, so I can find and resume the work later.
+4. As an import user, I want to search, filter, and paginate import history, so a long history remains usable.
+5. As an import user, I want to open a batch and see row-level source positions, results, errors, and links to records created or updated by the import.
+6. As an import user, I want progress, partial success, failure, cancellation, and revert states to be distinguishable in the history table.
+7. As an import user, I want to download a workbook reconstructed from the original source rows after upload, so I can recover the imported data without permanently storing the uploaded binary.
+8. As an authorized user, I want a batch download to be available only to users with permission in the same active business.
+9. As an import user, I want to revert an imported batch and restore prior values when the affected records have not changed since import.
+10. As an import user, I want revert to stop with a clear reason if another transaction now depends on or has changed an imported record.
+11. As an import user, I want a failed queued batch to expose its reason and an idempotent retry action, so I can recover without creating duplicate records.
+12. As an import user, I want to cancel work that has not committed, so an unwanted upload cannot continue silently.
+13. As an SPB importer, I want name matching to ignore honorific punctuation and case, so `Mr. Baginda Imom Nasution` can match the same canonical User name.
+14. As an SPB importer, I want candidate Users ranked with a visible similarity percentage, so I can distinguish a strong suggestion from a weak one.
+15. As an SPB importer, I want any score below 60% marked for examination and never silently accepted, so a weak name match cannot attach a trip to the wrong driver.
+16. As an SPB importer, I want duplicate exact Users shown as separate candidates with a distinguishing identifier, so I can choose the intended record.
+17. As an SPB importer, I want one approved driver choice to apply to every row with the same canonical workbook name, so I do not repeat the same correction across the sheet.
+18. As an SPB importer, I want group approval to update all affected row statuses immediately, so corrected rows become ready as soon as their other validation errors are resolved.
+19. As an operator, I want every import flow to enforce active-business and permission checks on upload, preview, history, download, retry, and revert, so imports cannot cross business data.
+20. As an operator, I want existing domain-specific validation, preview edits, and accounting rules preserved while each import adopts the common history and progress experience.
+
+## Implementation Decisions
+
+- **D1 — Scope:** include every user initiated data import, both file-based Excel/CSV flows and business-to-business copy imports. This includes Expense, Solar, Journal, SPB, Vendor Loading, Heavy Equipment rates, sales/purchase, products/opening stock, purchase products and price groups, Bonus Ayak, attendance, project workbooks, contact CSV, CRM contract workbooks, and cross-business contact/user/expense-category imports. Exclude CLI/maintenance jobs, security-audit report uploads, template downloads, and ordinary document attachments.
+- **D2 — Batch contract:** use a shared history and lifecycle contract, but keep parsing, row details, and domain-specific rollback in importer adapters. Do not replace mature Expense, Solar, Journal, or Vendor batch processing with a second implementation.
+- **D3 — Asynchronous work:** the browser uploads with AJAX and reports transfer progress; analysis, preview generation, and import writes run as Laravel queued jobs. Keep dedicated queues already used by importers; new queued flows use the configured imports queue.
+- **D4 — Status:** expose `queued`, `analyzing`, `preview_ready`, `queued_import`, `importing`, `imported`, `partial`, `failed`, `cancelled`, and `reverted` states where applicable. Every transition is durable and jobs remain idempotent.
+- **D5 — History/detail:** each importer page has a common DataTable history with search, status/date filters, pagination, progress, and actions. Batch detail shows source sheet/row, processing result, error, and related record reference.
+- **D6 — Workbook restoration:** do not retain uploaded XLS/XLSX/CSV binaries permanently. Store a private immutable snapshot of source sheet names, headings, and cell values through the history lifetime, then generate a logical `.xlsx` on download. This preserves values and sheets, not original styling, macros, formulas, or binary identity. Do not auto-expire snapshots.
+- **D7 — Safe revert:** each importer adapter deletes records created by the batch and restores captured prior values for updated records only if current fingerprints still match the post-import state. Block revert with a specific explanation if records changed or have downstream dependencies. Do not perform partial rollback.
+- **D8 — Business scope:** batch list, details, restored workbook, preview, retry, and revert are restricted to the active business and existing import permissions. History is visible to users who have the relevant import-view permission, not only to the uploader.
+- **D9 — SPB confidence:** scores represent name similarity, not a statistical probability. Normalize honorifics including punctuation (`Mr.`), case, whitespace, and name punctuation. Rank candidates by the greater of character-level similarity and token-set Dice similarity, rounded to an integer percentage. Show the five leading same-business active User candidates, and show every exact duplicate when more than five exist. Automatically link only a unique canonical exact match. Fuzzy and duplicate exact matches require explicit choice; scores below 60% are marked `Perlu pemeriksaan`. A user-approved choice propagates only to rows with the same canonical source name, not merely similar names.
+- **D10 — Vendor identities:** Vendor unit and driver remain vendor-provided text snapshots; do not match them against internal Assets or Users. This follows the existing Vendor data model.
+- **D11 — Existing contracts:** keep module-specific job queues, preview validation, financial posting rules, and detailed batch records as the source of business behavior. The shared contract normalizes history actions and state for the page; migrate one importer at a time.
+- **D12 — Queue recovery:** upload confirmation and batch import requests use AJAX; progress polling reads durable batch state. Retry resumes only failed/unprocessed work and cannot duplicate successful rows.
+
+## Testing Decisions
+
+- Test observable behavior through upload/status/preview/update/confirm/history/download/revert routes, not private scoring helpers or storage implementation.
+- The SPB preview seam uses a synthetic workbook with punctuation/title variants and two same-business exact Users. It verifies candidate confidence, ambiguity, low-confidence review state, group approval, and readiness recalculation.
+- The batch lifecycle seam verifies AJAX batch creation, durable progress/status, row detail, workbook restoration from immutable source values, same-business authorization, safe revert, and rejection when a dependent record or changed fingerprint exists.
+- Each importer adapter gets a synthetic representative file and verifies it produces a complete batch lifecycle without adding real business workbooks to the repository or CI.
+- Reuse existing feature tests for Expense, Solar, Journal, Vendor, SPB, and importer-specific transaction behavior. Add equivalent route-level feature tests for importers being migrated.
+- CI PHPUnit runs on each push. Playwright E2E remains a separate user-directed workflow after the repository checkpoint.
+
+## Out of Scope
+
+- Storing the original uploaded binary indefinitely or reproducing its exact formatting, macros, or formulas.
+- Matching Vendor-provided driver/unit names to internal Users or Assets.
+- Changing financial posting authority, tax rules, or transaction validation while adding import lifecycle support.
+- Deleting or rewriting existing business records during import rollback when the adapter cannot prove that restoration is safe.
+- CLI and one-off maintenance imports, security-audit JSON uploads, template downloads, and transaction attachments.
+
+## Further Notes
+
+- The file named in the report has 159 non-empty driver/description labels and two raw variants of the same Baginda name (3 rows without `Mr.`, 10 rows with `Mr.`). Local business data has more than one exact same-name active User, so exact text alone cannot select a unique ID.
+- Existing open Journal Import specifications (#8 and #16) already define resumable Journal processing and review rules. This work only adds the common history/download lifecycle around that implementation; it does not replace those rules.
+- Proposed ticket breakdown and blockers are tracked in the child issues linked to the parent spec issue.

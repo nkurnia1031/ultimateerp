@@ -67,6 +67,7 @@
                             <option value="">Semua status</option>
                             <option value="Siap">Siap</option>
                             <option value="Perlu koreksi">Perlu koreksi</option>
+                            <option value="Perlu pemeriksaan">Perlu pemeriksaan</option>
                         </select>
                     </div>
                     <div class="table-responsive fleet-datatable-wrap">
@@ -153,6 +154,7 @@
                                                 @foreach($drivers as $driver)<option value="{{ $driver['id'] }}" data-name="{{ $driver['name'] }}">{{ $driver['label'] }}</option>@endforeach
                                             </select>
                                         </div>
+                                        <div id="spb-driver-match-suggestions" class="spb-driver-match-suggestions" aria-live="polite"></div>
                                         <div class="spb-label-panel" id="spb-driver-label-panel" hidden>
                                             <input type="text" id="spb-edit-driver-label-editor" class="form-control" placeholder="Nama sopir dari workbook">
                                             <p class="help-block">Nama akan dicocokkan kembali dengan Users saat validasi.</p>
@@ -240,6 +242,9 @@
     .spb-import-modal .spb-field-error { color: #a94442; font-size: 12px; margin-top: 4px; }
     .spb-import-modal .select2-container { width: 100% !important; }
     .spb-edit-source { margin: 5px 24px 0 0; overflow-wrap: anywhere; }
+    .spb-driver-match-suggestions { margin-top: 8px; }
+    .spb-driver-match-suggestions .spb-driver-candidate { display: block; max-width: 100%; margin: 0 0 5px; white-space: normal; text-align: left; }
+    .spb-driver-match-suggestions .help-block { margin: 4px 0 8px; }
     #fleet-spb-import-preview-table td { overflow-wrap: anywhere; }
     @media (max-width: 767px) {
         .spb-import-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -267,9 +272,15 @@ $(function () {
     }
 
     function rowStatus(row) {
-        return row.row_errors && row.row_errors.length
-            ? '<span class="label label-warning">Perlu koreksi</span>'
-            : '<span class="label label-success">Siap</span>';
+        var status = rowStatusValue(row);
+        if (status === 'Siap') return '<span class="label label-success">Siap</span>';
+        if (status === 'Perlu pemeriksaan') return '<span class="label label-danger">Perlu pemeriksaan</span>';
+        return '<span class="label label-warning">Perlu koreksi</span>';
+    }
+
+    function rowStatusValue(row) {
+        if (row.driver_match && row.driver_match.requires_review && !row.driver_id) return 'Perlu pemeriksaan';
+        return row.row_errors && row.row_errors.length ? 'Perlu koreksi' : 'Siap';
     }
 
     function rowErrors(row) {
@@ -285,11 +296,23 @@ $(function () {
             { data: null, render: function (data, type, row) { return type === 'display' ? escapeHtml(row.source_sheet) + ':' + escapeHtml(row.source_row) : String(row.source_sheet || '') + ':' + String(row.source_row || ''); } },
             { data: 'ticket_no', defaultContent: '-', render: function (value, type) { return type === 'display' ? escapeHtml(value || '-') : (value || ''); } },
             { data: 'asset_label', defaultContent: '-', render: function (value, type) { return type === 'display' ? escapeHtml(value || '-') : (value || ''); } },
-            { data: 'driver_label', defaultContent: '-', render: function (value, type) { return type === 'display' ? escapeHtml(value || '-') : (value || ''); } },
+            { data: 'driver_label', defaultContent: '-', render: function (value, type, row) {
+                if (type !== 'display') return value || '';
+                var label = escapeHtml(value || '-');
+                var match = row.driver_match || {};
+                var candidates = match.candidates || [];
+                var candidate = candidates.find(function (item) { return Number(item.id) === Number(row.driver_id); }) || candidates[0];
+                if (candidate) {
+                    var confidence = Number(candidate.confidence_percent || 0);
+                    var cssClass = confidence < 60 ? 'text-danger' : 'text-muted';
+                    label += '<br><small class="' + cssClass + '">Kemiripan nama ' + confidence + '%</small>';
+                }
+                return label;
+            } },
             { data: 'trip_date', defaultContent: '-', render: function (value, type) { return type === 'display' ? escapeHtml(value || '-') : (value || ''); } },
             { data: 'actual_tons', defaultContent: '-', render: function (value, type) { return type === 'display' ? escapeHtml(value == null || value === '' ? '-' : value) : (value || ''); } },
             { data: 'sale_rate_per_ton', defaultContent: '-', render: function (value, type) { return type === 'display' ? escapeHtml(value == null || value === '' ? '-' : value) : (value || ''); } },
-            { data: null, orderable: false, render: function (data, type, row) { return type === 'display' ? rowStatus(row) : ((row.row_errors || []).length ? 'Perlu koreksi' : 'Siap'); } },
+            { data: null, orderable: false, render: function (data, type, row) { return type === 'display' ? rowStatus(row) : rowStatusValue(row); } },
             { data: null, orderable: false, render: function (data, type, row) { return type === 'display' ? rowErrors(row) : ((row.row_errors || []).join(' ')); } },
             { data: null, orderable: false, searchable: false, render: function (data, type, row) { return type === 'display' ? '<button type="button" class="btn btn-xs btn-primary spb-edit-row" data-row-index="' + Number(row.preview_index) + '"><i class="fas fa-edit"></i> Edit</button>' : ''; } }
         ],
@@ -365,6 +388,32 @@ $(function () {
         $('#spb-' + kind + '-new-panel').prop('hidden', mode !== 'new').find(':input').prop('disabled', mode !== 'new');
     }
 
+    function renderDriverCandidates(row) {
+        var match = row.driver_match || {};
+        var candidates = match.candidates || [];
+        var $suggestions = $('#spb-driver-match-suggestions').empty();
+        $suggestions.append($('<p class="text-muted small">').text('Nama dari workbook: ' + (match.source_label || row.source_driver_label || '-')));
+        if (!candidates.length) {
+            $suggestions.append($('<p class="help-block">').text('Tidak ditemukan kandidat sopir pada bisnis ini.'));
+            return;
+        }
+
+        $suggestions.append($('<p class="help-block">').text('Persentase menunjukkan kemiripan nama, bukan probabilitas. Pilih kandidat lalu simpan untuk menerapkan pilihan ke semua variasi nama sumber yang sama.'));
+        candidates.forEach(function (candidate) {
+            var confidence = Number(candidate.confidence_percent || 0);
+            var $button = $('<button type="button" class="btn btn-xs spb-driver-candidate">')
+                .toggleClass('btn-danger', confidence < 60)
+                .toggleClass('btn-default', confidence >= 60)
+                .attr('data-driver-id', candidate.id)
+                .text(candidate.label + ' · ' + confidence + '%');
+            if (Number(match.selected_driver_id) === Number(candidate.id)) $button.addClass('active');
+            $suggestions.append($button);
+        });
+        if (match.requires_review) {
+            $suggestions.append($('<div class="text-danger small">').text('Kandidat terdekat di bawah 60%; periksa nama dengan teliti sebelum menyimpan.'));
+        }
+    }
+
     function fillRelation(kind, row) {
         var isAsset = kind === 'asset';
         var idField = isAsset ? 'asset_id' : 'driver_id';
@@ -377,6 +426,7 @@ $(function () {
         $('#spb-edit-' + kind + '-label-editor').val(row[labelField] || '');
         $('#spb-edit-' + kind + '-new-name').val(row[labelField] || '');
         $('#spb-edit-' + labelField).val(row[labelField] || '');
+        if (!isAsset) renderDriverCandidates(row);
         syncModePanels(kind);
     }
 
@@ -450,6 +500,14 @@ $(function () {
         var name = $(this).find(':selected').data('name') || '';
         $('#spb-edit-driver-label').val(name);
         if (name) $('#spb-edit-driver-label-editor, #spb-driver-new-name').val(name);
+    });
+    $('#spb-driver-match-suggestions').on('click', '.spb-driver-candidate', function () {
+        $('#spb-edit-driver-mode').val('existing').trigger('change');
+        $('#spb-edit-driver-id').val(String($(this).data('driver-id'))).trigger('change');
+        $('#spb-driver-match-suggestions .spb-driver-candidate').removeClass('active');
+        $(this).addClass('active');
+        $('#spb-driver-match-suggestions .spb-driver-approval-notice').remove();
+        $('#spb-driver-match-suggestions').append($('<p class="text-success small spb-driver-approval-notice">').text('Kandidat dipilih. Klik “Simpan koreksi” untuk menyetujui dan memperbarui baris dengan nama sumber yang sama.'));
     });
     $('#spb-edit-asset-label-editor, #spb-asset-new-name').on('input change', function () { $('#spb-edit-asset-label').val($(this).val()); });
     $('#spb-edit-driver-label-editor, #spb-driver-new-name').on('input change', function () { $('#spb-edit-driver-label').val($(this).val()); });

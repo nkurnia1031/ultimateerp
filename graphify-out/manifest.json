@@ -13866,9 +13866,9 @@
     "semantic_hash": "12c3b3fc904d6b39786d5cd216644847"
   },
   "Modules/AssetManagement/Http/Controllers/HeavyEquipmentTripController.php": {
-    "mtime": 1795163347.8387132,
-    "seen": 1795163507.4545405,
-    "ast_hash": "7f247785255e4bdffbafb39b4b04676a",
+    "mtime": 1795182547.892632,
+    "seen": 1795183081.0904953,
+    "ast_hash": "2da7d62d3dd27eebfeb49d8320454167",
     "semantic_hash": ""
   },
   "Modules/AssetManagement/Resources/views/fleet/billing/project_invoice.blade.php": {
@@ -13938,15 +13938,15 @@
     "semantic_hash": ""
   },
   "Modules/AssetManagement/Resources/views/fleet/trips/import.blade.php": {
-    "mtime": 1795162991.7539976,
-    "seen": 1795163252.4581707,
-    "ast_hash": "ea6e7bd87068ce23a9d306375399c58f",
+    "mtime": 1795182883.1661015,
+    "seen": 1795183081.0904953,
+    "ast_hash": "d3d2af28f18986e170e78d83e4f34289",
     "semantic_hash": ""
   },
   "Modules/AssetManagement/Services/HeavyEquipmentSpbImportService.php": {
-    "mtime": 1795161866.4931974,
-    "seen": 1795163252.4581707,
-    "ast_hash": "ff1d28e2bc584a54cc6ba2578a4b8304",
+    "mtime": 1795182862.4598908,
+    "seen": 1795183081.0915163,
+    "ast_hash": "519b725f6f5e78fa000dbfff40867941",
     "semantic_hash": ""
   },
   "app/BonusAyakKasbon.php": {
@@ -14280,10 +14280,10 @@
     "semantic_hash": ""
   },
   "Modules/AssetManagement/Resources/views/fleet/vendor_loadings/grid_import.blade.php": {
-    "mtime": 1790272294.4879177,
-    "seen": 1793685076.8542116,
-    "ast_hash": "5522843aaa8083bc7507709f448d4fa8",
-    "semantic_hash": "5522843aaa8083bc7507709f448d4fa8"
+    "mtime": 1795176138.2352824,
+    "seen": 1795176443.804335,
+    "ast_hash": "c2ab462fde74e491520497fe18978065",
+    "semantic_hash": ""
   },
   "Modules/AssetManagement/Services/HeavyEquipmentVendorLoadingDocumentService.php": {
     "mtime": 1790272034.482967,

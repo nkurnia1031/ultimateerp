@@ -95,7 +95,7 @@ class HeavyEquipmentSpbImportService
 
         $target = $rows[$rowIndex];
         $assetGroup = $this->normalizeGroupLabel($target['source_asset_label'] ?? '');
-        $driverGroup = $this->normalizeGroupLabel($target['source_driver_label'] ?? '');
+        $driverGroup = $this->canonicalDriverName($target['source_driver_label'] ?? '');
         $editableFields = [
             'ticket_no', 'trip_date', 'load_date', 'unload_date', 'gross_tons', 'tare_tons',
             'actual_tons', 'received_tons', 'billable_tons', 'sale_rate_per_ton', 'origin',
@@ -115,7 +115,7 @@ class HeavyEquipmentSpbImportService
 
         foreach ($rows as $index => &$row) {
             $sameAssetSource = $assetGroup !== '' && $this->normalizeGroupLabel($row['source_asset_label'] ?? '') === $assetGroup;
-            $sameDriverSource = $driverGroup !== '' && $this->normalizeGroupLabel($row['source_driver_label'] ?? '') === $driverGroup;
+            $sameDriverSource = $driverGroup !== '' && $this->canonicalDriverName($row['source_driver_label'] ?? '') === $driverGroup;
 
             if ($index === $rowIndex || $sameAssetSource) {
                 $row['asset_id'] = $assetId ? (int) $assetId : null;
@@ -156,9 +156,14 @@ class HeavyEquipmentSpbImportService
                 $row['asset_id'] = null;
                 $this->addRowError($row, 'asset_id', 'Kendaraan/unit belum cocok dengan Assets. Pilih unit yang tersedia atau tambahkan unit baru.');
             }
-            if (empty($row['driver_id']) || ! DB::table('users')->where('business_id', $businessId)->where('user_type', 'user')->whereNull('deleted_at')->where('id', $row['driver_id'])->exists()) {
+            $validDriver = ! empty($row['driver_id']) && DB::table('users')->where('business_id', $businessId)
+                ->where('user_type', 'user')->whereNull('deleted_at')->where('id', $row['driver_id'])->exists();
+            if (! $validDriver) {
                 $row['driver_id'] = null;
-                $this->addRowError($row, 'driver_id', 'Nama sopir belum cocok dengan Users. Pilih sopir yang tersedia atau tambahkan sopir baru.');
+            }
+            $row['driver_match'] = $this->driverMatch($businessId, (string) ($row['source_driver_label'] ?? ''), $validDriver ? $row['driver_id'] : null);
+            if (! $validDriver) {
+                $this->addRowError($row, 'driver_id', $this->driverSelectionError($row['driver_match'], (string) ($row['source_driver_label'] ?? '')));
             }
             if (empty($row['trip_date'])) {
                 $this->addRowError($row, 'trip_date', 'Tanggal trip tidak terbaca.');
@@ -203,9 +208,19 @@ class HeavyEquipmentSpbImportService
 
     private function normalizeGroupLabel(?string $label): string
     {
-        $normalized = strtolower(trim((string) preg_replace('/\s+/', ' ', (string) $label)));
+        return strtolower(trim((string) preg_replace('/\s+/', ' ', (string) $label)));
+    }
 
-        return $normalized;
+    public function canonicalDriverName(?string $label): string
+    {
+        $normalized = mb_strtolower(trim((string) $label), 'UTF-8');
+        $normalized = preg_replace('/[^\pL\pN]+/u', ' ', $normalized) ?? '';
+        $tokens = array_values(array_filter(preg_split('/\s+/u', trim($normalized)) ?: []));
+        while ($tokens !== [] && in_array($tokens[0], ['mr', 'mrs', 'miss', 'ms'], true)) {
+            array_shift($tokens);
+        }
+
+        return implode(' ', $tokens);
     }
 
     public function prepareForImport(array $row, int $businessId, ?int $defaultRouteId = null): array
@@ -406,21 +421,124 @@ class HeavyEquipmentSpbImportService
 
     private function resolveDriverId(int $businessId, string $label): ?int
     {
-        $needle = $this->normalize($label);
-        if ($needle === '') {
+        $matches = $this->driverCandidates($businessId, $label);
+        $exactMatches = array_values(array_filter($matches, fn (array $candidate) => $candidate['exact']));
+
+        if (count($exactMatches) !== 1) {
             return null;
+        }
+
+        return (int) $exactMatches[0]['id'];
+    }
+
+    private function driverMatch(int $businessId, string $sourceLabel, $selectedDriverId = null): array
+    {
+        $candidates = $this->driverCandidates($businessId, $sourceLabel);
+        $top = $candidates[0] ?? null;
+        $selectedId = $selectedDriverId === null ? null : (int) $selectedDriverId;
+        $exactCandidates = array_values(array_filter($candidates, fn (array $candidate) => $candidate['exact']));
+
+        foreach ($candidates as &$candidate) {
+            $candidate['selected'] = $selectedId !== null && (int) $candidate['id'] === $selectedId;
+        }
+        unset($candidate);
+        $visibleCandidates = count($exactCandidates) > 5 ? $exactCandidates : array_slice($candidates, 0, 5);
+
+        return [
+            'source_label' => $sourceLabel,
+            'confidence_percent' => $top['confidence_percent'] ?? 0,
+            'requires_review' => $selectedId === null && $top !== null && $top['confidence_percent'] < 60,
+            'selected_driver_id' => $selectedId,
+            'exact_candidate_count' => count($exactCandidates),
+            'candidates' => $visibleCandidates,
+        ];
+    }
+
+    private function driverCandidates(int $businessId, string $label): array
+    {
+        $needle = $this->canonicalDriverName($label);
+        if ($needle === '') {
+            return [];
         }
 
         $users = DB::table('users')->where('business_id', $businessId)
             ->where('user_type', 'user')
             ->whereNull('deleted_at')
             ->select('id', 'surname', 'first_name', 'last_name', 'username')->get();
-        $matches = $users->filter(function ($user) use ($needle) {
-            $fullName = trim(implode(' ', array_filter([$user->surname, $user->first_name, $user->last_name])));
-            return $this->personMatches($needle, $fullName) || $this->personMatches($needle, $user->username);
-        });
+        $candidates = $users->map(function ($user) use ($needle) {
+            $name = trim(implode(' ', array_filter([$user->surname, $user->first_name, $user->last_name])));
+            $canonicalName = $this->canonicalDriverName($name);
+            $matchName = $canonicalName !== '' ? $canonicalName : $this->canonicalDriverName((string) ($user->username ?? ''));
+            $displayName = $name !== '' ? $name : (string) ($user->username ?? 'User #'.$user->id);
+            $confidence = $this->nameSimilarity($needle, $matchName);
 
-        return $matches->count() === 1 ? (int) $matches->first()->id : null;
+            return [
+                'id' => (int) $user->id,
+                'name' => $displayName,
+                'username' => (string) ($user->username ?? ''),
+                'canonical_name' => $matchName,
+                'confidence_percent' => $confidence,
+                'exact' => $matchName !== '' && $matchName === $needle,
+            ];
+        })->sort(function (array $left, array $right) {
+            return [$right['confidence_percent'], $left['id']] <=> [$left['confidence_percent'], $right['id']];
+        })->values()->all();
+
+        $duplicateNames = array_count_values(array_filter(array_column($candidates, 'canonical_name')));
+        foreach ($candidates as &$candidate) {
+            $candidate['label'] = $candidate['name'];
+            if (! empty($candidate['username']) && $this->canonicalDriverName($candidate['name']) !== $this->canonicalDriverName($candidate['username'])) {
+                $candidate['label'] .= ' ('.$candidate['username'].')';
+            } elseif (($duplicateNames[$candidate['canonical_name']] ?? 0) > 1) {
+                $candidate['label'] .= ' · User #'.$candidate['id'];
+            }
+            unset($candidate['canonical_name'], $candidate['username']);
+        }
+        unset($candidate);
+
+        return $candidates;
+    }
+
+    private function nameSimilarity(string $needle, string $candidate): int
+    {
+        if ($candidate === '') {
+            return 0;
+        }
+        if ($needle === $candidate) {
+            return 100;
+        }
+
+        similar_text($needle, $candidate, $characterSimilarity);
+        $needleTokens = array_values(array_unique(explode(' ', $needle)));
+        $candidateTokens = array_values(array_unique(explode(' ', $candidate)));
+        $commonTokens = count(array_intersect($needleTokens, $candidateTokens));
+        $tokenSimilarity = ($needleTokens === [] || $candidateTokens === [])
+            ? 0
+            : (200 * $commonTokens / (count($needleTokens) + count($candidateTokens)));
+
+        return (int) round(max($characterSimilarity, $tokenSimilarity));
+    }
+
+    private function driverSelectionError(array $match, string $sourceLabel): string
+    {
+        $candidates = $match['candidates'] ?? [];
+        if ($candidates === []) {
+            return 'Nama sopir "'.$sourceLabel.'" belum cocok dengan Users pada bisnis ini. Pilih sopir yang tersedia atau tambahkan sopir baru.';
+        }
+
+        $exactCandidates = array_values(array_filter($candidates, fn (array $candidate) => ! empty($candidate['exact'])));
+        $exactCount = (int) ($match['exact_candidate_count'] ?? count($exactCandidates));
+        if ($exactCount > 1) {
+
+            return 'Ditemukan '.$exactCount.' User dengan nama kanonis sama: '
+                .implode(', ', array_column($exactCandidates, 'label')).'. Pilih User yang benar sebelum impor.';
+        }
+
+        $top = $candidates[0];
+        $confidence = (int) ($top['confidence_percent'] ?? 0);
+        $review = $confidence < 60 ? ' Perlu pemeriksaan manual karena kemiripan di bawah 60%.' : '';
+
+        return 'Kandidat terdekat: '.$top['label'].' (kemiripan '.$confidence.'%). Pilih dan setujui kandidat sopir sebelum impor.'.$review;
     }
 
     private function resolveRouteId(int $businessId, string $label): ?int
@@ -543,20 +661,4 @@ class HeavyEquipmentSpbImportService
         return $compact ? preg_replace('/[^a-z0-9]+/', '', $value) : preg_replace('/\s+/', ' ', $value);
     }
 
-    private function personMatches(string $needle, ?string $candidate): bool
-    {
-        $needle = $this->normalize(preg_replace('/^(mr|mrs|miss|ms)\s+/i', '', $needle));
-        $candidate = $this->normalize(preg_replace('/^(mr|mrs|miss|ms)\s+/i', '', (string) $candidate));
-        if ($needle === '' || $candidate === '') {
-            return false;
-        }
-        if ($needle === $candidate) {
-            return true;
-        }
-
-        $needleTokens = array_filter(explode(' ', $needle));
-        $candidateTokens = array_filter(explode(' ', $candidate));
-
-        return count($needleTokens) > 0 && count(array_intersect($needleTokens, $candidateTokens)) === count($needleTokens);
-    }
 }
