@@ -49,6 +49,11 @@ SPB driver matching normalizes honorifics, punctuation, spacing, and case, then 
 - **D10 — Vendor identities:** Vendor unit and driver remain vendor-provided text snapshots; do not match them against internal Assets or Users. This follows the existing Vendor data model.
 - **D11 — Existing contracts:** keep module-specific job queues, preview validation, financial posting rules, and detailed batch records as the source of business behavior. The shared contract normalizes history actions and state for the page; migrate one importer at a time.
 - **D12 — Queue recovery:** upload confirmation and batch import requests use AJAX; progress polling reads durable batch state. Retry resumes only failed/unprocessed work and cannot duplicate successful rows.
+- **D13 — Shared batch record:** add one `user_import_batches` record as the common history/status/download/revert envelope, keyed by importer and business. Domain adapters keep their own row validation and domain-specific batch tables when they already exist; they store the shared batch ID on records they create or update.
+- **D14 — SPB revert:** SPB import creates draft trips. Revert is all-or-nothing and allowed only while every imported trip still has its post-import field fingerprint, remains editable, and has no invoice or payroll settlement dependency. If any trip changed or gained a dependency, block the whole revert with the affected trip numbers.
+- **D15 — SPB staging:** keep the uploaded workbook only in private staging while the queued preview job reads it. Persist the immutable values snapshot and preview payload, then delete the staged binary after processing, including failed processing. The history download rebuilds `.xlsx` from the snapshot.
+
+- D16 - SPB route recovery: tag a route created by an SPB batch with that batch ID in the same database transaction as its trip. Revert discovers routes from persistent provenance, including after a worker retry before result payload persistence. Revert blocks if a generated route has rate, trip, or Vendor Loading dependencies.
 
 ## Testing Decisions
 

@@ -149,6 +149,7 @@ class HeavyEquipmentTripService
                 'source_fingerprint' => $input['source_fingerprint'] ?? null,
                 'status' => 'draft',
                 'created_by' => $userId,
+                'import_batch_id' => $input['import_batch_id'] ?? null,
             ]);
         });
 

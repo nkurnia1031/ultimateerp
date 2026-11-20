@@ -1962,9 +1962,9 @@
     "semantic_hash": "9ba24c56c51f09683ef6fb5193f327ac"
   },
   "Modules/AssetManagement/Routes/web.php": {
-    "mtime": 1795161974.8945498,
-    "seen": 1795163252.4581707,
-    "ast_hash": "a356ba688a6a9f83d069433a6e6a12bb",
+    "mtime": 1795184819.7063067,
+    "seen": 1795186311.37535,
+    "ast_hash": "f02978f14f799ba2725cb41ca6ce4faa",
     "semantic_hash": ""
   },
   "Modules/AssetManagement/Services/AssetExpiryReminderService.php": {
@@ -13866,9 +13866,9 @@
     "semantic_hash": "12c3b3fc904d6b39786d5cd216644847"
   },
   "Modules/AssetManagement/Http/Controllers/HeavyEquipmentTripController.php": {
-    "mtime": 1795182547.892632,
-    "seen": 1795183081.0904953,
-    "ast_hash": "2da7d62d3dd27eebfeb49d8320454167",
+    "mtime": 1795185281.4781346,
+    "seen": 1795186311.37535,
+    "ast_hash": "e44dcc6e40dccf9b12747dc086b5889d",
     "semantic_hash": ""
   },
   "Modules/AssetManagement/Resources/views/fleet/billing/project_invoice.blade.php": {
@@ -13932,21 +13932,21 @@
     "semantic_hash": "e9febb5f1b37fd827e68f1049d28daec"
   },
   "Modules/AssetManagement/Services/HeavyEquipmentTripService.php": {
-    "mtime": 1795077907.4066365,
-    "seen": 1795078124.795129,
-    "ast_hash": "d52ed3bb4ef7c738ee36d4041794deeb",
+    "mtime": 1795184630.809569,
+    "seen": 1795186311.37535,
+    "ast_hash": "6ff88a9db4c0d9c9b060a0d1e07ffe87",
     "semantic_hash": ""
   },
   "Modules/AssetManagement/Resources/views/fleet/trips/import.blade.php": {
-    "mtime": 1795182883.1661015,
-    "seen": 1795183081.0904953,
-    "ast_hash": "d3d2af28f18986e170e78d83e4f34289",
+    "mtime": 1795185702.8021274,
+    "seen": 1795186311.37535,
+    "ast_hash": "59846960e9c5d9fc862999da5a3bd5fb",
     "semantic_hash": ""
   },
   "Modules/AssetManagement/Services/HeavyEquipmentSpbImportService.php": {
-    "mtime": 1795182862.4598908,
-    "seen": 1795183081.0915163,
-    "ast_hash": "519b725f6f5e78fa000dbfff40867941",
+    "mtime": 1795185702.7933383,
+    "seen": 1795186311.37535,
+    "ast_hash": "c3bbc85d1e4f8e81b9f1a93fc05aa95b",
     "semantic_hash": ""
   },
   "app/BonusAyakKasbon.php": {
@@ -15171,6 +15171,54 @@
     "mtime": 1795101060.965393,
     "seen": 1795101395.4643726,
     "ast_hash": "ba251d52503725ced96920d5a025ff3c",
+    "semantic_hash": ""
+  },
+  "Modules/AssetManagement/Database/Migrations/2026_11_20_000001_add_import_batch_id_to_heavy_equipment_trips.php": {
+    "mtime": 1795184390.3534617,
+    "seen": 1795186311.3739383,
+    "ast_hash": "fd79f4754cb7a086066e32fb01c98424",
+    "semantic_hash": ""
+  },
+  "Modules/AssetManagement/Database/Migrations/2026_11_20_000002_add_import_batch_id_to_heavy_equipment_routes.php": {
+    "mtime": 1795185646.3442948,
+    "seen": 1795186311.3739383,
+    "ast_hash": "214a6f1697a834c210af8c1189d34067",
+    "semantic_hash": ""
+  },
+  "Modules/AssetManagement/Jobs/ProcessHeavyEquipmentSpbImportJob.php": {
+    "mtime": 1795184645.5577748,
+    "seen": 1795186311.37535,
+    "ast_hash": "989e9f244abf6895ba3582f21fc24285",
+    "semantic_hash": ""
+  },
+  "Modules/AssetManagement/Jobs/ProcessHeavyEquipmentSpbPreviewJob.php": {
+    "mtime": 1795184645.5567632,
+    "seen": 1795186311.37535,
+    "ast_hash": "0a5f4804043df90e79635f3f6b73290f",
+    "semantic_hash": ""
+  },
+  "Modules/AssetManagement/Services/HeavyEquipmentSpbImportBatchService.php": {
+    "mtime": 1795185702.7967813,
+    "seen": 1795186311.37535,
+    "ast_hash": "0de55d65a9f6fe6cf178d09d6fe3e8a5",
+    "semantic_hash": ""
+  },
+  "app/Services/UserImportBatchService.php": {
+    "mtime": 1795185281.4771283,
+    "seen": 1795186311.3816175,
+    "ast_hash": "7b747e1b99051aa4b3c4576068239ad4",
+    "semantic_hash": ""
+  },
+  "app/UserImportBatch.php": {
+    "mtime": 1795184397.4783335,
+    "seen": 1795186311.3816175,
+    "ast_hash": "7ffd2d7030068fae9b8df52fdb9eb51e",
+    "semantic_hash": ""
+  },
+  "database/migrations/2026_11_20_000001_create_user_import_batches.php": {
+    "mtime": 1795184390.35136,
+    "seen": 1795186311.3838174,
+    "ast_hash": "6077333bc4fa7972a9da1f287c718a8e",
     "semantic_hash": ""
   }
 }

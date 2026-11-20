@@ -44,6 +44,12 @@ Route::middleware('web', 'authh', 'auth', 'SetSessionData', 'language', 'timezon
         Route::post('trips/import/preview', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentTripController::class, 'importPreview'])->name('trips.import.preview');
         Route::post('trips/import/rows/{rowIndex}', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentTripController::class, 'updateImportPreviewRow'])->whereNumber('rowIndex')->name('trips.import.rows.update');
         Route::post('trips/import/confirm', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentTripController::class, 'importConfirm'])->name('trips.import.confirm');
+        Route::get('trips/import/batches', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentTripController::class, 'importBatchHistory'])->name('trips.import.batches.index');
+        Route::get('trips/import/batches/{id}/status', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentTripController::class, 'importBatchStatus'])->whereNumber('id')->name('trips.import.batches.status');
+        Route::get('trips/import/batches/{id}/details', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentTripController::class, 'importBatchDetails'])->whereNumber('id')->name('trips.import.batches.details');
+        Route::get('trips/import/batches/{id}/download', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentTripController::class, 'downloadImportBatch'])->whereNumber('id')->name('trips.import.batches.download');
+        Route::post('trips/import/batches/{id}/retry', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentTripController::class, 'retryImportBatch'])->whereNumber('id')->name('trips.import.batches.retry');
+        Route::post('trips/import/batches/{id}/revert', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentTripController::class, 'revertImportBatch'])->whereNumber('id')->name('trips.import.batches.revert');
         Route::get('trips/project-invoice/choose', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentTripController::class, 'projectInvoiceChooser'])->name('trips.project-invoice.choose');
         Route::get('trips/project-invoice', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentTripController::class, 'projectInvoiceForm'])->name('trips.project-invoice.form');
         Route::post('trips/project-invoice', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentTripController::class, 'projectInvoice'])->name('trips.project-invoice');

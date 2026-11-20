@@ -17,21 +17,42 @@ class HeavyEquipmentSpbImportService
 {
     public function preview(UploadedFile $file, int $businessId): array
     {
-        $extension = strtolower($file->getClientOriginalExtension());
+        return $this->previewPath($file->getRealPath(), $file->getClientOriginalName(), $businessId);
+    }
+
+    public function previewPath(string $path, string $originalName, int $businessId, ?callable $progress = null): array
+    {
+        $extension = strtolower(pathinfo($originalName, PATHINFO_EXTENSION));
         if (! in_array($extension, ['xlsx', 'xls', 'csv'], true)) {
             throw new \InvalidArgumentException('File SPB harus berformat XLSX, XLS, atau CSV.');
         }
 
-        $spreadsheet = IOFactory::load($file->getRealPath());
-        $fileHash = @hash_file('sha256', $file->getRealPath()) ?: Str::random(64);
+        $spreadsheet = IOFactory::load($path);
+        $fileHash = @hash_file('sha256', $path) ?: Str::random(64);
         $rows = [];
         $sheets = 0;
+        $sourceSheets = [];
+        $totalWorkbookRows = 0;
+        foreach ($spreadsheet->getWorksheetIterator() as $worksheet) {
+            $totalWorkbookRows += (int) $worksheet->getHighestRow();
+        }
+        $processedWorkbookRows = 0;
 
         foreach ($spreadsheet->getWorksheetIterator() as $worksheet) {
             $sheets++;
             $sheetRows = $worksheet->toArray(null, true, true, true);
+            $sourceSheets[] = [
+                'title' => $worksheet->getTitle(),
+                'rows' => $worksheet->toArray(null, false, false, true),
+            ];
             $headerRow = $this->findHeaderRow($sheetRows);
             if ($headerRow === null) {
+                foreach ($sheetRows as $rowNumber => $_rawRow) {
+                    $processedWorkbookRows++;
+                    if ($progress && ($processedWorkbookRows % 25 === 0 || $processedWorkbookRows >= $totalWorkbookRows)) {
+                        $progress($processedWorkbookRows, $totalWorkbookRows, $worksheet->getTitle(), $rowNumber);
+                    }
+                }
                 continue;
             }
 
@@ -43,6 +64,10 @@ class HeavyEquipmentSpbImportService
             }
             $isReconciliation = isset($headers['nopolisi']) && (isset($headers['pks']) || isset($headers['pabrik']) || isset($headers['oa']));
             foreach ($sheetRows as $rowNumber => $rawRow) {
+                $processedWorkbookRows++;
+                if ($progress && ($processedWorkbookRows % 25 === 0 || $processedWorkbookRows >= $totalWorkbookRows)) {
+                    $progress($processedWorkbookRows, $totalWorkbookRows, $worksheet->getTitle(), $rowNumber);
+                }
                 if ($rowNumber <= $headerRow || $this->rowIsEmpty($rawRow)) {
                     continue;
                 }
@@ -57,7 +82,7 @@ class HeavyEquipmentSpbImportService
                     $candidate['claim_rate_per_kg'] = $this->claimRateFromFormula($worksheet, $rowNumber) ?? $candidate['claim_rate_per_kg'];
                 }
 
-                $candidate['source_workbook'] = $file->getClientOriginalName();
+                $candidate['source_workbook'] = $originalName;
                 $candidate['source_sheet'] = $worksheet->getTitle();
                 $candidate['source_row'] = $rowNumber;
                 $candidate['source_fingerprint'] = hash('sha256', $fileHash.'|'.$worksheet->getTitle().'|'.$rowNumber.'|'.json_encode($rawRow));
@@ -72,11 +97,17 @@ class HeavyEquipmentSpbImportService
             }
         }
 
+        $preview = $this->refreshPreview($rows, $businessId, $sheets);
+        $preview['analysis_total_rows'] = $totalWorkbookRows;
         if ($rows === []) {
-            throw new \InvalidArgumentException('Tidak ada baris SPB yang dapat dibaca dari workbook.');
+            $preview['fatal_error'] = 'Tidak ada baris SPB yang dapat dibaca dari workbook.';
         }
+        $preview['source_snapshot'] = [
+            'sheets' => $sourceSheets,
+            'captured_at' => now()->toIso8601String(),
+        ];
 
-        return $this->refreshPreview($rows, $businessId, $sheets);
+        return $preview;
     }
 
     public function updatePreviewRow(array $rows, int $rowIndex, array $changes, int $businessId, int $sheetCount = 0): array
@@ -238,6 +269,9 @@ class HeavyEquipmentSpbImportService
                 ]
             );
             $row['route_id'] = $route->id;
+            if ($route->wasRecentlyCreated) {
+                $row['_created_route_id'] = (int) $route->id;
+            }
         }
 
         return $row;

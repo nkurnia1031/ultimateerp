@@ -7,6 +7,7 @@ use App\Category;
 use App\Contact;
 use App\InvoiceScheme;
 use App\Product;
+use App\Services\UserImportBatchService;
 use App\Utils\ModuleUtil;
 use App\Utils\Util;
 use App\User;
@@ -15,12 +16,16 @@ use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Modules\AssetManagement\Entities\Asset;
 use Modules\AssetManagement\Entities\HeavyEquipmentRoute;
 use Modules\AssetManagement\Entities\HeavyEquipmentTrip;
+use Modules\AssetManagement\Jobs\ProcessHeavyEquipmentSpbImportJob;
+use Modules\AssetManagement\Jobs\ProcessHeavyEquipmentSpbPreviewJob;
+use Modules\AssetManagement\Services\HeavyEquipmentSpbImportBatchService;
 use Modules\AssetManagement\Services\HeavyEquipmentSpbImportService;
 use Modules\AssetManagement\Services\HeavyEquipmentTripService;
 use Modules\AssetManagement\Utils\AssetUtil;
@@ -31,6 +36,8 @@ class HeavyEquipmentTripController extends Controller
     public function __construct(
         private HeavyEquipmentTripService $tripService,
         private HeavyEquipmentSpbImportService $spbImportService,
+        private HeavyEquipmentSpbImportBatchService $spbImportBatchService,
+        private UserImportBatchService $userImportBatchService,
         private ModuleUtil $moduleUtil,
         private Util $commonUtil,
         private AssetUtil $assetUtil
@@ -197,6 +204,8 @@ class HeavyEquipmentTripController extends Controller
         $businessId = $this->businessId();
         $routes = HeavyEquipmentRoute::where('business_id', $businessId)->where('is_active', true)->orderBy('name')->pluck('name', 'id');
         $token = trim((string) $request->query('token'));
+        $batchId = $request->integer('batch_id') ?: null;
+        $batch = null;
         $preview = null;
         $viewData = [
             'assets' => collect(),
@@ -207,7 +216,21 @@ class HeavyEquipmentTripController extends Controller
             'canCreateDriver' => false,
         ];
 
-        if ($token !== '') {
+        if ($batchId) {
+            $batch = $this->userImportBatchService->findForBusiness($batchId, $businessId, 'spb');
+            if ($batch->status !== 'preview_ready' || ! $batch->preview_path) {
+                abort(404, 'Preview SPB belum siap atau batch tidak dapat diperiksa.');
+            }
+            $preview = $this->userImportBatchService->readPayload($batch, 'preview');
+            $token = (string) Str::uuid();
+            Cache::put($this->importCacheKey($token), [
+                'business_id' => $businessId,
+                'user_id' => auth()->id(),
+                'batch_id' => $batch->id,
+                'preview' => $preview,
+            ], now()->addHours(2));
+            $viewData = $this->importViewData($businessId);
+        } elseif ($token !== '') {
             $payload = Cache::get($this->importCacheKey($token));
             if (! $payload || (int) ($payload['business_id'] ?? 0) !== $businessId || (int) ($payload['user_id'] ?? 0) !== (int) auth()->id()) {
                 abort(404, 'Preview import SPB sudah kedaluwarsa atau tidak dapat diakses.');
@@ -216,7 +239,7 @@ class HeavyEquipmentTripController extends Controller
             $viewData = $this->importViewData($businessId);
         }
 
-        return view('assetmanagement::fleet.trips.import', array_merge($viewData, compact('routes', 'preview', 'token')));
+        return view('assetmanagement::fleet.trips.import', array_merge($viewData, compact('routes', 'preview', 'token', 'batch')));
     }
 
     public function importPreview(Request $request)
@@ -224,22 +247,52 @@ class HeavyEquipmentTripController extends Controller
         $this->authorizeManage();
         $request->validate(['file' => 'required|file|mimes:xlsx,xls,csv|max:51200']);
 
+        $batch = null;
+        $stagingPath = null;
         try {
-            $preview = $this->spbImportService->preview($request->file('file'), $this->businessId());
-            $token = (string) Str::uuid();
-            Cache::put($this->importCacheKey($token), [
-                'business_id' => $this->businessId(),
-                'user_id' => auth()->id(),
-                'preview' => $preview,
-            ], now()->addMinutes(30));
-            $routes = HeavyEquipmentRoute::where('business_id', $this->businessId())->where('is_active', true)->orderBy('name')->pluck('name', 'id');
-            $viewData = $this->importViewData($this->businessId());
+            $file = $request->file('file');
+            $businessId = $this->businessId();
+            $batch = $this->userImportBatchService->create([
+                'business_id' => $businessId,
+                'created_by' => auth()->id(),
+                'importer_key' => 'spb',
+                'file_name' => $file->getClientOriginalName(),
+                'status' => 'queued_preview',
+                'stage' => 'queued',
+                'last_message' => 'Upload diterima. Menunggu analisis workbook.',
+                'heartbeat_at' => now(),
+            ]);
+            $extension = strtolower($file->getClientOriginalExtension());
+            $stagingPath = $file->storeAs('user-import-staging', 'spb-'.$batch->id.'.'.$extension, 'local');
+            if (! $stagingPath) {
+                throw new \RuntimeException('File upload tidak dapat disimpan ke staging privat.');
+            }
+            $batch->staging_path = $stagingPath;
+            $batch->save();
 
-            return view('assetmanagement::fleet.trips.import', array_merge($viewData, compact('routes', 'preview', 'token')));
+            ProcessHeavyEquipmentSpbPreviewJob::dispatch((int) $batch->id);
+
+            return response()->json([
+                'success' => true,
+                'batch' => [
+                    'id' => $batch->id,
+                    'file_name' => $batch->file_name,
+                    'status' => $batch->status,
+                    'progress_percent' => 0,
+                    'last_message' => $batch->last_message,
+                ],
+                'message' => 'Upload diterima; analisis workbook berjalan di background.',
+            ], 202);
         } catch (\Throwable $e) {
             report($e);
+            if ($stagingPath) {
+                Storage::disk('local')->delete($stagingPath);
+            }
+            if ($batch) {
+                $this->spbImportBatchService->markFailed((int) $batch->id, $e->getMessage());
+            }
 
-            return back()->withInput()->with('status', ['success' => false, 'msg' => $e->getMessage()]);
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
         }
     }
 
@@ -348,7 +401,17 @@ class HeavyEquipmentTripController extends Controller
             );
         });
         $payload['preview'] = $newPreview;
-        Cache::put($cacheKey, $payload, now()->addMinutes(30));
+        if (! empty($payload['batch_id'])) {
+            $batch = $this->userImportBatchService->findForBusiness((int) $payload['batch_id'], $businessId, 'spb');
+            if ($batch->status !== 'preview_ready') {
+                abort(422, 'Preview batch sudah tidak dapat diubah.');
+            }
+            $this->userImportBatchService->storePayload($batch, 'preview', $newPreview);
+            $batch->summary_json = json_encode($newPreview['summary'] ?? [], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            $batch->last_message = 'Koreksi preview tersimpan.';
+            $batch->save();
+        }
+        Cache::put($cacheKey, $payload, now()->addHours(2));
 
         $updatedRows = [];
         foreach ($newPreview['rows'] as $index => $row) {
@@ -373,6 +436,52 @@ class HeavyEquipmentTripController extends Controller
         $payload = Cache::get($this->importCacheKey($request->input('token')));
         if (! $payload || (int) $payload['business_id'] !== $this->businessId() || (int) $payload['user_id'] !== (int) auth()->id()) {
             abort(422, 'Preview import SPB sudah kedaluwarsa atau tidak valid.');
+        }
+
+        if (! empty($payload['batch_id'])) {
+            $batch = $this->userImportBatchService->findForBusiness((int) $payload['batch_id'], $this->businessId(), 'spb');
+            if ($batch->status !== 'preview_ready' || ! $batch->preview_path) {
+                abort(422, 'Batch SPB tidak berada pada status preview siap.');
+            }
+            $defaultRouteId = $request->integer('default_route_id') ?: null;
+            if ($defaultRouteId) {
+                HeavyEquipmentRoute::where('business_id', $this->businessId())->where('is_active', true)->findOrFail($defaultRouteId);
+            }
+
+            $batch->forceFill([
+                'status' => 'queued_import',
+                'stage' => 'queued',
+                'options_json' => json_encode(['default_route_id' => $defaultRouteId], JSON_UNESCAPED_UNICODE),
+                'progress_current' => 0,
+                'progress_total' => (int) (($payload['preview']['summary']['source_rows'] ?? 0)),
+                'progress_percent' => 0,
+                'last_message' => 'Konfirmasi diterima. Menunggu worker queue imports.',
+                'error_message' => null,
+                'failed_at' => null,
+                'heartbeat_at' => now(),
+                'updated_at' => now(),
+            ])->save();
+
+            try {
+                ProcessHeavyEquipmentSpbImportJob::dispatch((int) $batch->id);
+            } catch (\Throwable $exception) {
+                report($exception);
+                $this->spbImportBatchService->markFailed((int) $batch->id, $exception->getMessage());
+
+                return response()->json(['success' => false, 'message' => 'Import belum dapat dimasukkan ke queue.'], 503);
+            }
+
+            Cache::forget($this->importCacheKey($request->input('token')));
+            $batch->refresh();
+            $response = [
+                'success' => true,
+                'batch_id' => $batch->id,
+                'status' => $batch->status,
+                'progress_percent' => (int) $batch->progress_percent,
+                'message' => 'Import SPB masuk ke queue. Progres dapat dipantau pada riwayat batch.',
+            ];
+
+            return $request->expectsJson() ? response()->json($response, 202) : redirect()->route('asset.fleet.trips.import.form')->with('status', ['success' => true, 'msg' => $response['message']]);
         }
 
         $rows = $payload['preview']['rows'] ?? [];
@@ -423,6 +532,146 @@ class HeavyEquipmentTripController extends Controller
         }
 
         return redirect()->route('asset.fleet.trips.index')->with('status', ['success' => true, 'msg' => $message]);
+    }
+
+    public function importBatchHistory(Request $request)
+    {
+        $this->authorizeManage();
+
+        return response()->json($this->userImportBatchService->dataTable($request, $this->businessId(), 'spb'));
+    }
+
+    public function importBatchStatus(int $id)
+    {
+        $this->authorizeManage();
+        $batch = $this->userImportBatchService->findForBusiness($id, $this->businessId(), 'spb');
+        $summary = json_decode((string) $batch->summary_json, true) ?: [];
+
+        return response()->json([
+            'id' => $batch->id,
+            'file_name' => $batch->file_name,
+            'status' => $batch->status,
+            'stage' => $batch->stage,
+            'progress_current' => (int) $batch->progress_current,
+            'progress_total' => (int) $batch->progress_total,
+            'progress_percent' => (int) $batch->progress_percent,
+            'summary' => $summary,
+            'message' => $batch->last_message,
+            'error' => $batch->error_message,
+            'heartbeat_at' => optional($batch->heartbeat_at)->toIso8601String(),
+            'has_snapshot' => $batch->hasSourceSnapshot(),
+            'active' => $batch->isActive(),
+        ]);
+    }
+
+    public function importBatchDetails(int $id)
+    {
+        $this->authorizeManage();
+        $batch = $this->userImportBatchService->findForBusiness($id, $this->businessId(), 'spb');
+        $preview = $batch->preview_path ? $this->userImportBatchService->readPayload($batch, 'preview') : ['rows' => []];
+        $results = [];
+        if ($batch->results_path) {
+            try {
+                $results = $this->userImportBatchService->readPayload($batch, 'results');
+            } catch (\Throwable $exception) {
+                report($exception);
+            }
+        }
+
+        $rows = [];
+        foreach (($preview['rows'] ?? []) as $index => $row) {
+            $key = (string) ($row['source_fingerprint'] ?? 'row-'.$index);
+            $result = $results[$key] ?? null;
+            $rows[] = [
+                'sheet' => $row['source_sheet'] ?? '',
+                'source_row' => $row['source_row'] ?? null,
+                'ticket_no' => $row['ticket_no'] ?? null,
+                'asset' => $row['asset_label'] ?? null,
+                'driver' => $row['driver_label'] ?? null,
+                'status' => $result['status'] ?? (empty($row['row_errors']) ? 'ready' : 'error'),
+                'trip_id' => $result['trip_id'] ?? null,
+                'trip_no' => $result['trip_no'] ?? null,
+                'trip_url' => ! empty($result['trip_id']) ? route('asset.fleet.trips.show', $result['trip_id']) : null,
+                'errors' => $result['error'] ?? implode(' ', $row['row_errors'] ?? []),
+            ];
+        }
+
+        return response()->json([
+            'batch' => [
+                'id' => $batch->id,
+                'file_name' => $batch->file_name,
+                'status' => $batch->status,
+                'summary' => json_decode((string) $batch->summary_json, true) ?: [],
+                'message' => $batch->last_message,
+                'error' => $batch->error_message,
+                'created_at' => optional($batch->created_at)->format('Y-m-d H:i:s'),
+            ],
+            'rows' => $rows,
+        ]);
+    }
+
+    public function downloadImportBatch(int $id)
+    {
+        $this->authorizeManage();
+        $batch = $this->userImportBatchService->findForBusiness($id, $this->businessId(), 'spb');
+        if (! $batch->hasSourceSnapshot()) {
+            abort(404, 'Snapshot workbook belum tersedia.');
+        }
+
+        return $this->userImportBatchService->workbookDownload($batch);
+    }
+
+    public function retryImportBatch(int $id)
+    {
+        $this->authorizeManage();
+        $batch = $this->userImportBatchService->findForBusiness($id, $this->businessId(), 'spb');
+        $summary = json_decode((string) $batch->summary_json, true) ?: [];
+        if (! in_array($batch->status, ['failed', 'partial'], true) || ! $batch->preview_path || (int) ($summary['source_rows'] ?? 0) < 1) {
+            return response()->json(['success' => false, 'message' => 'Batch ini tidak memiliki baris import yang dapat dicoba ulang.'], 422);
+        }
+
+        $batch->forceFill([
+            'status' => 'queued_import',
+            'stage' => 'queued',
+            'progress_current' => 0,
+            'progress_percent' => 0,
+            'error_message' => null,
+            'failed_at' => null,
+            'last_message' => 'Percobaan ulang diterima. Menunggu worker queue imports.',
+            'heartbeat_at' => now(),
+            'updated_at' => now(),
+        ])->save();
+
+        try {
+            ProcessHeavyEquipmentSpbImportJob::dispatch((int) $batch->id);
+        } catch (\Throwable $exception) {
+            report($exception);
+            $this->spbImportBatchService->markFailed((int) $batch->id, $exception->getMessage());
+
+            return response()->json(['success' => false, 'message' => 'Percobaan ulang belum dapat dimasukkan ke queue.'], 503);
+        }
+
+        return response()->json(['success' => true, 'message' => 'Percobaan ulang dimasukkan ke queue.']);
+    }
+
+    public function revertImportBatch(int $id)
+    {
+        $this->authorizeManage();
+        $batch = $this->userImportBatchService->findForBusiness($id, $this->businessId(), 'spb');
+
+        try {
+            $result = $this->spbImportBatchService->revert($batch, $this->businessId());
+
+            return response()->json([
+                'success' => true,
+                'message' => $result['reverted_trips'].' SPB berhasil di-revert.',
+                'trip_numbers' => $result['trip_numbers'],
+            ]);
+        } catch (\Throwable $exception) {
+            report($exception);
+
+            return response()->json(['success' => false, 'message' => $exception->getMessage()], 422);
+        }
     }
 
     public function show($id)

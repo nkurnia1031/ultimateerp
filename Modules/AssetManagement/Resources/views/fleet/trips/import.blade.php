@@ -16,7 +16,7 @@
         <div class="box-header with-border"><h3 class="box-title">Pilih workbook</h3></div>
         <div class="box-body">
             <p class="text-muted">Unggah workbook rekap loading atau rekonsiliasi cangkang. Periksa seluruh baris, lalu koreksi langsung dari preview sebelum import.</p>
-            <form method="POST" action="{{ route('asset.fleet.trips.import.preview') }}" enctype="multipart/form-data" class="spb-import-upload-form">
+            <form id="spb-import-upload-form" method="POST" action="{{ route('asset.fleet.trips.import.preview') }}" enctype="multipart/form-data" class="spb-import-upload-form">
                 @csrf
                 <div class="form-group">
                     <label for="spb-import-file">File Excel atau CSV</label>
@@ -25,6 +25,54 @@
                 <button class="btn btn-primary" type="submit"><i class="fas fa-search"></i> Preview Workbook</button>
                 <a href="{{ route('asset.fleet.trips.index') }}" class="btn btn-default">Kembali</a>
             </form>
+            <div id="spb-upload-feedback" class="help-block" role="status" aria-live="polite" hidden></div>
+        </div>
+    </div>
+
+    <div class="box box-info" id="spb-import-history">
+        <div class="box-header with-border"><h3 class="box-title"><i class="fas fa-history"></i> Riwayat import SPB</h3></div>
+        <div class="box-body">
+            <div class="spb-history-filter">
+                <label for="spb-import-history-status">Filter status</label>
+                <select id="spb-import-history-status" class="form-control input-sm">
+                    <option value="">Semua status</option>
+                    <option value="queued_preview">Menunggu analisis</option>
+                    <option value="analyzing">Menganalisis</option>
+                    <option value="preview_ready">Preview siap</option>
+                    <option value="queued_import">Menunggu import</option>
+                    <option value="importing">Mengimpor</option>
+                    <option value="imported">Selesai</option>
+                    <option value="partial">Selesai sebagian</option>
+                    <option value="failed">Gagal</option>
+                    <option value="reverted">Di-revert</option>
+                </select>
+            </div>
+            <div class="table-responsive fleet-datatable-wrap">
+                <table id="fleet-spb-import-history-table" class="table table-bordered table-striped table-condensed fleet-datatable" style="width:100%">
+                    <thead><tr><th>Waktu</th><th>File</th><th>Status</th><th>Progres</th><th>Ringkasan</th><th>Pesan</th><th>Aksi</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade spb-import-modal" id="spb-import-batch-details-modal" tabindex="-1" role="dialog" aria-labelledby="spb-import-batch-details-title" aria-hidden="true">
+        <div class="modal-dialog modal-lg" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Tutup"><span aria-hidden="true">&times;</span></button>
+                    <h4 class="modal-title" id="spb-import-batch-details-title">Detail batch import</h4>
+                </div>
+                <div class="modal-body">
+                    <div id="spb-import-batch-details-summary" class="alert alert-info" role="status"></div>
+                    <div class="table-responsive fleet-datatable-wrap">
+                        <table id="fleet-spb-import-batch-details-table" class="table table-bordered table-striped table-condensed fleet-datatable" style="width:100%">
+                            <thead><tr><th>Sumber</th><th>Tiket</th><th>Unit</th><th>Sopir</th><th>Status</th><th>SPB</th><th>Catatan</th></tr></thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -242,12 +290,18 @@
     .spb-import-modal .spb-field-error { color: #a94442; font-size: 12px; margin-top: 4px; }
     .spb-import-modal .select2-container { width: 100% !important; }
     .spb-edit-source { margin: 5px 24px 0 0; overflow-wrap: anywhere; }
+    .spb-history-filter { width: min(100%, 260px); margin: 0 0 12px; }
+    .spb-history-actions { display: flex; flex-wrap: wrap; gap: 4px; min-width: 150px; }
+    .spb-history-actions .btn { margin: 0; }
+    .spb-history-progress { min-width: 110px; margin-bottom: 4px; }
+    .spb-history-message { display: block; max-width: 300px; white-space: normal; overflow-wrap: anywhere; }
     .spb-driver-match-suggestions { margin-top: 8px; }
     .spb-driver-match-suggestions .spb-driver-candidate { display: block; max-width: 100%; margin: 0 0 5px; white-space: normal; text-align: left; }
     .spb-driver-match-suggestions .help-block { margin: 4px 0 8px; }
     #fleet-spb-import-preview-table td { overflow-wrap: anywhere; }
     @media (max-width: 767px) {
         .spb-import-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .spb-history-filter { width: 100%; }
         .spb-import-page .spb-import-upload-form { display: block; }
         .spb-import-page .spb-import-upload-form .form-group { margin-bottom: 12px; }
         .spb-import-page .spb-import-upload-form button,
@@ -257,6 +311,212 @@
 </style>
 
 @push('scripts')
+<script>
+$(function () {
+    var $history = $('#fleet-spb-import-history-table');
+    var $detailsModal = $('#spb-import-batch-details-modal');
+    var detailsTable = '#fleet-spb-import-batch-details-table';
+    var previewUrl = @json(route('asset.fleet.trips.import.form'));
+    var detailsUrl = @json(route('asset.fleet.trips.import.batches.details', ['id' => '__ID__']));
+    var downloadUrl = @json(route('asset.fleet.trips.import.batches.download', ['id' => '__ID__']));
+    var retryUrl = @json(route('asset.fleet.trips.import.batches.retry', ['id' => '__ID__']));
+    var revertUrl = @json(route('asset.fleet.trips.import.batches.revert', ['id' => '__ID__']));
+    var csrfToken = @json(csrf_token());
+
+    function escapeHtml(value) {
+        return $('<div>').text(value == null ? '' : String(value)).html();
+    }
+
+    function batchStatus(status) {
+        return ({
+            queued_preview: 'Menunggu analisis', analyzing: 'Menganalisis', preview_ready: 'Preview siap',
+            queued_import: 'Menunggu import', importing: 'Mengimpor', imported: 'Selesai',
+            partial: 'Selesai sebagian', failed: 'Gagal', reverted: 'Di-revert'
+        })[status] || status || 'Tidak diketahui';
+    }
+
+    function batchStatusClass(status) {
+        if (status === 'imported' || status === 'preview_ready') return 'label-success';
+        if (status === 'failed') return 'label-danger';
+        if (status === 'partial' || status === 'reverted') return 'label-warning';
+        return 'label-info';
+    }
+
+    function rowSummary(summary) {
+        summary = summary || {};
+        if (summary.imported_rows !== undefined) {
+            return Number(summary.imported_rows || 0) + ' diimpor · ' + Number(summary.error_rows || 0) + ' bermasalah';
+        }
+        if (summary.source_rows !== undefined) {
+            return Number(summary.ready_rows || 0) + ' siap · ' + Number(summary.error_rows || 0) + ' perlu koreksi';
+        }
+        return 'Menunggu analisis';
+    }
+
+    function rowActions(row) {
+        var id = Number(row.id);
+        var html = '<div class="spb-history-actions">'
+            + '<button type="button" class="btn btn-xs btn-default spb-batch-details" data-id="' + id + '"><i class="fas fa-eye"></i> Detail</button>';
+        if (row.can_preview) {
+            html += '<a class="btn btn-xs btn-primary" href="' + escapeHtml(previewUrl + '?batch_id=' + encodeURIComponent(id)) + '"><i class="fas fa-search"></i> Preview</a>';
+        }
+        if (row.has_snapshot) {
+            html += '<a class="btn btn-xs btn-success" href="' + escapeHtml(downloadUrl.replace('__ID__', id)) + '"><i class="fas fa-file-excel"></i> Unduh</a>';
+        }
+        if (row.can_retry) {
+            html += '<button type="button" class="btn btn-xs btn-warning spb-batch-retry" data-id="' + id + '"><i class="fas fa-redo"></i> Coba lagi</button>';
+        }
+        if (row.can_revert) {
+            html += '<button type="button" class="btn btn-xs btn-danger spb-batch-revert" data-id="' + id + '" data-file="' + escapeHtml(row.file_name) + '" data-count="' + Number((row.summary || {}).imported_rows || 0) + '"><i class="fas fa-undo"></i> Revert</button>';
+        }
+        return html + '</div>';
+    }
+
+    var historyTable = initFleetDataTable('#fleet-spb-import-history-table', {
+        serverSide: true,
+        processing: true,
+        ordering: false,
+        pageLength: 25,
+        lengthMenu: [[10, 25, 50, 100], [10, 25, 50, 100]],
+        ajax: {
+            url: @json(route('asset.fleet.trips.import.batches.index')),
+            data: function (request) { request.status = $('#spb-import-history-status').val() || ''; }
+        },
+        columns: [
+            { data: 'created_at', defaultContent: '-', render: function (value, type) { return type === 'display' ? escapeHtml(value || '-') : (value || ''); } },
+            { data: 'file_name', defaultContent: '-', render: function (value, type) { return type === 'display' ? escapeHtml(value || '-') : (value || ''); } },
+            { data: 'status', render: function (value, type) { return type === 'display' ? '<span class="label ' + batchStatusClass(value) + '">' + escapeHtml(batchStatus(value)) + '</span>' : batchStatus(value); } },
+            { data: null, render: function (value, type, row) {
+                var current = Number(row.progress_current || 0);
+                var total = Number(row.progress_total || 0);
+                var percent = Math.max(0, Math.min(100, Number(row.progress_percent || 0)));
+                if (type !== 'display') return percent + '%';
+                return '<div class="progress spb-history-progress" aria-label="Progres ' + percent + '%"><div class="progress-bar" role="progressbar" aria-valuenow="' + percent + '" aria-valuemin="0" aria-valuemax="100" style="width:' + percent + '%"></div></div><small>' + current + ' / ' + total + ' · ' + percent + '%</small>';
+            } },
+            { data: 'summary', render: function (value, type) { return type === 'display' ? escapeHtml(rowSummary(value)) : rowSummary(value); } },
+            { data: 'last_message', defaultContent: '-', render: function (value, type, row) {
+                var message = row.error_message || value || '-';
+                return type === 'display' ? '<span class="spb-history-message">' + escapeHtml(message) + '</span>' : message;
+            } },
+            { data: null, searchable: false, orderable: false, render: function (value, type, row) { return type === 'display' ? rowActions(row) : ''; } }
+        ]
+    });
+
+    $('#spb-import-history-status').on('change', function () { if (historyTable) historyTable.ajax.reload(); });
+
+    function scrollToHistory(message, isError) {
+        var $feedback = $('#spb-upload-feedback');
+        $feedback.toggleClass('text-danger', !!isError).toggleClass('text-success', !isError).text(message || '').prop('hidden', !message);
+        var node = document.getElementById('spb-import-history');
+        if (node) node.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    $('#spb-import-upload-form').on('submit', function (event) {
+        event.preventDefault();
+        var form = this;
+        var $button = $(form).find('button[type="submit"]').prop('disabled', true);
+        var original = $button.html();
+        $button.html('<i class="fas fa-spinner fa-spin"></i> Mengunggah…');
+        var formData = new FormData(form);
+        $.ajax({
+            url: form.action,
+            method: 'POST',
+            data: formData,
+            processData: false,
+            contentType: false,
+            dataType: 'json',
+            xhr: function () {
+                var xhr = $.ajaxSettings.xhr();
+                if (xhr.upload) xhr.upload.addEventListener('progress', function (progress) {
+                    if (progress.lengthComputable) scrollToHistory('Mengunggah workbook: ' + Math.round(progress.loaded * 100 / progress.total) + '%.');
+                });
+                return xhr;
+            }
+        })
+            .done(function (response) {
+                if (historyTable) historyTable.ajax.reload();
+                scrollToHistory(response.message || 'Upload diterima. Progres akan tampil di riwayat import.');
+                form.reset();
+            })
+            .fail(function (xhr) {
+                var response = xhr.responseJSON || {};
+                var message = response.message || 'Upload gagal. Periksa file dan coba lagi.';
+                if (historyTable) historyTable.ajax.reload(null, false);
+                scrollToHistory(message, true);
+            })
+            .always(function () { $button.prop('disabled', false).html(original); });
+    });
+
+    window.setInterval(function () {
+        if (!historyTable) return;
+        var hasActiveBatch = historyTable.rows().data().toArray().some(function (row) { return !!row.active; });
+        if (hasActiveBatch) historyTable.ajax.reload(null, false);
+    }, 3000);
+
+    $history.on('click', '.spb-batch-details', function () {
+        var id = Number($(this).data('id'));
+        $.getJSON(detailsUrl.replace('__ID__', id)).done(function (response) {
+            var batch = response.batch || {};
+            var message = [batch.file_name || '-', batchStatus(batch.status), batch.message || '', batch.error || ''].filter(Boolean).join(' · ');
+            $('#spb-import-batch-details-title').text('Detail import: ' + (batch.file_name || ('Batch #' + id)));
+            $('#spb-import-batch-details-summary').text(message);
+            var $tbody = $(detailsTable + ' tbody').empty();
+            (response.rows || []).forEach(function (row) {
+                var $tr = $('<tr>');
+                [$('<td>').text((row.sheet || '-') + ':' + (row.source_row || '-')),
+                    $('<td>').text(row.ticket_no || '-'), $('<td>').text(row.asset || '-'), $('<td>').text(row.driver || '-'),
+                    $('<td>').text(row.status || '-'), $('<td>'), $('<td>').text(row.errors || '-')].forEach(function ($cell) { $tr.append($cell); });
+                if (row.trip_url) $('<a>').attr('href', row.trip_url).text(row.trip_no || ('SPB #' + row.trip_id)).appendTo($tr.children().eq(5));
+                else $tr.children().eq(5).text('-');
+                $tbody.append($tr);
+            });
+            if ($.fn.DataTable.isDataTable(detailsTable)) $(detailsTable).DataTable().destroy();
+            initFleetDataTable(detailsTable, { pageLength: 10, order: [], columnDefs: [{ targets: [4, 5, 6], orderable: false }] });
+            $detailsModal.modal('show');
+        }).fail(function (xhr) {
+            window.alert((xhr.responseJSON || {}).message || 'Detail batch tidak dapat dimuat.');
+        });
+    });
+
+    $history.on('click', '.spb-batch-retry', function () {
+        var id = Number($(this).data('id'));
+        $.ajax({ url: retryUrl.replace('__ID__', id), method: 'POST', data: { _token: csrfToken }, dataType: 'json' })
+            .done(function (response) { scrollToHistory(response.message || 'Batch dijadwalkan ulang.'); if (historyTable) historyTable.ajax.reload(null, false); })
+            .fail(function (xhr) { window.alert((xhr.responseJSON || {}).message || 'Batch tidak dapat dicoba ulang.'); });
+    });
+
+    $history.on('click', '.spb-batch-revert', function () {
+        var id = Number($(this).data('id'));
+        var fileName = String($(this).data('file') || ('Batch #' + id));
+        var count = Number($(this).data('count') || 0);
+        if (!window.confirm('Revert batch “' + fileName + '”? Tindakan ini menghapus ' + count + ' SPB yang dibuat batch. Seluruh revert dibatalkan jika ada SPB yang sudah berubah, ditagihkan, verified, atau masuk payroll.')) return;
+        $.ajax({ url: revertUrl.replace('__ID__', id), method: 'POST', data: { _token: csrfToken }, dataType: 'json' })
+            .done(function (response) { scrollToHistory(response.message || 'Batch berhasil di-revert.'); if (historyTable) historyTable.ajax.reload(null, false); })
+            .fail(function (xhr) { window.alert((xhr.responseJSON || {}).message || 'Batch tidak dapat di-revert.'); });
+    });
+
+    var durablePreview = @json(!empty($batch));
+    $(document).on('submit', '#spb_import_confirm', function (event) {
+        if (!durablePreview) return;
+        event.preventDefault();
+        var form = this;
+        var $button = $(form).find('button[type="submit"]').prop('disabled', true);
+        var original = $button.html();
+        $button.html('<i class="fas fa-spinner fa-spin"></i> Mengirim ke queue…');
+        $.ajax({ url: form.action, method: 'POST', data: $(form).serialize(), dataType: 'json' })
+            .done(function (response) {
+                scrollToHistory(response.message || 'Import masuk queue; progres tampil pada riwayat batch.');
+                if (historyTable) historyTable.ajax.reload(null, false);
+                $('#spb-import-submit').prop('disabled', true);
+            })
+            .fail(function (xhr) {
+                var response = xhr.responseJSON || {};
+                window.alert(response.message || 'Import belum berhasil dijadwalkan.');
+                $button.prop('disabled', false).html(original);
+            });
+    });
+});
+</script>
 @if (!empty($preview))
 <script>
 $(function () {
