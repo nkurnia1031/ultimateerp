@@ -66,6 +66,7 @@ SPB driver matching normalizes honorifics, punctuation, spacing, and case, then 
 - D26 - Vendor document links: Vendor import permission is sufficient to inspect the batch and see document/line identifiers. Include a clickable document URL only when the user also has an existing permission to view Vendor Loading records.
 - D27 - Vendor staging cleanup: remove the original workbook after analysis in both normal and queue-failure paths, clear both domain and shared staging references, and keep any deletion failure visible in logs rather than silently claiming the binary was removed.
 - D28 - Vendor history layout: use the shared responsive DataTable behavior and allow action controls and long workbook/error text to wrap, avoiding a forced minimum table width on narrow screens.
+- D29 - Vendor route-test context: isolated route tests provide the active business session directly and bypass only `SetSessionData` and `AdminSidebarMenu`, which need unrelated Business/Currency and CRM menu tables. Authentication, importer permissions, controller business scoping, and cross-business denial remain exercised.
 
 ## Testing Decisions
 

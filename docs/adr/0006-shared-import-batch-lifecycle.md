@@ -11,6 +11,8 @@ Vendor batch details show document and line identifiers to import-authorized use
 
 Vendor history uses the shared responsive DataTable layout with wrapping action controls and content so the page does not force a wide horizontal table on narrow screens.
 
+Isolated Vendor history route tests supply their business session and bypass the global session-population and sidebar-menu middleware, whose unrelated Business/Currency and CRM menu queries require the full application schema. Route authentication, import permission checks, active-business filtering, and cross-business denial stay enabled and covered.
+
 **Status:** accepted for implementation, 2026-11-20.
 
 **Consequences:** importer adapters must expose business-scoped history, details, workbook restoration where a file was uploaded, and safe revert behavior. The rebuilt workbook preserves source values and sheet structure, not original formatting, macros, or exact binary identity. Snapshots live as long as their import history entry and are not automatically purged.
