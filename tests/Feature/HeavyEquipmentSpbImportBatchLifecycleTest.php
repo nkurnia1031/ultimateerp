@@ -345,6 +345,7 @@ class HeavyEquipmentSpbImportBatchLifecycleTest extends TestCase
 
     private function saveImportedResult(UserImportBatch $batch, HeavyEquipmentTrip $trip): void
     {
+        $trip->refresh();
         $attributes = $trip->getAttributes();
         unset($attributes['created_at'], $attributes['updated_at']);
         ksort($attributes);
