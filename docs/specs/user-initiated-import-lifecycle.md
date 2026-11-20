@@ -54,6 +54,7 @@ SPB driver matching normalizes honorifics, punctuation, spacing, and case, then 
 - **D15 — SPB staging:** keep the uploaded workbook only in private staging while the queued preview job reads it. Persist the immutable values snapshot and preview payload, then delete the staged binary after processing, including failed processing. The history download rebuilds `.xlsx` from the snapshot.
 
 - D16 - SPB route recovery: tag a route created by an SPB batch with that batch ID in the same database transaction as its trip. Revert discovers routes from persistent provenance, including after a worker retry before result payload persistence. Revert blocks if a generated route has rate, trip, or Vendor Loading dependencies.
+- D17 - SPB browser coverage: use an isolated CI business, unit, and driver with a real CSV upload; start the imports queue worker inside Playwright so the browser test covers queued preview and import, source restoration, details, and safe revert without touching local or production records.
 
 ## Testing Decisions
 

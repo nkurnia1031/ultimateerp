@@ -24,6 +24,7 @@ class JournalImportE2ESeeder extends Seeder
                 $this->seedGeneralLedgerFixture($businessId, $userId, $now);
                 $this->seedReconciliationFixture($businessId);
                 $this->seedJournalImportReviewFixture($businessId, $userId, $now);
+                $this->seedSpbImportFixture($businessId, $userId, $now);
 
                 return;
             }
@@ -96,7 +97,63 @@ class JournalImportE2ESeeder extends Seeder
             $this->seedGeneralLedgerFixture($businessId, $userId, $now);
             $this->seedReconciliationFixture($businessId);
             $this->seedJournalImportReviewFixture($businessId, $userId, $now);
+            $this->seedSpbImportFixture($businessId, $userId, $now);
         });
+    }
+
+    private function seedSpbImportFixture(int $businessId, int $userId, $now): void
+    {
+        $assetValues = [
+            'name' => 'CI SPB Truck',
+            'quantity' => 1,
+            'unit_price' => 0,
+            'model' => null,
+            'serial_no' => null,
+            'category_id' => null,
+            'location_id' => null,
+            'purchase_date' => null,
+            'purchase_type' => 'owned',
+            'depreciation' => null,
+            'is_allocatable' => 0,
+            'description' => 'Isolated Playwright SPB fixture',
+            'created_by' => $userId,
+            'updated_at' => $now,
+        ];
+        $asset = DB::table('assets')
+            ->where('business_id', $businessId)
+            ->where('asset_code', 'CI-SPB-TRUCK')
+            ->first();
+        if ($asset) {
+            DB::table('assets')->where('id', $asset->id)->update($assetValues);
+        } else {
+            DB::table('assets')->insert($assetValues + [
+                'business_id' => $businessId,
+                'asset_code' => 'CI-SPB-TRUCK',
+                'created_at' => $now,
+            ]);
+        }
+
+        $driverValues = [
+            'surname' => 'CI',
+            'first_name' => 'SPB',
+            'last_name' => 'Driver',
+            'email' => 'spb-driver-ci@example.invalid',
+            'password' => Hash::make('ci-spb-driver-not-for-login'),
+            'language' => 'en',
+            'business_id' => $businessId,
+            'user_type' => 'user',
+            'allow_login' => 0,
+            'updated_at' => $now,
+        ];
+        $driver = DB::table('users')->where('username', 'spb-driver-ci')->first();
+        if ($driver) {
+            DB::table('users')->where('id', $driver->id)->update($driverValues);
+        } else {
+            DB::table('users')->insert($driverValues + [
+                'username' => 'spb-driver-ci',
+                'created_at' => $now,
+            ]);
+        }
     }
 
     private function seedJournalImportReviewFixture(int $businessId, int $userId, $now): void
