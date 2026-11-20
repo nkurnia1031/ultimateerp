@@ -40,6 +40,7 @@ class HeavyEquipmentVendorLoadingImportHistoryTest extends TestCase
         DB::purge('sqlite');
         DB::setDefaultConnection('sqlite');
         Storage::fake('local');
+        $this->withoutMiddleware(\App\Http\Middleware\SetSessionData::class);
 
         $this->createSchemas();
         $this->app->instance(HeavyEquipmentVendorLoadingService::class, \Mockery::mock(HeavyEquipmentVendorLoadingService::class));
