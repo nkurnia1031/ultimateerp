@@ -39,7 +39,13 @@ Implementasi shared batch yang ada:
 - SPB memiliki batch domain khusus di `Modules/AssetManagement/Services/HeavyEquipmentSpbImportBatchService.php`.
 - Import salin lintas bisnis memiliki `app/Services/ContactBusinessImportService.php`.
 
-Graphify query menemukan modul import Project, Legacy Attachment, Journal, dan daftar adapter di atas. Kandidat lain yang terlihat antara lain Bonus Ayak (`app/Imports/BonusAyakImportPreview.php`, `app/Imports/BonusAyakImport.php`, `app/Http/Controllers/BonusAyakController.php`) dan Attendance (`Modules/Essentials`). Belum ada importer pilot yang dipilih atau diubah.
+Graphify query menemukan modul import Project, Legacy Attachment, Journal, dan daftar adapter di atas. Kandidat lain yang terlihat antara lain Bonus Ayak (`app/Imports/BonusAyakImportPreview.php`, `app/Imports/BonusAyakImport.php`, `app/Http/Controllers/BonusAyakController.php`) dan Attendance (`Modules/Essentials`).
+
+## Keputusan pilot — 2026-11-21
+
+Pilih Bonus Ayak sebagai pilot. Alur saat ini sudah punya parsing multi-sheet, preview tersimpan, konfirmasi eksplisit, pembatalan, fingerprint duplikat, dan transaksi saat menyimpan. Batch bersama dapat membungkus alur itu tanpa mengubah validasi bisnis atau UI. Attendance ditunda karena import-nya menulis langsung dalam satu request tanpa seam preview/pembatalan; mengadopsi lifecycle lebih luas di sana akan mengubah lebih banyak perilaku.
+
+Pakai `UserImportBatchService` yang sudah digunakan beberapa adapter sebagai pola bersama; jangan menambah lapisan generik baru. Pilot hanya menautkan batch bersama dan status/payload pada alur Bonus Ayak yang ada. Pertahankan proses sinkron, preview, konfirmasi, pembatalan, validasi, dan aturan duplikat. Jangan menambah halaman riwayat, queue, snapshot/download, atau revert pada tahap ini.
 
 Tiket terkait parent #56 mencakup #63 Journal, #64 Sales/Purchase/Expense, #65 Product/Opening Stock, #66 Purchase Product/Price Group, #67 Bonus Ayak, #68 Attendance, #69 Project, #70 Contact CSV, #71 CRM Contract, dan #72 import salin lintas bisnis. Acceptance criteria tiket-tiket ini mencakup pekerjaan produk yang lebih luas; jangan mengadopsinya sebagai fitur tambahan untuk refactor tanpa mencocokkan dengan batas terbaru pengguna.
 
