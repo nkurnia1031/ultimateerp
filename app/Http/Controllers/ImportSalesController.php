@@ -820,11 +820,11 @@ class ImportSalesController extends Controller
      * @return \Illuminate\Http\Response
      */
 
-    public function revertPembelianImport($batch)
+    public function revertPembelianImport(Request $request, $batch)
     {
-        return $this->revertSaleImport($batch);
+        return $this->revertSaleImport($request, $batch);
     }
-    public function revertSaleImport($batch)
+    public function revertSaleImport(Request $request, $batch)
     {
         $type = 'sell';
         if (request()->is('revert-pembelian-import/*')) {
@@ -877,6 +877,10 @@ class ImportSalesController extends Controller
                 'success' => 0,
                 'msg' => trans('messages.something_went_wrong'),
             ];
+        }
+
+        if ($request->expectsJson()) {
+            return response()->json($output, $output['success'] ? 200 : 422);
         }
 
         return back()->with('status', $output);

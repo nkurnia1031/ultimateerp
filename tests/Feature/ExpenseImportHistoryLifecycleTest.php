@@ -133,6 +133,36 @@ class ExpenseImportHistoryLifecycleTest extends TestCase
         }
     }
 
+    public function test_legacy_expense_revert_is_post_only_and_scoped_to_the_active_business(): void
+    {
+        $this->actingAs($this->admin())
+            ->withSession($this->businessSession(7))
+            ->get('/revert-expense-import/41')
+            ->assertMethodNotAllowed();
+
+        DB::table('transactions')->insert([
+            'id' => 410,
+            'business_id' => 7,
+            'type' => 'expense',
+            'import_batch' => 41,
+        ]);
+        DB::table('transactions')->insert([
+            'id' => 411,
+            'business_id' => 8,
+            'type' => 'expense',
+            'import_batch' => 41,
+        ]);
+
+        $response = $this->withHeader('Accept', 'application/json')
+            ->actingAs($this->admin())
+            ->withSession($this->businessSession(7))
+            ->post('/revert-expense-import/41');
+
+        $response->assertOk()->assertJsonPath('success', 1);
+        $this->assertDatabaseMissing('transactions', ['id' => 410]);
+        $this->assertDatabaseHas('transactions', ['id' => 411]);
+    }
+
     public function test_history_backfills_legacy_rows_without_duplicating_linked_batches_and_restores_all_sheets(): void
     {
         $shared = UserImportBatch::create([

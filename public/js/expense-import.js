@@ -82,7 +82,7 @@
             actions.push('<a href="' + escapeHtml(row.restore_url) + '" class="btn btn-xs btn-success expense-import-restore-workbook"><i class="fa fa-file-excel-o"></i> Unduh Excel</a>');
         }
         if (row.revert_url) {
-            actions.push('<a href="' + escapeHtml(row.revert_url) + '" class="tw-dw-btn tw-dw-btn-outline tw-dw-btn-xs tw-dw-btn-error revert_import"><i class="fas fa-undo"></i> Revert import</a>');
+            actions.push('<button type="button" data-url="' + escapeHtml(row.revert_url) + '" class="tw-dw-btn tw-dw-btn-outline tw-dw-btn-xs tw-dw-btn-error expense-import-revert"><i class="fas fa-undo"></i> Revert import</button>');
         }
         return '<div class="expense-import-history-actions">' + (actions.length ? actions.join(' ') : '<span class="text-muted">-</span>') + '</div>';
     }
@@ -292,16 +292,32 @@
             });
     });
 
-    $(document).on('click', 'a.revert_import', function (event) {
-        event.preventDefault();
-        var link = $(this);
-        if (window.swal) {
-            swal({ title: (window.LANG && LANG.sure) || 'Yakin?', icon: 'warning', buttons: true, dangerMode: true }).then(function (confirmed) {
-                if (confirmed) { window.location = link.attr('href'); }
-            });
-        } else if (window.confirm('Yakin ingin membatalkan import ini?')) {
-            window.location = link.attr('href');
-        }
+    table.on('click', '.expense-import-revert', function () {
+        var button = $(this);
+        var url = button.data('url');
+        var confirmed = window.swal
+            ? swal({ title: (window.LANG && LANG.sure) || 'Yakin?', icon: 'warning', buttons: true, dangerMode: true })
+            : Promise.resolve(window.confirm('Yakin ingin membatalkan import ini?'));
+
+        confirmed.then(function (accepted) {
+            if (!accepted) { return; }
+            button.prop('disabled', true);
+            $.ajax({
+                url: url,
+                method: 'POST',
+                dataType: 'json',
+                headers: { Accept: 'application/json' },
+                data: { _token: csrf }
+            }).done(function (response) {
+                dataTable.ajax.reload(null, false);
+                if (window.toastr) { toastr.success(response.msg || 'Import berhasil di-revert.'); }
+            }).fail(function (xhr) {
+                var message = xhr.responseJSON && (xhr.responseJSON.msg || xhr.responseJSON.message)
+                    ? (xhr.responseJSON.msg || xhr.responseJSON.message)
+                    : 'Import tidak dapat di-revert.';
+                if (window.toastr) { toastr.error(message); }
+            }).always(function () { button.prop('disabled', false); });
+        });
     });
 
     var focusBatch = new URLSearchParams(window.location.search).get('focus_batch');

@@ -85,7 +85,7 @@ class ExpenseController extends Controller
         $this->expenseImportProcessService = $expenseImportProcessService;
     }
 
-    public function revertImport($batch)
+    public function revertImport(Request $request, $batch)
     {
         $productUtil = new ProductUtil();
         $businessUtil = new BusinessUtil();
@@ -100,9 +100,12 @@ class ExpenseController extends Controller
             $accountTransactionUtil,
             $moduleUtil
         );
-        $response = $ImportSalesController->revertSaleImport($batch);
+        $response = $ImportSalesController->revertSaleImport($request, $batch);
         $businessId = (int) request()->session()->get('user.business_id');
-        if ((int) data_get(session()->get('status'), 'success', 0) === 1) {
+        $status = $request->expectsJson() && method_exists($response, 'getData')
+            ? $response->getData(true)
+            : session()->get('status');
+        if ((int) data_get($status, 'success', 0) === 1) {
             app(ExpenseImportHistoryService::class)->markReverted($businessId, (int) $batch);
         }
 
@@ -991,7 +994,7 @@ class ExpenseController extends Controller
             $status['references_url'] = route('expenses.import.references', $batchId);
             $status['restore_url'] = route('expenses.import.restore-workbook', $batchId);
             $status['revert_url'] = $importBatchNumber > 0 && auth()->user()->can('expense.delete')
-                ? action([self::class, 'revertImport'], $importBatchNumber)
+                ? route('expenses.import.revert', $importBatchNumber)
                 : null;
         }
 

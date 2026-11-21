@@ -494,7 +494,7 @@ Route::middleware(['setData', 'auth', 'SetSessionData', 'language', 'timezone', 
     Route::post('import-expense/{batch}/cancel', [ExpenseController::class, 'expenseImportCancel'])->name('expenses.import.cancel');
     Route::get('expenses/{id}/duplicate', [ExpenseController::class, 'duplicate'])
         ->name('expenses.duplicate');
-    Route::get('/revert-expense-import/{batch}', [ExpenseController::class, 'revertImport']);
+    Route::post('/revert-expense-import/{batch}', [ExpenseController::class, 'revertImport'])->name('expenses.import.revert');
 
     Route::post('store-import-expense', [ExpenseController::class, 'storeExpenseImport']);
 
