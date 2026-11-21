@@ -94,6 +94,8 @@ class SolarImportHistoryService
                     'completed_at' => $domain->completed_at,
                     'failed_at' => $domain->failed_at,
                     'reverted_at' => $domain->rolled_back_at,
+                    'created_at' => $domain->created_at,
+                    'updated_at' => $domain->updated_at,
                 ]);
             } else {
                 $shared->forceFill([

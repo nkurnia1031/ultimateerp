@@ -73349,7 +73349,7 @@
       "file_type": "code",
       "norm_label": ".ledgercounts()",
       "source_file": "app/Services/SolarImportHistoryService.php",
-      "source_location": "L462"
+      "source_location": "L461"
     },
     {
       "id": "app_services_solarimporthistoryservice_solarimporthistoryservice_searchtext",
@@ -73361,7 +73361,7 @@
       "file_type": "code",
       "norm_label": ".searchtext()",
       "source_file": "app/Services/SolarImportHistoryService.php",
-      "source_location": "L446"
+      "source_location": "L445"
     },
     {
       "id": "app_services_solarimporthistoryservice_solarimporthistoryservice_seedcachekey",
@@ -73373,7 +73373,7 @@
       "file_type": "code",
       "norm_label": ".seedcachekey()",
       "source_file": "app/Services/SolarImportHistoryService.php",
-      "source_location": "L483"
+      "source_location": "L482"
     },
     {
       "id": "app_services_solarimporthistoryservice_solarimporthistoryservice_sharedbatchfordomainbatch",
@@ -73421,7 +73421,7 @@
       "file_type": "code",
       "norm_label": ".statusclass()",
       "source_file": "app/Services/SolarImportHistoryService.php",
-      "source_location": "L424"
+      "source_location": "L423"
     },
     {
       "id": "app_services_solarimporthistoryservice_solarimporthistoryservice_statuslabel",
@@ -73433,7 +73433,7 @@
       "file_type": "code",
       "norm_label": ".statuslabel()",
       "source_file": "app/Services/SolarImportHistoryService.php",
-      "source_location": "L409"
+      "source_location": "L408"
     },
     {
       "id": "app_services_solarimporthistoryservice_solarimporthistoryservice_summaryjson",
@@ -73445,7 +73445,7 @@
       "file_type": "code",
       "norm_label": ".summaryjson()",
       "source_file": "app/Services/SolarImportHistoryService.php",
-      "source_location": "L434"
+      "source_location": "L433"
     },
     {
       "id": "app_services_solarimporthistoryservice_solarimporthistoryservice_syncfromdomainbatch",
@@ -375176,7 +375176,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "app/Services/SolarImportHistoryService.php",
-      "source_location": "L409",
+      "source_location": "L408",
       "weight": 1.0
     },
     {
@@ -375187,7 +375187,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "app/Services/SolarImportHistoryService.php",
-      "source_location": "L424",
+      "source_location": "L423",
       "weight": 1.0
     },
     {
@@ -375198,7 +375198,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "app/Services/SolarImportHistoryService.php",
-      "source_location": "L434",
+      "source_location": "L433",
       "weight": 1.0
     },
     {
@@ -375209,7 +375209,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "app/Services/SolarImportHistoryService.php",
-      "source_location": "L446",
+      "source_location": "L445",
       "weight": 1.0
     },
     {
@@ -375220,7 +375220,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "app/Services/SolarImportHistoryService.php",
-      "source_location": "L462",
+      "source_location": "L461",
       "weight": 1.0
     },
     {
@@ -375242,7 +375242,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "app/Services/SolarImportHistoryService.php",
-      "source_location": "L483",
+      "source_location": "L482",
       "weight": 1.0
     },
     {
@@ -432788,7 +432788,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "app/Services/SolarImportHistoryService.php",
-      "source_location": "L442",
+      "source_location": "L441",
       "weight": 1.0
     },
     {

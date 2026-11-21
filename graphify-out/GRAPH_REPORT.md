@@ -6,12 +6,12 @@
 - Unclassified: 161 file(s) not represented in the graph (top: (none) 126, .css 33, .woff 2)
 
 ## Summary
-- 11681 nodes · 26852 edges · 1898 communities (244 shown, 566 thin omitted)
-- Extraction: 90% EXTRACTED · 10% INFERRED · 0% AMBIGUOUS · INFERRED: 2798 edges (avg confidence: 0.85)
+- 11690 nodes · 26783 edges · 1921 communities (252 shown, 585 thin omitted)
+- Extraction: 90% EXTRACTED · 10% INFERRED · 0% AMBIGUOUS · INFERRED: 2729 edges (avg confidence: 0.85)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `d9f9afac`
+- Built from commit: `8ab78958`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -20,12 +20,12 @@
 - ProposalTemplateController
 - Illuminate\Database\Seeder
 - LegacyReconciliationFindingSnapshotService
-- ProjectWorkbookImporter.php
-- Illuminate\Http\Request
+- SolarController.php
+- .compact
 - ProjectTask
-- User
+- Illuminate\Http\Request
 - tailwind/app.js
-- HeavyEquipmentRateService
+- SellingPriceGroup
 - Illuminate\Database\Eloquent\Model
 - TransactionLineExport
 - SecurityAuditService
@@ -36,7 +36,7 @@
 - e
 - solar.js
 - GeneralLedgerBackfillService
-- LegacyAnnualAuditControlReader
+- TransactionSellLine
 - HeavyEquipmentTripController
 - ExpenseImportService
 - Transaction
@@ -47,7 +47,7 @@
 - Schedule
 - HeavyEquipmentVendorLoadingDocument
 - JournalImportPaymentService
-- ProcessJournalImportJob
+- JournalImportCancellationService
 - HeavyEquipmentVendorLoadingController
 - assets/js/journal_import.js
 - HeavyEquipmentRateController
@@ -62,13 +62,13 @@
 - SolarWorkbookService
 - ModuleUtil
 - HeavyEquipmentVendorLoading
-- AnalyzeJournalImportJob
+- Unit
 - pos.js
 - LegacySourceReconciliationFindingService
-- GeneralLedgerReportService
+- ExpenseController
 - AccountSubtype
 - ManageUserController
-- NotificationUtil
+- TransactionUtil
 - Storage
 - Accounting/Helpers/general_helper.php
 - functions.js
@@ -77,9 +77,9 @@
 - PaymentType
 - Controller
 - ExpenseImportProcessService
-- SolarImportHistoryService
+- UserImportBatchService
 - LegacyAnnualAuditService
-- Closure
+- GeneralLedgerBackfillReviewController
 - ImportJournalWorkbook
 - assets/js/vendor-loading-import.js
 - a
@@ -88,42 +88,42 @@
 - ContactBusinessImportService
 - Asset
 - a
-- DocumentAndNote
-- ReportController
+- Spatie\Activitylog\Traits\LogsActivity
+- BusinessLocation
 - User
 - AssetExpiryReminderService
 - Product
-- ReminderDigestService
+- Carbon\Carbon
 - InvalidArgumentException
 - JournalTaxReconciliationService
-- .compact
+- .view
 - ProjectWorkbookExporter
 - HeavyEquipmentVendorLoadingImportService
 - BonusAyakImport
 - ExpenseImportHistoryService
 - RuntimeException
-- AccountingAccountsTransaction
+- Illuminate\Support\Facades\Log
 - HeavyEquipmentDriverSettlement
-- isPusherEnabled
+- NewProjectAssignedNotification
 - AssetTransaction
 - GeneralLedgerAuditService
 - JournalImportExpenseService
 - Kn
 - Reminder
-- routes/web.php
+- SellingPriceGroupController
 - LegacyAttachmentImporter
 - initialize
 - ExpenseImportJournalMatcher
-- Tag
+- InvoiceScheme
 - CrmServiceProvider
 - initialize
-- ModulesController
+- DocumentAndNote
 - assets/js/general_ledger_backfill_review.js
 - LegacyOperationalEvidenceReader
 - PhpOffice\PhpSpreadsheet\Spreadsheet
 - accounting/js/general_ledger_backfill_review.js
-- .count
-- ImportLegacySources.php
+- SolarLedgerService
+- GeneralLedgerBackfillReviewService
 - Product
 - AiAssistance/package.json
 - HeavyEquipmentSpbImportService
@@ -133,12 +133,12 @@
 - JournalImportDraftService
 - Media
 - HeavyEquipmentVendorLoadingImportHistoryService
-- ExpenseCategoryBusinessImportService
+- ExpenseCategoryController
 - JournalAlignedCoaProvisioner
 - Contact
-- ChangeLogCatalog
+- Illuminate\Support\Collection
 - SuratKontrakTemplate
-- JournalImportSourceGroupMatcher
+- Booking
 - business/settings.blade.php
 - purchase.js
 - CashRegister
@@ -149,7 +149,7 @@
 - contact/show.blade.php
 - LegacyOperationalDraftEnricher
 - MyFatoorahController
-- RouteServiceProvider
+- Illuminate\Foundation\Support\Providers\RouteServiceProvider
 - End User License Agreement
 - public/js/app.js
 - scripts
@@ -166,25 +166,25 @@
 - scripts
 - assetmanagement/js/vendor-loading-document-create.js
 - HeavyEquipmentVendorLoadingService
-- TransactionController
+- TransactionPayment
 - TransactionSellLine
 - Campaign
 - InstallController
-- ChangeLogRead
-- Media
+- ProjectTimeLog
+- MfgRecipe
 - AdminlteCustomPresenter
 - AccountingServiceProvider
-- ExpenseCategoryController
-- LegacyJournalEntryMerger
-- CustomerNotification
+- ReconciliationFindingActionService
+- Printer
+- UserBusinessImportService
 - KnowledgeBase
 - System
 - AiAssistanceServiceProvider
 - gi
-- GeneralLedgerBackfillManualJournalService
+- ReconciliationFindingJournalService
 - Business
 - EssentialsMessage
-- PayrollController.php
+- EssentialsLeave
 - Illuminate\Support\ServiceProvider
 - AssetManagementServiceProvider
 - InventoryManagementServiceProvider
@@ -195,11 +195,11 @@
 - 2026_09_11_000001_add_bonus_ayak_import_fingerprint.php
 - assets/js/purchase_payment.js
 - System
-- JournalImportE2ESeeder
+- .edit
 - accounting/js/purchase_payment.js
 - Illuminate\Database\Eloquent\SoftDeletes
 - 2026_11_21_000003_add_expense_shared_import_history.php
-- TaskCommentController
+- Media
 - JournalImportSourceGroupService
 - composer.json
 - Business
@@ -208,21 +208,22 @@
 - RouteServiceProvider
 - expense-import-preview.js
 - assets/js/crm.js
-- JournalImportAccountComponentService
-- JournalImportBulkMappingService
+- AccountingAccountType
+- .count
 - bonus-ayak-ui.js
 - report.js
 - crm/js/crm.js
 - edit_old.blade.php
 - BudgetService
-- Illuminate\Foundation\Support\Providers\RouteServiceProvider
+- .parent
 - psr-4
 - initialize
 - resources/views/layouts/app.blade.php
 - Accounting/composer.json
-- NotificationTemplate
+- NotificationUtil
 - PurchaseLine
 - assets/js/expense_transactions.js
+- CrmDashboardController
 - AiAssistance/composer.json
 - AssetManagement/composer.json
 - Crm/composer.json
@@ -236,13 +237,14 @@
 - accounting/js/expense_transactions.js
 - Accounting/Resources/views/layouts/app.blade.php
 - RouteServiceProvider
-- RoleController
+- Document
+- AccountType
 - RouteServiceProvider
 - AiAssistanceController
-- 2026_09_09_000004_backfill_bonus_ayak_driver_relations.php
-- .parent
-- Illuminate\Bus\Queueable
-- BranchCapital
+- Discount
+- RouteServiceProvider
+- Illuminate\Notifications\Notification
+- TaxonomyController
 - ManufacturingServiceProvider
 - ProjectServiceProvider
 - create_old.blade.php
@@ -252,19 +254,20 @@
 - profit_loss.blade.php
 - sell/edit.blade.php
 - HomeController
-- LegacyJournalImportSourceLinkAuditReader
+- ProjectImportController
 - TaxRate
 - require-dev
-- 2022_02_09_223849_add_account_subtype_id_and_detail_type_id_to_chart_of_accounts_table.php
+- EssentialsLeaveType
+- Validator
 - 2026_11_21_000004_add_solar_shared_import_history.php
 - DocumentShareNotification
 - 2022_01_19_034231_create_countries_table.php
 - expense-import.js
-- RecurringExpenseNotification
-- ExceptionOccured
+- ReminderEmailNotification
+- EssentialsHoliday
 - AccountingAccountsExport
 - 2022_02_01_031031_create_transfers_table.php
-- 2022_02_09_002406_add_payment_type_id_to_chart_of_accounts_table.php
+- EssentialsServiceProvider
 - transactions/index.blade.php
 - 2026_11_04_000001_seed_cv_bm_legacy_cash_bank_mappings.php
 - RouteServiceProvider
@@ -277,35 +280,35 @@
 - 2022_02_03_215602_create_budgets_table.php
 - 2022_02_08_121045_add_currency_id_to_chart_of_accounts_table.php
 - 2022_02_09_125328_create_account_detail_types_table.php
-- TransactionPayment
+- ProjectUtil
 - MfgRecipeIngredient
-- VerificationController.php
+- BarcodeController
 - 2022_06_08_105942_create_branch_capital_table.php
 - 2020_08_20_114339_create_assets_table.php
 - DB
 - RouteServiceProvider
 - AccountDetailType
-- ProductVariation
+- StockAdjustmentController
 - purchase/create.blade.php
 - purchase/edit.blade.php
 - purchase_order/edit.blade.php
 - KeepLatestBackups.php
 - 2021_10_29_110841_create_asset_warranties_table.php
-- Illuminate\Support\Facades\Route
+- RouteServiceProvider
 - EventServiceProvider
 - 2021_02_22_132125_add_follow_up_by_to_crm_schedules_table.php
 - sell/create.blade.php
 - Crm/Resources/views/layouts/app.blade.php
 - attendance/index.blade.php
 - restaurant.blade.php
-- 2021_06_15_152924_create_proposal_templates_table.php
+- VariationTemplate
 - 2019_07_07_093258_create_chart_of_accounts_table.php
-- Illuminate\Contracts\Queue\ShouldQueue
+- Illuminate\Bus\Queueable
 - 2022_03_26_062215_create_asset_maintenances_table.php
-- 2020_04_16_114747_create_crm_campaigns_table.php
+- SolarImportService
 - assets/js/jQuery.print.js
 - 2023_02_11_161511_add_batch_uuid_column_to_activity_log_table.php
-- EcomApi.php
+- LedgerDiscountController
 - 2021_02_04_120439_create_call_logs_table.php
 - 2026_09_25_000001_remove_heavy_equipment_vendor_loading_status.php
 - 2021_11_29_170819_add_business_id_to_chart_of_accounts_table.php
@@ -329,7 +332,7 @@
 - 2021_01_07_155757_add_followup_additional_info_column_to_crm_schedules_table.php
 - 2022_11_14_171948_create_accounting_acc_trans_mapping.php
 - 2021_02_08_172047_add_mobile_name_column_to_crm_call_logs_table.php
-- 2021_02_16_190038_add_crm_module_indexing.php
+- SellReturnController
 - checkout.blade.php
 - product/index.blade.php
 - purchase_return.js
@@ -358,8 +361,8 @@
 - 2020_03_27_133628_create_schedule_users_table.php
 - 2022_12_02_133536_create_accounting_budgets_table.php
 - 2022_12_19_124743_add_accounting_settings_column_to_business_table.php
-- 2019_05_30_110049_create_essentials_payrolls_table.php
-- InvoiceLayout
+- ReconcileController
+- .process
 - `transaction_sell_line_tags`
 - hrm_dashboard.blade.php
 - showInventoryReports.blade.php
@@ -369,10 +372,10 @@
 - 2021_06_16_114448_add_recursive_fields_to_crm_schedules_table.php
 - 2022_03_02_180929_add_followup_category_id.php
 - 2021_06_16_125740_create_proposals_table.php
-- 2022_02_17_113045_add_source_id_to_marketplace.php
+- ManufacturingController
 - 2022_06_06_073006_add_cc_and_bcc_columns_to_crm_proposals_table.php
-- 2019_12_05_170724_add_hrm_columns_to_users_table.php
-- 2026_09_17_100000_add_logo_1_to_surat_kontrak_templates_table.php
+- SpreadsheetServiceProvider
+- InvoiceLayoutController
 - 2019_08_27_103724_create_essentials_allowance_and_deduction_table.php
 - 2018_10_02_151803_create_document_shares_table.php
 - 2020_11_26_170527_create_essentials_kb_table.php
@@ -385,7 +388,7 @@
 - 2021_03_04_174857_create_payroll_groups_table.php
 - 2026_11_02_000002_add_legacy_attachment_media_support.php
 - 2023_01_05_075042_add_inventory_management_module_version_to_system_table.php
-- 2023_01_14_103339_create_table_inventory_products.php
+- RecurringInvoiceNotification
 - accounts_payable_ageing_detail.blade.php
 - accounts_payable_ageing_summary.blade.php
 - accounts_receivable_ageing_detail.blade.php
@@ -401,9 +404,9 @@
 - 2019_06_28_134217_add_payroll_columns_to_transactions_table.php
 - 2019_02_22_120329_essentials_messages.php
 - 2020_03_30_162029_create_user_shifts_table.php
-- 2021_02_02_140021_add_additional_info_to_crm_campaigns_table.php
-- 2019_11_12_164431_create_project_members_table.php
-- 2021_02_12_185514_add_clock_in_location_to_essentials_attendances_table.php
+- ActivityController
+- ProcessReminderEmails
+- Kernel
 - 2021_03_04_175025_create_payroll_group_transactions_table.php
 - 2026_10_03_000002_support_solar_matrix_preview_coordinates.php
 - 2021_03_24_160736_add_department_and_designation_to_users_table.php
@@ -414,15 +417,15 @@
 - 2019_11_18_154617_create_project_task_comments_table.php
 - 2019_08_12_114610_add_ingredient_waste_percent_columns.php
 - 2021_03_12_175416_create_spreadsheet_shares_table.php
-- 2020_08_19_103831_add_production_cost_type_to_recipe_and_transaction_table.php
-- 2021_02_16_190302_add_manufacturing_module_indexing.php
-- 2019_11_19_134807_create_project_time_logs_table.php
+- BanRequest
+- Warranty
+- HeavyEquipmentVendorLoadingImportReverseService
 - Illuminate\Database\Schema\Blueprint
 - lead/show.blade.php
 - surat_kontrak/show.blade.php
 - 2020_02_22_120303_add_column_to_mfg_recipe_ingredients_table.php
 - 2019_11_14_112230_create_project_tasks_table.php
-- 2026_07_22_000001_add_project_task_id_to_invoice_lines.php
+- ProjectTaskComment
 - PesaPalController
 - 2018_01_08_123327_modify_transactions_table_for_expenses.php
 - view-modal.blade.php
@@ -453,35 +456,55 @@
 - ledger_format_3.blade.php
 - schedule/index.blade.php
 - scripts
+- ModuleAssetServiceProvider
 - 2018_02_21_105329_create_system_table.php
 - 2018_02_09_124945_modify_transaction_payments_table_for_contact_payments.php
 - 2018_02_26_130519_modify_users_table_for_sales_cmmsn_agnt.php
 - 2018_03_29_110138_change_tax_field_to_nullable_in_business_table.php
+- UserFactory.php
 - 2018_02_19_121537_stock_adjustment_move_to_transaction_table.php
 - 2018_02_27_170232_modify_transactions_table_for_stock_transfer.php
 - 2018_03_06_210206_modify_product_barcode_types.php
 - 2018_06_27_182835_add_superadmin_related_fields_business.php
+- 2019_01_08_112015_add_document_column_to_transaction_payments_table.php
+- 2021_08_23_175321_add_contact_and_location_id_to_journal_entries_table.php
 - 2018_09_27_111609_modify_transactions_table_for_purchase_return.php
 - 2019_07_15_165136_add_fields_for_combo_product.php
+- 2022_01_17_202319_create_payment_details_table.php
+- 2022_02_08_113906_add_opening_balance_to_chart_of_accounts_table.php
 - 2018_07_26_170424_add_unit_price_before_discount_column_to_transaction_sell_line_table.php
 - 2019_10_18_155633_create_account_types_table.php
+- 2022_02_23_130555_add_journal_entry_id_to_transactions_table.php
+- 2022_11_10_135427_create_accounts_transactions_table.php
+- InvoiceScheme
 - 2020_06_12_162245_modify_contacts_table.php
 - 2021_03_24_183132_add_shipping_export_custom_field_details_to_contacts_table.php
 - 2021_09_01_063110_add_spg_column_to_discounts_table.php
+- .dashboard
 - 2023_03_21_122731_add_sale_invoice_scheme_id_business_table.php
 - 2024_10_03_151459_modify_transaction_sell_lines_purchase_lines_table.php
-- 2021_03_16_120705_add_business_id_to_activity_log_table.php
+- 2020_03_30_112834_create_schedule_logs_table.php
+- 2022_05_26_061553_create_crm_contact_person_commissions_table.php
+- 2019_05_21_181653_create_table_essentials_attendance.php
+- 2019_08_27_105236_create_essentials_user_allowances_and_deductions.php
+- 2020_11_30_112615_create_essentials_kb_users_table.php
 - 2020_03_26_124736_add_allow_login_column_in_users_table.php
+- 2021_09_28_091541_create_essentials_user_sales_targets_table.php
+- 2023_01_06_130527_create_inventory_table.php
+- 2019_07_18_180217_add_production_columns_to_transactions_table.php
 - 2020_09_21_123224_modify_booking_status_column_in_bookings_table.php
 - 2020_12_22_164303_add_sub_status_column_to_transactions_table.php
-- 2026_10_31_000001_create_accounting_journal_import_source_links_table.php
+- 2019_11_05_115136_create_ingredient_groups_table.php
 - 2020_10_05_121550_modify_business_location_table_for_invoice_layout.php
+- 2021_04_07_154331_add_mfg_ingredient_group_id_to_transaction_sell_lines_table.php
 - CrmContact
 - 2025_09_28_142842_create_asset_depreciation_table.php
-- PayrollController
+- 2019_11_12_163135_create_projects_table.php
+- 2019_12_11_102549_add_more_fields_in_transactions_table.php
 - 2025_10_22_112314_create_asset_consumptions_table.php
 - 2026_09_24_000003_move_vendor_loading_route_to_document.php
 - 2026_02_25_132610_create_surat_kontrak_table.php
+- 2019_12_11_102735_create_invoice_lines_table.php
 - 2026_09_10_000001_integrate_spb_bonus_payroll.php
 - knowledge_base/show.blade.php
 - leave/index.blade.php
@@ -494,7 +517,8 @@
 - home.blade.php
 - child/dropdown.blade.php
 - menu.blade.php
-- 2026_09_12_000001_add_rate_source_audit_fields.php
+- InvoiceLine
+- 2019_11_25_160340_modify_categories_table_for_polymerphic_relationship.php
 - chart_of_accounts/ledger.blade.php
 - journal_entry/create.blade.php
 - journal_entry/edit.blade.php
@@ -504,6 +528,7 @@
 - invoice.blade.php
 - payment.blade.php
 - transfer/index.blade.php
+- 2025_09_23_105044_create_expense_lines_table.php
 - crm_dashboard/index.blade.php
 - layouts/header.blade.php
 - Crm/Resources/views/reports/index.blade.php
@@ -615,7 +640,9 @@
 - manufacturing::recipe.ingredient_row_for_production
 - accounting/dashboard.blade.php
 - budget/create.blade.php
+- 2026_10_26_000001_add_journal_import_row_to_account_transactions.php
 - chart_of_accounts/index.blade.php
+- ActivityService.php
 - backfill_review.blade.php
 - journal_entry/import.blade.php
 - journal_entry/index.blade.php
@@ -832,7 +859,7 @@
 2. `User` - 283 edges
 3. `ModuleUtil` - 280 edges
 4. `BusinessLocation` - 240 edges
-5. `Contact` - 213 edges
+5. `Contact` - 208 edges
 6. `Util` - 203 edges
 7. `TransactionUtil` - 197 edges
 8. `Business` - 138 edges
@@ -842,79 +869,75 @@
 ## Surprising Connections (you probably didn't know these)
 - `currency_code()` --calls--> `Business`  [EXTRACTED]
   Modules/Accounting/Helpers/general_helper.php → app/Business.php
-- `up()` --calls--> `Category`  [EXTRACTED]
-  database/migrations/2019_11_25_160340_modify_categories_table_for_polymerphic_relationship.php → app/Category.php
 - `up()` --calls--> `Transaction`  [EXTRACTED]
   database/migrations/2020_09_07_171059_change_completed_stock_transfer_status_to_final.php → app/Transaction.php
 - `up()` --calls--> `Transaction`  [EXTRACTED]
   database/migrations/2020_12_22_164303_add_sub_status_column_to_transactions_table.php → app/Transaction.php
 - `up()` --calls--> `TransactionPayment`  [EXTRACTED]
   database/migrations/2018_10_09_153105_add_business_id_to_transaction_payments_table.php → app/TransactionPayment.php
+- `up()` --calls--> `TransactionSellLine`  [EXTRACTED]
+  database/migrations/2018_07_26_170424_add_unit_price_before_discount_column_to_transaction_sell_line_table.php → app/TransactionSellLine.php
 
 ## Import Cycles
 - None detected.
 
-## Communities (1898 total, 566 thin omitted)
+## Communities (1921 total, 585 thin omitted)
 
 ### Community 0 - "Illuminate\Database\Migrations\Migration"
 Cohesion: 0.01
-Nodes (56): AddEventColumnToActivityLogTable, Illuminate\Database\Migrations\Migration, CreateJournalEntriesTable, AddContactAndLocationIdToJournalEntriesTable, CreatePaymentDetailsTable, AddOpeningBalanceToChartOfAccountsTable, AddJournalEntryIdToTransactionsTable, AddReconcileOpeningBalanceToChartOfAccountsTable (+48 more)
-
-### Community 1 - "ProposalTemplateController"
-Cohesion: 0.09
-Nodes (4): Proposal, ProposalTemplate, ProposalController, ProposalTemplateController
+Nodes (55): AddEventColumnToActivityLogTable, Illuminate\Database\Migrations\Migration, CreateJournalEntriesTable, AddPaymentTypeIdToChartOfAccountsTable, AddAccountSubtypeIdAndDetailTypeIdToChartOfAccountsTable, AddReconcileOpeningBalanceToChartOfAccountsTable, AddAccountingModuleVersionToSystemTable, AddAssetManagementModuleVersionToSystemTable (+47 more)
 
 ### Community 2 - "Illuminate\Database\Seeder"
-Cohesion: 0.06
-Nodes (16): Barcode, BarcodesTableSeeder, CurrenciesTableSeeder, DatabaseSeeder, PermissionsTableSeeder, Illuminate\Database\Seeder, AccountingDatabaseSeeder, AiAssistanceDatabaseSeeder (+8 more)
+Cohesion: 0.05
+Nodes (17): Barcode, BarcodesTableSeeder, CurrenciesTableSeeder, DatabaseSeeder, OldDummyBusinessSeeder, PermissionsTableSeeder, Illuminate\Database\Seeder, AccountingDatabaseSeeder (+9 more)
 
-### Community 4 - "ProjectWorkbookImporter.php"
+### Community 4 - "SolarController.php"
 Cohesion: 0.12
-Nodes (16): DateTimeImmutable, DateTimeInterface, Illuminate\Database\Eloquent\Builder, Illuminate\Http\UploadedFile, Illuminate\Support\Facades\File, JsonException, PhpOffice\PhpSpreadsheet\Cell\Cell, PhpOffice\PhpSpreadsheet\Cell\Coordinate (+8 more)
+Nodes (19): App\Services\SolarImportPreviewService, App\Services\SolarLedgerService, App\Services\SolarWorkbookService, DateTimeImmutable, DateTimeInterface, Illuminate\Database\Eloquent\Builder, PhpOffice\PhpSpreadsheet\Cell\Cell, PhpOffice\PhpSpreadsheet\Cell\Coordinate (+11 more)
 
-### Community 5 - "Illuminate\Http\Request"
-Cohesion: 0.03
-Nodes (17): Brands, BusinessLocation, Category, Discount, BrandController, BusinessLocationController, DiscountController, ReportController (+9 more)
+### Community 5 - ".compact"
+Cohesion: 0.02
+Nodes (12): Brands, Category, BrandController, App\Http\Controllers\PurchaseRequisitionController, PurchaseRequisitionController, SalesCommissionAgentController, User, Datatables (+4 more)
 
 ### Community 6 - "ProjectTask"
-Cohesion: 0.07
-Nodes (6): ProjectMember, ProjectTask, LogOptions, ProjectTimeLog, ProjectTimeLogController, TaskController
+Cohesion: 0.11
+Nodes (3): ProjectMember, ProjectTask, TaskController
 
-### Community 7 - "User"
+### Community 7 - "Illuminate\Http\Request"
 Cohesion: 0.03
-Nodes (24): User, UserFactory, up(), DummyBusinessSeeder, OldDummyBusinessSeeder, GuzzleHttp\Client, Illuminate\Database\Eloquent\Factories\Factory, Illuminate\Foundation\Auth\User (+16 more)
+Nodes (66): App\Http\Controllers\AccountController, App\Http\Controllers\AccountReportsController, App\Http\Controllers\AccountTypeController, App\Http\Controllers\BanController, App\Http\Controllers\BarcodeController, App\Http\Controllers\BrandController, App\Http\Controllers\BusinessController, App\Http\Controllers\BusinessLocationController (+58 more)
 
 ### Community 8 - "tailwind/app.js"
 Cohesion: 0.03
 Nodes (111): Ac(), addEmptyTag(), addMixTags(), addTags(), appendTag(), bc(), Bo(), build() (+103 more)
 
-### Community 9 - "HeavyEquipmentRateService"
-Cohesion: 0.15
-Nodes (3): HeavyEquipmentRateUnit, HeavyEquipmentRateService, Carbon
+### Community 9 - "SellingPriceGroup"
+Cohesion: 0.07
+Nodes (10): LabelsController, App\Http\Controllers\SellPosController, TypesOfServiceController, SellingPriceGroup, TypesOfService, ProductCatalogueController, Razorpay\Api\Api, Stripe\Charge (+2 more)
 
 ### Community 10 - "Illuminate\Database\Eloquent\Model"
 Cohesion: 0.02
-Nodes (46): CashDenomination, ProductRack, StockAdjustmentLine, TagTransaction, TransactionSellLineTag, UserContactAccess, Illuminate\Database\Eloquent\Model, AccountType (+38 more)
+Nodes (49): CashDenomination, ChangeLogRead, DashboardConfiguration, ReferenceCount, StockAdjustmentLine, TagTransaction, TransactionSellLineTag, UserContactAccess (+41 more)
 
 ### Community 11 - "TransactionLineExport"
 Cohesion: 0.08
 Nodes (15): ExpenseImportRestoredWorkbookExport, ProductsExport, TransactionLineExport, Generator, Illuminate\Database\Query\Builder, Maatwebsite\Excel\Concerns\FromArray, Maatwebsite\Excel\Concerns\FromGenerator, Maatwebsite\Excel\Concerns\WithColumnFormatting (+7 more)
 
 ### Community 12 - "SecurityAuditService"
-Cohesion: 0.06
-Nodes (9): SecurityAuditController, SecurityAuditService, Illuminate\Http\JsonResponse, Illuminate\Support\Facades\Log, Log, GeneralLedgerBackfillReviewController, ApiService, FlashService (+1 more)
+Cohesion: 0.18
+Nodes (3): SecurityAuditService, Illuminate\Support\Facades\File, JsonException
 
 ### Community 13 - "Account"
-Cohesion: 0.07
-Nodes (6): AccountType, Account, AccountType, AccountController, AccountReportsController, AccountTypeController
+Cohesion: 0.10
+Nodes (3): Account, AccountController, AccountReportsController
 
 ### Community 14 - "Util"
-Cohesion: 0.03
-Nodes (7): BookingController, DataController, ReferenceCount, Booking, RestaurantUtil, Util, ContactBookingController
+Cohesion: 0.02
+Nodes (10): App\Http\Controllers\BackUpController, DataController, RestaurantUtil, Util, AssetMaintenance, AssetMaitenanceController, AssetSettingsController, AssetUtil (+2 more)
 
 ### Community 16 - "UserImportBatch"
-Cohesion: 0.10
-Nodes (5): UserImportBatchService, UserImportBatch, HeavyEquipmentRateBatch, HeavyEquipmentRateImportHistoryService, Xlsx
+Cohesion: 0.07
+Nodes (10): UserImportBatch, Illuminate\Http\UploadedFile, HeavyEquipmentRateBatch, HeavyEquipmentRateUnit, HeavyEquipmentRouteRate, Throwable, Throwable, HeavyEquipmentRateImportHistoryService (+2 more)
 
 ### Community 17 - "e"
 Cohesion: 0.10
@@ -928,97 +951,81 @@ Nodes (51): applyPreviewFilter(), escapeHtml(), fetchProcessEvents(), filteredPr
 Cohesion: 0.06
 Nodes (3): BackfillGeneralLedger, GeneralLedgerBackfillService, Generator
 
-### Community 20 - "LegacyAnnualAuditControlReader"
-Cohesion: 0.25
-Nodes (3): LegacyAnnualAuditControlReader, SimpleXMLElement, ZipArchive
+### Community 21 - "HeavyEquipmentTripController"
+Cohesion: 0.13
+Nodes (3): HeavyEquipmentRoute, HeavyEquipmentTripController, User
 
 ### Community 22 - "ExpenseImportService"
 Cohesion: 0.08
 Nodes (3): ExpenseImportService, Transaction, TaxRate
 
 ### Community 23 - "Transaction"
-Cohesion: 0.01
-Nodes (24): TransactionPaymentAdded, TransactionPaymentDeleted, TransactionPaymentUpdated, AdvanceBalanceNotAvailable, PurchaseSellMismatch, CombinedPurchaseReturnController, LedgerDiscountController, NotificationController (+16 more)
+Cohesion: 0.02
+Nodes (7): PurchaseOrderController, Transaction, TagSellLineUtil, up(), up(), up(), up()
 
 ### Community 24 - "ToDo"
-Cohesion: 0.06
-Nodes (6): AddMoreColumnsToEssentialsToDosTable, ToDo, ToDoController, NewTaskCommentNotification, NewTaskDocumentNotification, NewTaskNotification
+Cohesion: 0.08
+Nodes (5): AddMoreColumnsToEssentialsToDosTable, ToDo, ToDoController, NewTaskCommentNotification, NewTaskDocumentNotification
 
-### Community 25 - "AccountingAccount"
-Cohesion: 0.09
-Nodes (5): AccountingAccount, AccountingAccountType, AccountingController, AccountTypeController, CoaController
+### Community 26 - "JournalEntryController"
+Cohesion: 0.05
+Nodes (4): AccountingAccountsTransaction, AccountingAccTransMapping, JournalEntryController, TransferController
 
 ### Community 27 - "c"
 Cohesion: 0.20
 Nodes (54): y(), b(), c(), ct(), d(), destroy(), f(), s() (+46 more)
 
 ### Community 28 - "Schedule"
-Cohesion: 0.05
-Nodes (8): Carbon\CarbonInterval, CrmCallLog, Schedule, ScheduleLog, CallLogController, CrmDashboardController, ReportController, ScheduleLogController
-
-### Community 29 - "HeavyEquipmentVendorLoadingDocument"
-Cohesion: 0.11
-Nodes (3): HeavyEquipmentVendorLoadingDocument, HeavyEquipmentVendorLoadingDocumentService, HeavyEquipmentVendorLoadingImportReverseService
+Cohesion: 0.03
+Nodes (14): CreateRecursiveFollowup, SendScheduleNotification, CrmCallLog, CrmContactPersonCommission, CrmMarketplace, Schedule, ScheduleLog, CallLogController (+6 more)
 
 ### Community 30 - "JournalImportPaymentService"
 Cohesion: 0.17
 Nodes (3): JournalImportPaymentService, Transaction, TransactionPayment
 
-### Community 31 - "ProcessJournalImportJob"
-Cohesion: 0.08
-Nodes (6): JournalImportBatchStatus, Throwable, Throwable, ProcessJournalImportJob, JournalImportCancellationService, JournalImportQueueService
+### Community 31 - "JournalImportCancellationService"
+Cohesion: 0.09
+Nodes (5): JournalImportBatchStatus, Throwable, Throwable, JournalImportCancellationService, JournalImportProgressService
 
 ### Community 33 - "assets/js/journal_import.js"
 Cohesion: 0.09
 Nodes (52): actionForStatus(), actionPayload(), addDraftDetailLine(), appendCandidateField(), appendProgressLog(), appendSourceGroupSuggestions(), candidateAmount(), candidatesForRow() (+44 more)
 
 ### Community 34 - "HeavyEquipmentRateController"
-Cohesion: 0.12
-Nodes (4): HeavyEquipmentRouteRate, HeavyEquipmentRateController, Carbon, Throwable
+Cohesion: 0.14
+Nodes (3): HeavyEquipmentRateController, Carbon, Throwable
 
 ### Community 35 - "accounting/js/journal_import.js"
 Cohesion: 0.09
 Nodes (52): actionForStatus(), actionPayload(), addDraftDetailLine(), appendCandidateField(), appendProgressLog(), appendSourceGroupSuggestions(), candidateAmount(), candidatesForRow() (+44 more)
 
-### Community 36 - "Project"
-Cohesion: 0.05
-Nodes (7): Project, ProjectCategory, ProjectUser, DataController, ProjectController, ReportController, ProjectUtil
-
 ### Community 39 - "HeavyEquipmentTrip"
-Cohesion: 0.07
-Nodes (8): BonusAyakKasbon, HeavyEquipmentTrip, HeavyEquipmentTripBilling, HeavyEquipmentReportController, HeavyEquipmentSpbImportBatchService, HeavyEquipmentTripService, Carbon, Transaction
+Cohesion: 0.06
+Nodes (10): BonusAyakKasbon, HeavyEquipmentTrip, HeavyEquipmentTripBilling, HeavyEquipmentReportController, Throwable, Throwable, HeavyEquipmentSpbImportBatchService, HeavyEquipmentTripService (+2 more)
+
+### Community 41 - "SolarController"
+Cohesion: 0.10
+Nodes (4): SolarLedgerService, Spreadsheet, SolarController, Controller
 
 ### Community 43 - "SolarWorkbookService"
 Cohesion: 0.13
 Nodes (3): Worksheet, SolarWorkbookService, PhpOffice\PhpSpreadsheet\Worksheet\Worksheet
 
 ### Community 44 - "ModuleUtil"
-Cohesion: 0.02
-Nodes (28): OrderController, AdminSidebarMenu, ModuleUtil, Illuminate\Contracts\Support\Renderable, Illuminate\Http\Response, Illuminate\Routing\Controller, Maatwebsite\Excel\Facades\Excel, Menu (+20 more)
+Cohesion: 0.03
+Nodes (17): AdminSidebarMenu, DeleteAccountTransaction, ModuleUtil, Illuminate\Contracts\Support\Renderable, Menu, DataController, ReconciliationFindingController, SettingsController (+9 more)
 
-### Community 46 - "AnalyzeJournalImportJob"
-Cohesion: 0.19
-Nodes (4): AnalyzeJournalImportJob, self, JournalImportCancellationRequestedException, JournalImportProgressService
+### Community 46 - "Unit"
+Cohesion: 0.11
+Nodes (3): ImportSalesController, UnitController, Unit
 
 ### Community 47 - "pos.js"
 Cohesion: 0.08
 Nodes (26): calculate_balance_due(), calculate_billing_details(), calculate_discounted_unit_price(), checkMobileAndSubmitQuick(), checkTaxNumberAndSubmitQuick(), get_sales_orders(), get_subtotal(), getCustomerRewardPoints() (+18 more)
 
-### Community 48 - "LegacySourceReconciliationFindingService"
-Cohesion: 0.05
-Nodes (6): ReconciliationFindingController, LegacyOperationalOnlyProcessor, Transaction, LegacySourceReconciliationFindingService, ReconciliationFindingActionService, ReconciliationFindingJournalService
-
-### Community 49 - "GeneralLedgerReportService"
-Cohesion: 0.13
-Nodes (3): GeneralLedgerReportPresenter, GeneralLedgerReportService, LengthAwarePaginator
-
-### Community 51 - "ManageUserController"
-Cohesion: 0.09
-Nodes (5): UserCreatedOrModified, ManageUserController, Contact, User, UserBusinessImportService
-
-### Community 52 - "NotificationUtil"
-Cohesion: 0.07
-Nodes (15): AutoSendPaymentReminder, BackfillSolarBusiness, BackfillSolarSourceKeys, CleanupVendorLoadingImportFiles, CreateDummyBusiness, MigrateSellLineTags, RecurringExpense, RecurringInvoice (+7 more)
+### Community 52 - "TransactionUtil"
+Cohesion: 0.02
+Nodes (39): BackfillSolarBusiness, BackfillSolarSourceKeys, CleanupVendorLoadingImportFiles, CreateDummyBusiness, MapPurchaseSell, MigrateSellLineTags, RecurringExpense, RecurringInvoice (+31 more)
 
 ### Community 53 - "Storage"
 Cohesion: 0.11
@@ -1032,21 +1039,29 @@ Nodes (16): Illuminate\Contracts\View\Factory, currency_code(), excel_date_to_ph
 Cohesion: 0.07
 Nodes (13): __currency_convert_recursively(), __currency_trans_from_en(), __disable_submit_button(), __highlight(), incrementImageCounter(), __is_online(), __number_f(), __number_uf() (+5 more)
 
+### Community 56 - "DataController"
+Cohesion: 0.08
+Nodes (4): DocumentShare, EssentialsTodoComment, EssentialsUserAllowancesAndDeduction, DataController
+
 ### Community 57 - "require"
 Cohesion: 0.06
 Nodes (35): require, aloha/twilio, arcanedev/log-viewer, automattic/woocommerce, barryvdh/laravel-dompdf, composer/semver, consoletvs/charts, giggsey/libphonenumber-for-php (+27 more)
 
 ### Community 59 - "Controller"
-Cohesion: 0.05
-Nodes (13): DashboardConfiguration, ForgotPasswordController, ChangeLogController, Controller, DashboardConfiguratorController, Illuminate\Foundation\Auth\Access\AuthorizesRequests, Illuminate\Foundation\Auth\SendsPasswordResetEmails, Illuminate\Foundation\Bus\DispatchesJobs (+5 more)
+Cohesion: 0.04
+Nodes (13): ForgotPasswordController, Controller, DashboardConfiguratorController, ModulesController, RoleController, Illuminate\Foundation\Auth\Access\AuthorizesRequests, Illuminate\Foundation\Auth\SendsPasswordResetEmails, Illuminate\Foundation\Bus\DispatchesJobs (+5 more)
 
-### Community 60 - "ExpenseImportProcessService"
-Cohesion: 0.30
-Nodes (3): Handler, ExpenseImportProcessService, Illuminate\Foundation\Exceptions\Handler
-
-### Community 63 - "Closure"
+### Community 61 - "UserImportBatchService"
 Cohesion: 0.12
-Nodes (8): CheckUserLogin, IsInstalled, RedirectIfAuthenticated, SetSessionData, Superadmin, Timezone, Closure, CheckContactLogin
+Nodes (6): UserImportBatch, SolarImportHistoryService, Spreadsheet, UserImportBatch, UserImportBatchService, App\UserImportBatch
+
+### Community 62 - "LegacyAnnualAuditService"
+Cohesion: 0.06
+Nodes (6): JournalImportAccountComponentService, JournalImportSourceGroupMatcher, LegacyAnnualAuditControlReader, LegacyAnnualAuditService, SimpleXMLElement, ZipArchive
+
+### Community 63 - "GeneralLedgerBackfillReviewController"
+Cohesion: 0.26
+Nodes (3): SecurityAuditController, Illuminate\Http\JsonResponse, GeneralLedgerBackfillReviewController
 
 ### Community 64 - "ImportJournalWorkbook"
 Cohesion: 0.23
@@ -1065,20 +1080,24 @@ Cohesion: 0.15
 Nodes (35): activateSheet(), batchUrl(), createGrid(), creatingSupplier(), customerReady(), dateIsValid(), destroyGrid(), escapeHtml() (+27 more)
 
 ### Community 68 - "AccountTransaction"
-Cohesion: 0.08
-Nodes (5): AccountTransaction, AccountTransaction, DeleteAccountTransaction, UpdateAccountTransaction, JournalImportBankTransactionService
+Cohesion: 0.06
+Nodes (6): AccountTransaction, AccountTransaction, UpdateAccountTransaction, JournalImportBankTransactionService, PayrollGroup, PayrollController
 
 ### Community 70 - "Asset"
-Cohesion: 0.08
+Cohesion: 0.09
 Nodes (4): Asset, AssetWarranty, AssetController, AssetDepreciationController
 
 ### Community 71 - "a"
 Cohesion: 0.19
 Nodes (31): applySettings(), at(), bt(), Ci(), en(), et(), ft(), ht() (+23 more)
 
-### Community 72 - "DocumentAndNote"
-Cohesion: 0.10
-Nodes (8): DocumentAndNote, LogOptions, DocumentAndNote, LogOptions, LogOptions, LogOptions, Spatie\Activitylog\LogOptions, Spatie\Activitylog\Traits\LogsActivity
+### Community 72 - "Spatie\Activitylog\Traits\LogsActivity"
+Cohesion: 0.14
+Nodes (6): DocumentAndNote, LogOptions, LogOptions, LogOptions, Spatie\Activitylog\LogOptions, Spatie\Activitylog\Traits\LogsActivity
+
+### Community 73 - "BusinessLocation"
+Cohesion: 0.04
+Nodes (11): BusinessLocation, CommonChart, CustomerGroup, ExpenseCategory, BusinessLocationController, CustomerGroupController, App\Http\Controllers\ReportController, ReportController (+3 more)
 
 ### Community 74 - "User"
 Cohesion: 0.11
@@ -1090,87 +1109,75 @@ Nodes (5): ProcessAssetExpiryReminders, AssetExpiryReminder, AssetExpiryReminder
 
 ### Community 76 - "Product"
 Cohesion: 0.02
-Nodes (26): ProductsCreatedOrModified, ImportOpeningStockController, ImportProductsController, ProductController, ModifierSetsController, UnitController, VariationTemplateController, Product (+18 more)
+Nodes (15): ProductsCreatedOrModified, ImportProductsController, ProductController, ModifierSetsController, ProductModifierSetController, VariationTemplateController, Product, Variation (+7 more)
 
-### Community 77 - "ReminderDigestService"
-Cohesion: 0.12
-Nodes (5): ProcessReminderEmails, Business, Carbon, ReminderDigestService, Command
+### Community 77 - "Carbon\Carbon"
+Cohesion: 0.19
+Nodes (4): Business, Carbon, ReminderDigestService, Carbon\Carbon
 
 ### Community 78 - "InvalidArgumentException"
-Cohesion: 0.27
+Cohesion: 0.29
 Nodes (3): InvalidArgumentException, Carbon, ProjectWorkbookImporter
 
-### Community 80 - ".compact"
-Cohesion: 0.02
-Nodes (19): BanController, CashRegisterController, DocumentAndNoteController, LabelsController, PurchaseRequisitionController, KitchenController, ProductModifierSetController, RestaurantController (+11 more)
+### Community 80 - ".view"
+Cohesion: 0.03
+Nodes (9): CashRegisterController, PurchaseReturnController, KitchenController, RestaurantController, TableController, SellPosController, StockTransferController, TransactionPaymentController (+1 more)
 
 ### Community 83 - "BonusAyakImport"
 Cohesion: 0.19
 Nodes (5): BonusAyakImport, User, BonusAyakImportPreview, Maatwebsite\Excel\Concerns\ToCollection, Maatwebsite\Excel\Concerns\WithHeadingRow
 
 ### Community 85 - "RuntimeException"
-Cohesion: 0.17
-Nodes (6): ExpenseImportConsolidationService, Transaction, ExpenseImportJournalLinkService, Transaction, Illuminate\Support\Collection, RuntimeException
+Cohesion: 0.31
+Nodes (3): ExpenseImportConsolidationService, Transaction, RuntimeException
 
-### Community 86 - "AccountingAccountsTransaction"
+### Community 86 - "Illuminate\Support\Facades\Log"
 Cohesion: 0.11
-Nodes (3): AccountingAccountsTransaction, AccountingAccTransMapping, TransferController
-
-### Community 88 - "isPusherEnabled"
-Cohesion: 0.08
-Nodes (4): isPusherEnabled(), LeaveStatusNotification, NewLeaveNotification, PayrollNotification
+Nodes (4): Illuminate\Support\Facades\Log, Log, ApiService, FlashService
 
 ### Community 89 - "AssetTransaction"
-Cohesion: 0.13
+Cohesion: 0.14
 Nodes (3): AssetTransaction, AssetAllocationController, RevokeAllocatedAssetController
 
-### Community 91 - "JournalImportExpenseService"
-Cohesion: 0.11
-Nodes (4): JournalImportExpenseService, Transaction, JournalImportExpenseTotalsService, JournalImportTaxCorrectionPolicy
+### Community 90 - "GeneralLedgerAuditService"
+Cohesion: 0.05
+Nodes (5): ReportController, GeneralLedgerAuditService, GeneralLedgerReportPresenter, GeneralLedgerReportService, LengthAwarePaginator
 
 ### Community 92 - "Kn"
 Cohesion: 0.13
 Nodes (26): ar(), Be(), Bi(), Cc(), cr(), ho(), Ji(), kc() (+18 more)
 
 ### Community 93 - "Reminder"
-Cohesion: 0.13
-Nodes (5): ReminderEmailNotification, Illuminate\Support\Facades\Notification, AssetExpiryReminderItem, Reminder, ReminderController
-
-### Community 94 - "routes/web.php"
-Cohesion: 0.06
-Nodes (10): BarcodeController, App\Http\Controllers\CategoryController, App\Http\Controllers\Restaurant, SalesCommissionAgentController, SellingPriceGroupController, SellReturnController, WarrantyController, Barcode (+2 more)
-
-### Community 95 - "LegacyAttachmentImporter"
-Cohesion: 0.05
-Nodes (12): LoginController, RegisterController, App\Models\User, ReCaptcha, Illuminate\Contracts\Validation\Rule, Illuminate\Foundation\Auth\AuthenticatesUsers, Illuminate\Foundation\Auth\RegistersUsers, Illuminate\Support\Facades\Http (+4 more)
+Cohesion: 0.24
+Nodes (3): AssetExpiryReminderItem, Reminder, ReminderController
 
 ### Community 96 - "initialize"
 Cohesion: 0.18
 Nodes (26): initialize(), acceptFinding(), addAdjustmentLine(), addCell(), addMetaRow(), addProposalRow(), adjustmentLines(), appendAdjustmentComparison() (+18 more)
 
+### Community 97 - "ExpenseImportJournalMatcher"
+Cohesion: 0.12
+Nodes (4): ExpenseImportJournalMatcher, JournalImportExpenseTotalsService, JournalImportTaxCorrectionPolicy, JournalImportTaxResolver
+
+### Community 98 - "InvoiceScheme"
+Cohesion: 0.06
+Nodes (8): App\Http\Controllers\InvoiceSchemeController, InvoiceSchemeController, App\Http\Controllers\LocationSettingsController, LocationSettingsController, TagController, InvoiceLayout, InvoiceScheme, Tag
+
 ### Community 100 - "initialize"
 Cohesion: 0.18
 Nodes (26): initialize(), acceptFinding(), addAdjustmentLine(), addCell(), addMetaRow(), addProposalRow(), adjustmentLines(), appendAdjustmentComparison() (+18 more)
+
+### Community 101 - "DocumentAndNote"
+Cohesion: 0.15
+Nodes (3): DocumentAndNote, LogOptions, DocumentAndNoteController
 
 ### Community 102 - "assets/js/general_ledger_backfill_review.js"
 Cohesion: 0.21
 Nodes (21): addOptions(), appendManualJournalLine(), confirmRetryPreview(), createRetryPreview(), escapeHtml(), filters(), loadOptions(), loadRows() (+13 more)
 
-### Community 104 - "PhpOffice\PhpSpreadsheet\Spreadsheet"
-Cohesion: 0.30
-Nodes (4): ProjectImportTemplate, PhpOffice\PhpSpreadsheet\Cell\DataValidation, PhpOffice\PhpSpreadsheet\NamedRange, PhpOffice\PhpSpreadsheet\Spreadsheet
-
 ### Community 105 - "accounting/js/general_ledger_backfill_review.js"
 Cohesion: 0.21
 Nodes (21): addOptions(), appendManualJournalLine(), confirmRetryPreview(), createRetryPreview(), escapeHtml(), filters(), loadOptions(), loadRows() (+13 more)
-
-### Community 106 - ".count"
-Cohesion: 0.07
-Nodes (4): SolarImportPreviewService, SolarImportService, SolarLedgerService, up()
-
-### Community 107 - "ImportLegacySources.php"
-Cohesion: 0.13
-Nodes (3): GeneralLedgerBackfillCheckpoint, self, LegacyJournalImportAuditReader
 
 ### Community 109 - "AiAssistance/package.json"
 Cohesion: 0.10
@@ -1193,12 +1200,20 @@ Cohesion: 0.08
 Nodes (3): App\Country, KycIdentification, Media
 
 ### Community 116 - "HeavyEquipmentVendorLoadingImportHistoryService"
-Cohesion: 0.13
-Nodes (5): AnalyzeHeavyEquipmentVendorLoadingImportJob, Throwable, UploadedFile, HeavyEquipmentVendorLoadingImportBatchService, HeavyEquipmentVendorLoadingImportHistoryService
+Cohesion: 0.18
+Nodes (3): Throwable, HeavyEquipmentVendorLoadingImportBatchService, HeavyEquipmentVendorLoadingImportHistoryService
+
+### Community 117 - "ExpenseCategoryController"
+Cohesion: 0.16
+Nodes (3): ExpenseCategoryController, ExpenseCategoryBusinessImportService, ExpenseCategory
 
 ### Community 119 - "Contact"
 Cohesion: 0.03
-Nodes (17): Contact, CustomerGroup, ContactController, CustomerGroupController, PurchaseFinancialSummaryPresenter, PurchaseIndexProductPresenter, ContactUtil, TagSellLineUtil (+9 more)
+Nodes (13): App\Contact, Contact, ContactController, SellController, isFileImage(), isFilePdf(), up(), Illuminate\Foundation\Auth\User (+5 more)
+
+### Community 120 - "Illuminate\Support\Collection"
+Cohesion: 0.21
+Nodes (3): GuideController, ChangeLogCatalog, Illuminate\Support\Collection
 
 ### Community 123 - "business/settings.blade.php"
 Cohesion: 0.11
@@ -1212,17 +1227,21 @@ Nodes (13): append_purchase_lines(), checkMobileAndSubmitPurchase(), checkTaxNum
 Cohesion: 0.19
 Nodes (4): CashRegister, CashRegisterTransaction, CashRegisterUtil, up()
 
+### Community 126 - ".handle"
+Cohesion: 0.06
+Nodes (7): ImportLegacySources, GeneralLedgerBackfillCheckpoint, self, JournalImportIdentityService, LegacyJournalEntryMerger, LegacyJournalImportAuditReader, LegacyJournalImportSourceLinkAuditReader
+
 ### Community 127 - "ExpenseLine"
-Cohesion: 0.10
-Nodes (6): ExpenseLine, BanRequest, Ban, BanPemasangan, Illuminate\Database\Eloquent\Factories\HasFactory, Illuminate\Foundation\Http\FormRequest
+Cohesion: 0.13
+Nodes (5): ExpenseLine, BanController, Ban, BanPemasangan, Illuminate\Database\Eloquent\Factories\HasFactory
 
 ### Community 130 - "contact/show.blade.php"
 Cohesion: 0.11
 Nodes (17): contact.partials.documents_and_notes_tab, contact.partials.ledger_tab, contact.partials.stock_report_tab, contact.partials.subscriptions, ledger_discount.create, activity_log.activities, contact.contact_basic_info, contact.contact_more_info (+9 more)
 
-### Community 132 - "MyFatoorahController"
-Cohesion: 0.19
-Nodes (5): MyFatoorahController, MyFatoorah\Library\API\Payment\MyFatoorahPayment, MyFatoorah\Library\API\Payment\MyFatoorahPaymentEmbedded, MyFatoorah\Library\API\Payment\MyFatoorahPaymentStatus, MyFatoorah\Library\MyFatoorah
+### Community 133 - "Illuminate\Foundation\Support\Providers\RouteServiceProvider"
+Cohesion: 0.21
+Nodes (6): App\Http\Controllers\Install, Illuminate\Cache\RateLimiting\Limit, Illuminate\Foundation\Support\Providers\RouteServiceProvider, Illuminate\Support\Facades\RateLimiter, Illuminate\Support\Facades\Route, RouteServiceProvider
 
 ### Community 134 - "End User License Agreement"
 Cohesion: 0.12
@@ -1237,8 +1256,8 @@ Cohesion: 0.12
 Nodes (16): devDependencies, cross-env, laravel-mix, laravel-mix-merge-manifest, cross-env, laravel-mix, laravel-mix-merge-manifest, private (+8 more)
 
 ### Community 137 - "EssentialsAttendance"
-Cohesion: 0.05
-Nodes (8): EssentialsAllowanceAndDeduction, EssentialsAttendance, EssentialsUserShift, Shift, AttendanceController, EssentialsAllowanceAndDeductionController, ShiftController, EssentialsUtil
+Cohesion: 0.04
+Nodes (10): AutoClockOutUser, EssentialsAllowanceAndDeduction, EssentialsAttendance, EssentialsUserShift, Shift, AttendanceController, DashboardController, EssentialsAllowanceAndDeductionController (+2 more)
 
 ### Community 138 - "scripts"
 Cohesion: 0.12
@@ -1249,8 +1268,8 @@ Cohesion: 0.21
 Nodes (16): appendLine(), calculatedField(), calculateLine(), calculateTotals(), createMinimal(), field(), labeledField(), lineField() (+8 more)
 
 ### Community 140 - "Illuminate\Contracts\View\View"
-Cohesion: 0.15
-Nodes (9): Illuminate\Contracts\View\View, Maatwebsite\Excel\Concerns\FromView, Maatwebsite\Excel\Concerns\WithEvents, Maatwebsite\Excel\Events\AfterSheet, AccountingExport, BudgetExport, GeneralLedgerExport, TrialBalanceExport (+1 more)
+Cohesion: 0.16
+Nodes (8): Illuminate\Contracts\View\View, Maatwebsite\Excel\Concerns\FromView, Maatwebsite\Excel\Concerns\WithEvents, Maatwebsite\Excel\Events\AfterSheet, AccountingExport, BudgetExport, GeneralLedgerExport, TrialBalanceExport
 
 ### Community 141 - "scripts"
 Cohesion: 0.12
@@ -1284,33 +1303,45 @@ Nodes (16): devDependencies, cross-env, laravel-mix, laravel-mix-merge-manifest,
 Cohesion: 0.21
 Nodes (16): appendLine(), calculatedField(), calculateLine(), calculateTotals(), createMinimal(), field(), labeledField(), lineField() (+8 more)
 
-### Community 153 - "InstallController"
-Cohesion: 0.09
-Nodes (11): InstallController, asset_cache_version(), isAppInstalled(), pos_boot(), versioned_asset_url(), InstallUtil, up(), FilesystemIterator (+3 more)
-
-### Community 155 - "Media"
+### Community 150 - "TransactionPayment"
 Cohesion: 0.04
-Nodes (8): PurchaseOrderController, UserController, Media, MfgIngredientGroup, MfgRecipe, ProductionController, RecipeController, ManufacturingUtil
+Nodes (14): TransactionPaymentAdded, TransactionPaymentDeleted, TransactionPaymentUpdated, AdvanceBalanceNotAvailable, PurchaseSellMismatch, AddAccountTransaction, TransactionPayment, Exception (+6 more)
+
+### Community 153 - "InstallController"
+Cohesion: 0.08
+Nodes (13): InstallController, asset_cache_version(), isAppInstalled(), pos_boot(), versioned_asset_url(), AppServiceProvider, InstallUtil, up() (+5 more)
+
+### Community 155 - "MfgRecipe"
+Cohesion: 0.11
+Nodes (3): MfgRecipe, ProductionController, RecipeController
+
+### Community 160 - "UserBusinessImportService"
+Cohesion: 0.28
+Nodes (3): Contact, User, UserBusinessImportService
 
 ### Community 162 - "System"
 Cohesion: 0.04
-Nodes (16): System, Composer\Semver\Comparator, Illuminate\Foundation\Inspiring, Illuminate\Support\Facades\Abort, Illuminate\Support\Facades\Artisan, InstallController, InstallController, InstallController (+8 more)
+Nodes (20): System, Illuminate\Filesystem\FilesystemAdapter, Illuminate\Pagination\Paginator, Illuminate\Support\Facades\Blade, Laravel\Passport\Console\ClientCommand, Laravel\Passport\Console\InstallCommand, Laravel\Passport\Console\KeysCommand, League\Flysystem\Filesystem (+12 more)
 
 ### Community 164 - "gi"
 Cohesion: 0.23
 Nodes (15): ai(), fo(), gi(), hi(), hr(), jr(), ln(), ni() (+7 more)
 
-### Community 166 - "Business"
-Cohesion: 0.03
-Nodes (15): Business, MapPurchaseSell, Currency, BusinessController, InvoiceLayoutController, InvoiceSchemeController, LocationSettingsController, PrinterController (+7 more)
+### Community 165 - "ReconciliationFindingJournalService"
+Cohesion: 0.13
+Nodes (3): AccountingManualJournalPostingService, GeneralLedgerBackfillManualJournalService, ReconciliationFindingJournalService
 
-### Community 168 - "PayrollController.php"
+### Community 166 - "Business"
 Cohesion: 0.04
-Nodes (9): EssentialsHoliday, EssentialsLeave, EssentialsLeaveType, EssentialsUserSalesTarget, DashboardController, EssentialsHolidayController, EssentialsLeaveController, EssentialsLeaveTypeController (+1 more)
+Nodes (16): Business, Currency, BusinessController, CheckUserLogin, EcomApi, IsInstalled, SetSessionData, Superadmin (+8 more)
+
+### Community 168 - "EssentialsLeave"
+Cohesion: 0.15
+Nodes (3): EssentialsLeave, LogOptions, EssentialsLeaveController
 
 ### Community 169 - "Illuminate\Support\ServiceProvider"
-Cohesion: 0.06
-Nodes (20): Kernel, AppServiceProvider, BroadcastServiceProvider, ModuleAssetServiceProvider, Illuminate\Console\Scheduling\Schedule, Illuminate\Database\Eloquent\Factory, Illuminate\Filesystem\FilesystemAdapter, Illuminate\Foundation\Console\Kernel (+12 more)
+Cohesion: 0.24
+Nodes (4): BroadcastServiceProvider, Illuminate\Database\Eloquent\Factory, Illuminate\Support\Facades\Broadcast, Illuminate\Support\ServiceProvider
 
 ### Community 173 - "sale_pos/create.blade.php"
 Cohesion: 0.14
@@ -1324,6 +1355,10 @@ Nodes (13): contact.create, sale_pos.partials.configure_search_modal, sale_pos.p
 Cohesion: 0.26
 Nodes (9): append_purchase_lines(), get_purchase_entry_row(), iraqi_dinnar_selling_price_adjustment(), update_grand_total(), update_inline_profit_percentage(), update_purchase_entry_row_values(), update_row_price_for_exchange_rate(), update_table_sr_number() (+1 more)
 
+### Community 179 - ".edit"
+Cohesion: 0.20
+Nodes (3): WarrantyController, Warranty, Warranty
+
 ### Community 180 - "accounting/js/purchase_payment.js"
 Cohesion: 0.26
 Nodes (9): append_purchase_lines(), get_purchase_entry_row(), iraqi_dinnar_selling_price_adjustment(), update_grand_total(), update_inline_profit_percentage(), update_purchase_entry_row_values(), update_row_price_for_exchange_rate(), update_table_sr_number() (+1 more)
@@ -1336,13 +1371,21 @@ Nodes (13): PaymentAccount, Illuminate\Database\Eloquent\SoftDeletes, Account, A
 Cohesion: 0.83
 Nodes (3): down(), hasIndex(), up()
 
+### Community 183 - "Media"
+Cohesion: 0.04
+Nodes (8): LoginController, Media, ReCaptcha, Illuminate\Contracts\Validation\Rule, Illuminate\Foundation\Auth\AuthenticatesUsers, Illuminate\Support\Facades\Http, ManageProfileController, TaskCommentController
+
+### Community 184 - "JournalImportSourceGroupService"
+Cohesion: 0.11
+Nodes (4): ExpenseImportJournalLinkService, Transaction, JournalImportSourceGroupService, JournalImportSourceLinkService
+
 ### Community 185 - "composer.json"
 Cohesion: 0.17
 Nodes (11): autoload-dev, psr-4, description, keywords, license, minimum-stability, name, prefer-stable (+3 more)
 
 ### Community 189 - "RouteServiceProvider"
 Cohesion: 0.19
-Nodes (7): ConfirmPasswordController, ResetPasswordController, RouteServiceProvider, Illuminate\Cache\RateLimiting\Limit, Illuminate\Foundation\Auth\ConfirmsPasswords, Illuminate\Foundation\Auth\ResetsPasswords, Illuminate\Support\Facades\RateLimiter
+Nodes (7): ConfirmPasswordController, ResetPasswordController, VerificationController, RouteServiceProvider, Illuminate\Foundation\Auth\ConfirmsPasswords, Illuminate\Foundation\Auth\ResetsPasswords, Illuminate\Foundation\Auth\VerifiesEmails
 
 ### Community 190 - "expense-import-preview.js"
 Cohesion: 0.21
@@ -1351,6 +1394,10 @@ Nodes (10): escapeHtml(), escapeMultiline(), formatRupiah(), openPreview(), prev
 ### Community 191 - "assets/js/crm.js"
 Cohesion: 0.21
 Nodes (5): getLeadListForKanban(), getScheduleLog(), initializeLeadKanbanBoard(), initializeLeadScheduleDatatable(), updateLeadLifeStageForKanban()
+
+### Community 193 - ".count"
+Cohesion: 0.09
+Nodes (7): DuplikatController, matches(), normalize(), up(), up(), JournalImportBulkMappingService, Collection
 
 ### Community 194 - "bonus-ayak-ui.js"
 Cohesion: 0.38
@@ -1384,9 +1431,9 @@ Nodes (10): layouts.module-assets, layouts.partials.extracss, home.todays_profit
 Cohesion: 0.18
 Nodes (10): authors, autoload, psr-4, description, extra, laravel, aliases, providers (+2 more)
 
-### Community 204 - "NotificationTemplate"
-Cohesion: 0.05
-Nodes (7): NotificationTemplateController, NotificationTemplate, up(), AssetMaintenance, AssetMaitenanceController, AssetSettingsController, AssetUtil
+### Community 204 - "NotificationUtil"
+Cohesion: 0.04
+Nodes (14): AutoSendPaymentReminder, App\Http\Controllers\NotificationController, NotificationController, NotificationTemplateController, CustomerNotification, RecurringExpenseNotification, SupplierNotification, TestEmailNotification (+6 more)
 
 ### Community 206 - "assets/js/expense_transactions.js"
 Cohesion: 0.24
@@ -1440,13 +1487,17 @@ Nodes (4): pad_zero(), show_invoice_preview(), updateProfitLoss(), updateStockBy
 Cohesion: 0.20
 Nodes (9): accounting::layouts.partials.alert-feedback, accounting::layouts.partials.css, accounting::layouts.partials.javascripts, home.todays_profit_modal, layouts.partials.footer, layouts.partials.footer_pos, layouts.partials.header, layouts.partials.header-pos (+1 more)
 
-### Community 225 - "2026_09_09_000004_backfill_bonus_ayak_driver_relations.php"
-Cohesion: 0.70
-Nodes (3): matches(), normalize(), up()
+### Community 221 - "Document"
+Cohesion: 0.20
+Nodes (3): Document, DocumentController, DocumentShareController
 
-### Community 227 - "Illuminate\Bus\Queueable"
-Cohesion: 0.04
-Nodes (16): RecurringInvoiceNotification, TestEmailNotification, Illuminate\Bus\Queueable, Illuminate\Notifications\Messages\BroadcastMessage, Illuminate\Notifications\Messages\MailMessage, Illuminate\Notifications\Notification, AssetAssignedForMaintenance, AssetSentForMaintenance (+8 more)
+### Community 222 - "AccountType"
+Cohesion: 0.23
+Nodes (3): AccountType, AccountType, AccountTypeController
+
+### Community 227 - "Illuminate\Notifications\Notification"
+Cohesion: 0.03
+Nodes (16): isPusherEnabled(), Illuminate\Notifications\Messages\BroadcastMessage, Illuminate\Notifications\Messages\MailMessage, Illuminate\Notifications\Notification, AssetAssignedForMaintenance, AssetSentForMaintenance, ScheduleNotification, SendCampaignNotification (+8 more)
 
 ### Community 231 - "create_old.blade.php"
 Cohesion: 0.20
@@ -1460,17 +1511,17 @@ Nodes (8): report.partials.profit_by_brands, report.partials.profit_by_categorie
 Cohesion: 0.22
 Nodes (8): contact.create, sale_pos.partials.configure_search_modal, sale_pos.partials.payment_row_form, sale_pos.partials.payment_type_details, sale_pos.partials.recurring_invoice_modal, sale_pos.product_row, sell.partials.media_table, types_of_service.pos_form_modal
 
-### Community 237 - "HomeController"
-Cohesion: 0.12
-Nodes (3): CommonChart, HomeController, ConsoleTVs\Charts\Classes\Highcharts\Chart
-
 ### Community 239 - "TaxRate"
-Cohesion: 0.03
-Nodes (16): PurchaseCreatedOrModified, ExpenseCategory, GroupSubTax, DuplikatController, ExpenseController, GroupTaxController, ImportSalesController, PurchaseController (+8 more)
+Cohesion: 0.04
+Nodes (8): GroupSubTax, CombinedPurchaseReturnController, App\Http\Controllers\GroupTaxController, GroupTaxController, PurchaseController, TaxRateController, TaxRate, TaxUtil
 
 ### Community 240 - "require-dev"
 Cohesion: 0.25
 Nodes (8): require-dev, barryvdh/laravel-debugbar, fakerphp/faker, knuckleswtf/scribe, mockery/mockery, nunomaduro/collision, phpunit/phpunit, spatie/laravel-ignition
+
+### Community 242 - "Validator"
+Cohesion: 0.25
+Nodes (5): RegisterController, App\Models\User, Illuminate\Foundation\Auth\RegistersUsers, InvoiceLayout, Validator
 
 ### Community 243 - "2026_11_21_000004_add_solar_shared_import_history.php"
 Cohesion: 0.83
@@ -1479,6 +1530,10 @@ Nodes (3): down(), hasIndex(), up()
 ### Community 246 - "expense-import.js"
 Cohesion: 0.24
 Nodes (12): badgeClass(), escapeHtml(), pollBatch(), renderActions(), renderProgress(), renderStatus(), renderSummary(), route() (+4 more)
+
+### Community 247 - "ReminderEmailNotification"
+Cohesion: 0.22
+Nodes (3): ReminderEmailNotification, Illuminate\Support\Facades\Notification, ReminderEmailDigest
 
 ### Community 252 - "transactions/index.blade.php"
 Cohesion: 0.29
@@ -1501,12 +1556,12 @@ Cohesion: 0.83
 Nodes (3): down(), indexExists(), up()
 
 ### Community 260 - "Illuminate\Queue\SerializesModels"
-Cohesion: 0.14
-Nodes (13): ContactCreatedOrModified, ExpenseCreatedOrModified, SellCreatedOrModified, StockAdjustmentCreatedOrModified, StockTransferCreatedOrModified, Illuminate\Broadcasting\Channel, Illuminate\Broadcasting\InteractsWithSockets, Illuminate\Broadcasting\PresenceChannel (+5 more)
+Cohesion: 0.13
+Nodes (14): ContactCreatedOrModified, SellCreatedOrModified, StockAdjustmentCreatedOrModified, StockTransferCreatedOrModified, ExceptionOccured, Illuminate\Broadcasting\Channel, Illuminate\Broadcasting\InteractsWithSockets, Illuminate\Broadcasting\PresenceChannel (+6 more)
 
 ### Community 269 - "DB"
 Cohesion: 0.02
-Nodes (35): up(), up(), up(), up(), up(), up(), up(), up() (+27 more)
+Nodes (33): up(), up(), up(), up(), up(), up(), up(), up() (+25 more)
 
 ### Community 274 - "purchase/create.blade.php"
 Cohesion: 0.29
@@ -1523,10 +1578,6 @@ Nodes (6): contact.create, layouts.partials.error, purchase.partials.edit_purcha
 ### Community 277 - "KeepLatestBackups.php"
 Cohesion: 0.47
 Nodes (4): KeepLatestBackups, Spatie\Backup\BackupDestination\BackupCollection, Spatie\Backup\BackupDestination\BackupDestination, Spatie\Backup\Tasks\Cleanup\CleanupStrategy
-
-### Community 279 - "Illuminate\Support\Facades\Route"
-Cohesion: 0.28
-Nodes (3): App\Http\Controllers\Install, Illuminate\Support\Facades\Route, RouteServiceProvider
 
 ### Community 280 - "EventServiceProvider"
 Cohesion: 0.40
@@ -1548,9 +1599,13 @@ Nodes (5): essentials::attendance.attendance_by_date, essentials::attendance.att
 Cohesion: 0.33
 Nodes (5): layouts.partials.footer-restaurant, layouts.partials.header-restaurant, home.todays_profit_modal, layouts.partials.css, layouts.partials.javascripts
 
-### Community 288 - "Illuminate\Contracts\Queue\ShouldQueue"
-Cohesion: 0.05
-Nodes (23): ProcessExpenseImport, ProcessExpensePreview, ProcessSolarImport, ProcessSolarPreview, Illuminate\Contracts\Queue\ShouldQueue, Illuminate\Foundation\Bus\Dispatchable, Illuminate\Queue\InteractsWithQueue, Illuminate\Queue\Middleware\WithoutOverlapping (+15 more)
+### Community 288 - "Illuminate\Bus\Queueable"
+Cohesion: 0.06
+Nodes (28): Handler, ProcessExpenseImport, ProcessExpensePreview, ProcessSolarImport, ProcessSolarPreview, Illuminate\Bus\Queueable, Illuminate\Contracts\Queue\ShouldQueue, Illuminate\Foundation\Bus\Dispatchable (+20 more)
+
+### Community 290 - "SolarImportService"
+Cohesion: 0.39
+Nodes (4): SolarImportPreviewService, SolarLedgerService, SolarWorkbookService, SolarImportService
 
 ### Community 291 - "assets/js/jQuery.print.js"
 Cohesion: 0.53
@@ -1698,7 +1753,7 @@ Nodes (3): inventorymanagement::partials.modals.editProductInventoryModal, inven
 
 ### Community 365 - "Illuminate\Support\Facades\Schema"
 Cohesion: 0.02
-Nodes (10): up(), up(), copyFiles(), up(), up(), up(), Illuminate\Pagination\LengthAwarePaginator, Illuminate\Support\Facades\Schema (+2 more)
+Nodes (9): up(), up(), up(), up(), Illuminate\Pagination\LengthAwarePaginator, Illuminate\Support\Facades\Schema, up(), up() (+1 more)
 
 ### Community 372 - "2026_11_02_000002_add_legacy_attachment_media_support.php"
 Cohesion: 0.83
@@ -1745,8 +1800,12 @@ Cohesion: 0.50
 Nodes (3): accounting::layouts.nav, accounting::report.partials.report_css, accounting::report.partials.report_js
 
 ### Community 387 - "Illuminate\Support\Facades\DB"
-Cohesion: 0.07
-Nodes (11): Barryvdh\DomPDF\Facade\Pdf, Carbon\Carbon, Illuminate\Support\Arr, Illuminate\Support\Facades\Cache, Illuminate\Support\Facades\DB, Illuminate\Support\Facades\Storage, Illuminate\Support\Facades\Validator, Illuminate\Support\Str (+3 more)
+Cohesion: 0.04
+Nodes (26): App\Http\Controllers\BonusAyakController, OrderController, Barryvdh\DomPDF\Facade\Pdf, Carbon\CarbonInterval, Composer\Semver\Comparator, Illuminate\Foundation\Inspiring, Illuminate\Http\File, Illuminate\Http\Response (+18 more)
+
+### Community 395 - "Kernel"
+Cohesion: 0.47
+Nodes (3): Kernel, Illuminate\Console\Scheduling\Schedule, Illuminate\Foundation\Console\Kernel
 
 ### Community 397 - "2026_10_03_000002_support_solar_matrix_preview_coordinates.php"
 Cohesion: 0.83
@@ -1754,7 +1813,7 @@ Nodes (3): down(), hasIndex(), up()
 
 ### Community 409 - "Illuminate\Database\Schema\Blueprint"
 Cohesion: 0.01
-Nodes (5): up(), up(), up(), up(), Illuminate\Database\Schema\Blueprint
+Nodes (5): up(), up(), up(), Illuminate\Database\Schema\Blueprint, up()
 
 ### Community 410 - "lead/show.blade.php"
 Cohesion: 0.50
@@ -1829,28 +1888,28 @@ Cohesion: 0.33
 Nodes (6): scripts, post-autoload-dump, post-create-project-cmd, post-install-cmd, post-root-package-install, post-update-cmd
 
 ### Community 664 - "CrmContact"
-Cohesion: 0.04
-Nodes (10): Contact, CreateRecursiveFollowup, CrmContact, CrmContactPersonCommission, CrmMarketplace, ContactLoginController, CrmMarketplaceController, DataController (+2 more)
+Cohesion: 0.14
+Nodes (3): Contact, CrmContact, LeadController
 
 ## Knowledge Gaps
-- **1079 isolated node(s):** `accounting::layouts.nav`, `accounting::layouts.nav`, `accounting::layouts.nav`, `accounting::budget.budget_table`, `accounting::budget.modals.edit_monthly_modal` (+1074 more)
-  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 4542 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
-- **566 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **1079 isolated node(s):** `opening_stock.form-part`, `layouts.partials.module_form_part`, `purchase.partials.show_details`, `purchase.partials.purchase_entry_row`, `purchase.partials.purchase_entry_row` (+1074 more)
+  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 4546 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
+- **585 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `Transaction` connect `Transaction` to `JournalImportSourceMatcher`, `JournalImportInvoiceService`, `Illuminate\Support\Facades\DB`, `Illuminate\Queue\SerializesModels`, `Illuminate\Http\Request`, `LegacyOperationalDraftEnricher`, `User`, `2019_06_28_134217_add_payroll_columns_to_transactions_table.php`, `EssentialsAttendance`, `Illuminate\Database\Eloquent\Model`, `SecurityAuditService`, `DB`, `Util`, `2020_12_22_164303_add_sub_status_column_to_transactions_table.php`, `ExpenseImportService`, `TransactionController`, `CrmContact`, `Illuminate\Database\Schema\Blueprint`, `Campaign`, `Media`, `PayrollController`, `JournalImportPaymentService`, `CustomerNotification`, `Illuminate\Contracts\Queue\ShouldQueue`, `JournalImportStockService`, `Business`, `HeavyEquipmentTrip`, `PayrollController.php`, `Transaction`, `ModuleUtil`, `LegacySourceReconciliationFindingService`, `GeneralLedgerReportService`, `ManageUserController`, `NotificationUtil`, `Controller`, `AccountTransaction`, `Product`, `JournalTaxReconciliationService`, `.compact`, `RuntimeException`, `AccountingAccountsTransaction`, `JournalImportExpenseService`, `routes/web.php`, `LegacyAttachmentImporter`, `ExpenseImportJournalMatcher`, `Tag`, `ModulesController`, `HomeController`, `Illuminate\Support\Facades\Schema`, `TaxRate`, `LegacyJournalImportSourceLinkAuditReader`, `ProjectTransaction`, `Contact`, `JournalImportSourceGroupMatcher`, `CashRegister`?**
-  _High betweenness centrality (0.026) - this node is a cross-community bridge._
-- **Why does `Contact` connect `Contact` to `Illuminate\Support\Facades\DB`, `ProjectWorkbookImporter.php`, `Illuminate\Http\Request`, `User`, `Util`, `HeavyEquipmentTripController`, `ExpenseImportService`, `Transaction`, `TransactionController`, `HeavyEquipmentVendorLoadingService`, `JournalEntryController`, `CrmContact`, `Schedule`, `HeavyEquipmentVendorLoadingDocument`, `HeavyEquipmentVendorLoadingController`, `Project`, `Business`, `HeavyEquipmentTrip`, `SuratKontrakController`, `SolarController`, `ModuleUtil`, `ManageUserController`, `NotificationUtil`, `Illuminate\Database\Eloquent\SoftDeletes`, `Controller`, `ContactBusinessImportService`, `User`, `InvalidArgumentException`, `.compact`, `HeavyEquipmentVendorLoadingImportService`, `TaxRate`, `ProjectTransaction`, `HeavyEquipmentVendorLoadingImportHistoryService`?**
+- **Why does `Transaction` connect `Transaction` to `JournalImportSourceMatcher`, `JournalImportInvoiceService`, `Illuminate\Support\Facades\DB`, `Illuminate\Queue\SerializesModels`, `.compact`, `LegacyOperationalDraftEnricher`, `Illuminate\Http\Request`, `2019_06_28_134217_add_payroll_columns_to_transactions_table.php`, `SellingPriceGroup`, `Illuminate\Database\Eloquent\Model`, `EssentialsAttendance`, `DB`, `Util`, `2020_12_22_164303_add_sub_status_column_to_transactions_table.php`, `TransactionSellLine`, `TransactionPayment`, `ExpenseImportService`, `Campaign`, `Illuminate\Database\Schema\Blueprint`, `JournalEntryController`, `MfgRecipe`, `Schedule`, `JournalImportPaymentService`, `Illuminate\Bus\Queueable`, `LedgerDiscountController`, `Business`, `JournalImportStockService`, `HeavyEquipmentTrip`, `Transaction`, `ModuleUtil`, `Unit`, `ExpenseController`, `ManageUserController`, `TransactionUtil`, `.edit`, `Media`, `JournalImportSourceGroupService`, `Controller`, `SellReturnController`, `LegacyAnnualAuditService`, `.count`, `AccountTransaction`, `BusinessLocation`, `NotificationUtil`, `Product`, `JournalTaxReconciliationService`, `.view`, `RuntimeException`, `Illuminate\Support\Facades\Log`, `GeneralLedgerAuditService`, `JournalImportExpenseService`, `.process`, `LegacyAttachmentImporter`, `ExpenseImportJournalMatcher`, `InvoiceScheme`, `HomeController`, `Illuminate\Support\Facades\Schema`, `TaxRate`, `ProjectTransaction`, `Contact`, `CashRegister`, `.handle`?**
+  _High betweenness centrality (0.039) - this node is a cross-community bridge._
+- **Why does `Business` connect `Business` to `Illuminate\Support\Facades\DB`, `.compact`, `Illuminate\Http\Request`, `SellingPriceGroup`, `Illuminate\Database\Eloquent\Model`, `Util`, `TransactionPayment`, `Campaign`, `InstallController`, `Schedule`, `UserBusinessImportService`, `HeavyEquipmentVendorLoadingController`, `System`, `ModuleUtil`, `Unit`, `ManageUserController`, `TransactionUtil`, `.edit`, `Accounting/Helpers/general_helper.php`, `BusinessLocation`, `AssetExpiryReminderService`, `NotificationUtil`, `Product`, `Carbon\Carbon`, `.view`, `ReminderEmailNotification`, `InvoiceScheme`, `TaxRate`, `ExpenseCategoryController`, `Contact`, `SuratKontrakTemplate`, `Booking`?**
   _High betweenness centrality (0.019) - this node is a cross-community bridge._
-- **Why does `Util` connect `Util` to `Illuminate\Support\Facades\DB`, `Illuminate\Http\Request`, `ProjectTask`, `User`, `EssentialsAttendance`, `DB`, `HeavyEquipmentTripController`, `Transaction`, `CrmContact`, `InstallController`, `Media`, `Schedule`, `System`, `Project`, `Business`, `PayrollController.php`, `Illuminate\Support\ServiceProvider`, `ModuleUtil`, `NotificationUtil`, `Storage`, `Illuminate\Database\Eloquent\SoftDeletes`, `PaymentType`, `Product`, `NotificationTemplate`, `.compact`, `routes/web.php`, `CrmServiceProvider`, `ProjectServiceProvider`, `HomeController`, `TaxRate`, `Contact`, `CashRegister`?**
-  _High betweenness centrality (0.017) - this node is a cross-community bridge._
-- **Are the 750 inferred relationships involving `DB` (e.g. with `.handle()` and `.handle()`) actually correct?**
-  _`DB` has 750 INFERRED edges - model-reasoned connections that need verification._
-- **What connects `accounting::layouts.nav`, `accounting::layouts.nav`, `accounting::layouts.nav` to the rest of the system?**
+- **Why does `ModuleUtil` connect `ModuleUtil` to `ProposalTemplateController`, `Illuminate\Support\Facades\DB`, `.compact`, `Illuminate\Http\Request`, `SellingPriceGroup`, `EssentialsAttendance`, `Account`, `Util`, `DB`, `HeavyEquipmentTripController`, `TransactionPayment`, `Campaign`, `InstallController`, `Schedule`, `KnowledgeBase`, `System`, `ReconciliationFindingJournalService`, `Business`, `EssentialsMessage`, `EssentialsLeave`, `Illuminate\Support\ServiceProvider`, `Spreadsheet`, `BudgetController`, `ManageUserController`, `TransactionUtil`, `.edit`, `Accounting/Helpers/general_helper.php`, `Media`, `Controller`, `AccountingAccountType`, `AccountTransaction`, `BusinessLocation`, `NotificationUtil`, `.view`, `Document`, `AiAssistanceController`, `EssentialsHoliday`, `InvoiceScheme`, `CrmServiceProvider`, `TaxonomyController`, `DocumentAndNote`, `ManufacturingServiceProvider`, `ModuleAssetServiceProvider`, `EssentialsLeaveType`, `Illuminate\Support\Collection`, `EssentialsServiceProvider`?**
+  _High betweenness centrality (0.019) - this node is a cross-community bridge._
+- **Are the 702 inferred relationships involving `DB` (e.g. with `.handle()` and `.handle()`) actually correct?**
+  _`DB` has 702 INFERRED edges - model-reasoned connections that need verification._
+- **What connects `opening_stock.form-part`, `layouts.partials.module_form_part`, `purchase.partials.show_details` to the rest of the system?**
   _1079 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Illuminate\Database\Migrations\Migration` be split into smaller, more focused modules?**
-  _Cohesion score 0.010784127586861592 - nodes in this community are weakly interconnected._
-- **Should `ProposalTemplateController` be split into smaller, more focused modules?**
-  _Cohesion score 0.09359605911330049 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.010802114456446793 - nodes in this community are weakly interconnected._
+- **Should `Illuminate\Database\Seeder` be split into smaller, more focused modules?**
+  _Cohesion score 0.0549645390070922 - nodes in this community are weakly interconnected._
