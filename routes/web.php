@@ -142,6 +142,18 @@ Route::middleware(['setData', 'auth', 'SetSessionData', 'language', 'timezone', 
     ->name('bonus-ayak.export-excel');
     Route::post('/bonus-ayak/import', [BonusAyakController::class, 'importExcel'])
     ->name('bonus-ayak.import');
+    Route::get('/bonus-ayak/import/history', [BonusAyakController::class, 'importHistory'])
+    ->name('bonus-ayak.import-history');
+    Route::get('/bonus-ayak/import/history/{batch}', [BonusAyakController::class, 'importHistoryDetail'])
+    ->name('bonus-ayak.import-history.detail');
+    Route::get('/bonus-ayak/import/history/{batch}/source', [BonusAyakController::class, 'importHistorySource'])
+    ->name('bonus-ayak.import-history.source');
+    Route::post('/bonus-ayak/import/history/{batch}/retry', [BonusAyakController::class, 'importHistoryRetry'])
+    ->name('bonus-ayak.import-history.retry');
+    Route::post('/bonus-ayak/import/history/{batch}/revert', [BonusAyakController::class, 'importHistoryRevert'])
+    ->name('bonus-ayak.import-history.revert');
+    Route::get('/bonus-ayak/import/status/{token}', [BonusAyakController::class, 'importStatus'])
+    ->name('bonus-ayak.import-status');
     Route::get('/bonus-ayak/import/preview/{token}', [BonusAyakController::class, 'importPreview'])
     ->name('bonus-ayak.import-preview');
     Route::post('/bonus-ayak/import/confirm/{token}', [BonusAyakController::class, 'importConfirm'])

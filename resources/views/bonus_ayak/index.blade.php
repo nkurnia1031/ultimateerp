@@ -188,7 +188,7 @@
         <div class="card-header bg-light fw-bold"><i class="fa fa-file-excel me-2" aria-hidden="true"></i><span id="bonus-import-title">Import dari Excel</span></div>
         <div class="card-body bonus-import">
             <p>Upload file Bonus Ayak untuk melihat hasil pencocokan sopir, unit, baris bermasalah dan duplikat. Data belum disimpan sampai Anda mengonfirmasi preview.</p>
-            <form action="{{ route('bonus-ayak.import') }}" method="POST" enctype="multipart/form-data">
+            <form id="bonus-ayak-import-form" action="{{ route('bonus-ayak.import') }}" method="POST" enctype="multipart/form-data">
                 @csrf
                 <div class="bonus-file-picker">
                     <input type="file" name="file" class="bonus-file-picker__input" id="customFile" required aria-label="Pilih file Excel Bonus Ayak" data-file-picker>
@@ -196,8 +196,19 @@
                     <span class="bonus-file-picker__name" data-file-name-for="customFile">Belum ada file dipilih</span>
                 </div>
                 <input type="hidden" name="import" value="excel">
-                <button type="submit" class="btn btn-warning"><i class="fa fa-search me-1" aria-hidden="true"></i>Upload &amp; Preview</button>
+                <button type="submit" class="btn btn-warning" id="bonus-ayak-import-submit"><i class="fa fa-search me-1" aria-hidden="true"></i>Upload &amp; Preview</button>
+                <div id="bonus-ayak-upload-progress" class="progress hidden mt-2" style="max-width:420px"><div class="progress-bar" role="progressbar" style="width:0%">0%</div></div>
+                <p id="bonus-ayak-upload-message" class="text-muted mt-1" aria-live="polite"></p>
             </form>
+        </div>
+    </section>
+
+    <section class="card mb-3" aria-labelledby="bonus-import-history-title">
+        <div class="card-header bg-light fw-bold" id="bonus-import-history-title"><i class="fa fa-history me-2" aria-hidden="true"></i>Riwayat Import Bonus Ayak</div>
+        <div class="card-body">
+            <div class="row"><div class="col-sm-3 form-group"><label for="bonus-import-history-status">Status</label><select id="bonus-import-history-status" class="form-control"><option value="">Semua status</option><option>queued_preview</option><option>analyzing</option><option>preview_ready</option><option>queued_import</option><option>importing</option><option>imported</option><option>partial</option><option>failed</option><option>cancelled</option><option>reverted</option></select></div></div>
+            <div class="table-responsive"><table id="bonus-import-history-table" class="table table-bordered table-striped" width="100%"><thead><tr><th>File</th><th>Status</th><th>Progress</th><th>Pesan</th><th>Dibuat</th><th>Aksi</th></tr></thead></table></div>
+            <div id="bonus-import-history-detail" class="well hidden"><h4>Detail batch Bonus Ayak</h4><pre class="bonus-import-history-detail-body" style="white-space:pre-wrap"></pre></div>
         </div>
     </section>
 
@@ -390,6 +401,84 @@ $(function () {
     initFleetDataTable('#bonus-ayak-table', {
         order: [[0, 'desc']],
         columnDefs: [{ targets: [1, 2, 3, 4, 5, 6, 7], orderable: false }]
+    });
+
+    var csrf = $('meta[name="csrf-token"]').attr('content');
+    var historyTable = $('#bonus-import-history-table').DataTable({
+        processing: true,
+        serverSide: true,
+        searchDelay: 350,
+        ajax: {
+            url: @json(route('bonus-ayak.import-history')),
+            data: function (data) { data.status = $('#bonus-import-history-status').val() || ''; }
+        },
+        columns: [
+            {data: 'file_name', name: 'file_name'},
+            {data: 'status', name: 'status'},
+            {data: null, orderable: false, searchable: false, render: function (row) {
+                var percent = Math.max(0, Math.min(100, parseInt(row.progress_percent || 0, 10)));
+                return '<div class="progress"><div class="progress-bar" style="width:' + percent + '%">' + percent + '%</div></div>' +
+                    '<small>' + parseInt(row.progress_current || 0, 10) + ' / ' + (parseInt(row.progress_total || 0, 10) || '—') + '</small>';
+            }},
+            {data: 'last_message', name: 'last_message', defaultContent: ''},
+            {data: 'created_at', name: 'created_at'},
+            {data: null, orderable: false, searchable: false, render: function (row) {
+                var actions = '<button type="button" class="btn btn-xs btn-default bonus-import-detail" data-url="' + $('<div>').text(row.detail_url).html() + '">Detail</button> ';
+                if (row.restore_url) actions += '<a class="btn btn-xs btn-success" href="' + $('<div>').text(row.restore_url).html() + '">Unduh sumber</a> ';
+                if (row.can_retry) actions += '<button type="button" class="btn btn-xs btn-warning bonus-import-retry" data-url="' + $('<div>').text(row.retry_url).html() + '">Coba lagi</button> ';
+                if (row.can_revert) actions += '<button type="button" class="btn btn-xs btn-danger bonus-import-revert" data-url="' + $('<div>').text(row.revert_url).html() + '">Revert</button>';
+                return actions;
+            }}
+        ],
+        order: [[4, 'desc']]
+    });
+    $('#bonus-import-history-status').on('change', function () { historyTable.ajax.reload(); });
+    window.setInterval(function () {
+        if (historyTable.rows().data().toArray().some(function (row) { return row.active; })) historyTable.ajax.reload(null, false);
+    }, 5000);
+
+    $('#bonus-ayak-import-form').on('submit', function (event) {
+        event.preventDefault();
+        var form = this;
+        var progress = $('#bonus-ayak-upload-progress').removeClass('hidden').find('.progress-bar').css('width', '0%').text('0%');
+        $('#bonus-ayak-import-submit').prop('disabled', true);
+        $('#bonus-ayak-upload-message').text('Mengunggah workbook…');
+        $.ajax({
+            url: $(form).attr('action'), method: 'POST', data: new FormData(form), processData: false, contentType: false,
+            dataType: 'json', headers: {'Accept': 'application/json', 'X-CSRF-TOKEN': csrf},
+            xhr: function () {
+                var xhr = $.ajaxSettings.xhr();
+                if (xhr.upload) xhr.upload.addEventListener('progress', function (e) {
+                    if (e.lengthComputable) { var percent = Math.round(e.loaded / e.total * 100); progress.css('width', percent + '%').text(percent + '%'); }
+                });
+                return xhr;
+            }
+        }).done(function (payload) {
+            $('#bonus-ayak-upload-message').text(payload.message || 'Workbook masuk antrean. Membuka status batch…');
+            if (payload.preview_url) window.location = payload.preview_url;
+            historyTable.ajax.reload(null, false);
+        }).fail(function (xhr) {
+            $('#bonus-ayak-import-submit').prop('disabled', false);
+            $('#bonus-ayak-upload-message').text((xhr.responseJSON && xhr.responseJSON.message) || 'Upload Bonus Ayak gagal.');
+            if (window.toastr) toastr.error($('#bonus-ayak-upload-message').text());
+        });
+    });
+
+    $('#bonus-import-history-table').on('click', '.bonus-import-detail', function () {
+        var target = $('#bonus-import-history-detail');
+        $.get($(this).data('url')).done(function (payload) {
+            target.find('pre').text(JSON.stringify({batch: payload.batch, results: payload.results, preview: payload.preview}, null, 2));
+            target.removeClass('hidden');
+        });
+    });
+    $('#bonus-import-history-table').on('click', '.bonus-import-retry, .bonus-import-revert', function () {
+        var button = $(this), reverting = button.hasClass('bonus-import-revert');
+        if (reverting && !window.confirm('Revert hanya berjalan jika data belum berubah dan belum masuk settlement. Lanjutkan?')) return;
+        $.ajax({url: button.data('url'), method: 'POST', data: {_token: csrf}}).done(function () {
+            historyTable.ajax.reload(null, false);
+        }).fail(function (xhr) {
+            if (window.toastr) toastr.error((xhr.responseJSON && xhr.responseJSON.message) || 'Aksi batch gagal.');
+        });
     });
 });
 </script>

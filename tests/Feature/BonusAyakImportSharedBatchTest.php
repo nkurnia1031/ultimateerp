@@ -9,6 +9,7 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Auth\User as AuthenticatableUser;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
@@ -60,7 +61,41 @@ class BonusAyakImportSharedBatchTest extends TestCase
             $this->assertSame(7, (int) $batch->business_id);
             $this->assertSame(999, (int) $batch->created_by);
             $this->assertNotEmpty($batch->preview_path);
+            $this->assertNotEmpty($batch->source_snapshot_path);
+            $this->assertNull($batch->staging_path);
             Storage::disk('local')->assertExists($batch->preview_path);
+            Storage::disk('local')->assertExists($batch->source_snapshot_path);
+        } finally {
+            @unlink($path);
+        }
+    }
+
+    public function test_upload_returns_a_durable_queued_batch_before_analysis_finishes(): void
+    {
+        Queue::fake();
+        $path = $this->workbook();
+
+        try {
+            $response = $this->actingAs($this->admin())
+                ->withSession($this->businessSession(7))
+                ->postJson(route('bonus-ayak.import'), [
+                    'file' => new UploadedFile(
+                        $path,
+                        'bonus-ayak.xlsx',
+                        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                        UPLOAD_ERR_OK,
+                        true
+                    ),
+                ]);
+
+            $response->assertAccepted()->assertJsonPath('status', 'queued_preview');
+            $batch = UserImportBatch::where('business_id', 7)
+                ->where('importer_key', 'bonus_ayak')->firstOrFail();
+            $this->assertSame('queued_preview', $batch->status);
+            $this->assertNull($batch->preview_path);
+            $this->assertNotEmpty($batch->staging_path);
+            Storage::disk('local')->assertExists($batch->staging_path);
+            Queue::assertPushed(\App\Jobs\AnalyzeBonusAyakImportBatch::class);
         } finally {
             @unlink($path);
         }
@@ -78,15 +113,20 @@ class BonusAyakImportSharedBatchTest extends TestCase
                 ->withSession($this->businessSession(7))
                 ->post(route('bonus-ayak.import-confirm', $batch->source_key), ['entries' => [0]]);
 
-            $response->assertRedirect(route('bonus-ayak.index'));
+            $response->assertRedirect(route('bonus-ayak.import-preview', $batch->source_key));
+            $this->assertSame('queued_import', $batch->fresh()->status);
+            (new \App\Jobs\ProcessBonusAyakImportBatch((int) $batch->id, 7))->handle(
+                app(BonusAyakImportHistoryService::class),
+                app(\App\Services\UserImportBatchService::class)
+            );
             $bonus = BonusAyak::where('user_import_batch_id', $batch->id)->firstOrFail();
 
             $this->assertSame(55, (int) $bonus->trip);
             $this->assertSame(60000, (int) $bonus->bonus);
             $this->assertSame('imported', $batch->fresh()->status);
             $this->assertSame(1, json_decode($batch->fresh()->summary_json, true)['imported_rows']);
-            $this->assertNull($batch->fresh()->preview_path);
-            Storage::disk('local')->assertMissing($previewPath);
+            $this->assertSame($previewPath, $batch->fresh()->preview_path);
+            Storage::disk('local')->assertExists($previewPath);
         } finally {
             @unlink($path);
         }
@@ -109,6 +149,86 @@ class BonusAyakImportSharedBatchTest extends TestCase
             $this->assertNull($batch->fresh()->preview_path);
             $this->assertSame(0, BonusAyak::count());
             Storage::disk('local')->assertMissing($previewPath);
+        } finally {
+            @unlink($path);
+        }
+    }
+
+    public function test_safe_revert_restores_source_and_removes_unchanged_bonus_rows(): void
+    {
+        $path = $this->workbook();
+
+        try {
+            $batch = $this->uploadPreview($path);
+            $this->actingAs($this->admin())
+                ->withSession($this->businessSession(7))
+                ->post(route('bonus-ayak.import-confirm', $batch->source_key), ['entries' => [0]])
+                ->assertRedirect();
+            (new \App\Jobs\ProcessBonusAyakImportBatch((int) $batch->id, 7))->handle(
+                app(BonusAyakImportHistoryService::class),
+                app(\App\Services\UserImportBatchService::class)
+            );
+
+            $detail = $this->actingAs($this->admin())
+                ->withSession($this->businessSession(7))
+                ->getJson(route('bonus-ayak.import-history.detail', $batch->id));
+            $detail->assertOk()->assertJsonPath('results.summary.created_rows', 1)
+                ->assertJsonPath('results.row_outcomes.0.source_sheet', 'Sheet 1')
+                ->assertJsonPath('results.row_outcomes.0.source_row', 2);
+
+            $download = $this->actingAs($this->admin())
+                ->withSession($this->businessSession(7))
+                ->get(route('bonus-ayak.import-history.source', $batch->id));
+            $download->assertOk();
+
+            $bonus = BonusAyak::where('user_import_batch_id', $batch->id)->firstOrFail();
+            DB::table('heavy_equipment_driver_settlements')->insert(['id' => 1]);
+            DB::table('heavy_equipment_settlement_bonus_ayak')->insert([
+                'bonus_ayak_id' => $bonus->id,
+                'settlement_id' => 1,
+                'business_id' => 7,
+            ]);
+            $this->actingAs($this->admin())
+                ->withSession($this->businessSession(7))
+                ->postJson(route('bonus-ayak.import-history.revert', $batch->id))
+                ->assertStatus(422);
+            $this->assertSame('imported', $batch->fresh()->status);
+            DB::table('heavy_equipment_settlement_bonus_ayak')->delete();
+
+            $this->actingAs($this->admin())
+                ->withSession($this->businessSession(7))
+                ->postJson(route('bonus-ayak.import-history.revert', $batch->id))
+                ->assertOk()->assertJsonPath('status', 'reverted');
+            $this->assertSame(0, BonusAyak::where('user_import_batch_id', $batch->id)->count());
+        } finally {
+            @unlink($path);
+        }
+    }
+
+    public function test_revert_is_rejected_after_an_imported_bonus_row_changes(): void
+    {
+        $path = $this->workbook();
+
+        try {
+            $batch = $this->uploadPreview($path);
+            $this->actingAs($this->admin())
+                ->withSession($this->businessSession(7))
+                ->post(route('bonus-ayak.import-confirm', $batch->source_key), ['entries' => [0]])
+                ->assertRedirect();
+            (new \App\Jobs\ProcessBonusAyakImportBatch((int) $batch->id, 7))->handle(
+                app(BonusAyakImportHistoryService::class),
+                app(\App\Services\UserImportBatchService::class)
+            );
+            $record = BonusAyak::where('user_import_batch_id', $batch->id)->firstOrFail();
+            $record->update(['trip' => 56]);
+
+            $this->actingAs($this->admin())
+                ->withSession($this->businessSession(7))
+                ->postJson(route('bonus-ayak.import-history.revert', $batch->id))
+                ->assertStatus(422);
+
+            $this->assertSame(56, (int) $record->fresh()->trip);
+            $this->assertSame('imported', $batch->fresh()->status);
         } finally {
             @unlink($path);
         }
@@ -159,6 +279,7 @@ class BonusAyakImportSharedBatchTest extends TestCase
 
     private function uploadPreview(string $path): UserImportBatch
     {
+        Queue::fake();
         $response = $this->actingAs($this->admin())
             ->withSession($this->businessSession(7))
             ->post(route('bonus-ayak.import'), [
@@ -172,10 +293,15 @@ class BonusAyakImportSharedBatchTest extends TestCase
             ]);
 
         $response->assertRedirect();
-
-        return UserImportBatch::where('business_id', 7)
+        $batch = UserImportBatch::where('business_id', 7)
             ->where('importer_key', 'bonus_ayak')
             ->firstOrFail();
+        (new \App\Jobs\AnalyzeBonusAyakImportBatch((int) $batch->id, 7))->handle(
+            app(BonusAyakImportHistoryService::class),
+            app(\App\Services\UserImportBatchService::class)
+        );
+
+        return $batch->fresh();
     }
 
     private function workbook(): string
@@ -214,11 +340,24 @@ class BonusAyakImportSharedBatchTest extends TestCase
 
     private function businessSession(int $businessId, int $userId = 999): array
     {
-        return ['user' => ['id' => $userId, 'business_id' => $businessId]];
+        return [
+            'user' => ['id' => $userId, 'business_id' => $businessId],
+            'business' => ['time_zone' => 'UTC'],
+        ];
     }
 
     private function createDriverAndAsset(): void
     {
+        DB::table('users')->insert([
+            'id' => 999,
+            'business_id' => 7,
+            'user_type' => 'user',
+            'email' => 'admin@example.test',
+            'username' => 'admin',
+            'surname' => '',
+            'first_name' => 'Test',
+            'last_name' => 'Admin',
+        ]);
         DB::table('users')->insert([
             'id' => 11,
             'business_id' => 7,
@@ -301,6 +440,15 @@ class BonusAyakImportSharedBatchTest extends TestCase
             $table->unsignedBigInteger('user_import_batch_id')->nullable();
             $table->timestamps();
             $table->unique(['business_id', 'source_fingerprint']);
+        });
+        Schema::create('heavy_equipment_settlement_bonus_ayak', function (Blueprint $table) {
+            $table->unsignedBigInteger('bonus_ayak_id');
+            $table->unsignedBigInteger('settlement_id');
+            $table->unsignedInteger('business_id')->nullable();
+            $table->timestamps();
+        });
+        Schema::create('heavy_equipment_driver_settlements', function (Blueprint $table) {
+            $table->bigIncrements('id');
         });
     }
 }
