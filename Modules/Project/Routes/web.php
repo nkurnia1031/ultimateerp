@@ -8,6 +8,11 @@ Route::middleware('web', 'authh', 'SetSessionData', 'auth', 'language', 'timezon
     Route::put('project-settings', [Modules\Project\Http\Controllers\ProjectController::class, 'postSettings']);
     Route::get('project-import', [Modules\Project\Http\Controllers\ProjectImportController::class, 'index']);
     Route::post('project-import', [Modules\Project\Http\Controllers\ProjectImportController::class, 'store']);
+    Route::get('project-import/history', [Modules\Project\Http\Controllers\ProjectImportController::class, 'history'])->name('project.import.history');
+    Route::get('project-import/history/{batch}', [Modules\Project\Http\Controllers\ProjectImportController::class, 'historyDetail'])->name('project.import.history.detail');
+    Route::get('project-import/history/{batch}/source', [Modules\Project\Http\Controllers\ProjectImportController::class, 'historySource'])->name('project.import.history.source');
+    Route::post('project-import/history/{batch}/retry', [Modules\Project\Http\Controllers\ProjectImportController::class, 'retry'])->name('project.import.history.retry');
+    Route::post('project-import/history/{batch}/revert', [Modules\Project\Http\Controllers\ProjectImportController::class, 'revert'])->name('project.import.history.revert');
     Route::get('project-import/template', [Modules\Project\Http\Controllers\ProjectImportController::class, 'downloadTemplate']);
     Route::get('project/{id}/export', [Modules\Project\Http\Controllers\ProjectImportController::class, 'export']);
     Route::get('ledger', [Modules\Project\Http\Controllers\ProjectController::class, 'ledger']);

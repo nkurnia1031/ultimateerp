@@ -5,6 +5,7 @@ namespace Modules\Project\Http\Controllers;
 use App\BusinessLocation;
 use App\Category;
 use App\Contact;
+use App\Services\UserImportBatchService;
 use App\InvoiceScheme;
 use App\Tag;
 use App\TaxRate;
@@ -14,12 +15,15 @@ use App\Utils\Util;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Storage;
 use InvalidArgumentException;
 use Modules\Project\Entities\Project;
 use Modules\Project\Entities\ProjectTransaction;
 use Modules\Project\Services\ProjectImportTemplate;
 use Modules\Project\Services\ProjectWorkbookExporter;
 use Modules\Project\Services\ProjectWorkbookImporter;
+use Modules\Project\Services\ProjectImportBatchService;
+use Modules\Project\Jobs\ProcessProjectImportBatch;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use Throwable;
 
@@ -85,34 +89,128 @@ class ProjectImportController extends Controller
             'confirm_import' => 'accepted',
         ]);
 
+        $file = $request->file('project_file');
+        $batchService = app(UserImportBatchService::class);
+        $batch = $batchService->create([
+            'business_id' => $businessId,
+            'created_by' => (int) $request->user()->id,
+            'importer_key' => ProjectImportBatchService::IMPORTER_KEY,
+            'source_key' => (string) Str::uuid(),
+            'file_name' => $file->getClientOriginalName(),
+            'status' => 'queued_preview',
+            'stage' => 'queued',
+            'last_message' => 'Menunggu worker untuk menganalisis workbook Project.',
+            'heartbeat_at' => now(),
+        ]);
+
         try {
-            $result = $this->importer->import(
-                $request->file('project_file')->getRealPath(),
-                $businessId,
-                (int) $request->user()->id
-            );
-
-            $message = __('project::lang.project_import_success', [
-                'tasks' => $result['tasks'],
-                'time_logs' => $result['time_logs'],
-                'invoice' => $result['invoice'] ? 1 : 0,
-            ]);
-
-            return redirect()->action(
-                [ProjectController::class, 'show'],
-                [$result['project']->id]
-            )->with('status', ['success' => true, 'msg' => $message]);
-        } catch (InvalidArgumentException $exception) {
-            return redirect()->back()
-                ->withInput()
-                ->with('status', ['success' => false, 'msg' => $exception->getMessage()]);
+            $extension = strtolower($file->getClientOriginalExtension()) ?: 'xlsx';
+            $relativePath = $file->storeAs('user-imports/'.$batch->id.'/staging', 'source.'.$extension, 'local');
+            if (! $relativePath) {
+                throw new \RuntimeException('Workbook Project tidak dapat disimpan ke storage privat.');
+            }
+            $batch->staging_path = $relativePath;
+            $batch->save();
+            $batchService->captureWorkbook($batch, Storage::disk('local')->path($relativePath));
+            ProcessProjectImportBatch::dispatch((int) $batch->id, $businessId);
         } catch (Throwable $exception) {
-            \Log::emergency('File:'.$exception->getFile().' Line:'.$exception->getLine().' Message:'.$exception->getMessage());
+            $batch->forceFill([
+                'status' => 'failed',
+                'stage' => 'failed',
+                'last_message' => 'Batch Project gagal dimasukkan ke antrean.',
+                'error_message' => $exception->getMessage(),
+                'failed_at' => now(),
+                'completed_at' => now(),
+                'heartbeat_at' => null,
+            ])->save();
+            report($exception);
 
-            return redirect()->back()
-                ->withInput()
-                ->with('status', ['success' => false, 'msg' => __('messages.something_went_wrong')]);
+            if ($request->expectsJson()) {
+                return response()->json(['success' => false, 'message' => 'Workbook gagal dimasukkan ke antrean.'], 422);
+            }
+
+            return redirect()->back()->with('status', ['success' => false, 'msg' => 'Workbook gagal dimasukkan ke antrean.']);
         }
+
+        if ($request->expectsJson()) {
+            return response()->json([
+                'success' => true,
+                'batch_id' => $batch->id,
+                'status' => 'queued_preview',
+                'message' => 'Workbook Project masuk antrean. Proses tetap berjalan saat halaman ditutup.',
+            ], 202);
+        }
+
+        return redirect()->back()->with('status', [
+            'success' => true,
+            'msg' => 'Workbook Project masuk antrean. Proses tetap berjalan saat halaman ditutup.',
+        ]);
+    }
+
+    public function history(Request $request, ProjectImportBatchService $history)
+    {
+        $businessId = $this->authorizeImport($request);
+        $canRevert = $request->user()->can('project.delete_project');
+
+        return response()->json($history->history($request, $businessId, $canRevert));
+    }
+
+    public function historyDetail(Request $request, int $batch, ProjectImportBatchService $history)
+    {
+        $businessId = $this->authorizeImport($request);
+        $detail = $history->detail($batch, $businessId);
+
+        return response()->json([
+            'batch' => $detail['batch']->only([
+                'id', 'file_name', 'status', 'stage', 'progress_current', 'progress_total',
+                'progress_percent', 'summary_json', 'last_message', 'error_message',
+                'created_at', 'started_at', 'completed_at', 'failed_at', 'reverted_at',
+            ]),
+            'results' => $detail['results'],
+        ]);
+    }
+
+    public function historySource(Request $request, int $batch, UserImportBatchService $batches)
+    {
+        $businessId = $this->authorizeImport($request);
+        $shared = $batches->findForBusiness($batch, $businessId, ProjectImportBatchService::IMPORTER_KEY);
+        abort_unless($shared->hasSourceSnapshot(), 404, 'Snapshot workbook Project tidak tersedia.');
+
+        return $batches->workbookDownload($shared);
+    }
+
+    public function retry(Request $request, int $batch, UserImportBatchService $batches)
+    {
+        $businessId = $this->authorizeImport($request);
+        $shared = $batches->findForBusiness($batch, $businessId, ProjectImportBatchService::IMPORTER_KEY);
+        abort_unless($shared->status === 'failed' && filled($shared->staging_path), 422, 'Batch Project ini tidak dapat dicoba ulang.');
+
+        $shared->forceFill([
+            'status' => 'queued_preview',
+            'stage' => 'queued',
+            'progress_current' => 0,
+            'progress_total' => 0,
+            'progress_percent' => 0,
+            'last_message' => 'Menunggu worker untuk mencoba ulang import Project.',
+            'error_message' => null,
+            'heartbeat_at' => now(),
+            'started_at' => null,
+            'completed_at' => null,
+            'failed_at' => null,
+        ])->save();
+        ProcessProjectImportBatch::dispatch((int) $shared->id, $businessId);
+
+        return response()->json(['success' => true, 'message' => 'Batch Project masuk antrean ulang.'], 202);
+    }
+
+    public function revert(Request $request, int $batch, UserImportBatchService $batches, ProjectImportBatchService $history)
+    {
+        $businessId = $this->authorizeImport($request);
+        abort_unless($request->user()->can('project.delete_project'), 403, 'Unauthorized action.');
+        $shared = $batches->findForBusiness($batch, $businessId, ProjectImportBatchService::IMPORTER_KEY);
+        $history->revert($shared);
+
+        return response()->json(['success' => true, 'message' => 'Project hasil batch berhasil dikembalikan.']);
     }
 
     public function export(Request $request, $id)

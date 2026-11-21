@@ -220,8 +220,8 @@ class UserImportBatchService
             'can_preview' => $batch->status === 'preview_ready',
             'can_revert' => in_array($batch->status, ['imported', 'partial'], true),
             'can_retry' => in_array($batch->status, ['failed', 'partial'], true)
-                && (bool) $batch->preview_path
-                && (int) ($summary['source_rows'] ?? 0) > 0,
+                && ((bool) $batch->preview_path || $batch->hasSourceSnapshot())
+                && ((int) ($summary['source_rows'] ?? 0) > 0 || $batch->hasSourceSnapshot()),
             'active' => $batch->isActive(),
         ];
     }
