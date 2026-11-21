@@ -122,7 +122,7 @@ class BonusAyakImportSharedBatchTest extends TestCase
             $batch = $this->uploadPreview($path);
 
             $this->actingAs($this->admin(998))
-                ->withSession($this->businessSession(8))
+                ->withSession($this->businessSession(8, 998))
                 ->get(route('bonus-ayak.import-preview', $batch->source_key))
                 ->assertNotFound();
 
@@ -201,14 +201,20 @@ class BonusAyakImportSharedBatchTest extends TestCase
                 return $ability === 'superadmin';
             }
         };
-        $admin->forceFill(['id' => $id, 'business_id' => 7, 'first_name' => 'Test', 'user_type' => 'user']);
+        $admin->forceFill([
+            'id' => $id,
+            'business_id' => 7,
+            'first_name' => 'Test',
+            'user_type' => 'user',
+            'allow_login' => 1,
+        ]);
 
         return $admin;
     }
 
-    private function businessSession(int $businessId): array
+    private function businessSession(int $businessId, int $userId = 999): array
     {
-        return ['user' => ['business_id' => $businessId]];
+        return ['user' => ['id' => $userId, 'business_id' => $businessId]];
     }
 
     private function createDriverAndAsset(): void
