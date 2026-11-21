@@ -41,7 +41,8 @@ class SuratKontrakImportBatchLifecycleTest extends TestCase
             $response->assertStatus(202)->assertJsonPath('success', true);
             Bus::assertDispatchedTimes(ProcessSuratKontrakImportBatch::class, 1);
 
-            $batch = UserImportBatch::where('importer_key', SuratKontrakImportBatchService::IMPORTER_KEY)->firstOrFail();
+            $batch = UserImportBatch::where('business_id', $this->businessId)
+                ->where('importer_key', SuratKontrakImportBatchService::IMPORTER_KEY)->firstOrFail();
             $this->assertSame($this->businessId, (int) $batch->business_id);
             $this->assertSame('queued_preview', $batch->status);
             $this->assertTrue($batch->hasSourceSnapshot());

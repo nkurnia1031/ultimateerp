@@ -286,7 +286,12 @@ Route::middleware(['setData', 'auth', 'SetSessionData', 'language', 'timezone', 
     Route::get('/contacts/ledger', [ContactController::class, 'getLedger']);
     Route::post('/contacts/send-ledger', [ContactController::class, 'sendLedger']);
     Route::get('/contacts/import', [ContactController::class, 'getImportContacts'])->name('contacts.import');
-    Route::post('/contacts/import', [ContactController::class, 'postImportContacts']);
+    Route::post('/contacts/import', [ContactController::class, 'queueImportContacts'])->name('contacts.import.upload');
+    Route::get('/contacts/import/history', [ContactController::class, 'contactImportHistory'])->name('contacts.import.history');
+    Route::get('/contacts/import/history/{batch}', [ContactController::class, 'contactImportDetail'])->name('contacts.import.detail');
+    Route::get('/contacts/import/history/{batch}/source', [ContactController::class, 'contactImportSource'])->name('contacts.import.source');
+    Route::post('/contacts/import/history/{batch}/retry', [ContactController::class, 'retryContactImport'])->name('contacts.import.retry');
+    Route::post('/contacts/import/history/{batch}/revert', [ContactController::class, 'revertContactImport'])->name('contacts.import.revert');
     Route::post('/contacts/import/business/preview', [ContactController::class, 'previewBusinessImport'])->name('contacts.import.business.preview');
     Route::post('/contacts/import/business', [ContactController::class, 'importFromBusiness'])->name('contacts.import.business');
     Route::post('/contacts/check-contacts-id', [ContactController::class, 'checkContactId']);
