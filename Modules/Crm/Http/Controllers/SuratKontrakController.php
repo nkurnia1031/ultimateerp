@@ -7,17 +7,17 @@ use App\Contact;
 use App\User;
 use App\Utils\ModuleUtil;
 use App\Utils\Util;
+use App\Services\UserImportBatchService;
+use App\UserImportBatch;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
 use Modules\Crm\Entities\SuratKontrak;
 use Modules\Crm\Services\SuratKontrakTemplateService;
+use Modules\Crm\Services\SuratKontrakImportBatchService;
+use Modules\Crm\Jobs\ProcessSuratKontrakImportBatch;
 use Modules\Crm\Utils\CrmUtil;
-use Excel;
 use Yajra\DataTables\Facades\DataTables;
-use Illuminate\Support\Facades\DB;
-
-use PhpOffice\PhpSpreadsheet\Shared\Date;
 
 class SuratKontrakController extends Controller
 {
@@ -129,64 +129,8 @@ class SuratKontrakController extends Controller
         $sources = Category::forDropdown($business_id, 'source');
 
         $users = User::forDropdown($business_id, false, false, false, true);
-        $listBatch=$this->getImportBatchList();
-
         return view('crm::surat_kontrak.index')
-            ->with(compact('sources', 'life_stages', 'users', 'listBatch'));
-    }
-    public function getImportBatchList()
-    {
-        $business_id = request()->session()->get('user.business_id');
-
-        $batches = SuratKontrak::where('business_id', $business_id)
-            ->whereNotNull('import_batch')
-            ->select(
-                'import_batch',
-                DB::raw('MIN(created_at) as created_at'),
-                DB::raw('GROUP_CONCAT(nomor SEPARATOR ", ") as nomor_list')
-            )
-            ->groupBy('import_batch')
-            ->orderBy('import_batch', 'desc')
-            ->get();
-
-        return $batches;
-    }
-    public function destroyBatch($batch)
-    {
-        if (!request()->ajax()) {
-            abort(404);
-        }
-
-        $business_id = request()->session()->get('user.business_id');
-
-        if (!(auth()->user()->can('superadmin') ||
-            $this->moduleUtil->hasThePermissionInSubscription($business_id, 'crm_module'))) {
-            abort(403, 'Unauthorized action.');
-        }
-
-        try {
-
-            SuratKontrak::where('business_id', $business_id)
-                ->where('import_batch', $batch)
-                ->delete();
-
-            $output = [
-                'success' => true,
-                'msg' => 'Batch #' . $batch . ' berhasil dihapus'
-            ];
-        } catch (\Exception $e) {
-
-            \Log::emergency('File:' . $e->getFile()
-                . ' Line:' . $e->getLine()
-                . ' Message:' . $e->getMessage());
-
-            $output = [
-                'success' => false,
-                'msg' => __('messages.something_went_wrong')
-            ];
-        }
-
-        return $output;
+            ->with(compact('sources', 'life_stages', 'users'));
     }
 
     /**
@@ -220,11 +164,7 @@ class SuratKontrakController extends Controller
         if (! (auth()->user()->can('superadmin') || $this->moduleUtil->hasThePermissionInSubscription($business_id, 'crm_module'))) {
             abort(403, 'Unauthorized action.');
         }
-        $listBatch=$this->getImportBatchList();
-
-
-        return view('crm::surat_kontrak.import')
-            ->with(compact('business_id', 'listBatch'));
+        return view('crm::surat_kontrak.import')->with(compact('business_id'));
     }
     public function prosesContactId($contactId, ?int $businessId = null)
     {
@@ -255,7 +195,7 @@ class SuratKontrakController extends Controller
             return $newContact->id;
         }
     }
-    public function importProses(Request $request)
+    public function importProses(Request $request, UserImportBatchService $batches)
     {
         $business_id = (int) $request->session()->get('user.business_id');
 
@@ -268,86 +208,110 @@ class SuratKontrakController extends Controller
             'import_file' => 'required|file|mimes:xlsx,xls'
         ]);
 
+        $file = $request->file('import_file');
+        $sourceKey = hash_file('sha256', $file->getRealPath());
+        $existing = UserImportBatch::where('business_id', $business_id)
+            ->where('importer_key', SuratKontrakImportBatchService::IMPORTER_KEY)
+            ->where('source_key', $sourceKey)
+            ->first();
+        if ($existing) {
+            if ($existing->status === 'reverted') {
+                return response()->json(['success' => false, 'msg' => 'File ini sudah pernah direvert. Gunakan file yang diperbarui untuk membuat batch baru.'], 409);
+            }
+
+            return response()->json(['success' => true, 'msg' => 'File ini sudah tercatat pada batch #'.$existing->id.'.', 'batch_id' => $existing->id, 'status' => $existing->status], 202);
+        }
+
+        $batch = $batches->create([
+            'business_id' => $business_id,
+            'created_by' => auth()->id(),
+            'importer_key' => SuratKontrakImportBatchService::IMPORTER_KEY,
+            'source_key' => $sourceKey,
+            'file_name' => $file->getClientOriginalName(),
+            'status' => 'queued_preview',
+            'stage' => 'queued',
+            'progress_current' => 0,
+            'progress_total' => 0,
+            'progress_percent' => 0,
+            'last_message' => 'Workbook diterima dan menunggu worker import.',
+        ]);
         try {
+            $batches->captureWorkbook($batch, $file->getRealPath());
+            ProcessSuratKontrakImportBatch::dispatch((int) $batch->id, $business_id);
+        } catch (\Throwable $exception) {
+            app(SuratKontrakImportBatchService::class)->fail($batch, $exception);
+            report($exception);
 
-            DB::beginTransaction(); // 🔥 mulai transaction
+            return response()->json(['success' => false, 'msg' => 'Workbook belum dapat dimasukkan ke antrean import.'], 422);
+        }
 
-            $file = $request->file('import_file');
+        return response()->json([
+            'success' => true,
+            'msg' => 'Workbook diterima pada batch #'.$batch->id.'. Proses berlanjut di latar belakang.',
+            'batch_id' => $batch->id,
+            'status' => $batch->status,
+        ], 202);
+    }
 
-            $rows = Excel::toArray([], $file)[0];
-            $header = array_shift($rows);
+    public function importHistory(Request $request, SuratKontrakImportBatchService $service)
+    {
+        $businessId = (int) $request->session()->get('user.business_id');
+        $this->authorizeContractImport($businessId);
 
-            // ambil batch terakhir
-            $lastBatch = SuratKontrak::where('business_id', $business_id)->max('import_batch');
-            $currentBatch = $lastBatch ? $lastBatch + 1 : 1;
+        return response()->json($service->history($request, $businessId, true));
+    }
 
-            $dataInsert = [];
-
-            foreach ($rows as $row) {
-
-                if (empty(array_filter($row))) {
-                    continue;
-                }
-
-                $item = array_combine(
-                    array_slice($header, 0, count($row)),
-                    $row
-                );
-
-                $item['Selesai'] = is_int($item['Selesai'])
-                    ? Date::excelToDateTimeObject($item['Selesai'])->format('Y-m-d')
-                    : null;
-
-                $item['Mulai Kerja'] = is_int($item['Mulai Kerja'])
-                    ? Date::excelToDateTimeObject($item['Mulai Kerja'])->format('Y-m-d')
-                    : null;
-
-                $item['Contact ID'] = $this->prosesContactId($item['Contact ID'] ?? null, $business_id);
-
-                $dataInsert[] = [
-                    'nomor' => $item['Nomor'] ?? null,
-                    'contact_id' => $item['Contact ID'] ?? null,
-                    'jabatan_pihak_2' => $item['Jabatan Pihak 2'] ?? null,
-                    'pekerjaan' => $item['Pekerjaan'] ?? null,
-                    'kapal_mv' => $item['Kapal / MV'] ?? null,
-                    'tonase' => isset($item['Tonase']) && is_numeric($item['Tonase'])
-    ? round((float)$item['Tonase'], -1)
-    : null,
-                    'lokasi_muat' => $item['Lokasi Muat'] ?? null,
-                    'lokasi_bongkar' => $item['Lokasi Bongkar'] ?? null,
-                    'mulai_kerja' => $item['Mulai Kerja'] ?? null,
-                    'selesai' => $item['Selesai'] ?? null,
-                    'jangka_waktu' => $item['Jangka Waktu'] ?? null,
-                    'notes' => $item['Notes'] ?? null,
-                    'business_id' => auth()->user()->business_id,
-                    'import_batch' => $currentBatch,
-                    'created_at' => now(),
-                    'updated_at' => now(),
-                ];
+    public function importHistoryDetail(Request $request, int $batch, SuratKontrakImportBatchService $service)
+    {
+        $businessId = (int) $request->session()->get('user.business_id');
+        $this->authorizeContractImport($businessId);
+        $detail = $service->detail($batch, $businessId);
+        $detail['results']['row_outcomes'] = collect($detail['results']['row_outcomes'] ?? [])->map(function ($row) {
+            if (! empty($row['record_id'])) {
+                $row['record_url'] = action([self::class, 'show'], $row['record_id']);
             }
 
-            if (!empty($dataInsert)) {
-                SuratKontrak::insert($dataInsert);
-            }
+            return $row;
+        })->values();
 
-            DB::commit(); // 🔥 commit kalau sukses
+        return response()->json($detail);
+    }
 
-            return [
-                'success' => true,
-                'msg' => 'Surat kontrak berhasil diimport (Batch #' . $currentBatch . ')'
-            ];
-        } catch (\Exception $e) {
+    public function importHistorySource(Request $request, int $batch, UserImportBatchService $batches, SuratKontrakImportBatchService $service)
+    {
+        $businessId = (int) $request->session()->get('user.business_id');
+        $this->authorizeContractImport($businessId);
+        $record = $batches->findForBusiness($batch, $businessId, SuratKontrakImportBatchService::IMPORTER_KEY);
 
-            DB::rollBack(); // 🔥 rollback kalau error
+        return $batches->workbookDownload($record);
+    }
 
-            \Log::emergency('File:' . $e->getFile()
-                . ' Line:' . $e->getLine()
-                . ' Message:' . $e->getMessage());
+    public function retryImport(Request $request, int $batch, SuratKontrakImportBatchService $service)
+    {
+        $businessId = (int) $request->session()->get('user.business_id');
+        $this->authorizeContractImport($businessId);
+        $record = app(UserImportBatchService::class)->findForBusiness($batch, $businessId, SuratKontrakImportBatchService::IMPORTER_KEY);
+        abort_unless(in_array($record->status, ['failed', 'partial'], true), 422, 'Batch ini tidak dapat dicoba ulang.');
+        $record->forceFill(['status' => 'queued_preview', 'stage' => 'retry_queued', 'failed_at' => null, 'completed_at' => null, 'error_message' => null, 'last_message' => 'Baris yang gagal dijadwalkan ulang.'])->save();
+        ProcessSuratKontrakImportBatch::dispatch((int) $record->id, $businessId);
 
-            return [
-                'success' => false,
-                'msg' => $e->getMessage()
-            ];
+        return response()->json(['success' => true, 'status' => 'queued_preview']);
+    }
+
+    public function revertImport(Request $request, int $batch, SuratKontrakImportBatchService $service)
+    {
+        $businessId = (int) $request->session()->get('user.business_id');
+        $this->authorizeContractImport($businessId);
+        $record = app(UserImportBatchService::class)->findForBusiness($batch, $businessId, SuratKontrakImportBatchService::IMPORTER_KEY);
+        $service->revert($record);
+
+        return response()->json(['success' => true, 'status' => 'reverted']);
+    }
+
+    private function authorizeContractImport(int $businessId): void
+    {
+        if (! (auth()->user()->can('superadmin') || $this->moduleUtil->hasThePermissionInSubscription($businessId, 'crm_module'))) {
+            abort(403, 'Unauthorized action.');
         }
     }
 

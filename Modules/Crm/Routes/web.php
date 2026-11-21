@@ -43,7 +43,16 @@ Route::middleware('web', 'authh', 'auth', 'SetSessionData', 'language', 'timezon
 
     Route::get('surat-kontrak/import', [Modules\Crm\Http\Controllers\SuratKontrakController::class, 'import']);
     Route::post('surat-kontrak/importproses', [Modules\Crm\Http\Controllers\SuratKontrakController::class, 'importproses']);
-    Route::delete('surat-kontrak/destroy-batch/{batch}', [Modules\Crm\Http\Controllers\SuratKontrakController::class, 'destroyBatch']);
+    Route::get('surat-kontrak/import-history', [Modules\Crm\Http\Controllers\SuratKontrakController::class, 'importHistory'])
+        ->name('crm.surat-kontrak-import.history');
+    Route::get('surat-kontrak/import-history/{batch}', [Modules\Crm\Http\Controllers\SuratKontrakController::class, 'importHistoryDetail'])
+        ->name('crm.surat-kontrak-import.detail');
+    Route::get('surat-kontrak/import-history/{batch}/source', [Modules\Crm\Http\Controllers\SuratKontrakController::class, 'importHistorySource'])
+        ->name('crm.surat-kontrak-import.source');
+    Route::post('surat-kontrak/import-history/{batch}/retry', [Modules\Crm\Http\Controllers\SuratKontrakController::class, 'retryImport'])
+        ->name('crm.surat-kontrak-import.retry');
+    Route::post('surat-kontrak/import-history/{batch}/revert', [Modules\Crm\Http\Controllers\SuratKontrakController::class, 'revertImport'])
+        ->name('crm.surat-kontrak-import.revert');
     Route::get('surat-kontrak/download-sample', [Modules\Crm\Http\Controllers\SuratKontrakController::class, 'downloadSample']);
 
     Route::get('surat-kontrak-templates', [Modules\Crm\Http\Controllers\SuratKontrakTemplateController::class, 'index'])
