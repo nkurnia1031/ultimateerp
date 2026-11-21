@@ -222,8 +222,9 @@ class HeavyEquipmentRateImportLifecycleTest extends TestCase
         $this->assertDatabaseHas('heavy_equipment_route_rates', [
             'id' => $previousRateId,
             'status' => 'expired',
-            'effective_to' => '2026-10-31',
         ]);
+        $effectiveTo = DB::table('heavy_equipment_route_rates')->where('id', $previousRateId)->value('effective_to');
+        $this->assertSame('2026-10-31', \Carbon\Carbon::parse($effectiveTo)->toDateString());
         $this->assertDatabaseHas('heavy_equipment_route_rates', ['id' => $rateId, 'status' => 'active']);
 
         $revert = $this->actingAs($this->admin())
