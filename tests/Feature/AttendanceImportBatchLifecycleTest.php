@@ -126,6 +126,7 @@ class AttendanceImportBatchLifecycleTest extends TestCase
             $this->assertNull($batch->staging_path);
             $this->assertFalse(Storage::disk('local')->exists($stagingPath));
             $this->assertTrue($batch->hasSourceSnapshot());
+            $this->assertTrue(Storage::disk('local')->exists($batch->source_snapshot_path));
             $this->actingAs($this->admin())
                 ->withSession($this->businessSession(7))
                 ->get(route('attendance.import.history.source', $batch->id))
