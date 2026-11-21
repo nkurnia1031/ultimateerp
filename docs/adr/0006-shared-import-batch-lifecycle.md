@@ -19,6 +19,10 @@ Vendor retry is limited to failed batches with a retained preview and no created
 
 SPB route revert checks Vendor Loading usage through each line's parent document. The normalized Vendor schema stores business and route on the document, not on the loading line; the isolated SPB test fixture mirrors this relationship so schema drift is caught.
 
+Heavy Equipment rate imports keep `heavy_equipment_rate_batches` as the domain record and link it to the shared history row. Analysis snapshots all source sheets before deleting staging; the existing parser continues to use its first sheet. Draft rates remain available for Asset mapping. Confirmation runs on the imports queue, while retry is limited to failed confirmation of a still-draft batch. Revert compares imported-rate fingerprints and the prior rates' post-import fingerprints, restores prior effective dates/status, and refuses changes, trip dependencies, or legacy active batches without a trustworthy snapshot.
+
+Heavy Equipment row errors remain authoritative on the domain batch and are summarized into the shared history row for search. The detail endpoint returns each issue with its source workbook row so users can diagnose both parsing failures and activation blockers.
+
 **Status:** accepted for implementation, 2026-11-20.
 
 **Consequences:** importer adapters must expose business-scoped history, details, workbook restoration where a file was uploaded, and safe revert behavior. The rebuilt workbook preserves source values and sheet structure, not original formatting, macros, or exact binary identity. Snapshots live as long as their import history entry and are not automatically purged.

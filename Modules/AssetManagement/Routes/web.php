@@ -28,6 +28,13 @@ Route::middleware('web', 'authh', 'auth', 'SetSessionData', 'language', 'timezon
         Route::put('rates/{id}', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentRateController::class, 'update'])->name('rates.update');
         Route::delete('rates/{id}', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentRateController::class, 'destroy'])->name('rates.destroy');
         Route::post('rates/upload', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentRateController::class, 'upload'])->name('rates.upload');
+        Route::get('rates/import/batches', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentRateController::class, 'importBatchHistory'])->name('rates.import.batches.index');
+        Route::get('rates/import/batches/{id}/details', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentRateController::class, 'importBatchDetails'])->name('rates.import.batches.details');
+        Route::get('rates/import/batches/{id}/download', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentRateController::class, 'downloadImportBatch'])->name('rates.import.batches.download');
+        Route::post('rates/import/batches/{id}/confirm', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentRateController::class, 'confirmImportBatch'])->name('rates.import.batches.confirm');
+        Route::post('rates/import/batches/{id}/retry', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentRateController::class, 'retryImportBatch'])->name('rates.import.batches.retry');
+        Route::post('rates/import/batches/{id}/cancel', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentRateController::class, 'cancelImportBatch'])->name('rates.import.batches.cancel');
+        Route::post('rates/import/batches/{id}/revert', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentRateController::class, 'revertImportBatch'])->name('rates.import.batches.revert');
         Route::post('rates/{id}/confirm', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentRateController::class, 'confirm'])->name('rates.confirm');
         Route::post('rates/{id}/cancel', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentRateController::class, 'cancel'])->name('rates.cancel');
         Route::post('rates/{id}/units/map', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentRateController::class, 'mapUnits'])->name('rates.units.bulk-map');

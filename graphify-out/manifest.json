@@ -1962,9 +1962,9 @@
     "semantic_hash": "9ba24c56c51f09683ef6fb5193f327ac"
   },
   "Modules/AssetManagement/Routes/web.php": {
-    "mtime": 1795200546.584471,
-    "seen": 1795201059.539745,
-    "ast_hash": "64f30ebbdfc07b76bc0fc40d429aeebb",
+    "mtime": 1795241012.3470347,
+    "seen": 1795241792.247222,
+    "ast_hash": "d2f2c5ee30cec27478bbc20424c4ca63",
     "semantic_hash": ""
   },
   "Modules/AssetManagement/Services/AssetExpiryReminderService.php": {
@@ -13812,10 +13812,10 @@
     "semantic_hash": "aeedd623df9de5ec395cfa94ad8c1ebe"
   },
   "Modules/AssetManagement/Entities/HeavyEquipmentRateBatch.php": {
-    "mtime": 1788968468.9064834,
-    "seen": 1793685076.8418596,
-    "ast_hash": "fd1176dad7bd64f5a0494871194f4afc",
-    "semantic_hash": "fd1176dad7bd64f5a0494871194f4afc"
+    "mtime": 1795240044.140152,
+    "seen": 1795241792.2461772,
+    "ast_hash": "1c731e9d891d8065c69fb0cee8d51f9e",
+    "semantic_hash": ""
   },
   "Modules/AssetManagement/Entities/HeavyEquipmentRateUnit.php": {
     "mtime": 1788968468.907738,
@@ -13848,10 +13848,10 @@
     "semantic_hash": "d44857c4d3536fbb98c0313a2aa2b6fd"
   },
   "Modules/AssetManagement/Http/Controllers/HeavyEquipmentRateController.php": {
-    "mtime": 1789993371.1103714,
-    "seen": 1793685076.8440886,
-    "ast_hash": "1f4ead4a269b1ff05093ff9cb333fc79",
-    "semantic_hash": "1f4ead4a269b1ff05093ff9cb333fc79"
+    "mtime": 1795241339.4413142,
+    "seen": 1795241792.2461772,
+    "ast_hash": "ade15b48ec6bad09ed6cd1372db93556",
+    "semantic_hash": ""
   },
   "Modules/AssetManagement/Http/Controllers/HeavyEquipmentReportController.php": {
     "mtime": 1790957756.6679075,
@@ -13884,10 +13884,10 @@
     "semantic_hash": "27165ce9a0da72c709194295c663355d"
   },
   "Modules/AssetManagement/Resources/views/fleet/rates/index.blade.php": {
-    "mtime": 1789994643.5302446,
-    "seen": 1793685076.8542116,
-    "ast_hash": "d1a6683b769582b46ad880ebaa192255",
-    "semantic_hash": "d1a6683b769582b46ad880ebaa192255"
+    "mtime": 1795242332.4776022,
+    "seen": 1795242687.3084757,
+    "ast_hash": "4c6db2f479e7d816a091387b5fc2bd7c",
+    "semantic_hash": ""
   },
   "Modules/AssetManagement/Resources/views/fleet/reports/asset_ledger.blade.php": {
     "mtime": 1790957846.208817,
@@ -13926,10 +13926,10 @@
     "semantic_hash": ""
   },
   "Modules/AssetManagement/Services/HeavyEquipmentRateService.php": {
-    "mtime": 1789161002.5992136,
-    "seen": 1793685076.8572571,
-    "ast_hash": "e9febb5f1b37fd827e68f1049d28daec",
-    "semantic_hash": "e9febb5f1b37fd827e68f1049d28daec"
+    "mtime": 1795242376.8607993,
+    "seen": 1795242687.3084757,
+    "ast_hash": "4bf9a5090fd3c5591c3af39729ff7cb6",
+    "semantic_hash": ""
   },
   "Modules/AssetManagement/Services/HeavyEquipmentTripService.php": {
     "mtime": 1795184630.809569,
@@ -15231,6 +15231,30 @@
     "mtime": 1795200726.6465304,
     "seen": 1795201059.539745,
     "ast_hash": "7a2f045e335767f007e544e4c2f35bb5",
+    "semantic_hash": ""
+  },
+  "Modules/AssetManagement/Database/Migrations/2026_11_21_000002_add_shared_history_to_heavy_equipment_rate_batches.php": {
+    "mtime": 1795240044.1370285,
+    "seen": 1795241792.2461772,
+    "ast_hash": "2d86914a8a80ef33ff93cd666e7cc00f",
+    "semantic_hash": ""
+  },
+  "Modules/AssetManagement/Jobs/AnalyzeHeavyEquipmentRateImportJob.php": {
+    "mtime": 1795240322.3275628,
+    "seen": 1795241792.2461772,
+    "ast_hash": "2a03902fcd638129be0e6c22f3048fc6",
+    "semantic_hash": ""
+  },
+  "Modules/AssetManagement/Jobs/ProcessHeavyEquipmentRateImportJob.php": {
+    "mtime": 1795240322.3301408,
+    "seen": 1795241792.2461772,
+    "ast_hash": "3700628a9747a641ae77776161662a33",
+    "semantic_hash": ""
+  },
+  "Modules/AssetManagement/Services/HeavyEquipmentRateImportHistoryService.php": {
+    "mtime": 1795242300.9421422,
+    "seen": 1795242687.3084757,
+    "ast_hash": "90dd4a3124703063eb85e2e30d48938b",
     "semantic_hash": ""
   }
 }
