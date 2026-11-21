@@ -35,6 +35,8 @@ use App\Jobs\ProcessExpenseImport;
 use App\Jobs\ProcessExpensePreview;
 use App\Services\ExpenseImportProcessService;
 use App\Services\ExpenseImportService;
+use App\Services\ExpenseImportHistoryService;
+use App\Services\UserImportBatchService;
 
 
 class ExpenseController extends Controller
@@ -98,7 +100,13 @@ class ExpenseController extends Controller
             $accountTransactionUtil,
             $moduleUtil
         );
-        return $ImportSalesController->revertSaleImport($batch);
+        $response = $ImportSalesController->revertSaleImport($batch);
+        $businessId = (int) request()->session()->get('user.business_id');
+        if ((int) data_get(session()->get('status'), 'success', 0) === 1) {
+            app(ExpenseImportHistoryService::class)->markReverted($businessId, (int) $batch);
+        }
+
+        return $response;
     }
     /**
      * Display a listing of the resource.
@@ -898,187 +906,15 @@ class ExpenseController extends Controller
             ->values()
             ->all();
         $zip_loaded = extension_loaded('zip') ? true : false;
-        $imported_sales = Transaction::where('business_id', $business_id)
-            ->where('type', 'expense')
-            ->whereNotNull('import_batch')
-            ->with(['sales_person'])
-            ->select('id', 'import_batch', 'import_time', 'import_file', 'invoice_no', 'ref_no', 'created_by')
-            ->orderBy('import_batch', 'desc')
-            ->get();
-
-        $imported_sales_array = [];
-        foreach ($imported_sales as $sale) {
-            $imported_sales_array[$sale->import_batch]['import_time'] = $sale->import_time;
-            $imported_sales_array[$sale->import_batch]['import_file'] = $sale->import_file;
-            $imported_sales_array[$sale->import_batch]['created_by'] = optional($sale->sales_person)->user_full_name ?: '-';
-            $imported_sales_array[$sale->import_batch]['invoices'][] = $sale->ref_no;
-        }
-
-        $expense_import_batches = Schema::hasTable('expense_import_batches')
-            ? DB::table('expense_import_batches')->where('business_id', $business_id)->orderByDesc('created_at')->get()
-            : collect();
-
-        // New importer batches also write transactions.import_batch. Link those
-        // rows to the legacy history group so the unified table does not show
-        // the same imported expenses twice.
-        $linkedLegacyBatches = [];
-        $claimedLegacyBatches = [];
-        foreach ($expense_import_batches as $batch) {
-            if ($batch->status !== 'imported') {
-                continue;
-            }
-
-            $summary = json_decode((string) $batch->summary, true) ?: [];
-            $legacyBatchNumber = (int) ($summary['legacy_import_batch_number'] ?? 0);
-            if ($legacyBatchNumber > 0 && isset($imported_sales_array[$legacyBatchNumber]) && ! isset($claimedLegacyBatches[$legacyBatchNumber])) {
-                $linkedLegacyBatches[$batch->id] = $legacyBatchNumber;
-                $claimedLegacyBatches[$legacyBatchNumber] = true;
-            }
-        }
-
-        // Older batches do not have the explicit link in their summary. Use a
-        // filename plus near-exact import timestamp only when the match is
-        // unique in both directions; ambiguous records remain separate.
-        $fallbackCandidates = [];
-        $fallbackBatchCounts = [];
-        foreach ($expense_import_batches as $batch) {
-            if ($batch->status !== 'imported' || isset($linkedLegacyBatches[$batch->id])) {
-                continue;
-            }
-
-            $batchTime = strtotime((string) ($batch->confirmed_at ?: $batch->updated_at ?: $batch->created_at));
-            if (! $batchTime) {
-                continue;
-            }
-
-            foreach ($imported_sales_array as $legacyBatchNumber => $legacyImport) {
-                if (isset($claimedLegacyBatches[$legacyBatchNumber]) || (string) $legacyImport['import_file'] !== (string) $batch->file_name) {
-                    continue;
-                }
-
-                $legacyTime = strtotime((string) $legacyImport['import_time']);
-                if ($legacyTime && abs($legacyTime - $batchTime) <= 300) {
-                    $fallbackCandidates[$batch->id][] = $legacyBatchNumber;
-                    $fallbackBatchCounts[$legacyBatchNumber] = ($fallbackBatchCounts[$legacyBatchNumber] ?? 0) + 1;
-                }
-            }
-        }
-
-        foreach ($fallbackCandidates as $batchId => $candidateBatchNumbers) {
-            if (count($candidateBatchNumbers) !== 1) {
-                continue;
-            }
-
-            $legacyBatchNumber = $candidateBatchNumbers[0];
-            if (($fallbackBatchCounts[$legacyBatchNumber] ?? 0) === 1 && ! isset($claimedLegacyBatches[$legacyBatchNumber])) {
-                $linkedLegacyBatches[$batchId] = $legacyBatchNumber;
-                $claimedLegacyBatches[$legacyBatchNumber] = true;
-            }
-        }
-
-        $expense_import_history = [];
-        foreach ($imported_sales_array as $legacyBatchNumber => $legacyImport) {
-            if (isset($claimedLegacyBatches[$legacyBatchNumber])) {
-                continue;
-            }
-
-            $invoiceCount = count($legacyImport['invoices']);
-            $expense_import_history[] = [
-                'type' => 'legacy',
-                'id' => 'legacy-'.$legacyBatchNumber,
-                'batch_number' => $legacyBatchNumber,
-                'batch_id' => null,
-                'file_name' => $legacyImport['import_file'],
-                'created_at' => $legacyImport['import_time'],
-                'sort_at' => strtotime((string) $legacyImport['import_time']) ?: 0,
-                'created_by' => $legacyImport['created_by'],
-                'status_label' => 'Import selesai',
-                'status_class' => 'success',
-                'status_message' => '',
-                'progress_percent' => 100,
-                'progress_current' => $invoiceCount,
-                'progress_total' => $invoiceCount,
-                'progress_meta' => $invoiceCount.' transaksi',
-                'summary_text' => $invoiceCount.' transaksi Expense',
-                'summary_detail' => implode(', ', $legacyImport['invoices']),
-                'reference_count' => $invoiceCount,
-                'can_preview' => false,
-                'can_cancel' => false,
-                'done' => true,
-                'revert_url' => action([self::class, 'revertImport'], $legacyBatchNumber),
-            ];
-        }
-
-        foreach ($expense_import_batches as $batch) {
-            $summary = json_decode((string) $batch->summary, true) ?: [];
-            $legacyBatchNumber = $linkedLegacyBatches[$batch->id] ?? null;
-            $importBatchNumber = (int) ($summary['legacy_import_batch_number'] ?? $legacyBatchNumber ?? 0);
-            if ($legacyBatchNumber === null && $importBatchNumber > 0) {
-                $legacyBatchNumber = $importBatchNumber;
-            }
-            $legacyImport = $legacyBatchNumber !== null ? ($imported_sales_array[$legacyBatchNumber] ?? null) : null;
-            $processState = $batch->process_state ?: 'completed';
-            $isImported = $batch->status === 'imported';
-            $isReady = $batch->status === 'preview' && in_array($processState, ['completed', 'failed'], true);
-            $statusClass = $isImported ? 'success' : ($processState === 'failed' ? 'danger' : ($processState === 'cancelled' ? 'default' : ($processState === 'completed' ? 'info' : 'warning')));
-            $statusLabel = $isImported ? 'Import selesai' : ($processState === 'completed' ? 'Preview siap' : ($processState === 'queued' ? 'Dalam antrean' : ($processState === 'processing' ? 'Sedang diproses' : ucfirst((string) $processState))));
-            $invoiceCount = $legacyImport ? count($legacyImport['invoices']) : 0;
-            $progressCurrent = $isImported ? (int) ($summary['transactions'] ?? $invoiceCount) : (int) $batch->progress_current;
-            $progressTotal = $isImported ? $progressCurrent : (int) $batch->progress_total;
-            $summaryText = $isImported
-                ? (int) ($summary['transactions'] ?? $invoiceCount).' transaksi · '.(int) ($summary['rows'] ?? 0).' baris workbook'
-                : (int) ($summary['valid'] ?? 0).' valid · '.(int) ($summary['errors'] ?? 0).' error';
-            $progressMeta = $progressCurrent.' / '.$progressTotal;
-            if ($batch->heartbeat_at) {
-                $progressMeta .= ' · '.(string) $batch->heartbeat_at;
-            }
-
-            $expense_import_history[] = [
-                'type' => 'batch',
-                'id' => (string) $batch->id,
-                'batch_number' => $importBatchNumber > 0 ? $importBatchNumber : $legacyBatchNumber,
-                'batch_id' => (string) $batch->id,
-                'file_name' => $batch->file_name,
-                'created_at' => $batch->created_at,
-                'sort_at' => strtotime((string) $batch->created_at) ?: 0,
-                'created_by' => $legacyImport['created_by'] ?? '-',
-                'status_label' => $statusLabel,
-                'status_class' => $statusClass,
-                'status_message' => $batch->progress_message,
-                'progress_percent' => (int) $batch->progress_percent,
-                'progress_current' => $progressCurrent,
-                'progress_total' => $progressTotal,
-                'progress_meta' => $progressMeta,
-                'summary_text' => $summaryText,
-                'summary_detail' => $legacyImport ? implode(', ', $legacyImport['invoices']) : '',
-                'reference_count' => $isImported ? (int) ($summary['transactions'] ?? $invoiceCount) : $invoiceCount,
-                'can_preview' => $isReady,
-                'can_cancel' => $processState === 'queued',
-                'done' => $isImported || $batch->status === 'cancelled',
-                'can_view_references' => $isImported,
-                'references_url' => $isImported ? route('expenses.import.references', $batch->id) : null,
-                'restore_url' => $isImported ? route('expenses.import.restore-workbook', $batch->id) : null,
-                'revert_url' => $importBatchNumber > 0 ? action([self::class, 'revertImport'], $importBatchNumber) : null,
-                'process_state' => $processState,
-            ];
-        }
-
-        usort($expense_import_history, function ($left, $right) {
-            return $right['sort_at'] <=> $left['sort_at'];
-        });
-
-        //Check if zip extension it loaded or not.
         if ($zip_loaded === false) {
-            $output = [
-                'success' => 0,
-                'msg' => 'Please install/enable PHP Zip archive for import',
-            ];
-
-            return view('expense.import', compact('payment_types', 'expense_import_history', 'expense_import_tax_options'))
-                ->with('notification', $output);
-        } else {
-            return view('expense.import', compact('payment_types', 'expense_import_history', 'expense_import_tax_options'));
+            return view('expense.import', compact('payment_types', 'expense_import_tax_options'))
+                ->with('notification', [
+                    'success' => 0,
+                    'msg' => 'Please install/enable PHP Zip archive for import',
+                ]);
         }
+
+        return view('expense.import', compact('payment_types', 'expense_import_tax_options'));
     }
 
     /**
@@ -1119,6 +955,17 @@ class ExpenseController extends Controller
             'success' => true,
             'msg' => 'Upload diterima dan preview sedang diproses.',
         ]);
+    }
+
+    public function expenseImportHistory(Request $request)
+    {
+        $businessId = $this->authorizeExpenseImport($request);
+
+        return response()->json(app(ExpenseImportHistoryService::class)->dataTable(
+            $request,
+            $businessId,
+            auth()->user()->can('expense.delete')
+        ));
     }
 
     public function expenseImportStatus(Request $request, string $batchId)
@@ -1217,6 +1064,19 @@ class ExpenseController extends Controller
     {
         $businessId = $this->authorizeExpenseImport($request);
         $batch = $this->importedExpenseImportBatch($batchId, $businessId);
+        if (! empty($batch->user_import_batch_id)) {
+            $shared = \App\UserImportBatch::where('business_id', $businessId)
+                ->where('importer_key', ExpenseImportHistoryService::IMPORTER_KEY)
+                ->find($batch->user_import_batch_id);
+            if ($shared && $shared->hasSourceSnapshot()) {
+                return app(UserImportBatchService::class)->workbookDownload($shared);
+            }
+        }
+
+        if (! empty($batch->legacy)) {
+            abort(404, 'Snapshot workbook tidak tersedia untuk batch Expense lama ini.');
+        }
+
         $rawRows = DB::table('expense_import_preview_rows')
             ->where('batch_id', $batchId)
             ->where('business_id', $businessId)
@@ -1238,13 +1098,26 @@ class ExpenseController extends Controller
 
     private function importedExpenseImportBatch(string $batchId, int $businessId): object
     {
+        if (preg_match('/^legacy-([1-9][0-9]*)$/D', $batchId, $matches)) {
+            $shared = app(ExpenseImportHistoryService::class)->legacyBatch($businessId, (int) $matches[1]);
+            abort_if(! $shared, 404, 'Batch import Expense tidak ditemukan.');
+            abort_unless(in_array($shared->status, ['imported', 'reverted'], true), 409, 'Batch Expense belum selesai diimpor.');
+
+            return (object) [
+                'id' => $batchId,
+                'file_name' => $shared->file_name,
+                'summary' => $shared->summary_json,
+                'legacy' => true,
+            ];
+        }
+
         $batch = DB::table('expense_import_batches')
             ->where('id', $batchId)
             ->where('business_id', $businessId)
             ->first();
 
         abort_if(! $batch, 404, 'Batch import Expense tidak ditemukan.');
-        abort_unless($batch->status === 'imported' && $batch->operation === 'import', 409, 'Batch Expense belum selesai diimpor.');
+        abort_unless(in_array($batch->status, ['imported', 'partial', 'reverted'], true) && $batch->operation === 'import', 409, 'Batch Expense belum selesai diimpor.');
 
         return $batch;
     }
@@ -1474,6 +1347,16 @@ class ExpenseController extends Controller
             ], 202);
         }
 
+        $queuedBatch = DB::table('expense_import_batches')
+            ->where('id', $batch->id)
+            ->where('business_id', $businessId)
+            ->first(['progress_total']);
+        $this->expenseImportProcessService->queued(
+            $batch->id,
+            $businessId,
+            'import',
+            (int) ($queuedBatch->progress_total ?? 0)
+        );
         ProcessExpenseImport::dispatch($batch->id, $businessId, (int) $request->session()->get('user.id'));
 
         return response()->json([
@@ -1489,6 +1372,9 @@ class ExpenseController extends Controller
     {
         $businessId = $this->authorizeExpenseImport($request);
         $cancelled = $this->expenseImportProcessService->cancel($batchId, $businessId);
+        if ($cancelled) {
+            $this->expenseImportService->releaseStagingFile($batchId, $businessId);
+        }
         return response()->json([
             'success' => $cancelled,
             'message' => $cancelled ? 'Proses dibatalkan.' : 'Proses sudah berjalan atau selesai.',
@@ -1903,6 +1789,8 @@ class ExpenseController extends Controller
             }
 
             DB::commit();
+
+            \Illuminate\Support\Facades\Cache::forget(ExpenseImportHistoryService::seedCacheKey((int) $business_id));
 
             $output = [
                 'success' => 1,

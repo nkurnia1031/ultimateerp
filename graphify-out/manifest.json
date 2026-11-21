@@ -5892,9 +5892,9 @@
     "semantic_hash": "a755999204c8132a699d69db9fd6d7f2"
   },
   "app/Http/Controllers/ExpenseController.php": {
-    "mtime": 1794758612.5145962,
-    "seen": 1794759343.9842758,
-    "ast_hash": "3c68a07f77e85755f3b2b5b3f8006015",
+    "mtime": 1795249257.2101326,
+    "seen": 1795249480.4264073,
+    "ast_hash": "5945412762abccb8f215b674376616a4",
     "semantic_hash": ""
   },
   "app/Http/Controllers/GroupTaxController.php": {
@@ -9558,9 +9558,9 @@
     "semantic_hash": ""
   },
   "resources/views/expense/import.blade.php": {
-    "mtime": 1794757095.804129,
-    "seen": 1794759343.9883,
-    "ast_hash": "be73514a9371392b87c649462dc3b818",
+    "mtime": 1795247054.921934,
+    "seen": 1795248399.0854676,
+    "ast_hash": "afcdd896dbbf608aa6dd7e5e3188870c",
     "semantic_hash": ""
   },
   "resources/views/expense/index.blade.php": {
@@ -12966,9 +12966,9 @@
     "semantic_hash": "e604e8c82a6bc445c9785a4567a1ebeb"
   },
   "routes/web.php": {
-    "mtime": 1795096284.7315495,
-    "seen": 1795096803.263804,
-    "ast_hash": "be731793c40a54a133aaa0b1c7c9f300",
+    "mtime": 1795249355.2061489,
+    "seen": 1795249480.4386585,
+    "ast_hash": "62791f082704dda5df1ec0c69b2ba8ed",
     "semantic_hash": ""
   },
   "Modules/Manufacturing/License.txt": {
@@ -13770,21 +13770,21 @@
     "semantic_hash": "84fa9ebc3a7f48bcde14b3c7e842710c"
   },
   "app/Jobs/ProcessExpensePreview.php": {
-    "mtime": 1792596575.7825587,
-    "seen": 1793685077.1924891,
-    "ast_hash": "17241e607a43b95fcbed9eb18f6d7bf6",
-    "semantic_hash": "17241e607a43b95fcbed9eb18f6d7bf6"
+    "mtime": 1795247318.5522206,
+    "seen": 1795248399.0814703,
+    "ast_hash": "c208a137c1a8e6e754c9fe0e66f4f943",
+    "semantic_hash": ""
   },
   "app/Services/ExpenseImportProcessService.php": {
-    "mtime": 1787782240.7688425,
-    "seen": 1793685077.2062364,
-    "ast_hash": "aab0f2f1a9cbfcb412641094fbfa9b0d",
-    "semantic_hash": "aab0f2f1a9cbfcb412641094fbfa9b0d"
+    "mtime": 1795248184.892141,
+    "seen": 1795248399.0814703,
+    "ast_hash": "9275c32b459924662f0263593594cdd9",
+    "semantic_hash": ""
   },
   "app/Services/ExpenseImportService.php": {
-    "mtime": 1794756866.1051533,
-    "seen": 1794759343.9842758,
-    "ast_hash": "366a2d9a10f6f19cc973db053ed7a64f",
+    "mtime": 1795249491.4290833,
+    "seen": 1795249753.538267,
+    "ast_hash": "e1ac9a210d268dcc6d052d9bccf76e81",
     "semantic_hash": ""
   },
   "database/migrations/2026_08_27_000000_create_expense_import_previews.php": {
@@ -13794,9 +13794,9 @@
     "semantic_hash": "a367f285a6358d54cb2d77e2781decbd"
   },
   "public/js/expense-import.js": {
-    "mtime": 1794756986.178244,
-    "seen": 1794759343.987293,
-    "ast_hash": "8e591cbe46bde30c08898a4b4ca1f629",
+    "mtime": 1795248917.597988,
+    "seen": 1795249118.8477237,
+    "ast_hash": "5ec4748c4d68ca4591632b15b0683b51",
     "semantic_hash": ""
   },
   "Modules/AssetManagement/Database/Migrations/2026_09_09_000001_create_heavy_equipment_tracking_tables.php": {
@@ -15204,9 +15204,9 @@
     "semantic_hash": ""
   },
   "app/Services/UserImportBatchService.php": {
-    "mtime": 1795185281.4771283,
-    "seen": 1795186311.3816175,
-    "ast_hash": "7b747e1b99051aa4b3c4576068239ad4",
+    "mtime": 1795249480.4197736,
+    "seen": 1795249753.538267,
+    "ast_hash": "43b0d9da9e0a97672074f18208d6f1d2",
     "semantic_hash": ""
   },
   "app/UserImportBatch.php": {
@@ -15255,6 +15255,18 @@
     "mtime": 1795242300.9421422,
     "seen": 1795242687.3084757,
     "ast_hash": "90dd4a3124703063eb85e2e30d48938b",
+    "semantic_hash": ""
+  },
+  "app/Services/ExpenseImportHistoryService.php": {
+    "mtime": 1795249249.9212296,
+    "seen": 1795249480.4276695,
+    "ast_hash": "1c1b5cbab1b61e127b241fdc5cd19f3b",
+    "semantic_hash": ""
+  },
+  "database/migrations/2026_11_21_000003_add_expense_shared_import_history.php": {
+    "mtime": 1795247881.8823035,
+    "seen": 1795248399.0844681,
+    "ast_hash": "eb7601b2787c2af2b259fdaf2954aba4",
     "semantic_hash": ""
   }
 }

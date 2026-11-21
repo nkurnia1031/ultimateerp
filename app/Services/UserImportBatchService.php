@@ -6,9 +6,11 @@ use App\UserImportBatch;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
+use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Cell\DataType;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
+use PhpOffice\PhpSpreadsheet\RichText\RichText;
 
 class UserImportBatchService
 {
@@ -76,6 +78,9 @@ class UserImportBatchService
                 $query->where('file_name', 'like', '%'.$search.'%')
                     ->orWhere('status', 'like', '%'.$search.'%')
                     ->orWhere('last_message', 'like', '%'.$search.'%')
+                    ->orWhere('source_key', 'like', '%'.$search.'%')
+                    ->orWhere('search_text', 'like', '%'.$search.'%')
+                    ->orWhere('summary_json', 'like', '%'.$search.'%')
                     ->orWhere('error_message', 'like', '%'.$search.'%');
             });
         }
@@ -98,38 +103,7 @@ class UserImportBatchService
 
     public function workbookDownload(UserImportBatch $batch)
     {
-        $snapshot = $this->readPayload($batch, 'source_snapshot');
-        $sheets = $snapshot['sheets'] ?? [];
-        if ($sheets === []) {
-            abort(404, 'Snapshot workbook tidak memiliki sheet yang dapat dipulihkan.');
-        }
-
-        $spreadsheet = new Spreadsheet();
-        $spreadsheet->removeSheetByIndex(0);
-        foreach ($sheets as $sheetData) {
-            $worksheet = $spreadsheet->createSheet();
-            $worksheet->setTitle($this->safeSheetTitle((string) ($sheetData['title'] ?? 'Data'), $spreadsheet));
-            foreach (($sheetData['rows'] ?? []) as $rowKey => $cells) {
-                $rowNumber = is_numeric($rowKey) ? (int) $rowKey : 0;
-                if ($rowNumber < 1) {
-                    $rowNumber = (int) $rowKey + 1;
-                }
-                if ($rowNumber < 1 || ! is_array($cells)) {
-                    continue;
-                }
-                foreach ($cells as $column => $value) {
-                    if ($value === null || $value === '' || ! is_string($column) || ! preg_match('/^[A-Z]+$/i', $column)) {
-                        continue;
-                    }
-                    $coordinate = strtoupper($column).$rowNumber;
-                    $type = is_bool($value)
-                        ? DataType::TYPE_BOOL
-                        : (is_int($value) || is_float($value) ? DataType::TYPE_NUMERIC : DataType::TYPE_STRING);
-                    $worksheet->setCellValueExplicit($coordinate, $value, $type);
-                }
-            }
-        }
-        $spreadsheet->setActiveSheetIndex(0);
+        $spreadsheet = $this->spreadsheetFromSnapshot($batch);
 
         $baseName = pathinfo((string) $batch->file_name, PATHINFO_FILENAME);
         $safeName = preg_replace('/[^A-Za-z0-9._-]+/', '_', $baseName) ?: 'import';
@@ -143,12 +117,86 @@ class UserImportBatchService
         ]);
     }
 
+    public function snapshotWorkbookFile(string $path): array
+    {
+        $spreadsheet = IOFactory::load($path);
+        $sheets = [];
+        try {
+            foreach ($spreadsheet->getAllSheets() as $worksheet) {
+                $rows = [];
+                foreach ($worksheet->getCoordinates() as $coordinate) {
+                    if (! preg_match('/^([A-Z]+)([0-9]+)$/i', $coordinate, $matches)) {
+                        continue;
+                    }
+                    $value = $worksheet->getCell($coordinate)->getValue();
+                    if ($value instanceof RichText) {
+                        $value = $value->getPlainText();
+                    }
+                    if ($value === null || $value === '') {
+                        continue;
+                    }
+                    if (! is_scalar($value)) {
+                        $value = (string) $value;
+                    }
+                    $rows[(int) $matches[2]][strtoupper($matches[1])] = $value;
+                }
+                ksort($rows);
+
+                $sheets[] = [
+                    'title' => $worksheet->getTitle(),
+                    'rows' => $rows,
+                ];
+            }
+        } finally {
+            $spreadsheet->disconnectWorksheets();
+        }
+
+        return ['version' => 1, 'sheets' => $sheets];
+    }
+
+    public function captureWorkbook(UserImportBatch $batch, string $path): string
+    {
+        return $this->storePayload($batch, 'source_snapshot', $this->snapshotWorkbookFile($path));
+    }
+
+    public function restoredWorkbookPath(UserImportBatch $batch): string
+    {
+        $spreadsheet = $this->spreadsheetFromSnapshot($batch);
+        $directory = null;
+        $path = null;
+
+        try {
+            $directory = rtrim(sys_get_temp_dir(), DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.'ultimateerp-import-'.bin2hex(random_bytes(16));
+            if (! @mkdir($directory, 0700)) {
+                throw new \RuntimeException('Direktori privat untuk preview ulang tidak dapat dibuat.');
+            }
+            $path = $directory.DIRECTORY_SEPARATOR.'source.xlsx';
+            (new Xlsx($spreadsheet))->save($path);
+            if (function_exists('chmod')) {
+                @chmod($path, 0600);
+            }
+        } catch (\Throwable $exception) {
+            if ($path && is_file($path)) {
+                @unlink($path);
+            }
+            if ($directory && is_dir($directory)) {
+                @rmdir($directory);
+            }
+            throw $exception;
+        } finally {
+            $spreadsheet->disconnectWorksheets();
+        }
+
+        return (string) $path;
+    }
+
     private function tableRow(UserImportBatch $batch): array
     {
         $summary = json_decode((string) $batch->summary_json, true) ?: [];
 
         return [
             'id' => $batch->id,
+            'source_key' => $batch->source_key,
             'file_name' => $batch->file_name ?: 'Impor tanpa file',
             'status' => $batch->status,
             'stage' => $batch->stage,
@@ -168,6 +216,41 @@ class UserImportBatchService
                 && (int) ($summary['source_rows'] ?? 0) > 0,
             'active' => $batch->isActive(),
         ];
+    }
+
+    private function spreadsheetFromSnapshot(UserImportBatch $batch): Spreadsheet
+    {
+        $snapshot = $this->readPayload($batch, 'source_snapshot');
+        $sheets = $snapshot['sheets'] ?? [];
+        if ($sheets === []) {
+            abort(404, 'Snapshot workbook tidak memiliki sheet yang dapat dipulihkan.');
+        }
+
+        $spreadsheet = new Spreadsheet();
+        $spreadsheet->removeSheetByIndex(0);
+        foreach ($sheets as $sheetData) {
+            $worksheet = $spreadsheet->createSheet();
+            $worksheet->setTitle($this->safeSheetTitle((string) ($sheetData['title'] ?? 'Data'), $spreadsheet));
+            foreach (($sheetData['rows'] ?? []) as $rowKey => $cells) {
+                $rowNumber = is_numeric($rowKey) ? (int) $rowKey : 0;
+                if ($rowNumber < 1 || ! is_array($cells)) {
+                    continue;
+                }
+                foreach ($cells as $column => $value) {
+                    if ($value === null || $value === '' || ! is_string($column) || ! preg_match('/^[A-Z]+$/i', $column)) {
+                        continue;
+                    }
+                    $coordinate = strtoupper($column).$rowNumber;
+                    $type = is_bool($value)
+                        ? DataType::TYPE_BOOL
+                        : (is_int($value) || is_float($value) ? DataType::TYPE_NUMERIC : DataType::TYPE_STRING);
+                    $worksheet->setCellValueExplicit($coordinate, $value, $type);
+                }
+            }
+        }
+        $spreadsheet->setActiveSheetIndex(0);
+
+        return $spreadsheet;
     }
 
     private function safeSheetTitle(string $title, Spreadsheet $spreadsheet): string

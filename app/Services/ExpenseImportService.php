@@ -32,6 +32,8 @@ class ExpenseImportService
 
     private $consolidationService;
 
+    private $importBatchService;
+
     private const REQUIRED_HEADERS = [
         'LOCATION', 'CATEGORY', 'SUB-CATEGORY', 'DESCRIPTION', 'REFERENCE NO',
         'TAGS', 'EXPENSE DATE', 'EXPENSE FOR', 'EXPENSE FOR CONTACT ID',
@@ -44,11 +46,13 @@ class ExpenseImportService
         private TransactionUtil $transactionUtil,
         ?ExpenseImportJournalMatcher $journalMatcher = null,
         ?ExpenseImportJournalLinkService $journalLinkService = null,
-        ?ExpenseImportConsolidationService $consolidationService = null
+        ?ExpenseImportConsolidationService $consolidationService = null,
+        ?UserImportBatchService $importBatchService = null
     ) {
         $this->journalMatcher = $journalMatcher ?: app(ExpenseImportJournalMatcher::class);
         $this->journalLinkService = $journalLinkService ?: app(ExpenseImportJournalLinkService::class);
         $this->consolidationService = $consolidationService ?: app(ExpenseImportConsolidationService::class);
+        $this->importBatchService = $importBatchService ?: app(UserImportBatchService::class);
     }
 
     public function storeUploadedFile(UploadedFile $file, int $businessId, ?int $userId): object
@@ -57,26 +61,119 @@ class ExpenseImportService
         $extension = strtolower($file->getClientOriginalExtension() ?: 'xlsx');
         $path = $file->storeAs("expense-imports/{$businessId}", "{$token}.{$extension}", 'local');
 
-        DB::table('expense_import_batches')->insert([
-            'id' => $token,
-            'business_id' => $businessId,
-            'created_by' => $userId,
-            'file_name' => $file->getClientOriginalName(),
-            'file_path' => $path,
-            'file_hash' => hash_file('sha256', Storage::disk('local')->path($path)),
-            'status' => 'preview',
-            'operation' => 'preview',
-            'process_state' => 'queued',
-            'stage' => 'uploading',
-            'progress_message' => 'File diterima, menunggu proses preview.',
-            'heartbeat_at' => now(),
-            'summary' => json_encode([], JSON_UNESCAPED_UNICODE),
-            'row_overrides' => json_encode([], JSON_UNESCAPED_UNICODE),
-            'created_at' => now(),
+        try {
+            DB::transaction(function () use ($token, $path, $file, $businessId, $userId) {
+                $now = now();
+                DB::table('expense_import_batches')->insert([
+                    'id' => $token,
+                    'business_id' => $businessId,
+                    'created_by' => $userId,
+                    'file_name' => $file->getClientOriginalName(),
+                    'file_path' => $path,
+                    'file_hash' => hash_file('sha256', Storage::disk('local')->path($path)),
+                    'status' => 'preview',
+                    'operation' => 'preview',
+                    'process_state' => 'queued',
+                    'stage' => 'uploading',
+                    'progress_message' => 'File diterima, menunggu proses preview.',
+                    'heartbeat_at' => $now,
+                    'summary' => json_encode([], JSON_UNESCAPED_UNICODE),
+                    'row_overrides' => json_encode([], JSON_UNESCAPED_UNICODE),
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ]);
+                $sharedBatch = $this->importBatchService->create([
+                    'business_id' => $businessId,
+                    'created_by' => $userId,
+                    'importer_key' => ExpenseImportHistoryService::IMPORTER_KEY,
+                    'source_key' => 'domain:'.$token,
+                    'file_name' => $file->getClientOriginalName(),
+                    'staging_path' => $path,
+                    'status' => 'queued_preview',
+                    'stage' => 'uploading',
+                    'progress_percent' => 0,
+                    'last_message' => 'File diterima, menunggu proses preview.',
+                    'heartbeat_at' => $now,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ]);
+                DB::table('expense_import_batches')->where('id', $token)->update([
+                    'user_import_batch_id' => $sharedBatch->id,
+                ]);
+            });
+        } catch (\Throwable $exception) {
+            Storage::disk('local')->delete($path);
+            throw $exception;
+        }
+
+        return DB::table('expense_import_batches')->where('id', $token)->first();
+    }
+
+    /** Snapshot the uploaded workbook before parsing, and return a disposable reconstruction. */
+    public function previewFromBatch(string $batchId, int $businessId, array $overrides = [], ?callable $progress = null): array
+    {
+        $batch = DB::table('expense_import_batches')->where('id', $batchId)->where('business_id', $businessId)->first();
+        if (! $batch) {
+            throw new RuntimeException('Batch import Expense tidak ditemukan.');
+        }
+
+        $shared = app(ExpenseImportHistoryService::class)->ensureDomainEnvelope($batchId, $businessId);
+        $useStagingFile = $batch->file_path && Storage::disk('local')->exists($batch->file_path);
+        if (! $shared->hasSourceSnapshot()) {
+            if (! $batch->file_path || ! Storage::disk('local')->exists($batch->file_path)) {
+                throw new RuntimeException('File sumber preview sudah tidak tersedia.');
+            }
+            $this->importBatchService->captureWorkbook($shared, Storage::disk('local')->path($batch->file_path));
+            $shared->refresh();
+        }
+
+        $reconstructedPath = $useStagingFile ? null : $this->importBatchService->restoredWorkbookPath($shared);
+        try {
+            $sourcePath = $useStagingFile
+                ? Storage::disk('local')->path($batch->file_path)
+                : $reconstructedPath;
+            return $this->preview($batchId, $businessId, (string) $sourcePath, $overrides, $progress);
+        } finally {
+            if ($reconstructedPath) {
+                if (is_file($reconstructedPath)) {
+                    @unlink($reconstructedPath);
+                }
+                @rmdir(dirname($reconstructedPath));
+            }
+            $this->releaseStagingFile($batchId, $businessId);
+        }
+    }
+
+    public function releaseStagingFile(string $batchId, int $businessId): void
+    {
+        $batch = DB::table('expense_import_batches')->where('id', $batchId)->where('business_id', $businessId)->first();
+        if (! $batch) {
+            return;
+        }
+
+        if ($batch->file_path) {
+            try {
+                $deleted = Storage::disk('local')->delete($batch->file_path);
+                if (! $deleted && Storage::disk('local')->exists($batch->file_path)) {
+                    \Log::warning('Expense import staging file could not be removed.', ['batch_id' => $batchId]);
+                    return;
+                }
+            } catch (\Throwable $exception) {
+                \Log::warning('Expense import staging file cleanup failed.', ['batch_id' => $batchId]);
+                return;
+            }
+        }
+        DB::table('expense_import_batches')->where('id', $batchId)->where('business_id', $businessId)->update([
+            'file_path' => null,
             'updated_at' => now(),
         ]);
 
-        return DB::table('expense_import_batches')->where('id', $token)->first();
+        $domain = DB::table('expense_import_batches')->where('id', $batchId)->where('business_id', $businessId)->first();
+        if ($domain && $domain->user_import_batch_id) {
+            DB::table('user_import_batches')->where('id', $domain->user_import_batch_id)
+                ->where('business_id', $businessId)->where('importer_key', ExpenseImportHistoryService::IMPORTER_KEY)
+                ->update(['staging_path' => null, 'updated_at' => now()]);
+        }
     }
 
     public function preview(string $batchId, int $businessId, string $path, array $overrides = [], ?callable $progress = null): array
@@ -327,12 +424,7 @@ class ExpenseImportService
             json_decode((string) ($batch->row_overrides ?? '[]'), true) ?: []
         );
         $overrides[$row->source_row.':'.$field] = $date;
-        $path = $batch->file_path;
-        if (! $path || ! Storage::disk('local')->exists($path)) {
-            throw new RuntimeException('File sumber preview sudah tidak tersedia.');
-        }
-
-        $summary = $this->preview($batchId, $businessId, Storage::disk('local')->path($path), $overrides);
+        $summary = $this->previewFromBatch($batchId, $businessId, $overrides);
         DB::table('expense_import_batches')->where('id', $batchId)->update([
             'row_overrides' => json_encode($overrides, JSON_UNESCAPED_UNICODE),
             'updated_at' => now(),
@@ -375,12 +467,7 @@ class ExpenseImportService
             json_decode((string) ($batch->row_overrides ?? '[]'), true) ?: []
         );
         $overrides['tax_name:'.$this->normalize($rawTaxName)] = (int) $taxRate->id;
-        $path = $batch->file_path;
-        if (! $path || ! Storage::disk('local')->exists($path)) {
-            throw new RuntimeException('File sumber preview sudah tidak tersedia.');
-        }
-
-        $summary = $this->preview($batchId, $businessId, Storage::disk('local')->path($path), $overrides);
+        $summary = $this->previewFromBatch($batchId, $businessId, $overrides);
         DB::table('expense_import_batches')->where('id', $batchId)->where('business_id', $businessId)->update([
             'row_overrides' => json_encode($overrides, JSON_UNESCAPED_UNICODE),
             'updated_at' => now(),
@@ -425,12 +512,7 @@ class ExpenseImportService
             json_decode((string) ($batch->row_overrides ?? '[]'), true) ?: []
         );
         $overrides['journal_candidate:'.$this->normalize($reference)] = $journalMappingId;
-        $path = $batch->file_path;
-        if (! $path || ! Storage::disk('local')->exists($path)) {
-            throw new RuntimeException('File sumber preview sudah tidak tersedia.');
-        }
-
-        $summary = $this->preview($batchId, $businessId, Storage::disk('local')->path($path), $overrides);
+        $summary = $this->previewFromBatch($batchId, $businessId, $overrides);
         DB::table('expense_import_batches')->where('id', $batchId)->where('business_id', $businessId)->update([
             'row_overrides' => json_encode($overrides, JSON_UNESCAPED_UNICODE),
             'updated_at' => now(),
@@ -487,12 +569,7 @@ class ExpenseImportService
         );
         $normalizedReference = $this->normalize($reference);
         $overrides['expense_existing_action:'.$normalizedReference] = $action;
-        $path = $batch->file_path;
-        if (! $path || ! Storage::disk('local')->exists($path)) {
-            throw new RuntimeException('File sumber preview sudah tidak tersedia.');
-        }
-
-        $summary = $this->preview($batchId, $businessId, Storage::disk('local')->path($path), $overrides);
+        $summary = $this->previewFromBatch($batchId, $businessId, $overrides);
         DB::table('expense_import_batches')->where('id', $batchId)->where('business_id', $businessId)->update([
             'row_overrides' => json_encode($overrides, JSON_UNESCAPED_UNICODE),
             'updated_at' => now(),

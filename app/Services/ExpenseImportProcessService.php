@@ -31,6 +31,7 @@ class ExpenseImportProcessService
         ];
         DB::table('expense_import_batches')->where('id', $batchId)->where('business_id', $businessId)->update($values);
         $this->cacheProgress($batchId, $businessId, $values);
+        $this->syncHistory($batchId);
     }
 
     public function start(string $batchId, int $businessId, string $stage, string $message, int $percent = 1): bool
@@ -47,6 +48,7 @@ class ExpenseImportProcessService
             $this->cacheProgress($batchId, $businessId, array_merge($values, [
                 'progress_current' => 0,
             ]));
+            $this->syncHistory($batchId);
         }
         return $started;
     }
@@ -74,6 +76,7 @@ class ExpenseImportProcessService
         if (DB::transactionLevel() === 0) {
             DB::table('expense_import_batches')->where('id', $batchId)->where('business_id', $businessId)
                 ->where('process_state', 'processing')->update($values);
+            $this->syncHistory($batchId);
         }
     }
 
@@ -84,6 +87,7 @@ class ExpenseImportProcessService
             'process_state' => 'completed', 'stage' => 'finished', 'progress_percent' => 100,
             'progress_message' => $message, 'completed_at' => now(), 'heartbeat_at' => now(), 'updated_at' => now(),
         ]);
+        $this->syncHistory($batchId);
     }
 
     public function fail(string $batchId, int $businessId, string $message): void
@@ -93,6 +97,7 @@ class ExpenseImportProcessService
             'process_state' => 'failed', 'stage' => 'failed', 'progress_message' => 'Proses gagal.',
             'error_message' => mb_substr($message, 0, 65000), 'failed_at' => now(), 'heartbeat_at' => now(), 'updated_at' => now(),
         ]);
+        $this->syncHistory($batchId);
     }
 
     public function cancel(string $batchId, int $businessId): bool
@@ -104,6 +109,7 @@ class ExpenseImportProcessService
             ]) > 0;
         if ($cancelled) {
             Cache::forget($this->progressCacheKey($batchId, $businessId));
+            $this->syncHistory($batchId);
         }
         return $cancelled;
     }
@@ -144,6 +150,60 @@ class ExpenseImportProcessService
             'summary' => $summary,
             'can_confirm' => $state === 'completed' && $batch->status === 'preview' && (int) ($summary['importable'] ?? 0) > 0,
         ];
+    }
+
+    public function historyProgress(string|object $batch, int $businessId): array
+    {
+        if (is_string($batch)) {
+            $batch = DB::table('expense_import_batches')->where('id', $batch)->where('business_id', $businessId)->first();
+        }
+        if (! $batch) {
+            return [];
+        }
+
+        $cached = Cache::get($this->progressCacheKey((string) $batch->id, $businessId), []);
+        $cached = is_array($cached) ? $cached : [];
+        $state = (string) ($batch->process_state ?: 'completed');
+        $operation = (string) ($batch->operation ?: 'preview');
+        $domainStatus = (string) $batch->status;
+        $status = match (true) {
+            $domainStatus === 'reverted' || $batch->rolled_back_at => 'reverted',
+            $state === 'cancelled' || $domainStatus === 'cancelled' => 'cancelled',
+            $state === 'failed' => 'failed',
+            $operation === 'import' && $state === 'queued' => 'queued_import',
+            $operation === 'import' && $state === 'processing' => 'importing',
+            $operation === 'import' && $domainStatus === 'imported' => 'imported',
+            $operation === 'import' && $domainStatus === 'partial' => 'partial',
+            $state === 'queued' => 'queued_preview',
+            $state === 'processing' => 'analyzing',
+            $state === 'completed' && $domainStatus === 'preview' => 'preview_ready',
+            default => $domainStatus,
+        };
+
+        return [
+            'status' => $status,
+            'state' => $state,
+            'operation' => $operation,
+            'domain_status' => $domainStatus,
+            'current' => (int) ($cached['progress_current'] ?? $batch->progress_current),
+            'total' => (int) ($cached['progress_total'] ?? $batch->progress_total),
+            'percent' => (int) ($cached['progress_percent'] ?? $batch->progress_percent),
+            'message' => $cached['progress_message'] ?? $batch->progress_message,
+            'heartbeat_at' => $cached['heartbeat_at'] ?? $batch->heartbeat_at,
+            'error' => $batch->error_message,
+        ];
+    }
+
+    private function syncHistory(string $batchId): void
+    {
+        try {
+            app(ExpenseImportHistoryService::class)->syncFromDomainBatch($batchId);
+        } catch (\Throwable $exception) {
+            \Log::warning('Expense shared import history sync failed.', [
+                'batch_id' => $batchId,
+                'message' => $exception->getMessage(),
+            ]);
+        }
     }
 
     private function progressCacheKey(string $batchId, int $businessId): string
