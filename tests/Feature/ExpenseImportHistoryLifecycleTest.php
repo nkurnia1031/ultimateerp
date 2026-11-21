@@ -407,7 +407,13 @@ class ExpenseImportHistoryLifecycleTest extends TestCase
                 return true;
             }
         };
-        $admin->forceFill(['id' => 999, 'business_id' => 7, 'first_name' => 'Admin', 'user_type' => 'user']);
+        $admin->forceFill([
+            'id' => 999,
+            'business_id' => 7,
+            'first_name' => 'Admin',
+            'user_type' => 'user',
+            'allow_login' => 1,
+        ]);
 
         return $admin;
     }
