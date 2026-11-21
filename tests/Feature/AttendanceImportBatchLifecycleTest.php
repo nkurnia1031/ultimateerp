@@ -157,7 +157,7 @@ class AttendanceImportBatchLifecycleTest extends TestCase
         $spreadsheet = new Spreadsheet();
         $spreadsheet->getActiveSheet()->fromArray([
             ['Email', 'Clock In', 'Clock Out', 'Shift', 'Clock In Note', 'Clock Out Note', 'IP Address'],
-            ['employee@example.test', '2026-11-01 08:00:00', '2026-11-01 17:00:00', '', '', '', ''],
+            ['employee@example.test', '2026-11-01 08:00:00', '2026-11-01 17:00:00', '', 'Fixture '.\Illuminate\Support\Str::uuid(), '', ''],
         ], null, 'A1');
         $path = tempnam(sys_get_temp_dir(), 'attendance-import-').'.xlsx';
         (new Xlsx($spreadsheet))->save($path);
