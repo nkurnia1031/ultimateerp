@@ -702,7 +702,7 @@ class AttendanceController extends Controller
 
     private function retryAttendanceBatch(UserImportBatch $batch, int $businessId)
     {
-        abort_unless(filled($batch->staging_path) && Storage::disk('local')->exists($batch->staging_path), 422, 'Workbook sumber Attendance tidak tersedia.');
+        abort_unless($batch->hasSourceSnapshot(), 422, 'Snapshot workbook sumber Attendance tidak tersedia.');
         $batch->forceFill([
             'status' => 'queued_preview', 'stage' => 'queued',
             'progress_current' => 0, 'progress_total' => 0, 'progress_percent' => 0,

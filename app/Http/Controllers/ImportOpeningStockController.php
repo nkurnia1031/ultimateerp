@@ -11,6 +11,7 @@ use App\Variation;
 use DB;
 use Excel;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 
 class ImportOpeningStockController extends Controller
 {
@@ -72,6 +73,15 @@ class ImportOpeningStockController extends Controller
         if (! auth()->user()->can('product.opening_stock')) {
             abort(403, 'Unauthorized action.');
         }
+        if (! $request->attributes->get('process_import_batch')) {
+            $business = (array) $request->session()->get('business', []);
+            $context = [
+                'business' => array_intersect_key($business, array_flip(['date_format', 'default_profit_percent', 'currency_id', 'currency_symbol_placement', 'currency_precision', 'quantity_precision'])),
+                'financial_year' => array_intersect_key((array) $request->session()->get('financial_year', []), array_flip(['start'])),
+            ];
+
+            return app(\App\Services\LegacyImportBatchService::class)->queue($request, 'opening_stock', $context);
+        }
 
         try {
             $notAllowed = $this->productUtil->notAllowedInDemo();
@@ -99,6 +109,8 @@ class ImportOpeningStockController extends Controller
                 $error_msg = '';
 
                 DB::beginTransaction();
+                $progressCurrent = 0;
+                $progressTotal = count($imported_data);
                 foreach ($imported_data as $key => $value) {
                     $row_no = $key + 1;
 
@@ -173,6 +185,16 @@ class ImportOpeningStockController extends Controller
                             ->first();
 
                     $this->addOpeningStock($opening_stock, $product_info, $business_id, $unit_cost_before_tax, $os_transaction);
+                    $progressCurrent++;
+                    $batchId = (int) $request->attributes->get('import_batch_id', 0);
+                    if ($batchId > 0) {
+                        Cache::put('legacy_import_progress_'.$batchId, [
+                            'progress_current' => $progressCurrent,
+                            'progress_total' => max($progressTotal, $progressCurrent),
+                            'progress_percent' => min(95, (int) floor(($progressCurrent / max(1, $progressTotal)) * 95)),
+                            'last_message' => "Baris stok {$progressCurrent} dari {$progressTotal} selesai diproses.",
+                        ], 3600);
+                    }
 
                     // //If exist add to it.
                     // if(!empty($os_transaction)){
@@ -206,6 +228,50 @@ class ImportOpeningStockController extends Controller
         }
 
         return redirect('import-opening-stock')->with('status', $output);
+    }
+
+    public function importBatchHistory(Request $request)
+    {
+        abort_unless(auth()->user()->can('product.opening_stock'), 403, 'Unauthorized action.');
+
+        return response()->json(app(\App\Services\LegacyImportBatchService::class)
+            ->history($request, (int) $request->session()->get('user.business_id'), 'opening_stock'));
+    }
+
+    public function importBatchDetail(Request $request, int $batchId)
+    {
+        abort_unless(auth()->user()->can('product.opening_stock'), 403, 'Unauthorized action.');
+
+        return response()->json(app(\App\Services\LegacyImportBatchService::class)
+            ->detail($batchId, (int) $request->session()->get('user.business_id'), 'opening_stock'));
+    }
+
+    public function importBatchSource(Request $request, int $batchId)
+    {
+        abort_unless(auth()->user()->can('product.opening_stock'), 403, 'Unauthorized action.');
+        $batch = app(\App\Services\UserImportBatchService::class)
+            ->findForBusiness($batchId, (int) $request->session()->get('user.business_id'), 'opening_stock');
+
+        return app(\App\Services\UserImportBatchService::class)->workbookDownload($batch);
+    }
+
+    public function retryImportBatch(Request $request, int $batchId)
+    {
+        abort_unless(auth()->user()->can('product.opening_stock'), 403, 'Unauthorized action.');
+        app(\App\Services\LegacyImportBatchService::class)
+            ->retry($batchId, (int) $request->session()->get('user.business_id'), 'opening_stock');
+
+        return response()->json(['success' => true, 'status' => 'queued_import']);
+    }
+
+    public function revertImportBatch(Request $request, int $batchId)
+    {
+        abort_unless(auth()->user()->can('product.opening_stock'), 403, 'Unauthorized action.');
+        $batch = app(\App\Services\UserImportBatchService::class)
+            ->findForBusiness($batchId, (int) $request->session()->get('user.business_id'), 'opening_stock');
+        app(\App\Services\LegacyImportBatchService::class)->revert($batch);
+
+        return response()->json(['success' => true, 'status' => 'reverted']);
     }
 
     /**

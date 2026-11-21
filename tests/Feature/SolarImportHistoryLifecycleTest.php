@@ -319,6 +319,7 @@ class SolarImportHistoryLifecycleTest extends TestCase
             $table->uuid('batch_id');
             $table->unsignedBigInteger('business_id');
             $table->string('ledger', 20);
+            $table->string('source_sheet')->nullable();
             $table->unsignedInteger('source_row')->nullable();
             $table->text('raw_date')->nullable();
             $table->date('normalized_date')->nullable();

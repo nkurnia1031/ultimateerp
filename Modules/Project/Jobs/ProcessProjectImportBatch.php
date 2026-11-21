@@ -66,11 +66,21 @@ class ProcessProjectImportBatch implements ShouldQueue
             'heartbeat_at' => now()->toDateTimeString(),
         ], now()->addMinutes(40));
 
+        $temporaryPath = null;
         try {
             $batch = $batch->fresh();
-            $sourcePath = Storage::disk('local')->path((string) $batch->staging_path);
+            if (filled($batch->staging_path) && Storage::disk('local')->exists($batch->staging_path)) {
+                $sourcePath = Storage::disk('local')->path($batch->staging_path);
+            } else {
+                abort_unless($batch->hasSourceSnapshot(), 422, 'Snapshot workbook Project tidak tersedia untuk diproses ulang.');
+                $temporaryPath = $batches->restoredWorkbookPath($batch);
+                $sourcePath = $temporaryPath;
+            }
             if (! is_file($sourcePath)) {
                 throw new \RuntimeException('Workbook sumber Project tidak tersedia.');
+            }
+            if (! $batch->hasSourceSnapshot()) {
+                $batches->captureWorkbook($batch, $sourcePath);
             }
             $user = User::where('business_id', $this->businessId)->findOrFail((int) $batch->created_by);
             Auth::setUser($user);
@@ -147,6 +157,11 @@ class ProcessProjectImportBatch implements ShouldQueue
             report($exception);
         } finally {
             Auth::logout();
+            $this->discardStaging($batch->fresh());
+            if ($temporaryPath && is_file($temporaryPath)) {
+                @unlink($temporaryPath);
+                @rmdir(dirname($temporaryPath));
+            }
         }
     }
 
@@ -159,8 +174,24 @@ class ProcessProjectImportBatch implements ShouldQueue
             ->first();
         if ($batch) {
             app(ProjectImportBatchService::class)->fail($batch, $exception);
+            $this->discardStaging($batch->fresh());
         }
         Cache::forget(ProjectImportBatchService::progressCacheKey($this->batchId));
+    }
+
+    private function discardStaging(UserImportBatch $batch): void
+    {
+        $path = (string) $batch->staging_path;
+        if ($path === '') {
+            return;
+        }
+
+        Storage::disk('local')->delete($path);
+        UserImportBatch::where('business_id', $this->businessId)
+            ->where('importer_key', ProjectImportBatchService::IMPORTER_KEY)
+            ->where('id', $this->batchId)
+            ->where('staging_path', $path)
+            ->update(['staging_path' => null, 'updated_at' => now()]);
     }
 
     private function modelAttributes($model): array

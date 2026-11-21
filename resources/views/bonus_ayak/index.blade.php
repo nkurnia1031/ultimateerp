@@ -413,15 +413,15 @@ $(function () {
             data: function (data) { data.status = $('#bonus-import-history-status').val() || ''; }
         },
         columns: [
-            {data: 'file_name', name: 'file_name'},
-            {data: 'status', name: 'status'},
+            {data: 'file_name', name: 'file_name', render: $.fn.dataTable.render.text()},
+            {data: 'status', name: 'status', render: $.fn.dataTable.render.text()},
             {data: null, orderable: false, searchable: false, render: function (row) {
                 var percent = Math.max(0, Math.min(100, parseInt(row.progress_percent || 0, 10)));
                 return '<div class="progress"><div class="progress-bar" style="width:' + percent + '%">' + percent + '%</div></div>' +
                     '<small>' + parseInt(row.progress_current || 0, 10) + ' / ' + (parseInt(row.progress_total || 0, 10) || '—') + '</small>';
             }},
-            {data: 'last_message', name: 'last_message', defaultContent: ''},
-            {data: 'created_at', name: 'created_at'},
+            {data: 'last_message', name: 'last_message', defaultContent: '', render: $.fn.dataTable.render.text()},
+            {data: 'created_at', name: 'created_at', render: $.fn.dataTable.render.text()},
             {data: null, orderable: false, searchable: false, render: function (row) {
                 var actions = '<button type="button" class="btn btn-xs btn-default bonus-import-detail" data-url="' + $('<div>').text(row.detail_url).html() + '">Detail</button> ';
                 if (row.restore_url) actions += '<a class="btn btn-xs btn-success" href="' + $('<div>').text(row.restore_url).html() + '">Unduh sumber</a> ';

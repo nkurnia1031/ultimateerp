@@ -183,7 +183,7 @@ class ProjectImportController extends Controller
     {
         $businessId = $this->authorizeImport($request);
         $shared = $batches->findForBusiness($batch, $businessId, ProjectImportBatchService::IMPORTER_KEY);
-        abort_unless($shared->status === 'failed' && filled($shared->staging_path), 422, 'Batch Project ini tidak dapat dicoba ulang.');
+        abort_unless($shared->status === 'failed' && $shared->hasSourceSnapshot(), 422, 'Batch Project ini tidak dapat dicoba ulang tanpa snapshot workbook.');
 
         $shared->forceFill([
             'status' => 'queued_preview',

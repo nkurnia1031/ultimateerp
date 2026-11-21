@@ -1310,124 +1310,106 @@ class PurchaseController extends Controller
 
     public function importPurchaseProducts(Request $request)
     {
-        try {
-            $file = $request->file('file');
+        abort_unless(auth()->user()->can('purchase.create'), 403, 'Unauthorized action.');
+        $businessId = (int) $request->session()->get('user.business_id');
+        $validated = $request->validate([
+            'file' => 'required|file|mimes:csv,xls,xlsx|max:51200',
+            'location_id' => 'required|integer|exists:business_locations,id',
+            'row_count' => 'nullable|integer|min:0',
+        ]);
+        $location = BusinessLocation::where('business_id', $businessId)->findOrFail((int) $validated['location_id']);
+        $permittedLocations = auth()->user()->permitted_locations();
+        abort_unless($permittedLocations === 'all' || in_array($location->id, $permittedLocations, true) || in_array((string) $location->id, $permittedLocations, true), 403, 'Lokasi tidak diizinkan.');
 
-            $parsed_array = Excel::toArray([], $file);
-            //Remove header row
-            $imported_data = array_splice($parsed_array[0], 1);
+        $file = $request->file('file');
+        $stagingPath = $file->storeAs('user-imports/staging', (string) \Illuminate\Support\Str::uuid().'.'.$file->getClientOriginalExtension(), 'local');
+        $batches = app(\App\Services\UserImportBatchService::class);
+        $batch = $batches->create([
+            'business_id' => $businessId,
+            'created_by' => auth()->id(),
+            'importer_key' => \App\Services\PurchaseProductLineImportBatchService::IMPORTER_KEY,
+            'source_key' => (string) \Illuminate\Support\Str::uuid(),
+            'file_name' => $file->getClientOriginalName(),
+            'staging_path' => $stagingPath,
+            'status' => 'queued_preview',
+            'stage' => 'queued_preview',
+            'options_json' => json_encode(['location_id' => (int) $location->id, 'row_count' => (int) ($validated['row_count'] ?? 0)], JSON_THROW_ON_ERROR),
+            'progress_percent' => 0,
+            'last_message' => 'Upload selesai; workbook menunggu worker import.',
+        ]);
+        \App\Jobs\ProcessPurchaseProductLineImportBatch::dispatch($batch->id, $businessId);
 
-            $business_id = $request->session()->get('user.business_id');
-            $location_id = $request->input('location_id');
-            $row_count = $request->input('row_count');
+        return response()->json([
+            'success' => true,
+            'queued' => true,
+            'batch_id' => (int) $batch->id,
+            'status_url' => route('purchase.product-import.history.detail', $batch->id),
+            'msg' => 'Workbook diterima dan sedang dianalisis.',
+        ], 202);
+    }
 
-            $formatted_data = [];
-            $row_index = 0;
-            $error_msg = '';
-            foreach ($imported_data as $key => $value) {
-                $row_index = $key + 1;
-                $temp_array = [];
+    public function purchaseProductImportHistory(Request $request)
+    {
+        abort_unless(auth()->user()->can('purchase.create'), 403, 'Unauthorized action.');
 
-                if (! empty($value[0])) {
-                    $variation = Variation::where('sub_sku', trim($value[0]))
-                        ->join('products', 'products.id', '=', 'variations.product_id')
-                        ->where('products.business_id', $business_id)
-                        ->with([
-                            'product_variation',
-                            'variation_location_details' => function ($q) use ($location_id) {
-                                $q->where('location_id', $location_id);
-                            },
-                        ])
-                        ->select('variations.*')
-                        ->first();
-                    $temp_array['variation'] = $variation;
+        return response()->json(app(\App\Services\PurchaseProductLineImportBatchService::class)
+            ->history($request, (int) $request->session()->get('user.business_id')));
+    }
 
-                    if (empty($variation)) {
-                        $error_msg = __('lang_v1.product_not_found_exception', ['row' => $row_index, 'sku' => $value[0]]);
-                        break;
-                    }
+    public function purchaseProductImportDetail(Request $request, int $batchId)
+    {
+        abort_unless(auth()->user()->can('purchase.create'), 403, 'Unauthorized action.');
+        $batch = app(\App\Services\UserImportBatchService::class)->findForBusiness(
+            $batchId,
+            (int) $request->session()->get('user.business_id'),
+            \App\Services\PurchaseProductLineImportBatchService::IMPORTER_KEY
+        );
 
-                    $product = Product::where('id', $variation->product_id)
-                        ->where('business_id', $business_id)
-                        ->with(['unit'])
-                        ->first();
+        return response()->json(app(\App\Services\PurchaseProductLineImportBatchService::class)
+            ->detail($batch, (int) $request->session()->get('user.business_id')));
+    }
 
-                    if (empty($product)) {
-                        $error_msg = __('lang_v1.product_not_found_exception', ['row' => $row_index, 'sku' => $value[0]]);
-                        break;
-                    }
+    public function purchaseProductImportSource(Request $request, int $batchId)
+    {
+        abort_unless(auth()->user()->can('purchase.create'), 403, 'Unauthorized action.');
+        $batch = app(\App\Services\UserImportBatchService::class)->findForBusiness(
+            $batchId,
+            (int) $request->session()->get('user.business_id'),
+            \App\Services\PurchaseProductLineImportBatchService::IMPORTER_KEY
+        );
 
-                    $temp_array['product'] = $product;
+        return app(\App\Services\UserImportBatchService::class)->workbookDownload($batch);
+    }
 
-                    $sub_units = $this->productUtil->getSubUnits($business_id, $product->unit->id, false, $product->id);
+    public function retryPurchaseProductImport(Request $request, int $batchId)
+    {
+        abort_unless(auth()->user()->can('purchase.create'), 403, 'Unauthorized action.');
+        $businessId = (int) $request->session()->get('user.business_id');
+        $service = app(\App\Services\UserImportBatchService::class);
+        $batch = $service->findForBusiness($batchId, $businessId, \App\Services\PurchaseProductLineImportBatchService::IMPORTER_KEY);
+        abort_unless($batch->hasSourceSnapshot(), 422, 'Snapshot workbook tidak tersedia untuk retry.');
+        $updated = \App\UserImportBatch::where('business_id', $businessId)->whereKey($batchId)->where('status', 'failed')->update([
+            'status' => 'queued_preview', 'stage' => 'queued_preview', 'progress_current' => 0, 'progress_total' => 0,
+            'progress_percent' => 0, 'error_message' => null, 'failed_at' => null, 'completed_at' => null,
+            'last_message' => 'Retry analisis workbook masuk antrean.', 'updated_at' => now(),
+        ]);
+        abort_unless($updated, 422, 'Batch tidak dapat di-retry dari status saat ini.');
+        \App\Jobs\ProcessPurchaseProductLineImportBatch::dispatch($batchId, $businessId);
 
-                    $temp_array['sub_units'] = $sub_units;
-                } else {
-                    $error_msg = __('lang_v1.product_not_found_exception', ['row' => $row_index, 'sku' => $value[0]]);
-                    break;
-                }
+        return response()->json(['success' => true, 'status' => 'queued_preview']);
+    }
 
-                if (! empty($value[0])) {
-                    $temp_array['quantity'] = $value[1];
-                } else {
-                    $error_msg = __('lang_v1.quantity_required', ['row' => $row_index]);
-                    break;
-                }
+    public function revertPurchaseProductImport(Request $request, int $batchId)
+    {
+        abort_unless(auth()->user()->can('purchase.create'), 403, 'Unauthorized action.');
+        $batch = app(\App\Services\UserImportBatchService::class)->findForBusiness(
+            $batchId,
+            (int) $request->session()->get('user.business_id'),
+            \App\Services\PurchaseProductLineImportBatchService::IMPORTER_KEY
+        );
+        app(\App\Services\PurchaseProductLineImportBatchService::class)->revert($batch);
 
-                $temp_array['unit_cost_before_discount'] = ! empty($value[2]) ? $value[2] : $variation->default_purchase_price;
-                $temp_array['discount_percent'] = ! empty($value[3]) ? $value[3] : 0;
-
-                $tax_id = null;
-
-                if (! empty($value[4])) {
-                    $tax_name = trim($value[4]);
-                    $tax = TaxRate::where('business_id', $business_id)
-                        ->where('name', 'like', "%{$tax_name}%")
-                        ->first();
-
-                    $tax_id = $tax->id ?? $tax_id;
-                }
-
-                $temp_array['tax_id'] = $tax_id;
-                $temp_array['lot_number'] = ! empty($value[5]) ? $value[5] : null;
-                $temp_array['mfg_date'] = ! empty($value[6]) ? $this->productUtil->format_date($value[6]) : null;
-                $temp_array['exp_date'] = ! empty($value[7]) ? $this->productUtil->format_date($value[7]) : null;
-
-                $formatted_data[] = $temp_array;
-            }
-
-            if (! empty($error_msg)) {
-                return [
-                    'success' => false,
-                    'msg' => $error_msg,
-                ];
-            }
-
-            $hide_tax = 'hide';
-            if ($request->session()->get('business.enable_inline_tax') == 1) {
-                $hide_tax = '';
-            }
-
-            $taxes = TaxRate::where('business_id', $business_id)
-                ->ExcludeForTaxGroup()
-                ->get();
-
-            $currency_details = $this->transactionUtil->purchaseCurrencyDetails($business_id);
-
-            $html = view('purchase.partials.imported_purchase_product_rows')
-                ->with(compact('formatted_data', 'taxes', 'currency_details', 'hide_tax', 'row_count'))->render();
-
-            return [
-                'success' => true,
-                'msg' => __('lang_v.imported'),
-                'html' => $html,
-            ];
-        } catch (\Exception $e) {
-            return [
-                'success' => false,
-                'msg' => $e->getMessage(),
-            ];
-        }
+        return response()->json(['success' => true, 'status' => 'reverted']);
     }
 
     public function getPurchaseOrderLines($purchase_order_id)

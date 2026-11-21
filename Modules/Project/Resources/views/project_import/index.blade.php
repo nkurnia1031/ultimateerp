@@ -119,6 +119,11 @@
 <script>
     $(function () {
         var csrf = $('meta[name="csrf-token"]').attr('content');
+        var escapeImportAttribute = function (value) {
+            return String(value || '').replace(/[&<>"']/g, function (character) {
+                return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[character];
+            });
+        };
         var historyTable = $('#project_import_history_table').DataTable({
             processing: true,
             serverSide: true,
@@ -130,25 +135,25 @@
                 }
             },
             columns: [
-                {data: 'file_name', name: 'file_name'},
-                {data: 'status', name: 'status'},
+                {data: 'file_name', name: 'file_name', render: $.fn.dataTable.render.text()},
+                {data: 'status', name: 'status', render: $.fn.dataTable.render.text()},
                 {data: null, orderable: false, searchable: false, render: function (row) {
                     var percent = Math.max(0, Math.min(100, parseInt(row.progress_percent || 0, 10)));
                     return '<div class="progress"><div class="progress-bar" role="progressbar" style="width:' + percent + '%">' + percent + '%</div></div>' +
                         '<small>' + (parseInt(row.progress_current || 0, 10)) + ' / ' + (parseInt(row.progress_total || 0, 10) || '—') + '</small>';
                 }},
-                {data: 'last_message', name: 'last_message', defaultContent: ''},
-                {data: 'created_at', name: 'created_at'},
+                {data: 'last_message', name: 'last_message', defaultContent: '', render: $.fn.dataTable.render.text()},
+                {data: 'created_at', name: 'created_at', render: $.fn.dataTable.render.text()},
                 {data: null, orderable: false, searchable: false, render: function (row) {
-                    var actions = '<button type="button" class="btn btn-xs btn-default project-import-detail" data-url="' + row.detail_url + '">Detail</button> ';
+                    var actions = '<button type="button" class="btn btn-xs btn-default project-import-detail" data-url="' + escapeImportAttribute(row.detail_url) + '">Detail</button> ';
                     if (row.restore_url) {
-                        actions += '<a class="btn btn-xs btn-success" href="' + row.restore_url + '">Unduh sumber</a> ';
+                        actions += '<a class="btn btn-xs btn-success" href="' + escapeImportAttribute(row.restore_url) + '">Unduh sumber</a> ';
                     }
                     if (row.can_retry) {
-                        actions += '<button type="button" class="btn btn-xs btn-warning project-import-retry" data-url="' + row.retry_url + '">Coba lagi</button> ';
+                        actions += '<button type="button" class="btn btn-xs btn-warning project-import-retry" data-url="' + escapeImportAttribute(row.retry_url) + '">Coba lagi</button> ';
                     }
                     if (row.can_revert) {
-                        actions += '<button type="button" class="btn btn-xs btn-danger project-import-revert" data-url="' + row.revert_url + '">Revert</button>';
+                        actions += '<button type="button" class="btn btn-xs btn-danger project-import-revert" data-url="' + escapeImportAttribute(row.revert_url) + '">Revert</button>';
                     }
                     return actions;
                 }}

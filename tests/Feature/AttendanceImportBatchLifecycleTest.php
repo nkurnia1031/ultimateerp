@@ -21,6 +21,7 @@ class AttendanceImportBatchLifecycleTest extends TestCase
         Bus::fake();
         Storage::fake('local');
         $this->withoutMiddleware([
+            \App\Http\Middleware\IsInstalled::class,
             \App\Http\Middleware\SetSessionData::class,
             \App\Http\Middleware\AdminSidebarMenu::class,
         ]);
@@ -37,7 +38,7 @@ class AttendanceImportBatchLifecycleTest extends TestCase
             $second->assertStatus(202)->assertJsonPath('batch_id', $first->json('batch_id'));
             Bus::assertDispatchedTimes(ProcessAttendanceImportBatch::class, 1);
 
-            $batch = UserImportBatch::where('importer_key', 'attendance')->firstOrFail();
+            $batch = UserImportBatch::findOrFail($first->json('batch_id'));
             $this->assertSame(7, (int) $batch->business_id);
             $this->assertSame('queued_preview', $batch->status);
             $this->assertTrue($batch->hasSourceSnapshot());
@@ -72,7 +73,7 @@ class AttendanceImportBatchLifecycleTest extends TestCase
             'business_id' => 8,
             'created_by' => 998,
             'importer_key' => 'attendance',
-            'source_key' => 'foreign-attendance-batch',
+            'source_key' => (string) \Illuminate\Support\Str::uuid(),
             'file_name' => 'foreign.xlsx',
             'status' => 'imported',
         ]);
@@ -104,6 +105,41 @@ class AttendanceImportBatchLifecycleTest extends TestCase
             ->postJson(route('attendance.import.history.revert', $changedBatch->id))
             ->assertStatus(422);
         $this->assertDatabaseHas('essentials_attendances', ['id' => $changed->id, 'clock_in_note' => 'Edited after import']);
+    }
+
+    public function test_completed_failed_job_discards_upload_and_retry_uses_the_saved_workbook_snapshot(): void
+    {
+        $path = $this->workbook();
+
+        try {
+            $response = $this->upload($path);
+            $response->assertStatus(202);
+            $batch = UserImportBatch::findOrFail($response->json('batch_id'));
+            $stagingPath = $batch->staging_path;
+            $this->assertNotEmpty($stagingPath);
+            $this->assertTrue($batch->hasSourceSnapshot());
+
+            (new ProcessAttendanceImportBatch((int) $batch->id, 7))->handle(app(UserImportBatchService::class));
+
+            $batch->refresh();
+            $this->assertSame('failed', $batch->status);
+            $this->assertNull($batch->staging_path);
+            $this->assertFalse(Storage::disk('local')->exists($stagingPath));
+            $this->assertTrue($batch->hasSourceSnapshot());
+            $this->actingAs($this->admin())
+                ->withSession($this->businessSession(7))
+                ->get(route('attendance.import.history.source', $batch->id))
+                ->assertOk();
+
+            $this->actingAs($this->admin())
+                ->withSession($this->businessSession(7))
+                ->postJson(route('attendance.import.history.retry', $batch->id))
+                ->assertStatus(202)->assertJsonPath('status', 'queued_preview');
+            $this->assertSame('queued_preview', $batch->fresh()->status);
+            Bus::assertDispatchedTimes(ProcessAttendanceImportBatch::class, 2);
+        } finally {
+            @unlink($path);
+        }
     }
 
     private function upload(string $path)

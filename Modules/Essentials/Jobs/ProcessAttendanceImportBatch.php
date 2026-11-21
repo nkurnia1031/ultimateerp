@@ -57,11 +57,22 @@ class ProcessAttendanceImportBatch implements ShouldQueue
             'message' => 'Workbook Attendance sedang dianalisis.', 'heartbeat_at' => now()->toDateTimeString(),
         ], now()->addMinutes(40));
 
+        $temporaryPath = null;
+        $stagingPath = (string) $batch->staging_path;
         try {
             $batch = $batch->fresh();
-            $path = Storage::disk('local')->path((string) $batch->staging_path);
+            if (filled($batch->staging_path) && Storage::disk('local')->exists($batch->staging_path)) {
+                $path = Storage::disk('local')->path($batch->staging_path);
+            } else {
+                abort_unless($batch->hasSourceSnapshot(), 422, 'Snapshot workbook Attendance tidak tersedia untuk diproses ulang.');
+                $temporaryPath = $batches->restoredWorkbookPath($batch);
+                $path = $temporaryPath;
+            }
             if (! is_file($path)) {
                 throw new \RuntimeException('Workbook Attendance tidak tersedia.');
+            }
+            if (! $batch->hasSourceSnapshot()) {
+                $batches->captureWorkbook($batch, $path);
             }
             if (! User::where('business_id', $this->businessId)->whereKey($batch->created_by)->exists()) {
                 throw new \RuntimeException('Pengguna pembuat batch tidak lagi terdaftar pada business ini.');
@@ -211,6 +222,12 @@ class ProcessAttendanceImportBatch implements ShouldQueue
             }
             Cache::forget(AttendanceImportBatchService::progressCacheKey($this->batchId));
             report($exception);
+        } finally {
+            $this->discardStaging($batch->fresh());
+            if ($temporaryPath && is_file($temporaryPath)) {
+                @unlink($temporaryPath);
+                @rmdir(dirname($temporaryPath));
+            }
         }
     }
 
@@ -222,8 +239,24 @@ class ProcessAttendanceImportBatch implements ShouldQueue
             ->whereIn('status', ['queued_preview', 'analyzing', 'importing'])->first();
         if ($batch) {
             app(AttendanceImportBatchService::class)->fail($batch, $exception);
+            $this->discardStaging($batch->fresh());
         }
         Cache::forget(AttendanceImportBatchService::progressCacheKey($this->batchId));
+    }
+
+    private function discardStaging(UserImportBatch $batch): void
+    {
+        $path = (string) $batch->staging_path;
+        if ($path === '') {
+            return;
+        }
+
+        Storage::disk('local')->delete($path);
+        UserImportBatch::where('business_id', $this->businessId)
+            ->where('importer_key', AttendanceImportBatchService::IMPORTER_KEY)
+            ->where('id', $this->batchId)
+            ->where('staging_path', $path)
+            ->update(['staging_path' => null, 'updated_at' => now()]);
     }
 
     private function modelAttributes(EssentialsAttendance $attendance): array

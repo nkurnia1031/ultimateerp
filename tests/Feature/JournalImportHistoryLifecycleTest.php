@@ -367,6 +367,7 @@ class JournalImportHistoryLifecycleTest extends TestCase
             $table->unsignedInteger('business_id');
             $table->unsignedInteger('entry_index');
             $table->string('source_type');
+            $table->string('source_number')->nullable();
             $table->string('source_action')->nullable();
             $table->longText('entry_data')->nullable();
             $table->string('processing_status')->default('pending');

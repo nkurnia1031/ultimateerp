@@ -360,6 +360,11 @@ Route::middleware(['setData', 'auth', 'SetSessionData', 'language', 'timezone', 
 
     Route::resource('products', ProductController::class);
     Route::post('/import-purchase-products', [PurchaseController::class, 'importPurchaseProducts']);
+    Route::get('/import-purchase-products/history', [PurchaseController::class, 'purchaseProductImportHistory'])->name('purchase.product-import.history');
+    Route::get('/import-purchase-products/history/{batchId}', [PurchaseController::class, 'purchaseProductImportDetail'])->name('purchase.product-import.history.detail');
+    Route::get('/import-purchase-products/history/{batchId}/source', [PurchaseController::class, 'purchaseProductImportSource'])->name('purchase.product-import.history.source');
+    Route::post('/import-purchase-products/history/{batchId}/retry', [PurchaseController::class, 'retryPurchaseProductImport'])->name('purchase.product-import.history.retry');
+    Route::post('/import-purchase-products/history/{batchId}/revert', [PurchaseController::class, 'revertPurchaseProductImport'])->name('purchase.product-import.history.revert');
     Route::post('/purchases/update-status', [PurchaseController::class, 'updateStatus']);
     Route::get('/purchases/get_products', [PurchaseController::class, 'getProducts']);
     Route::get('/purchases/get_suppliers', [PurchaseController::class, 'getSuppliers']);
@@ -382,11 +387,23 @@ Route::middleware(['setData', 'auth', 'SetSessionData', 'language', 'timezone', 
     Route::get('/import-sales', [ImportSalesController::class, 'index']);
     Route::post('/import-sales/preview', [ImportSalesController::class, 'preview']);
     Route::post('/import-sales', [ImportSalesController::class, 'import']);
+    Route::get('/import-sales/history', [ImportSalesController::class, 'salesImportBatchHistory'])->name('sales.import.batch.history');
+    Route::get('/import-sales/history/{batchId}', [ImportSalesController::class, 'salesImportBatchDetail'])->name('sales.import.batch.detail');
+    Route::get('/import-sales/history/{batchId}/source', [ImportSalesController::class, 'salesImportBatchSource'])->name('sales.import.batch.source');
+    Route::get('/import-sales/history/{batchId}/preview', [ImportSalesController::class, 'salesImportBatchPreview'])->name('sales.import.batch.preview');
+    Route::post('/import-sales/history/{batchId}/retry', [ImportSalesController::class, 'salesImportBatchRetry'])->name('sales.import.batch.retry');
+    Route::post('/import-sales/history/{batchId}/revert', [ImportSalesController::class, 'salesImportBatchRevert'])->name('sales.import.batch.revert');
     Route::post('/revert-sale-import/{batch}', [ImportSalesController::class, 'revertSaleImport'])->name('sales.import.revert');
 
     Route::get('/import-pembelian', [ImportSalesController::class, 'index']);
     Route::post('/import-pembelian/preview', [ImportSalesController::class, 'preview']);
     Route::post('/import-pembelian', [ImportSalesController::class, 'import']);
+    Route::get('/import-pembelian/history', [ImportSalesController::class, 'purchaseImportBatchHistory'])->name('purchase.import.batch.history');
+    Route::get('/import-pembelian/history/{batchId}', [ImportSalesController::class, 'purchaseImportBatchDetail'])->name('purchase.import.batch.detail');
+    Route::get('/import-pembelian/history/{batchId}/source', [ImportSalesController::class, 'purchaseImportBatchSource'])->name('purchase.import.batch.source');
+    Route::get('/import-pembelian/history/{batchId}/preview', [ImportSalesController::class, 'purchaseImportBatchPreview'])->name('purchase.import.batch.preview');
+    Route::post('/import-pembelian/history/{batchId}/retry', [ImportSalesController::class, 'purchaseImportBatchRetry'])->name('purchase.import.batch.retry');
+    Route::post('/import-pembelian/history/{batchId}/revert', [ImportSalesController::class, 'purchaseImportBatchRevert'])->name('purchase.import.batch.revert');
     Route::post('/revert-pembelian-import/{batch}', [ImportSalesController::class, 'revertPembelianImport'])->name('purchases.import.revert');
 
     Route::get('/sells/pos/get_product_row/{variation_id}/{location_id}', [SellPosController::class, 'getProductRow']);
@@ -547,6 +564,11 @@ Route::middleware(['setData', 'auth', 'SetSessionData', 'language', 'timezone', 
     //Import products
     Route::get('/import-products', [ImportProductsController::class, 'index']);
     Route::post('/import-products/store', [ImportProductsController::class, 'store']);
+    Route::get('/import-products/history', [ImportProductsController::class, 'importBatchHistory'])->name('import.products.history');
+    Route::get('/import-products/history/{batchId}', [ImportProductsController::class, 'importBatchDetail'])->name('import.products.history.detail');
+    Route::get('/import-products/history/{batchId}/source', [ImportProductsController::class, 'importBatchSource'])->name('import.products.history.source');
+    Route::post('/import-products/history/{batchId}/retry', [ImportProductsController::class, 'retryImportBatch'])->name('import.products.history.retry');
+    Route::post('/import-products/history/{batchId}/revert', [ImportProductsController::class, 'revertImportBatch'])->name('import.products.history.revert');
 
     //Sales Commission Agent
     Route::resource('sales-commission-agents', SalesCommissionAgentController::class);
@@ -565,6 +587,11 @@ Route::middleware(['setData', 'auth', 'SetSessionData', 'language', 'timezone', 
     //Import opening stock
     Route::get('/import-opening-stock', [ImportOpeningStockController::class, 'index']);
     Route::post('/import-opening-stock/store', [ImportOpeningStockController::class, 'store']);
+    Route::get('/import-opening-stock/history', [ImportOpeningStockController::class, 'importBatchHistory'])->name('import.opening-stock.history');
+    Route::get('/import-opening-stock/history/{batchId}', [ImportOpeningStockController::class, 'importBatchDetail'])->name('import.opening-stock.history.detail');
+    Route::get('/import-opening-stock/history/{batchId}/source', [ImportOpeningStockController::class, 'importBatchSource'])->name('import.opening-stock.history.source');
+    Route::post('/import-opening-stock/history/{batchId}/retry', [ImportOpeningStockController::class, 'retryImportBatch'])->name('import.opening-stock.history.retry');
+    Route::post('/import-opening-stock/history/{batchId}/revert', [ImportOpeningStockController::class, 'revertImportBatch'])->name('import.opening-stock.history.revert');
 
     //Sell return
     Route::get('validate-invoice-to-return/{invoice_no}', [SellReturnController::class, 'validateInvoiceToReturn']);
@@ -586,6 +613,11 @@ Route::middleware(['setData', 'auth', 'SetSessionData', 'language', 'timezone', 
     Route::get('update-product-price', [SellingPriceGroupController::class, 'updateProductPrice'])->name('update-product-price');
     Route::get('export-product-price', [SellingPriceGroupController::class, 'export']);
     Route::post('import-product-price', [SellingPriceGroupController::class, 'import']);
+    Route::get('selling-price-group/import/history', [SellingPriceGroupController::class, 'importHistory'])->name('selling-price-group.import.history');
+    Route::get('selling-price-group/import/history/{batch}', [SellingPriceGroupController::class, 'importHistoryDetail'])->name('selling-price-group.import.history.detail');
+    Route::get('selling-price-group/import/history/{batch}/source', [SellingPriceGroupController::class, 'importHistorySource'])->name('selling-price-group.import.history.source');
+    Route::post('selling-price-group/import/history/{batch}/retry', [SellingPriceGroupController::class, 'importHistoryRetry'])->name('selling-price-group.import.history.retry');
+    Route::post('selling-price-group/import/history/{batch}/revert', [SellingPriceGroupController::class, 'importHistoryRevert'])->name('selling-price-group.import.history.revert');
 
     Route::resource('selling-price-group', SellingPriceGroupController::class);
 

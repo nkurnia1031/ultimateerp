@@ -21,6 +21,7 @@ class ProjectImportBatchLifecycleTest extends TestCase
         Bus::fake();
         Storage::fake('local');
         $this->withoutMiddleware([
+            \App\Http\Middleware\IsInstalled::class,
             \App\Http\Middleware\SetSessionData::class,
             \App\Http\Middleware\AdminSidebarMenu::class,
         ]);
@@ -78,7 +79,7 @@ class ProjectImportBatchLifecycleTest extends TestCase
             'business_id' => 8,
             'created_by' => 998,
             'importer_key' => 'project',
-            'source_key' => 'foreign-project-batch',
+            'source_key' => (string) \Illuminate\Support\Str::uuid(),
             'file_name' => 'foreign.xlsx',
             'status' => 'imported',
         ]);
@@ -111,6 +112,48 @@ class ProjectImportBatchLifecycleTest extends TestCase
             ->postJson(route('project.import.history.revert', $changedBatch->id))
             ->assertStatus(422);
         $this->assertDatabaseHas('pjt_projects', ['id' => $changedProject->id, 'name' => 'Project diubah setelah import']);
+    }
+
+    public function test_completed_failed_job_discards_upload_and_retry_restores_from_snapshot(): void
+    {
+        $path = $this->workbook();
+
+        try {
+            $response = $this->actingAs($this->admin())
+                ->withSession($this->businessSession(7))
+                ->postJson('/project/project-import', [
+                    'project_file' => new UploadedFile($path, 'project-import.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', null, true),
+                    'confirm_import' => 1,
+                ]);
+            $response->assertStatus(202);
+            $batch = UserImportBatch::findOrFail($response->json('batch_id'));
+            $stagingPath = $batch->staging_path;
+            $this->assertTrue($batch->hasSourceSnapshot());
+
+            (new ProcessProjectImportBatch((int) $batch->id, 7))->handle(
+                app(\Modules\Project\Services\ProjectWorkbookImporter::class),
+                app(UserImportBatchService::class)
+            );
+
+            $batch->refresh();
+            $this->assertSame('failed', $batch->status);
+            $this->assertNull($batch->staging_path);
+            $this->assertFalse(Storage::disk('local')->exists($stagingPath));
+            $this->assertTrue($batch->hasSourceSnapshot());
+            $this->actingAs($this->admin())
+                ->withSession($this->businessSession(7))
+                ->get(route('project.import.history.source', $batch->id))
+                ->assertOk();
+
+            $this->actingAs($this->admin())
+                ->withSession($this->businessSession(7))
+                ->postJson(route('project.import.history.retry', $batch->id))
+                ->assertStatus(202);
+            $this->assertSame('queued_preview', $batch->fresh()->status);
+            Bus::assertDispatchedTimes(ProcessProjectImportBatch::class, 2);
+        } finally {
+            @unlink($path);
+        }
     }
 
     private function workbook(): string
