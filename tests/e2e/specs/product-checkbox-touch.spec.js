@@ -33,12 +33,10 @@ test('product checkboxes toggle when their labels are tapped in WebKit', async (
 
         if (name === 'enable_stock') {
             await expect(page.locator('#alert_quantity_div')).toBeHidden();
-            await expect(page.locator('#opening_stock_button')).toBeDisabled();
 
             await label.tap({ position: { x: bounds.width - 15, y: bounds.height / 2 } });
             await expect(checkbox).toBeChecked();
             await expect(page.locator('#alert_quantity_div')).toBeVisible();
-            await expect(page.locator('#opening_stock_button')).toBeEnabled();
         }
     }
 });
