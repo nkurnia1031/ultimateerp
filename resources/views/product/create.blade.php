@@ -171,9 +171,9 @@
                 <div class="col-sm-4">
                     <div class="form-group">
                         <br>
-                        <label>
+                        <label class="product-form-checkbox">
                             {!! Form::checkbox('enable_stock', 1, !empty($duplicate_product) ? $duplicate_product->enable_stock : true, [
-                                'class' => 'input-icheck',
+                                'class' => 'product-form-checkbox__input',
                                 'id' => 'enable_stock',
                             ]) !!} <strong>@lang('product.manage_stock')</strong>
                         </label>@show_tooltip(__('tooltip.enable_stock')) <p class="help-block"><i>@lang('product.enable_stock_help')</i></p>
@@ -301,9 +301,9 @@
                 <div class="col-sm-4">
                     <div class="form-group">
                         <br>
-                        <label>
+                        <label class="product-form-checkbox">
                             {!! Form::checkbox('enable_sr_no', 1, !empty($duplicate_product) ? $duplicate_product->enable_sr_no : false, [
-                                'class' => 'input-icheck',
+                                'class' => 'product-form-checkbox__input',
                             ]) !!} <strong>@lang('lang_v1.enable_imei_or_sr_no')</strong>
                         </label> @show_tooltip(__('lang_v1.tooltip_sr_no'))
                     </div>
@@ -312,12 +312,12 @@
                 <div class="col-sm-4">
                     <div class="form-group">
                         <br>
-                        <label>
+                        <label class="product-form-checkbox">
                             {!! Form::checkbox(
                                 'not_for_selling',
                                 1,
                                 !empty($duplicate_product) ? $duplicate_product->not_for_selling : false,
-                                ['class' => 'input-icheck'],
+                                ['class' => 'product-form-checkbox__input'],
                             ) !!} <strong>@lang('lang_v1.not_for_selling')</strong>
                         </label> @show_tooltip(__('lang_v1.tooltip_not_for_selling'))
                     </div>

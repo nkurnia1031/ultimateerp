@@ -155,7 +155,7 @@ jobs:
 
       - name: Install Chromium and system dependencies
         working-directory: tests/e2e
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install --with-deps chromium webkit
 
       - name: Start Laravel
         run: |

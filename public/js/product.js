@@ -1,20 +1,23 @@
 //This file contains all functions used products tab
 
 $(document).ready(function() {
-    $(document).on('ifChecked', 'input#enable_stock', function() {
-        $('div#alert_quantity_div').show();
-        $('div#quick_product_opening_stock_div').show();
+    var updateStockFields = function(enabled) {
+        if (enabled) {
+            $('div#alert_quantity_div').show();
+            $('div#quick_product_opening_stock_div').show();
 
-        //Enable expiry selection
-        if ($('#expiry_period_type').length) {
-            $('#expiry_period_type').removeAttr('disabled');
+            //Enable expiry selection
+            if ($('#expiry_period_type').length) {
+                $('#expiry_period_type').removeAttr('disabled');
+            }
+
+            if ($('#opening_stock_button').length) {
+                $('#opening_stock_button').removeAttr('disabled');
+            }
+
+            return;
         }
 
-        if ($('#opening_stock_button').length) {
-            $('#opening_stock_button').removeAttr('disabled');
-        }
-    });
-    $(document).on('ifUnchecked', 'input#enable_stock', function() {
         $('div#alert_quantity_div').hide();
         $('div#quick_product_opening_stock_div').hide();
         $('input#alert_quantity').val(0);
@@ -29,6 +32,16 @@ $(document).ready(function() {
         if ($('#opening_stock_button').length) {
             $('#opening_stock_button').attr('disabled', true);
         }
+    };
+
+    $(document).on('ifChecked', 'input#enable_stock', function() {
+        updateStockFields(true);
+    });
+    $(document).on('ifUnchecked', 'input#enable_stock', function() {
+        updateStockFields(false);
+    });
+    $(document).on('change', '#product_add_form input#enable_stock', function() {
+        updateStockFields(this.checked);
     });
 
     //Start For product type single

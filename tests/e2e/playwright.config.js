@@ -12,9 +12,24 @@ module.exports = defineConfig({
         ? [['github'], ['html', { outputFolder: 'playwright-report', open: 'never' }]]
         : 'list',
     outputDir: 'test-results',
+    projects: [
+        {
+            name: 'chromium',
+            testIgnore: '**/product-checkbox-touch.spec.js',
+            use: { browserName: 'chromium' },
+        },
+        {
+            name: 'webkit-touch',
+            testMatch: '**/product-checkbox-touch.spec.js',
+            use: {
+                browserName: 'webkit',
+                hasTouch: true,
+                viewport: { width: 834, height: 1194 },
+            },
+        },
+    ],
     use: {
         baseURL: process.env.PLAYWRIGHT_TEST_BASE_URL || 'http://127.0.0.1:8000',
-        browserName: 'chromium',
         screenshot: 'only-on-failure',
         trace: 'retain-on-failure',
     },

@@ -277,6 +277,7 @@ class JournalImportE2ESeeder extends Seeder
             'accounting.add_journal',
             'accounting.view_reports',
             'accounting.manage_accounts',
+            'product.create',
             'superadmin',
         ])->map(fn ($name) => Permission::firstOrCreate([
             'name' => $name,
