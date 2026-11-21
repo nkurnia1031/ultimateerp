@@ -30,8 +30,8 @@ class HeavyEquipmentRateImportLifecycleTest extends TestCase
         }
 
         config([
-            'database.default' => 'sqlite',
-            'database.connections.sqlite' => [
+            'database.default' => 'heavy_equipment_rate_test',
+            'database.connections.heavy_equipment_rate_test' => [
                 'driver' => 'sqlite',
                 'database' => ':memory:',
                 'prefix' => '',
@@ -39,8 +39,8 @@ class HeavyEquipmentRateImportLifecycleTest extends TestCase
             ],
             'cache.default' => 'array',
         ]);
-        DB::purge('sqlite');
-        DB::setDefaultConnection('sqlite');
+        DB::purge('heavy_equipment_rate_test');
+        DB::setDefaultConnection('heavy_equipment_rate_test');
         Storage::fake('local');
         $this->withoutMiddleware([
             \App\Http\Middleware\SetSessionData::class,
