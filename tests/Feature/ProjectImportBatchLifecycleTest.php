@@ -20,7 +20,10 @@ class ProjectImportBatchLifecycleTest extends TestCase
         parent::setUp();
         Bus::fake();
         Storage::fake('local');
-        $this->withoutMiddleware();
+        $this->withoutMiddleware([
+            \App\Http\Middleware\SetSessionData::class,
+            \App\Http\Middleware\AdminSidebarMenu::class,
+        ]);
     }
 
     public function test_ajax_upload_queues_a_business_scoped_project_batch_with_restorable_source(): void
@@ -133,7 +136,7 @@ class ProjectImportBatchLifecycleTest extends TestCase
             'lead_id' => 999,
             'created_by' => 999,
             'settings' => ['enable_timelog' => true, 'enable_invoice' => false],
-        ]);
+        ])->fresh();
     }
 
     private function importedBatchFor(Project $project): UserImportBatch

@@ -55,7 +55,12 @@ Route::middleware('web', 'authh', 'auth', 'SetSessionData', 'language', 'timezon
         Route::get('/settings', [Modules\Essentials\Http\Controllers\EssentialsSettingsController::class, 'edit']);
         Route::post('/settings', [Modules\Essentials\Http\Controllers\EssentialsSettingsController::class, 'update']);
 
-        Route::post('/import-attendance', [Modules\Essentials\Http\Controllers\AttendanceController::class, 'importAttendance']);
+        Route::post('/import-attendance', [Modules\Essentials\Http\Controllers\AttendanceController::class, 'importAttendance'])->name('attendance.import.store');
+        Route::get('/import-attendance/history', [Modules\Essentials\Http\Controllers\AttendanceController::class, 'importHistory'])->name('attendance.import.history');
+        Route::get('/import-attendance/history/{batch}', [Modules\Essentials\Http\Controllers\AttendanceController::class, 'importHistoryDetail'])->name('attendance.import.history.detail');
+        Route::get('/import-attendance/history/{batch}/source', [Modules\Essentials\Http\Controllers\AttendanceController::class, 'importHistorySource'])->name('attendance.import.history.source');
+        Route::post('/import-attendance/history/{batch}/retry', [Modules\Essentials\Http\Controllers\AttendanceController::class, 'retryImportAttendance'])->name('attendance.import.history.retry');
+        Route::post('/import-attendance/history/{batch}/revert', [Modules\Essentials\Http\Controllers\AttendanceController::class, 'revertImportAttendance'])->name('attendance.import.history.revert');
         Route::resource('/attendance', 'Modules\Essentials\Http\Controllers\AttendanceController');
         Route::post('/clock-in-clock-out', [Modules\Essentials\Http\Controllers\AttendanceController::class, 'clockInClockOut']);
 

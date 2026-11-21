@@ -3,14 +3,19 @@
 namespace Modules\Essentials\Http\Controllers;
 
 use App\User;
+use App\Services\UserImportBatchService;
+use App\UserImportBatch;
 use App\Utils\ModuleUtil;
 use DB;
-use Excel;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Modules\Essentials\Entities\EssentialsAttendance;
 use Modules\Essentials\Entities\Shift;
+use Modules\Essentials\Jobs\ProcessAttendanceImportBatch;
+use Modules\Essentials\Services\AttendanceImportBatchService;
 use Modules\Essentials\Utils\EssentialsUtil;
 use Spatie\Permission\Models\Permission;
 use Yajra\DataTables\Facades\DataTables;
@@ -579,112 +584,151 @@ class AttendanceController extends Controller
      */
     public function importAttendance(Request $request)
     {
-        $business_id = request()->session()->get('user.business_id');
-        $is_admin = $this->moduleUtil->is_admin(auth()->user(), $business_id);
-
-        if (! (auth()->user()->can('superadmin') || $this->moduleUtil->hasThePermissionInSubscription($business_id, 'essentials_module') || $is_admin)) {
-            abort(403, 'Unauthorized action.');
+        $businessId = $this->authorizeAttendanceImport($request);
+        $request->validate(['attendance' => 'required|file|mimes:xls,xlsx|max:5120']);
+        $notAllowed = $this->moduleUtil->notAllowedInDemo();
+        if (! empty($notAllowed)) {
+            return $notAllowed;
         }
+
+        $file = $request->file('attendance');
+        $sourceHash = hash_file('sha256', $file->getRealPath());
+        $existing = UserImportBatch::where('business_id', $businessId)
+            ->where('importer_key', AttendanceImportBatchService::IMPORTER_KEY)
+            ->where('source_key', $sourceHash)
+            ->first();
+        if ($existing && in_array($existing->status, ['queued_preview', 'analyzing', 'importing', 'imported', 'partial'], true)) {
+            return response()->json([
+                'success' => true,
+                'batch_id' => $existing->id,
+                'status' => $existing->status,
+                'message' => 'File ini sudah tercatat pada riwayat import Attendance.',
+            ], 202);
+        }
+        if ($existing && $existing->status === 'failed') {
+            return $this->retryAttendanceBatch($existing, $businessId);
+        }
+        if ($existing && $existing->status === 'reverted') {
+            $sourceHash = hash('sha256', $sourceHash.'|'.Str::uuid());
+        }
+
+        $batch = app(UserImportBatchService::class)->create([
+            'business_id' => $businessId,
+            'created_by' => (int) $request->user()->id,
+            'importer_key' => AttendanceImportBatchService::IMPORTER_KEY,
+            'source_key' => $sourceHash,
+            'file_name' => $file->getClientOriginalName(),
+            'status' => 'queued_preview',
+            'stage' => 'queued',
+            'options_json' => json_encode(['ip_address' => $this->moduleUtil->getUserIpAddr()], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            'last_message' => 'Menunggu worker untuk menganalisis workbook Attendance.',
+            'heartbeat_at' => now(),
+        ]);
 
         try {
-            $notAllowed = $this->moduleUtil->notAllowedInDemo();
-            if (! empty($notAllowed)) {
-                return $notAllowed;
+            $extension = strtolower($file->getClientOriginalExtension()) ?: 'xls';
+            $path = $file->storeAs('user-imports/'.$batch->id.'/staging', 'source.'.$extension, 'local');
+            if (! $path) {
+                throw new \RuntimeException('Workbook Attendance tidak dapat disimpan ke storage privat.');
             }
+            $batch->staging_path = $path;
+            $batch->save();
+            app(UserImportBatchService::class)->captureWorkbook($batch, Storage::disk('local')->path($path));
+            ProcessAttendanceImportBatch::dispatch((int) $batch->id, $businessId);
+        } catch (\Throwable $exception) {
+            app(AttendanceImportBatchService::class)->fail($batch, $exception);
+            report($exception);
 
-            //Set maximum php execution time
-            ini_set('max_execution_time', 0);
-
-            if ($request->hasFile('attendance')) {
-                $file = $request->file('attendance');
-                $parsed_array = Excel::toArray([], $file);
-                //Remove header row
-                $imported_data = array_splice($parsed_array[0], 1);
-
-                $formated_data = [];
-
-                $is_valid = true;
-                $error_msg = '';
-
-                DB::beginTransaction();
-                $ip_address = $this->moduleUtil->getUserIpAddr();
-                foreach ($imported_data as $key => $value) {
-                    $row_no = $key + 1;
-                    $temp = [];
-
-                    //Add user
-                    if (! empty($value[0])) {
-                        $email = trim($value[0]);
-                        $user = User::where('business_id', $business_id)->where('email', $email)->first();
-                        if (! empty($user)) {
-                            $temp['user_id'] = $user->id;
-                        } else {
-                            $is_valid = false;
-                            $error_msg = "User not found in row no. $row_no";
-                            break;
-                        }
-                    } else {
-                        $is_valid = false;
-                        $error_msg = "Email is required in row no. $row_no";
-                        break;
-                    }
-
-                    //clockin time
-                    if (! empty($value[1])) {
-                        $temp['clock_in_time'] = trim($value[1]);
-                    } else {
-                        $is_valid = false;
-                        $error_msg = "Clock in time is required in row no. $row_no";
-                        break;
-                    }
-                    $temp['clock_out_time'] = ! empty($value[2]) ? trim($value[2]) : null;
-
-                    //Add shift
-                    if (! empty($value[3])) {
-                        $shift_name = trim($value[3]);
-                        $shift = Shift::where('business_id', $business_id)->where('name', $shift_name)->first();
-                        if (! empty($shift)) {
-                            $temp['essentials_shift_id'] = $shift->id;
-                        } else {
-                            $is_valid = false;
-                            $error_msg = "Shift not found in row no. $row_no";
-                            break;
-                        }
-                    }
-
-                    $temp['clock_in_note'] = ! empty($value[4]) ? trim($value[4]) : null;
-                    $temp['clock_out_note'] = ! empty($value[5]) ? trim($value[5]) : null;
-                    $temp['ip_address'] = ! empty($value[6]) ? trim($value[6]) : $ip_address;
-                    $temp['business_id'] = $business_id;
-                    $formated_data[] = $temp;
-                }
-
-                if (! $is_valid) {
-                    throw new \Exception($error_msg);
-                }
-
-                if (! empty($formated_data)) {
-                    EssentialsAttendance::insert($formated_data);
-                }
-
-                $output = ['success' => 1,
-                    'msg' => __('product.file_imported_successfully'),
-                ];
-
-                DB::commit();
-            }
-        } catch (\Exception $e) {
-            DB::rollBack();
-            \Log::emergency('File:'.$e->getFile().'Line:'.$e->getLine().'Message:'.$e->getMessage());
-
-            $output = ['success' => 0,
-                'msg' => $e->getMessage(),
-            ];
-
-            return redirect()->back()->with('notification', $output);
+            return response()->json(['success' => false, 'message' => 'Workbook Attendance gagal dimasukkan ke antrean.'], 422);
         }
 
-        return redirect()->back()->with('status', $output);
+        return response()->json([
+            'success' => true,
+            'batch_id' => $batch->id,
+            'status' => 'queued_preview',
+            'message' => 'Workbook Attendance masuk antrean dan tetap diproses setelah halaman ditutup.',
+        ], 202);
+    }
+
+    public function importHistory(Request $request, AttendanceImportBatchService $history)
+    {
+        $businessId = $this->authorizeAttendanceImport($request);
+
+        return response()->json($history->history($request, $businessId, $request->user()->can('essentials.crud_all_attendance')));
+    }
+
+    public function importHistoryDetail(Request $request, int $batch, AttendanceImportBatchService $history)
+    {
+        $businessId = $this->authorizeAttendanceImport($request);
+        $detail = $history->detail($batch, $businessId);
+
+        return response()->json([
+            'batch' => $detail['batch']->only([
+                'id', 'file_name', 'status', 'stage', 'progress_current', 'progress_total',
+                'progress_percent', 'summary_json', 'last_message', 'error_message',
+                'created_at', 'started_at', 'completed_at', 'failed_at', 'reverted_at',
+            ]),
+            'results' => $detail['results'],
+        ]);
+    }
+
+    public function importHistorySource(Request $request, int $batch, UserImportBatchService $batches)
+    {
+        $businessId = $this->authorizeAttendanceImport($request);
+        $shared = $batches->findForBusiness($batch, $businessId, AttendanceImportBatchService::IMPORTER_KEY);
+        abort_unless($shared->hasSourceSnapshot(), 404, 'Snapshot workbook Attendance tidak tersedia.');
+
+        return $batches->workbookDownload($shared);
+    }
+
+    public function retryImportAttendance(Request $request, int $batch, UserImportBatchService $batches)
+    {
+        $businessId = $this->authorizeAttendanceImport($request);
+        $shared = $batches->findForBusiness($batch, $businessId, AttendanceImportBatchService::IMPORTER_KEY);
+        abort_unless($shared->status === 'failed', 422, 'Batch Attendance ini tidak dapat dicoba ulang.');
+
+        return $this->retryAttendanceBatch($shared, $businessId);
+    }
+
+    public function revertImportAttendance(Request $request, int $batch, UserImportBatchService $batches, AttendanceImportBatchService $history)
+    {
+        $businessId = $this->authorizeAttendanceImport($request);
+        abort_unless(auth()->user()->can('essentials.crud_all_attendance'), 403, 'Unauthorized action.');
+        $shared = $batches->findForBusiness($batch, $businessId, AttendanceImportBatchService::IMPORTER_KEY);
+        $history->revert($shared);
+
+        return response()->json(['success' => true, 'message' => 'Record Attendance hasil batch berhasil dikembalikan.']);
+    }
+
+    private function retryAttendanceBatch(UserImportBatch $batch, int $businessId)
+    {
+        abort_unless(filled($batch->staging_path) && Storage::disk('local')->exists($batch->staging_path), 422, 'Workbook sumber Attendance tidak tersedia.');
+        $batch->forceFill([
+            'status' => 'queued_preview', 'stage' => 'queued',
+            'progress_current' => 0, 'progress_total' => 0, 'progress_percent' => 0,
+            'last_message' => 'Menunggu worker untuk mencoba ulang import Attendance.',
+            'error_message' => null, 'heartbeat_at' => now(),
+            'started_at' => null, 'completed_at' => null, 'failed_at' => null,
+        ])->save();
+        ProcessAttendanceImportBatch::dispatch((int) $batch->id, $businessId);
+
+        return response()->json(['success' => true, 'batch_id' => $batch->id, 'status' => 'queued_preview', 'message' => 'Batch Attendance masuk antrean ulang.'], 202);
+    }
+
+    private function authorizeAttendanceImport(Request $request): int
+    {
+        $businessId = (int) $request->session()->get('user.business_id');
+        $isSuperadmin = $request->user()->can('superadmin');
+        $isAdmin = $isSuperadmin ? false : $this->moduleUtil->is_admin($request->user(), $businessId);
+        abort_unless(
+            $isSuperadmin
+                || $this->moduleUtil->hasThePermissionInSubscription($businessId, 'essentials_module')
+                || $isAdmin,
+            403,
+            'Unauthorized action.'
+        );
+
+        return $businessId;
     }
 
     /**
