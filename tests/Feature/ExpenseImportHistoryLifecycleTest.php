@@ -138,7 +138,7 @@ class ExpenseImportHistoryLifecycleTest extends TestCase
         $this->actingAs($this->admin())
             ->withSession($this->businessSession(7))
             ->get('/revert-expense-import/41')
-            ->assertMethodNotAllowed();
+            ->assertStatus(405);
 
         DB::table('transactions')->insert([
             'id' => 410,
