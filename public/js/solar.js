@@ -379,27 +379,114 @@
     function initHistoryUI() {
         var history = $('#solar-import-history');
         if (!history.length) return;
+        var tableElement = $('#solar-import-history-table');
+        if (!$.fn.DataTable || !tableElement.length) return;
         var timer = null;
-        var initialHistoryPoll = true;
+        var stopped = false;
+        var statusUrlTemplate = history.attr('data-status-url-template');
+        var csrf = $('meta[name="csrf-token"]').attr('content') || history.find('input[name="_token"]').val();
+
+        function statusLabel(status) {
+            var labels = {
+                queued_preview: 'Menunggu preview', analyzing: 'Menganalisis', preview_ready: 'Preview siap',
+                queued_import: 'Menunggu import', importing: 'Mengimpor', imported: 'Selesai',
+                queued: 'Menunggu', processing: 'Memproses', completed: 'Selesai',
+                failed: 'Gagal', cancelled: 'Dibatalkan', reverted: 'Rollback'
+            };
+            return labels[status] || status || '—';
+        }
+
+        function statusClass(status) {
+            if (status === 'imported' || status === 'preview_ready') return 'success';
+            if (status === 'failed') return 'danger';
+            if (status === 'reverted' || status === 'cancelled') return 'default';
+            return 'warning';
+        }
+
+        function actionLink(url, label, icon, className) {
+            return url ? '<a class="btn btn-xs ' + className + '" href="' + escapeHtml(url) + '"><i class="fa ' + icon + '"></i> ' + label + '</a>' : '';
+        }
+
+        function actionPost(url, label, icon, className, action) {
+            return url ? '<button type="button" class="btn btn-xs ' + className + ' solar-history-post" data-url="' + escapeHtml(url) + '" data-action="' + action + '"><i class="fa ' + icon + '"></i> ' + label + '</button>' : '';
+        }
+
+        function processCell(row) {
+            var active = !!row.active;
+            var state = row.process_state || 'completed';
+            var color = state === 'failed' ? 'danger' : (state === 'completed' ? 'success' : (state === 'cancelled' ? 'default' : 'info'));
+            var percent = Math.max(0, Math.min(100, Number(row.progress_percent || 0)));
+            return '<span class="label label-' + color + '">' + escapeHtml(statusLabel(state)) + '</span>' +
+                (active ? '<div class="progress progress-xs" style="margin:5px 0 0"><div class="progress-bar" style="width:' + percent + '%"></div></div>' : '') +
+                '<small class="text-muted">' + (active ? percent + '% · ' : '') + escapeHtml(row.last_message || row.error_message || '') + '</small>';
+        }
+
+        function rowActions(row) {
+            var actions = [
+                actionLink(row.preview_url, 'Tinjau', 'fa-eye', 'btn-primary'),
+                actionLink(row.detail_url, 'Detail', 'fa-list-alt', 'btn-default'),
+                actionLink(row.restore_url, 'Unduh Excel', 'fa-download', 'btn-success'),
+                actionPost(row.retry_url, 'Ulangi', 'fa-repeat', 'btn-warning', 'retry'),
+                actionPost(row.cancel_url, 'Batalkan', 'fa-times', 'btn-default', 'cancel'),
+                actionPost(row.rollback_url, 'Rollback', 'fa-undo', 'btn-danger', 'rollback')
+            ].filter(Boolean);
+            return '<div class="btn-group-vertical">' + (actions.join(' ') || '<span class="text-muted">—</span>') + '</div>';
+        }
+
+        var table = tableElement.DataTable({
+            processing: true,
+            serverSide: true,
+            searchDelay: 400,
+            pageLength: 25,
+            lengthMenu: [[10, 25, 50, 100], [10, 25, 50, 100]],
+            order: [[1, 'desc']],
+            ajax: {
+                url: history.attr('data-table-url'),
+                data: function (data) {
+                    data.status = $('#solar-import-history-status').val() || '';
+                    data.start_date = $('#solar-import-history-start-date').val() || '';
+                    data.end_date = $('#solar-import-history-end-date').val() || '';
+                },
+                error: function () {
+                    $('#solar-history-feedback').removeClass('alert-success').addClass('alert-danger').text('Riwayat batch Solar tidak dapat dimuat.').removeAttr('hidden');
+                }
+            },
+            columns: [
+                { data: 'file_name', render: function (value, type, row) { return type === 'display' ? actionLink(row.detail_url, escapeHtml(value || 'Workbook Solar'), 'fa-file-excel-o', 'btn-link') : value; } },
+                { data: 'created_at', render: function (value) { return value ? escapeHtml(new Date(value.replace(' ', 'T')).toLocaleString()) : '—'; } },
+                { data: 'status', render: function (value) { return '<span class="label label-' + statusClass(value) + '">' + escapeHtml(statusLabel(value)) + '</span>'; } },
+                { data: null, orderable: false, searchable: false, render: function (value, type, row) { return type === 'display' ? processCell(row) : (row.last_message || ''); } },
+                { data: 'counts.stock', defaultContent: 0, searchable: false },
+                { data: 'counts.pool', defaultContent: 0, searchable: false },
+                { data: 'counts.mess', defaultContent: 0, searchable: false },
+                { data: 'counts.usage', defaultContent: 0, searchable: false },
+                { data: null, orderable: false, searchable: false, render: function (value, type, row) { return type === 'display' ? rowActions(row) : ''; } }
+            ],
+            createdRow: function (row, data) {
+                if (data.domain_batch_id) row.id = 'solar-import-batch-' + data.domain_batch_id;
+            },
+            language: {
+                emptyTable: 'Belum ada riwayat import.',
+                processing: 'Memuat riwayat…',
+                search: 'Cari:',
+                lengthMenu: 'Tampilkan _MENU_ batch',
+                info: 'Menampilkan _START_–_END_ dari _TOTAL_ batch',
+                infoEmpty: 'Tidak ada batch',
+                zeroRecords: 'Tidak ada batch yang cocok.',
+                paginate: { previous: 'Sebelumnya', next: 'Berikutnya' }
+            }
+        });
+
         function pollHistory() {
-            var batchRows = history.find('tr[data-import-batch]');
-            var activeRows = initialHistoryPoll ? batchRows : batchRows.filter(function () {
-                return ['queued', 'processing'].indexOf($(this).attr('data-process-state')) !== -1;
-            });
-            initialHistoryPoll = false;
-            if (!activeRows.length) return;
-            var pending = activeRows.length;
-            var hasActive = false;
-            activeRows.each(function () {
-                var tr = $(this);
-                $.getJSON(tr.attr('data-status-url')).done(function (data) {
-                    tr.attr('data-process-state', data.state);
-                    if (['queued', 'processing'].indexOf(data.state) !== -1) hasActive = true;
-                    var color = data.state === 'failed' ? 'danger' : (data.state === 'completed' ? 'success' : (data.state === 'cancelled' ? 'default' : 'info'));
-                    tr.find('[data-process-cell]').html('<span class="label label-' + color + '">' + escapeHtml(data.state) + '</span>' +
-                        (['queued', 'processing'].indexOf(data.state) !== -1
-                            ? '<div class="progress progress-xs" style="margin:5px 0 0"><div class="progress-bar" data-process-progress style="width:' + Number(data.percent || 0) + '%"></div></div><small class="text-muted" data-process-message>' + Number(data.percent || 0) + '% · ' + escapeHtml(data.message || '') + (data.stale ? ' · Worker tidak merespons' : '') + '</small>'
-                            : '<small class="text-muted">' + escapeHtml(data.message || data.error || '') + '</small>'));
+            if (stopped) return;
+            var requests = [];
+            var reachedTerminal = false;
+            table.rows({ page: 'current' }).every(function () {
+                var rowData = this.data();
+                if (!rowData || !rowData.active || !rowData.domain_batch_id) return;
+                var currentRow = this;
+                var statusUrl = statusUrlTemplate.replace('__BATCH__', encodeURIComponent(rowData.domain_batch_id));
+                requests.push($.getJSON(statusUrl).done(function (data) {
                     var counts = { stock: 0, pool: 0, mess: 0, usage: 0 };
                     var summary = data.summary || {};
                     if (Array.isArray(summary.sheets)) {
@@ -410,39 +497,57 @@
                     } else {
                         Object.keys(counts).forEach(function (ledger) { counts[ledger] = Number(summary[ledger] || 0); });
                     }
-                    ['stock', 'pool', 'mess', 'usage'].forEach(function (ledger, index) {
-                        tr.children().eq(4 + index).text(counts[ledger]);
+                    var updated = $.extend({}, rowData, {
+                        process_state: data.state,
+                        progress_percent: data.percent,
+                        last_message: data.message || data.error || '',
+                        active: ['queued', 'processing'].indexOf(data.state) !== -1,
+                        domain_status: data.domain_status,
+                        counts: counts
                     });
-                    if (data.domain_status === 'imported') tr.find('[data-domain-status]').removeClass('label-warning label-default').addClass('label-success').text('Imported');
-                }).always(function () {
-                    pending--;
-                    if (pending === 0 && hasActive) timer = window.setTimeout(pollHistory, 4000);
-                });
+                    if (rowData.active && !updated.active) reachedTerminal = true;
+                    if (data.domain_status === 'imported') updated.status = 'imported';
+                    else if (data.domain_status === 'rolled_back') updated.status = 'reverted';
+                    currentRow.data(updated).invalidate();
+                }));
+            });
+            if (!requests.length) return;
+            $.when.apply($, requests).always(function () {
+                if (reachedTerminal) table.ajax.reload(null, false);
+                else table.draw(false);
             });
         }
-        history.find('tr[data-import-batch]').each(function () {
-            var state = $(this).find('[data-process-cell] .label').text().toLowerCase();
-            $(this).attr('data-process-state', state);
+
+        table.on('draw.dt', function () {
+            if (timer) window.clearTimeout(timer);
+            timer = window.setTimeout(pollHistory, 250);
         });
-        pollHistory();
-        history.on('submit', '.solar-rollback-form', function (event) {
-            event.preventDefault();
-            if (!window.confirm('Rollback batch ini? Semua data yang dibuat batch akan dihapus dan saldo dihitung ulang.')) return;
-            var form = this;
-            var row = $(form).closest('tr');
-            var button = $(form).find('button[type="submit"]').prop('disabled', true);
-            $.ajax({ url: form.action, method: 'POST', data: $(form).serialize(), headers: { Accept: 'application/json' } })
+        $('#solar-import-history-status').on('change', function () { table.ajax.reload(); });
+        $('#solar-import-history-start-date, #solar-import-history-end-date').on('change', function () { table.ajax.reload(); });
+        history.on('click', '.solar-history-post', function () {
+            var button = $(this);
+            var action = button.data('action');
+            var prompts = {
+                cancel: 'Batalkan proses batch ini?',
+                rollback: 'Rollback batch ini? Data ledger yang dibuat batch akan dihapus dan saldo dihitung ulang.'
+            };
+            if (prompts[action] && !window.confirm(prompts[action])) return;
+            button.prop('disabled', true);
+            $.ajax({ url: button.data('url'), method: 'POST', data: { _token: csrf }, headers: { Accept: 'application/json' } })
                 .done(function (response) {
-                    row.find('[data-domain-status]').removeClass('label-success label-warning').addClass('label-default').text('Rolled back');
-                    $(form).replaceWith('<span class="text-muted">Sudah di-rollback</span>');
-                    $('#solar-history-feedback').removeClass('alert-danger').addClass('alert-success').text(response.message || 'Rollback selesai.').removeAttr('hidden');
+                    $('#solar-history-feedback').removeClass('alert-danger').addClass('alert-success').text(response.message || 'Permintaan selesai.').removeAttr('hidden');
+                    table.ajax.reload(null, false);
                 }).fail(function (xhr) {
-                    var message = xhr.responseJSON && xhr.responseJSON.message ? xhr.responseJSON.message : 'Rollback gagal.';
+                    var message = xhr.responseJSON && xhr.responseJSON.message ? xhr.responseJSON.message : 'Permintaan gagal.';
                     $('#solar-history-feedback').removeClass('alert-success').addClass('alert-danger').text(message).removeAttr('hidden');
+                    table.ajax.reload(null, false);
                 }).always(function () { button.prop('disabled', false); });
         });
+        $(window).on('beforeunload.solar-import-history', function () {
+            stopped = true;
+            if (timer) window.clearTimeout(timer);
+        });
     }
-
     function initImportDetailUI() {
         if (!importDetailApp) return;
         var root = $(importDetailApp);
@@ -451,6 +556,45 @@
         var cursor = Number(root.attr('data-last-event-id') || 0);
         var timer = null;
         var stopped = false;
+
+        var sourceRowsTable = $('#solar-import-source-rows');
+        if ($.fn.DataTable && sourceRowsTable.length) {
+            function payloadCell(value) {
+                if (!value || typeof value !== 'object' || !Object.keys(value).length) return '<span class="text-muted">—</span>';
+                return '<details><summary>Lihat</summary><pre style="max-width:360px;max-height:220px;overflow:auto;white-space:pre-wrap">' + escapeHtml(JSON.stringify(value, null, 2)) + '</pre></details>';
+            }
+            sourceRowsTable.DataTable({
+                processing: true,
+                serverSide: true,
+                searchDelay: 350,
+                pageLength: 25,
+                lengthMenu: [[10, 25, 50, 100], [10, 25, 50, 100]],
+                order: [[0, 'asc'], [1, 'asc']],
+                ajax: { url: root.attr('data-rows-url'), data: function (data) { data.length = Math.min(Number(data.length || 25), 100); } },
+                columns: [
+                    { data: 'sheet', render: function (value) { return escapeHtml(value || '—'); } },
+                    { data: 'source_row', render: function (value) { return escapeHtml(value || '—'); } },
+                    { data: 'ledger', render: function (value) { return escapeHtml(value || '—'); } },
+                    { data: 'date', render: function (value) { return escapeHtml(value || '—'); } },
+                    { data: 'status_label', render: function (value, type, row) { return '<span class="label label-' + (row.status === 'error' ? 'danger' : (row.status === 'match' ? 'success' : 'warning')) + '">' + escapeHtml(value || row.status || '—') + '</span>'; } },
+                    { data: 'matched_by', render: function (value) { return escapeHtml(value || '—'); } },
+                    { data: 'detail', render: function (value) { return escapeHtml(value || '—'); } },
+                    { data: 'excel', orderable: false, searchable: false, render: payloadCell },
+                    { data: 'app', orderable: false, searchable: false, render: payloadCell },
+                    { data: 'importable', orderable: false, searchable: false, render: function (value) { return value ? '<span class="label label-success">Siap</span>' : '<span class="label label-default">Tidak</span>'; } }
+                ],
+                language: {
+                    emptyTable: 'Tidak ada baris sumber untuk batch ini.',
+                    processing: 'Memuat rincian baris…',
+                    search: 'Cari:',
+                    lengthMenu: 'Tampilkan _MENU_ baris',
+                    info: 'Menampilkan _START_–_END_ dari _TOTAL_ baris',
+                    infoEmpty: 'Tidak ada baris',
+                    zeroRecords: 'Tidak ada baris yang cocok.',
+                    paginate: { previous: 'Sebelumnya', next: 'Berikutnya' }
+                }
+            });
+        }
 
         function poll() {
             if (stopped) return;

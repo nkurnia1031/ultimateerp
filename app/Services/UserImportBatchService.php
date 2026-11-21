@@ -88,6 +88,14 @@ class UserImportBatchService
         if ($status !== '') {
             $filteredQuery->where('status', $status);
         }
+        $startDate = $this->dateFilter($request->input('start_date'));
+        $endDate = $this->dateFilter($request->input('end_date'));
+        if ($startDate !== null) {
+            $filteredQuery->whereDate('created_at', '>=', $startDate);
+        }
+        if ($endDate !== null) {
+            $filteredQuery->whereDate('created_at', '<=', $endDate);
+        }
         $recordsFiltered = (clone $filteredQuery)->count();
         $length = min(100, max(1, (int) $request->input('length', 25)));
         $start = max(0, (int) $request->input('start', 0));
@@ -216,6 +224,17 @@ class UserImportBatchService
                 && (int) ($summary['source_rows'] ?? 0) > 0,
             'active' => $batch->isActive(),
         ];
+    }
+
+    private function dateFilter(mixed $value): ?string
+    {
+        if (! is_string($value) || ! preg_match('/^\d{4}-\d{2}-\d{2}$/', $value)) {
+            return null;
+        }
+
+        $date = \DateTimeImmutable::createFromFormat('!Y-m-d', $value);
+
+        return $date && $date->format('Y-m-d') === $value ? $value : null;
     }
 
     private function spreadsheetFromSnapshot(UserImportBatch $batch): Spreadsheet

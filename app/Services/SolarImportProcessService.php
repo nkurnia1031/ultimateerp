@@ -49,6 +49,7 @@ class SolarImportProcessService
             'started_at' => null,
         ]);
         $this->appendEvent($batchId, $businessId, 'queued', $message, 0, 0, $total);
+        $this->syncSharedHistory($batchId, $businessId, true);
     }
 
     public function start(string $batchId, int $businessId, string $stage, string $message, int $percent = 1): bool
@@ -121,6 +122,8 @@ class SolarImportProcessService
             ->where('business_id', $businessId)
             ->where('process_state', 'processing')
             ->update($values);
+
+        $this->syncSharedHistory($batchId, $businessId, false, $stage, $values['progress_percent']);
     }
 
     public function complete(string $batchId, int $businessId, string $message = 'Proses selesai.'): void
@@ -300,6 +303,35 @@ class SolarImportProcessService
         }
         DB::table('solar_import_batches')->where('id', $batchId)->where('business_id', $businessId)->update($values);
         $this->rememberStatus($batchId, $businessId, $values);
+        $this->syncSharedHistory($batchId, $businessId, true);
+    }
+
+    private function syncSharedHistory(
+        string $batchId,
+        int $businessId,
+        bool $force = false,
+        ?string $stage = null,
+        ?int $percent = null
+    ): void {
+        if (! $force && DB::transactionLevel() > 0) {
+            return;
+        }
+
+        $key = 'solar-import-history-sync:'.$businessId.':'.$batchId;
+        $last = Cache::get($key, []);
+        $last = is_array($last) ? $last : [];
+        $shouldSync = $force
+            || ($stage !== null && ($last['stage'] ?? null) !== $stage)
+            || ($percent !== null && $percent >= ((int) ($last['percent'] ?? -5) + 5));
+        if (! $shouldSync) {
+            return;
+        }
+
+        $shared = app(SolarImportHistoryService::class)->syncFromDomainBatch($batchId, $businessId);
+        Cache::put($key, [
+            'stage' => $stage ?? $shared->stage,
+            'percent' => $percent ?? (int) $shared->progress_percent,
+        ], self::CACHE_TTL_SECONDS);
     }
 
     private function appendEvent(

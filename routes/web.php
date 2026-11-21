@@ -172,6 +172,10 @@ Route::middleware(['setData', 'auth', 'SetSessionData', 'language', 'timezone', 
         Route::post('/reconcile/upload', [SolarController::class, 'uploadPreview'])->name('reconcile.upload');
         Route::post('/import/confirm', [SolarController::class, 'confirmImport'])->name('import.confirm');
         Route::get('/imports', [SolarController::class, 'importHistory'])->name('imports');
+        Route::get('/imports/data', [SolarController::class, 'importHistoryData'])->name('imports.data');
+        Route::get('/imports/{batchId}/restore', [SolarController::class, 'restoreImportWorkbook'])
+            ->whereUuid('batchId')
+            ->name('imports.restore');
         Route::get('/imports/{batchId}', [SolarController::class, 'importDetail'])
             ->whereUuid('batchId')
             ->name('imports.detail');

@@ -54,6 +54,9 @@ class SolarImportHistoryLifecycleTest extends TestCase
         $this->previewService->shouldReceive('summary')
             ->zeroOrMoreTimes()
             ->andReturn($this->solarSummary());
+        $this->previewService->shouldReceive('referenceMappings')
+            ->zeroOrMoreTimes()
+            ->andReturn(['asset' => [], 'driver' => []]);
         $this->app->instance(SolarImportPreviewService::class, $this->previewService);
     }
 
@@ -86,6 +89,8 @@ class SolarImportHistoryLifecycleTest extends TestCase
             $this->assertSame('queued_preview', $shared->status);
             $stagingPath = $domain->file_path;
             Storage::disk('local')->assertExists($stagingPath);
+            $queuedStatus = $this->asBusiness(7)->get(route('solar.imports.status', $domain->id));
+            $queuedStatus->assertOk()->assertJsonPath('state', 'queued')->assertJsonPath('operation', 'preview');
 
             $this->previewService->shouldReceive('rebuild')
                 ->once()
@@ -101,6 +106,8 @@ class SolarImportHistoryLifecycleTest extends TestCase
             $this->assertTrue($shared->hasSourceSnapshot());
             $this->assertNull($shared->staging_path);
             Storage::disk('local')->assertMissing($stagingPath);
+            $previewStatus = $this->asBusiness(7)->get(route('solar.imports.status', $domain->id));
+            $previewStatus->assertOk()->assertJsonPath('state', 'completed')->assertJsonPath('domain_status', 'preview')->assertJsonPath('percent', 100);
 
             $history = $this->asBusiness(7)->get(route('solar.imports.data', [
                 'draw' => 1,
@@ -131,6 +138,8 @@ class SolarImportHistoryLifecycleTest extends TestCase
             $confirm->assertStatus(202)->assertJsonPath('success', true);
             Bus::assertDispatched(ProcessSolarImport::class, 1);
             $this->assertSame('queued_import', $shared->fresh()->status);
+            $queuedImportStatus = $this->asBusiness(7)->get(route('solar.imports.status', $domain->id));
+            $queuedImportStatus->assertOk()->assertJsonPath('state', 'queued')->assertJsonPath('operation', 'import');
 
             $this->asBusiness(8)->get(route('solar.imports.restore', $domain->id))->assertNotFound();
         } finally {
@@ -173,6 +182,15 @@ class SolarImportHistoryLifecycleTest extends TestCase
             ->assertJsonPath('data.0.has_snapshot', false)
             ->assertJsonPath('data.0.restore_url', null);
         $this->assertNotNull(DB::table('solar_import_batches')->where('id', $legacyId)->value('user_import_batch_id'));
+
+        $dateFilteredHistory = $this->asBusiness(7)->get(route('solar.imports.data', [
+            'draw' => 6,
+            'start' => 0,
+            'length' => 25,
+            'start_date' => now()->toDateString(),
+            'end_date' => now()->toDateString(),
+        ]));
+        $dateFilteredHistory->assertOk()->assertJsonPath('recordsTotal', 1)->assertJsonPath('recordsFiltered', 0);
 
         $rows = $this->asBusiness(7)->get(route('solar.imports.rows', [
             'batchId' => $legacyId,

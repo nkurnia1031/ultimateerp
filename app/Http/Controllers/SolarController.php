@@ -6,6 +6,7 @@ use App\Contact;
 use App\Jobs\ProcessSolarImport;
 use App\Jobs\ProcessSolarPreview;
 use App\Services\SolarImportProcessService;
+use App\Services\SolarImportHistoryService;
 use App\Services\SolarImportService;
 use App\Services\SolarLedgerService;
 use App\Services\SolarImportPreviewService;
@@ -165,14 +166,25 @@ class SolarController extends Controller
 
     public function importHistory(Request $request)
     {
+        $this->authorizeSolar($request);
+
+        return view('solar.import-history');
+    }
+
+    public function importHistoryData(Request $request)
+    {
         $businessId = $this->authorizeSolar($request);
 
-        return view('solar.import-history', [
-            'batches' => DB::table('solar_import_batches')
-                ->where('business_id', $businessId)
-                ->orderByDesc('created_at')
-                ->paginate(25),
-        ]);
+        return response()->json(app(SolarImportHistoryService::class)->dataTable($request, $businessId));
+    }
+
+    public function restoreImportWorkbook(Request $request, string $batchId)
+    {
+        $businessId = $this->authorizeSolar($request);
+        $shared = app(SolarImportHistoryService::class)->sharedBatchForDomainBatch($batchId, $businessId);
+        abort_unless(app(SolarImportHistoryService::class)->hasSourceSnapshot($batchId, $businessId), 404, 'Snapshot workbook tidak tersedia untuk batch ini.');
+
+        return app(\App\Services\UserImportBatchService::class)->workbookDownload($shared);
     }
 
     public function importDetail(Request $request, string $batchId)
@@ -205,8 +217,10 @@ class SolarController extends Controller
             ->orderBy('sequence')
             ->limit(300)
             ->get();
+        $mappings = $this->previewService->referenceMappings($businessId, $batchId);
+        $hasWorkbookSnapshot = app(SolarImportHistoryService::class)->hasSourceSnapshot($batchId, $businessId);
 
-        return view('solar.import-detail', compact('batch', 'rows', 'events'));
+        return view('solar.import-detail', compact('batch', 'rows', 'events', 'mappings', 'hasWorkbookSnapshot'));
     }
 
     public function reconcilePreview(Request $request, string $batchId)
@@ -600,10 +614,17 @@ class SolarController extends Controller
     {
         $businessId = $this->authorizeSolar($request);
         $cancelled = $this->processService->cancel($batchId, $businessId);
+        $stagingRemoved = true;
+        if ($cancelled && ! app(SolarImportHistoryService::class)->hasSourceSnapshot($batchId, $businessId)) {
+            $stagingRemoved = app(SolarImportHistoryService::class)->deleteStaging($batchId, $businessId);
+            $request->session()->forget("solar_imports.{$batchId}");
+        }
 
         return response()->json([
             'success' => $cancelled,
-            'message' => $cancelled ? 'Proses dibatalkan.' : 'Proses sudah berjalan atau selesai.',
+            'message' => $cancelled
+                ? ($stagingRemoved ? 'Proses dibatalkan.' : 'Proses dibatalkan, tetapi pembersihan file sementara belum berhasil. Hubungi administrator dengan ID batch.')
+                : 'Proses sudah berjalan atau selesai.',
             'status' => $this->processService->status($batchId, $businessId),
         ], $cancelled ? 200 : 409);
     }
@@ -620,6 +641,12 @@ class SolarController extends Controller
             abort_if(! $batch, 404, 'Batch import tidak ditemukan.');
             abort_unless(in_array($batch->process_state, ['failed', 'cancelled'], true), 409, 'Batch belum dapat diulang.');
             abort_unless($batch->status === 'preview', 409, 'Batch import yang sudah selesai tidak dapat diulang.');
+            abort_unless(
+                app(SolarImportHistoryService::class)->hasSourceSnapshot($batchId, $businessId)
+                || ($batch->file_path && Storage::disk('local')->exists($batch->file_path)),
+                409,
+                'Sumber workbook tidak tersedia. Unggah ulang file untuk memulai batch baru.'
+            );
 
             $operation = $batch->operation ?: 'preview';
             $total = $operation === 'import'
@@ -662,10 +689,12 @@ class SolarController extends Controller
 
         $overrides = json_decode((string) ($batch->date_overrides ?? '[]'), true) ?: [];
         $overrides[$row->ledger.':'.$row->source_row] = $date;
-        $path = $batch->file_path ?: $request->session()->get("solar_imports.{$batchId}");
-        abort_if(! $path || ! Storage::disk('local')->exists($path), 404, 'File preview sudah tidak tersedia.');
-
-        $this->previewService->rebuild($businessId, $batchId, Storage::disk('local')->path($path), $overrides);
+        [$workbookPath, $temporary] = app(SolarImportHistoryService::class)->sourceWorkbookPath($batchId, $businessId);
+        try {
+            $this->previewService->rebuild($businessId, $batchId, $workbookPath, $overrides);
+        } finally {
+            app(SolarImportHistoryService::class)->cleanupTemporaryWorkbook($workbookPath, $temporary);
+        }
         DB::table('solar_import_batches')->where('id', $batchId)->update([
             'date_overrides' => json_encode($overrides),
             'updated_at' => now(),
@@ -875,6 +904,7 @@ class SolarController extends Controller
                 'updated_at' => now(),
             ]);
         });
+        app(SolarImportHistoryService::class)->syncFromDomainBatch($batchId, $businessId);
 
         if ($request->expectsJson()) {
             return response()->json(['success' => true, 'message' => 'Import Solar berhasil di-rollback.']);
@@ -1322,9 +1352,31 @@ class SolarController extends Controller
     private function cleanupImports(string $directory): void
     {
         $disk = Storage::disk('local');
+        $referenced = DB::table('solar_import_batches')
+            ->where('file_path', 'like', rtrim($directory, '/').'/%')
+            ->get(['id', 'file_path', 'user_import_batch_id', 'process_state'])
+            ->keyBy('file_path');
         foreach ($disk->files($directory) as $file) {
-            if ($disk->lastModified($file) < now()->subDay()->timestamp) {
-                $disk->delete($file);
+            if ($disk->lastModified($file) >= now()->subDay()->timestamp) {
+                continue;
+            }
+            $batch = $referenced->get($file);
+            if ($batch && in_array($batch->process_state, ['queued', 'processing'], true)) {
+                continue;
+            }
+
+            if ($disk->exists($file) && ! $disk->delete($file)) {
+                \Illuminate\Support\Facades\Log::warning('Expired Solar staging file could not be deleted.', [
+                    'path' => $file,
+                    'batch_id' => $batch->id ?? null,
+                ]);
+                continue;
+            }
+            if ($batch) {
+                DB::table('solar_import_batches')->where('id', $batch->id)->update(['file_path' => null, 'updated_at' => now()]);
+                if ($batch->user_import_batch_id) {
+                    DB::table('user_import_batches')->where('id', $batch->user_import_batch_id)->update(['staging_path' => null, 'updated_at' => now()]);
+                }
             }
         }
     }

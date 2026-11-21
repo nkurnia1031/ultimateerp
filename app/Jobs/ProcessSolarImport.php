@@ -35,7 +35,14 @@ class ProcessSolarImport implements ShouldQueue
             $processService->complete(
                 $this->batchId,
                 $this->businessId,
-                sprintf('Import selesai: %d Stock, %d Pool, %d Mess, %d pemakaian alat.', $inserted['stock'], $inserted['pool'], $inserted['mess'], $inserted['usage'] ?? 0)
+                sprintf(
+                    'Import selesai: %d Stock, %d Pool, %d Mess, %d pemakaian alat.%s',
+                    $inserted['stock'],
+                    $inserted['pool'],
+                    $inserted['mess'],
+                    $inserted['usage'] ?? 0,
+                    ! empty($inserted['staging_cleanup_warning']) ? ' File sementara belum berhasil dibersihkan; workbook pemulihan tersedia di riwayat.' : ''
+                )
             );
         } catch (RuntimeException $exception) {
             if ($exception->getMessage() === 'solar_import_cancelled') {
