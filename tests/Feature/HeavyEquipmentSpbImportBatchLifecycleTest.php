@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
+use Modules\AssetManagement\Entities\HeavyEquipmentRoute;
 use Modules\AssetManagement\Entities\HeavyEquipmentTrip;
 use Modules\AssetManagement\Jobs\ProcessHeavyEquipmentSpbImportJob;
 use Modules\AssetManagement\Jobs\ProcessHeavyEquipmentSpbPreviewJob;
