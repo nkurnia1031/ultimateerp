@@ -9,6 +9,7 @@ use App\Account;
 use App\Transaction;
 use App\User;
 use App\Services\UserBusinessImportService;
+use App\Services\BusinessCopyImportBatchService;
 use App\Utils\ModuleUtil;
 use DB;
 use Illuminate\Http\Request;
@@ -27,10 +28,11 @@ class ManageUserController extends Controller
      * @param  Util  $commonUtil
      * @return void
      */
-    public function __construct(ModuleUtil $moduleUtil, UserBusinessImportService $userBusinessImport)
+    public function __construct(ModuleUtil $moduleUtil, UserBusinessImportService $userBusinessImport, BusinessCopyImportBatchService $businessCopyImport)
     {
         $this->moduleUtil = $moduleUtil;
         $this->userBusinessImport = $userBusinessImport;
+        $this->businessCopyImport = $businessCopyImport;
     }
 
     /**
@@ -329,23 +331,29 @@ class ManageUserController extends Controller
             return response()->json(['success' => false, 'message' => 'Kuota user business tujuan telah habis.'], 422);
         }
 
-        $user = $this->userBusinessImport->import(
-            (int) $validated['source_business_id'],
-            $targetBusinessId,
-            (int) $validated['source_user_id'],
-            $validated
-        );
-        $this->moduleUtil->activityLog($user, 'imported', null, [
-            'source_business_id' => (int) $validated['source_business_id'],
-            'source_user_id' => (int) $validated['source_user_id'],
-        ], true, $targetBusinessId);
-        event(new UserCreatedOrModified($user, 'added'));
+        try {
+            $queued = $this->businessCopyImport->queue('users', (int) $validated['source_business_id'], $targetBusinessId, (int) auth()->id(), [
+                'source_user_id' => (int) $validated['source_user_id'],
+                'mapping' => [
+                    'username' => $validated['username'] ?? null,
+                    'role_map' => $validated['role_map'] ?? [],
+                    'location_map' => $validated['location_map'] ?? [],
+                    'contact_map' => $validated['contact_map'] ?? [],
+                ],
+            ]);
+        } catch (\Throwable $exception) {
+            return response()->json(['success' => false, 'message' => $exception->getMessage()], 422);
+        }
+        $batch = $queued['batch'];
 
         return response()->json([
             'success' => true,
-            'message' => 'User berhasil diimpor ke business ini.',
-            'redirect' => action([self::class, 'index']),
-        ]);
+            'batch_id' => $batch->id,
+            'status' => $batch->status,
+            'message' => $queued['duplicate']
+                ? 'Salinan user ini sudah tercatat pada batch #'.$batch->id.'.'
+                : 'Salin user masuk antrean pada batch #'.$batch->id.'.',
+        ], 202);
     }
 
     private function authorizeBusinessUserImport(): void

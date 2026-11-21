@@ -439,6 +439,10 @@
             </div>
         </div>
 
+        @if (auth()->user()->can('supplier.create') || auth()->user()->can('customer.create'))
+            @include('import_copies.history', ['copyType' => 'contacts', 'historyTitle' => 'Riwayat salin kontak dari bisnis'])
+        @endif
+
     </section>
     <!-- /.content -->
 @stop

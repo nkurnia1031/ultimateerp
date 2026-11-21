@@ -96,6 +96,10 @@
         </div>
     </div>
 
+    @if (auth()->user()->can('admin') || auth()->user()->can('superadmin'))
+        @include('import_copies.history', ['copyType' => 'expense_categories', 'historyTitle' => 'Riwayat salin kategori biaya'])
+    @endif
+
 </section>
 <!-- /.content -->
 

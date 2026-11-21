@@ -121,7 +121,8 @@ class SuratKontrakImportBatchLifecycleTest extends TestCase
         $path = $this->workbook('Kontrak retry', 'PT Retry');
         try {
             $response = $this->upload($path)->assertStatus(202);
-            $batch = UserImportBatch::where('importer_key', SuratKontrakImportBatchService::IMPORTER_KEY)->firstOrFail();
+            $batch = UserImportBatch::where('business_id', $this->businessId)
+                ->where('importer_key', SuratKontrakImportBatchService::IMPORTER_KEY)->firstOrFail();
             $batch->forceFill(['status' => 'partial', 'stage' => 'partial'])->save();
 
             $this->actingAs($this->admin())->withSession($this->businessSession($this->businessId))
@@ -164,7 +165,7 @@ class SuratKontrakImportBatchLifecycleTest extends TestCase
         $spreadsheet->getActiveSheet()->setTitle('Kontrak');
         $spreadsheet->getActiveSheet()->fromArray([
             ['Nomor', 'Contact ID', 'Pekerjaan', 'Mulai Kerja', 'Selesai', 'Tonase'],
-            ['SPK-'.substr(sha1($job), 0, 8), $contact, $job, '2026-11-01', '2026-11-05', 143],
+            ['SPK-'.substr(sha1($job.bin2hex(random_bytes(4))), 0, 8), $contact, $job, '2026-11-01', '2026-11-05', 143],
         ], null, 'A1');
         $path = tempnam(sys_get_temp_dir(), 'surat-kontrak-').'.xlsx';
         (new Xlsx($spreadsheet))->save($path);
@@ -189,7 +190,10 @@ class SuratKontrakImportBatchLifecycleTest extends TestCase
 
     private function businessSession(int $businessId): array
     {
-        return ['user' => ['business_id' => $businessId, 'id' => $this->userId]];
+        return [
+            'user' => ['business_id' => $businessId, 'id' => $this->userId],
+            'business' => ['time_zone' => 'UTC'],
+        ];
     }
 
     private function createBusinessFixture(): void

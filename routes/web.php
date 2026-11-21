@@ -294,6 +294,14 @@ Route::middleware(['setData', 'auth', 'SetSessionData', 'language', 'timezone', 
     Route::post('/contacts/import/history/{batch}/revert', [ContactController::class, 'revertContactImport'])->name('contacts.import.revert');
     Route::post('/contacts/import/business/preview', [ContactController::class, 'previewBusinessImport'])->name('contacts.import.business.preview');
     Route::post('/contacts/import/business', [ContactController::class, 'importFromBusiness'])->name('contacts.import.business');
+    Route::get('/import-copies/{type}/history', [\App\Http\Controllers\BusinessCopyImportController::class, 'history'])
+        ->where('type', 'contacts|expense_categories|users')->name('import-copies.history');
+    Route::get('/import-copies/{type}/history/{batch}', [\App\Http\Controllers\BusinessCopyImportController::class, 'detail'])
+        ->where('type', 'contacts|expense_categories|users')->name('import-copies.detail');
+    Route::post('/import-copies/{type}/history/{batch}/retry', [\App\Http\Controllers\BusinessCopyImportController::class, 'retry'])
+        ->where('type', 'contacts|expense_categories|users')->name('import-copies.retry');
+    Route::post('/import-copies/{type}/history/{batch}/revert', [\App\Http\Controllers\BusinessCopyImportController::class, 'revert'])
+        ->where('type', 'contacts|expense_categories|users')->name('import-copies.revert');
     Route::post('/contacts/check-contacts-id', [ContactController::class, 'checkContactId']);
 
     Route::post('/contacts/check-tax-number', [ContactController::class, 'checkTaxNumber']);

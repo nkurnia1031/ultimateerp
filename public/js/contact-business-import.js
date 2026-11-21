@@ -95,12 +95,15 @@
         }).done(function (result) {
             modal.modal('hide');
             if (window.toastr) {
-                toastr.success(result.message || 'Kontak berhasil diimpor.');
+                toastr.success(result.message || 'Salin kontak masuk antrean.');
             }
             if (typeof contact_table !== 'undefined' && contact_table) {
                 contact_table.ajax.reload(null, false);
             } else {
                 window.location.reload();
+            }
+            if (window.businessCopyImportHistories && window.businessCopyImportHistories.contacts) {
+                window.businessCopyImportHistories.contacts.ajax.reload(null, false);
             }
         }).fail(function (xhr) {
             var message = xhr.responseJSON && xhr.responseJSON.message ? xhr.responseJSON.message : 'Import kontak gagal.';

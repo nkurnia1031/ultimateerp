@@ -125,6 +125,128 @@ class ContactBusinessImportService
         });
     }
 
+    public function importTracked(
+        int $sourceBusinessId,
+        int $targetBusinessId,
+        int $createdBy,
+        string $type,
+        bool $skipExisting = true,
+        array $previous = [],
+        ?callable $progress = null,
+        ?int $batchId = null
+    ): array {
+        if ($sourceBusinessId === $targetBusinessId) {
+            throw new RuntimeException('Bisnis sumber dan tujuan harus berbeda.');
+        }
+
+        $source = $this->sourceContacts($sourceBusinessId, $type)->get();
+        $target = Contact::query()->where('business_id', $targetBusinessId)->get();
+        $index = $this->buildIndex($target);
+        $outcomes = collect($previous['row_outcomes'] ?? [])->keyBy('source_id');
+        $createdRecords = collect($previous['created_records'] ?? [])->keyBy('target_id');
+        $current = 0;
+
+        foreach ($source as $contact) {
+            $sourceId = (int) $contact->id;
+            $prior = $outcomes->get($sourceId);
+            if ($prior && in_array($prior['status'] ?? '', ['created', 'skipped'], true)) {
+                $current++;
+                if ($progress) $progress($current, $source->count(), $outcomes->values()->all(), $createdRecords->values()->all());
+                continue;
+            }
+
+            // Recover a row committed just before a worker interruption, even if
+            // its result payload had not yet been written to durable storage.
+            $recovered = $batchId
+                ? Contact::where('business_id', $targetBusinessId)->where('user_import_batch_id', $batchId)
+                    ->where('user_import_source_id', $sourceId)->first()
+                : null;
+            if ($recovered) {
+                $outcomes->put($sourceId, [
+                    'source_id' => $sourceId,
+                    'source_label' => (string) $contact->name,
+                    'status' => 'created',
+                    'target_id' => (int) $recovered->id,
+                    'target_label' => (string) $recovered->name,
+                    'attributes' => $this->modelAttributes($recovered),
+                    'updated_at' => (string) $recovered->updated_at,
+                ]);
+                $createdRecords->put($recovered->id, [
+                    'target_id' => (int) $recovered->id,
+                    'attributes' => $this->modelAttributes($recovered),
+                    'updated_at' => (string) $recovered->updated_at,
+                ]);
+                $this->addToIndex($index, $recovered);
+                $current++;
+                if ($progress) $progress($current, $source->count(), $outcomes->values()->all(), $createdRecords->values()->all());
+                continue;
+            }
+
+            $match = $this->findMatch($contact, $index);
+            if ($match && $skipExisting) {
+                $outcomes->put($sourceId, [
+                    'source_id' => $sourceId,
+                    'source_label' => (string) $contact->name,
+                    'status' => 'skipped',
+                    'target_id' => (int) $match['contact']->id,
+                    'target_label' => (string) $match['contact']->name,
+                    'matched_by' => $match['matched_by'],
+                ]);
+            } else {
+                try {
+                    $newContact = DB::transaction(function () use ($contact, $targetBusinessId, $createdBy, $batchId, $sourceId) {
+                        $payload = $this->copyPayload($contact, $targetBusinessId, $createdBy);
+                        $payload['contact_id'] = $this->uniqueContactId($payload['contact_id'] ?? null, $targetBusinessId);
+                        if ($batchId) {
+                            $payload['user_import_batch_id'] = $batchId;
+                            $payload['user_import_source_id'] = $sourceId;
+                        }
+
+                        return Contact::create($payload)->fresh();
+                    });
+                    $outcomes->put($sourceId, [
+                        'source_id' => $sourceId,
+                        'source_label' => (string) $contact->name,
+                        'status' => 'created',
+                        'target_id' => (int) $newContact->id,
+                        'target_label' => (string) $newContact->name,
+                        'attributes' => $this->modelAttributes($newContact),
+                        'updated_at' => (string) $newContact->updated_at,
+                    ]);
+                    $createdRecords->put($newContact->id, [
+                        'target_id' => (int) $newContact->id,
+                        'attributes' => $this->modelAttributes($newContact),
+                        'updated_at' => (string) $newContact->updated_at,
+                    ]);
+                    $this->addToIndex($index, $newContact);
+                } catch (\Throwable $exception) {
+                    $outcomes->put($sourceId, [
+                        'source_id' => $sourceId,
+                        'source_label' => (string) $contact->name,
+                        'status' => 'failed',
+                        'error' => mb_substr($exception->getMessage(), 0, 2000),
+                    ]);
+                }
+            }
+
+            $current++;
+            if ($progress) $progress($current, $source->count(), $outcomes->values()->all(), $createdRecords->values()->all());
+        }
+
+        $rows = $outcomes->values()->all();
+
+        return [
+            'summary' => [
+                'source_rows' => count($rows),
+                'created_rows' => $outcomes->where('status', 'created')->count(),
+                'skipped_rows' => $outcomes->where('status', 'skipped')->count(),
+                'failed_rows' => $outcomes->where('status', 'failed')->count(),
+            ],
+            'row_outcomes' => $rows,
+            'created_records' => $createdRecords->values()->all(),
+        ];
+    }
+
     private function sourceContacts(int $businessId, string $type)
     {
         $types = $type === 'supplier' ? ['supplier', 'both'] : ['customer', 'both'];
@@ -225,5 +347,10 @@ class ContactBusinessImportService
     {
         $value = preg_replace('/\D+/', '', (string) $value);
         return $value === '' ? null : $value;
+    }
+
+    private function modelAttributes($model): array
+    {
+        return json_decode(json_encode($model->getAttributes(), JSON_THROW_ON_ERROR), true, 512, JSON_THROW_ON_ERROR);
     }
 }

@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\ExpenseCategory;
 use App\Business;
 use App\Services\ExpenseCategoryBusinessImportService;
+use App\Services\BusinessCopyImportBatchService;
 use Illuminate\Http\Request;
 use Yajra\DataTables\Facades\DataTables;
 
@@ -71,7 +72,7 @@ class ExpenseCategoryController extends Controller
         return response()->json($this->businessCategoryImport->preview($sourceBusinessId, $targetBusinessId));
     }
 
-    public function importFromBusiness(Request $request)
+    public function importFromBusiness(Request $request, BusinessCopyImportBatchService $copyBatches)
     {
         $validated = $request->validate([
             'source_business_id' => ['required', 'integer'],
@@ -81,12 +82,9 @@ class ExpenseCategoryController extends Controller
         $sourceBusinessId = (int) $validated['source_business_id'];
         $this->authorizeBusinessImport($sourceBusinessId, $targetBusinessId);
         try {
-            $result = $this->businessCategoryImport->import(
-                $sourceBusinessId,
-                $targetBusinessId,
-                (int) $request->session()->get('user.id'),
-                (bool) ($validated['skip_existing'] ?? true)
-            );
+            $queued = $copyBatches->queue('expense_categories', $sourceBusinessId, $targetBusinessId, (int) auth()->id(), [
+                'skip_existing' => (bool) ($validated['skip_existing'] ?? true),
+            ]);
         } catch (\Throwable $exception) {
             \Log::warning('Expense category business import failed.', [
                 'source_business_id' => $sourceBusinessId,
@@ -107,17 +105,17 @@ class ExpenseCategoryController extends Controller
             ]);
         }
 
+        $batch = $queued['batch'];
+        $message = $queued['duplicate']
+            ? 'Salinan ini sudah tercatat pada batch #'.$batch->id.'.'
+            : 'Salin kategori biaya masuk antrean pada batch #'.$batch->id.'.';
         if ($request->expectsJson()) {
-            return response()->json([
-                'success' => true,
-                'message' => sprintf('%d kategori diimpor, %d dilewati karena sudah ada.', $result['created'], $result['skipped']),
-                'result' => $result,
-            ]);
+            return response()->json(['success' => true, 'batch_id' => $batch->id, 'status' => $batch->status, 'message' => $message], 202);
         }
 
         return redirect()->route('expense-categories.index')->with('status', [
             'success' => true,
-            'msg' => sprintf('%d kategori diimpor, %d dilewati karena sudah ada.', $result['created'], $result['skipped']),
+            'msg' => $message,
         ]);
     }
 

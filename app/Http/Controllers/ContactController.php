@@ -17,6 +17,7 @@ use App\Utils\NotificationUtil;
 use App\Utils\TransactionUtil;
 use App\Utils\Util;
 use App\Services\ContactBusinessImportService;
+use App\Services\BusinessCopyImportBatchService;
 use App\Services\ContactCsvImportBatchService;
 use App\Services\UserImportBatchService;
 use App\UserImportBatch;
@@ -137,7 +138,7 @@ class ContactController extends Controller
      * Copy contacts from the selected source business. Existing contacts are
      * skipped by default and the response contains an actionable summary.
      */
-    public function importFromBusiness(Request $request)
+    public function importFromBusiness(Request $request, BusinessCopyImportBatchService $copyBatches)
     {
         $validated = $request->validate([
             'type' => ['required', 'in:customer,supplier'],
@@ -148,26 +149,31 @@ class ContactController extends Controller
         $sourceBusinessId = (int) $validated['source_business_id'];
         $this->authorizeBusinessContactImport($request, $targetBusinessId, $sourceBusinessId);
 
-        $result = $this->businessContactImport->import(
-            $sourceBusinessId,
-            $targetBusinessId,
-            (int) $request->session()->get('user.id'),
-            $validated['type'],
-            (bool) ($validated['skip_existing'] ?? true)
-        );
+        try {
+            $queued = $copyBatches->queue('contacts', $sourceBusinessId, $targetBusinessId, (int) auth()->id(), [
+                'contact_type' => $validated['type'],
+                'skip_existing' => (bool) ($validated['skip_existing'] ?? true),
+            ]);
+        } catch (\Throwable $exception) {
+            if ($request->expectsJson()) {
+                return response()->json(['success' => false, 'message' => $exception->getMessage()], 422);
+            }
+
+            return redirect()->route('contacts.index', ['type' => $validated['type']])->withErrors(['import' => $exception->getMessage()]);
+        }
+        $batch = $queued['batch'];
+        $message = $queued['duplicate']
+            ? 'Salinan ini sudah tercatat pada batch #'.$batch->id.'.'
+            : 'Salin kontak masuk antrean pada batch #'.$batch->id.'.';
 
         if ($request->expectsJson()) {
-            return response()->json([
-                'success' => true,
-                'message' => sprintf('%d kontak diimpor, %d dilewati karena sudah ada.', $result['created'], $result['skipped']),
-                'result' => $result,
-            ]);
+            return response()->json(['success' => true, 'batch_id' => $batch->id, 'status' => $batch->status, 'message' => $message], 202);
         }
 
         return redirect()->route('contacts.index', ['type' => $validated['type']])
             ->with('status', [
                 'success' => true,
-                'msg' => sprintf('%d kontak diimpor, %d dilewati karena sudah ada.', $result['created'], $result['skipped']),
+                'msg' => $message,
             ]);
     }
 
