@@ -211,7 +211,7 @@ class JournalImportHistoryLifecycleTest extends TestCase
         }
     }
 
-    public function test_history_and_workbook_download_require_journal_import_permission(): void
+    public function test_history_detail_and_workbook_download_require_journal_import_permission(): void
     {
         $this->journalBatch(51, 7, 'journal-private.xlsx', 'analyzed');
 
@@ -234,8 +234,23 @@ class JournalImportHistoryLifecycleTest extends TestCase
             ->assertForbidden();
 
         $this->asBusiness(7, false)
+            ->getJson('/accounting/journal-entry/import/history/'.$batch->id)
+            ->assertForbidden();
+
+        $this->asBusiness(7, false)
             ->get('/accounting/journal-entry/import/history/'.$batch->id.'/download')
             ->assertForbidden();
+    }
+
+    public function test_revert_remains_permission_scoped(): void
+    {
+        $this->journalBatch(52, 7, 'journal-imported.xlsx', 'imported');
+
+        $this->asBusiness(7, true, false)
+            ->postJson('/accounting/journal-entry/import/52/revert')
+            ->assertForbidden();
+
+        $this->assertSame('imported', DB::table('accounting_journal_imports')->where('id', 52)->value('status'));
     }
 
     public function test_web_upload_returns_queued_batch_and_dispatches_analysis_asynchronously(): void
@@ -298,12 +313,13 @@ class JournalImportHistoryLifecycleTest extends TestCase
         ]);
     }
 
-    private function asBusiness(int $businessId, bool $journalPermission = true): self
+    private function asBusiness(int $businessId, bool $journalPermission = true, bool $deleteJournalPermission = false): self
     {
         $user = Mockery::mock(User::class)->makePartial();
         $user->id = 55;
         $user->shouldReceive('can')->with('superadmin')->andReturn(false);
         $user->shouldReceive('can')->with('accounting.add_journal')->andReturn($journalPermission);
+        $user->shouldReceive('can')->with('accounting.delete_journal')->andReturn($deleteJournalPermission);
 
         return $this->withHeader('Accept', 'application/json')
             ->actingAs($user)

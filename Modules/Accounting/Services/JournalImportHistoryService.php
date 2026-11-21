@@ -7,6 +7,7 @@ use App\UserImportBatch;
 use Illuminate\Http\Request;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
+use Modules\Accounting\Entities\JournalImportBatchStatus;
 
 class JournalImportHistoryService
 {
