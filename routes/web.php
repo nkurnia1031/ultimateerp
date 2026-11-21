@@ -357,12 +357,12 @@ Route::middleware(['setData', 'auth', 'SetSessionData', 'language', 'timezone', 
     Route::get('/import-sales', [ImportSalesController::class, 'index']);
     Route::post('/import-sales/preview', [ImportSalesController::class, 'preview']);
     Route::post('/import-sales', [ImportSalesController::class, 'import']);
-    Route::get('/revert-sale-import/{batch}', [ImportSalesController::class, 'revertSaleImport']);
+    Route::post('/revert-sale-import/{batch}', [ImportSalesController::class, 'revertSaleImport'])->name('sales.import.revert');
 
     Route::get('/import-pembelian', [ImportSalesController::class, 'index']);
     Route::post('/import-pembelian/preview', [ImportSalesController::class, 'preview']);
     Route::post('/import-pembelian', [ImportSalesController::class, 'import']);
-    Route::get('/revert-pembelian-import/{batch}', [ImportSalesController::class, 'revertPembelianImport']);
+    Route::post('/revert-pembelian-import/{batch}', [ImportSalesController::class, 'revertPembelianImport'])->name('purchases.import.revert');
 
     Route::get('/sells/pos/get_product_row/{variation_id}/{location_id}', [SellPosController::class, 'getProductRow']);
     Route::post('/sells/pos/get_payment_row', [SellPosController::class, 'getPaymentRow']);

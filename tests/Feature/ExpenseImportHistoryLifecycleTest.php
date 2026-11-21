@@ -140,6 +140,9 @@ class ExpenseImportHistoryLifecycleTest extends TestCase
             ->get('/revert-expense-import/41')
             ->assertStatus(405);
 
+        $this->get('/revert-sale-import/41')->assertStatus(405);
+        $this->get('/revert-pembelian-import/41')->assertStatus(405);
+
         DB::table('transactions')->insert([
             'id' => 410,
             'business_id' => 7,

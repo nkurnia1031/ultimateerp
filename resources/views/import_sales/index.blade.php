@@ -160,15 +160,17 @@
                                         </p>
                                     </td>
                                     @can('sell.delete')
-                                        @if (request()->is('import-pembelian'))
-                                            <td><a href="{{ action([\App\Http\Controllers\ImportSalesController::class, 'revertPembelianImport'], $key) }}"
-                                                    class="tw-dw-btn tw-dw-btn-outline tw-dw-btn-xs tw-dw-btn-error revert_import"><i
-                                                        class="fas fa-undo"></i> @lang('lang_v1.revert_import')</a></td>
-                                        @else
-                                            <td><a href="{{ action([\App\Http\Controllers\ImportSalesController::class, 'revertSaleImport'], $key) }}"
-                                                    class="tw-dw-btn tw-dw-btn-outline tw-dw-btn-xs tw-dw-btn-error revert_import"><i
-                                                        class="fas fa-undo"></i> @lang('lang_v1.revert_import')</a></td>
-                                        @endif
+                                        <td>
+                                            {!! Form::open([
+                                                'url' => request()->is('import-pembelian') ? route('purchases.import.revert', $key) : route('sales.import.revert', $key),
+                                                'method' => 'post',
+                                                'class' => 'revert_import_form',
+                                            ]) !!}
+                                            <button type="submit" class="tw-dw-btn tw-dw-btn-outline tw-dw-btn-xs tw-dw-btn-error revert_import">
+                                                <i class="fas fa-undo"></i> @lang('lang_v1.revert_import')
+                                            </button>
+                                            {!! Form::close() !!}
+                                        </td>
                                     @endcan
                                 </tr>
                             @endforeach
@@ -181,7 +183,7 @@
 @stop
 @section('javascript')
     <script type="text/javascript">
-        $(document).on('click', 'a.revert_import', function(e) {
+        $(document).on('submit', 'form.revert_import_form', function(e) {
             e.preventDefault();
             swal({
                 title: LANG.sure,
@@ -190,7 +192,7 @@
                 dangerMode: true,
             }).then(willDelete => {
                 if (willDelete) {
-                    window.location = $(this).attr('href');
+                    this.submit();
                 } else {
                     return false;
                 }
