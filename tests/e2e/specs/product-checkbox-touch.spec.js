@@ -21,7 +21,7 @@ test('product checkboxes toggle when their labels are tapped in WebKit', async (
 
     for (const { name, initiallyChecked } of checkboxes) {
         const checkbox = page.locator(`#product_add_form input[name="${name}"]`);
-        const label = labels.filter({ has: checkbox });
+        const label = checkbox.locator('xpath=ancestor::label[1]');
         const bounds = await label.boundingBox();
 
         expect(bounds).not.toBeNull();
