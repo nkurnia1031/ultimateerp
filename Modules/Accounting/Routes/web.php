@@ -55,6 +55,9 @@ Route::middleware('web', 'SetSessionData', 'auth', 'language', 'timezone', 'Admi
 
     Route::get('journal-entry/import', [\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'import'])->name('journal-entry.import');
     Route::post('journal-entry/import/analyze', [\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'analyzeImport']);
+    Route::get('journal-entry/import/history', [\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'importHistoryData']);
+    Route::get('journal-entry/import/history/{batchId}', [\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'importHistoryDetail'])->whereNumber('batchId');
+    Route::get('journal-entry/import/history/{batchId}/download', [\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'downloadImportSource'])->whereNumber('batchId');
     Route::get('journal-entry/import/{id}/review', [\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'reviewImport']);
     Route::get('journal-entry/import/{id}/status', [\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'importStatus']);
     Route::post('journal-entry/import/{id}/terminate', [\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'terminateImport']);

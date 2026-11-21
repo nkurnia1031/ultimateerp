@@ -7,11 +7,21 @@ use App\Services\UserImportBatchService;
 use App\UserImportBatch;
 use App\Utils\ModuleUtil;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Mockery;
 use PhpOffice\PhpSpreadsheet\IOFactory;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
+use Modules\Accounting\Http\Controllers\JournalEntryController;
+use Modules\Accounting\Jobs\AnalyzeJournalImportJob;
+use Modules\Accounting\Services\JournalImportCancellationService;
+use Modules\Accounting\Services\JournalImportDraftService;
+use Modules\Accounting\Services\JournalImportHistoryService;
+use Modules\Accounting\Services\JournalImportProgressService;
 use Tests\TestCase;
 
 class JournalImportHistoryLifecycleTest extends TestCase
@@ -140,13 +150,133 @@ class JournalImportHistoryLifecycleTest extends TestCase
         $this->asBusiness(8)->get('/accounting/journal-entry/import/history/'.$batch->id.'/download')->assertNotFound();
     }
 
+    public function test_analysis_snapshots_all_sheets_before_cleaning_the_staged_workbook(): void
+    {
+        $this->journalBatch(61, 7, 'journal-analysis.xlsx', 'queued');
+
+        $spreadsheet = new Spreadsheet();
+        $spreadsheet->getActiveSheet()->setTitle('Journal');
+        $spreadsheet->getActiveSheet()->setCellValue('A1', 'Nomor Akun');
+        $spreadsheet->getActiveSheet()->setCellValue('A2', '1000');
+        $notes = $spreadsheet->createSheet();
+        $notes->setTitle('Catatan');
+        $notes->setCellValue('A1', 'Sheet kedua');
+        $sourcePath = tempnam(sys_get_temp_dir(), 'journal-analysis-source-');
+        (new Xlsx($spreadsheet))->save($sourcePath);
+        $spreadsheet->disconnectWorksheets();
+
+        try {
+            Storage::fake('journal_imports');
+            Storage::disk('journal_imports')->put('journal-analysis.xlsx', file_get_contents($sourcePath));
+            DB::table('accounting_journal_imports')->where('id', 61)->update([
+                'file_path' => 'journal_imports/journal-analysis.xlsx',
+            ]);
+            $analysis = [
+                'source_date_range' => '2026-01',
+                'total_entries' => 1,
+                'unbalanced_count' => 0,
+                'duplicate_count' => 0,
+                'missing_accounts' => [],
+                'entries' => [['source_type' => 'Journal Entry']],
+            ];
+            $controller = Mockery::mock(JournalEntryController::class)->makePartial();
+            $controller->shouldReceive('analyzeJournalWorkbook')->once()->andReturn($analysis);
+            $controller->shouldReceive('writeTemporaryJournalAnalysis')->once()->andReturn('journal_imports/analysis.json');
+            $controller->shouldReceive('compactJournalAnalysisSummary')->once()->andReturn(['total_entries' => 1]);
+            $draftService = Mockery::mock(JournalImportDraftService::class);
+            $draftService->shouldReceive('persistEntries')->once()->with(61, 7, $analysis['entries']);
+            $cancellationService = Mockery::mock(JournalImportCancellationService::class);
+            $cancellationService->shouldReceive('stopIfRequested')->zeroOrMoreTimes()->andReturn(false);
+
+            (new AnalyzeJournalImportJob(61))->handle(
+                $controller,
+                $draftService,
+                $cancellationService,
+                app(JournalImportProgressService::class),
+                app(JournalImportHistoryService::class),
+                app(UserImportBatchService::class)
+            );
+
+            $domain = DB::table('accounting_journal_imports')->where('id', 61)->first();
+            $this->assertSame('analyzed', $domain->status);
+            $this->assertNull($domain->file_path);
+            Storage::disk('journal_imports')->assertMissing('journal-analysis.xlsx');
+
+            $shared = UserImportBatch::findOrFail((int) $domain->user_import_batch_id);
+            $this->assertSame('preview_ready', $shared->status);
+            $this->assertTrue($shared->hasSourceSnapshot());
+            $this->assertNull($shared->staging_path);
+        } finally {
+            @unlink($sourcePath);
+        }
+    }
+
     public function test_history_and_workbook_download_require_journal_import_permission(): void
     {
         $this->journalBatch(51, 7, 'journal-private.xlsx', 'analyzed');
 
+        $batch = app(UserImportBatchService::class)->create([
+            'business_id' => 7,
+            'created_by' => 55,
+            'importer_key' => 'journal',
+            'source_key' => 'domain:51',
+            'file_name' => 'journal-private.xlsx',
+            'status' => 'preview_ready',
+        ]);
+        DB::table('accounting_journal_imports')->where('id', 51)->update(['user_import_batch_id' => $batch->id]);
+        app(UserImportBatchService::class)->storePayload($batch, 'source_snapshot', [
+            'version' => 1,
+            'sheets' => [['title' => 'Journal', 'rows' => [1 => ['A' => 'Nomor Akun']]]],
+        ]);
+
         $this->asBusiness(7, false)
             ->getJson('/accounting/journal-entry/import/history')
             ->assertForbidden();
+
+        $this->asBusiness(7, false)
+            ->get('/accounting/journal-entry/import/history/'.$batch->id.'/download')
+            ->assertForbidden();
+    }
+
+    public function test_web_upload_returns_queued_batch_and_dispatches_analysis_asynchronously(): void
+    {
+        Bus::fake();
+        Storage::fake('journal_imports');
+        $spreadsheet = new Spreadsheet();
+        $spreadsheet->getActiveSheet()->setTitle('Journal');
+        $spreadsheet->getActiveSheet()->setCellValue('A1', 'Nomor Akun');
+        $sourcePath = tempnam(sys_get_temp_dir(), 'journal-upload-');
+        (new Xlsx($spreadsheet))->save($sourcePath);
+        $spreadsheet->disconnectWorksheets();
+
+        try {
+            $upload = $this->asBusiness(7)->postJson('/accounting/journal-entry/import/analyze', [
+                'journal_file' => new UploadedFile(
+                    $sourcePath,
+                    'journal-upload.xlsx',
+                    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    UPLOAD_ERR_OK,
+                    true
+                ),
+            ]);
+
+            $upload->assertStatus(202)
+                ->assertJsonPath('success', 1)
+                ->assertJsonPath('status', 'queued')
+                ->assertJsonPath('batch_id', $upload->json('import_id'));
+            Bus::assertDispatched(AnalyzeJournalImportJob::class, 1);
+
+            $domain = DB::table('accounting_journal_imports')->where('id', $upload->json('batch_id'))->first();
+            $this->assertSame('web', $domain->import_origin);
+            $this->assertNotNull($domain->user_import_batch_id);
+            $shared = UserImportBatch::findOrFail((int) $domain->user_import_batch_id);
+            $this->assertSame('journal', $shared->importer_key);
+            $this->assertSame('domain:'.$domain->id, $shared->source_key);
+            $this->assertSame('queued_preview', $shared->status);
+            Storage::disk('journal_imports')->assertExists(basename($domain->file_path));
+        } finally {
+            @unlink($sourcePath);
+        }
     }
 
     private function journalBatch(int $id, int $businessId, string $fileName, string $status): void
@@ -191,6 +321,10 @@ class JournalImportHistoryLifecycleTest extends TestCase
             $table->unsignedInteger('imported_entries')->default(0);
             $table->unsignedInteger('skipped_entries')->default(0);
             $table->unsignedInteger('processed_entries')->default(0);
+            $table->unsignedInteger('unbalanced_entries')->default(0);
+            $table->unsignedInteger('duplicate_entries')->default(0);
+            $table->unsignedInteger('missing_accounts')->default(0);
+            $table->unsignedInteger('unsupported_entries')->default(0);
             $table->string('file_path')->nullable();
             $table->string('analysis_path')->nullable();
             $table->longText('import_options')->nullable();
@@ -216,6 +350,8 @@ class JournalImportHistoryLifecycleTest extends TestCase
             $table->string('source_action')->nullable();
             $table->longText('entry_data')->nullable();
             $table->string('processing_status')->default('pending');
+            $table->text('processing_message')->nullable();
+            $table->text('processing_error')->nullable();
             $table->dateTime('created_at')->nullable();
             $table->dateTime('updated_at')->nullable();
         });
