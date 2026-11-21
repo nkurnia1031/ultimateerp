@@ -38,7 +38,7 @@ test('a queued Journal Import can stop, resume, and post once', async ({ page })
         await expect(page.getByRole('heading', { name: 'Impor Jurnal dari Workbook' })).toBeVisible();
 
         await page.locator('input[name="journal_file"]').setInputFiles(fixturePath);
-        await page.getByRole('button', { name: 'Analisa File' }).click();
+        await page.getByRole('button', { name: 'Unggah & Analisa di Background' }).click();
 
         const row = page.locator('tr').filter({ hasText: fileName });
         await expect(row).toBeVisible();
