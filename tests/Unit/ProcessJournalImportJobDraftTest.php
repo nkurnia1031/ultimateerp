@@ -302,6 +302,7 @@ class ProcessJournalImportJobDraftTest extends TestCase
             'business_id' => 3,
             'created_by' => 8,
             'status' => 'queued',
+            'import_origin' => 'cli',
             'file_path' => 'uploads/journal-imports/test.xlsx',
             'created_at' => $now,
             'updated_at' => $now,
@@ -813,6 +814,7 @@ class ProcessJournalImportJobDraftTest extends TestCase
             $table->unsignedInteger('business_id');
             $table->unsignedInteger('created_by');
             $table->string('status');
+            $table->string('import_origin')->default('web');
             $table->longText('import_options')->nullable();
             $table->integer('processed_entries')->default(0);
             $table->integer('imported_entries')->default(0);

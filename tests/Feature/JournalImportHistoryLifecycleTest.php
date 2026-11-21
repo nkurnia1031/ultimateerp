@@ -250,6 +250,10 @@ class JournalImportHistoryLifecycleTest extends TestCase
             ->postJson('/accounting/journal-entry/import/52/revert')
             ->assertForbidden();
 
+        $this->asBusiness(8, true, true)
+            ->postJson('/accounting/journal-entry/import/52/revert')
+            ->assertStatus(422);
+
         $this->assertSame('imported', DB::table('accounting_journal_imports')->where('id', 52)->value('status'));
     }
 

@@ -421,6 +421,8 @@ class JournalImportCliCommandTest extends TestCase
             $table->string('status')->default('imported');
             $table->longText('summary')->nullable();
             $table->integer('created_by');
+            $table->string('import_origin', 16)->default('web');
+            $table->unsignedBigInteger('user_import_batch_id')->nullable();
             $table->unsignedBigInteger('prepare_cursor')->default(0);
             $table->unsignedBigInteger('tax_reconciliation_cursor')->default(0);
             $table->dateTime('cancel_requested_at')->nullable();

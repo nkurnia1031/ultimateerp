@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Mockery;
 use Modules\Accounting\Jobs\ProcessJournalImportJob;
+use Modules\Accounting\Services\JournalImportHistoryService;
 use Tests\TestCase;
 
 class JournalImportBulkMappingTest extends TestCase
@@ -62,6 +63,9 @@ class JournalImportBulkMappingTest extends TestCase
         $moduleUtil = Mockery::mock(ModuleUtil::class);
         $moduleUtil->shouldReceive('hasThePermissionInSubscription')->byDefault()->andReturn(true);
         $this->app->instance(ModuleUtil::class, $moduleUtil);
+        $historyService = Mockery::mock(JournalImportHistoryService::class);
+        $historyService->shouldReceive('linkBatch')->zeroOrMoreTimes()->andReturn(null);
+        $this->app->instance(JournalImportHistoryService::class, $historyService);
         Bus::fake();
     }
 

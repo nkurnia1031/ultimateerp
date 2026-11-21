@@ -59,14 +59,18 @@ class AnalyzeJournalImportJob implements ShouldQueue
             return;
         }
 
-        $historyService = $historyService ?: app(JournalImportHistoryService::class);
-        $batchService = $batchService ?: app(UserImportBatchService::class);
+        $isWebImport = ($import->import_origin ?? 'web') === 'web';
 
         if ($cancellationService->stopIfRequested((int) $import->id, (int) $import->business_id)) {
             return;
         }
 
         try {
+            if ($isWebImport) {
+                $historyService = $historyService ?: app(JournalImportHistoryService::class);
+                $batchService = $batchService ?: app(UserImportBatchService::class);
+            }
+
             $claimed = DB::table('accounting_journal_imports')
                 ->where('id', $this->importId)
                 ->where('status', 'queued')
@@ -82,7 +86,7 @@ class AnalyzeJournalImportJob implements ShouldQueue
             }
 
             $analysisSourcePath = $import->file_path;
-            if (($import->import_origin ?? 'web') === 'web') {
+            if ($isWebImport) {
                 $sharedBatch = $historyService->linkBatch((int) $import->id, (int) $import->business_id);
                 $resolvedSourcePath = ! empty($analysisSourcePath)
                     ? $controller->resolveJournalImportFilePath($analysisSourcePath)
@@ -176,7 +180,7 @@ class AnalyzeJournalImportJob implements ShouldQueue
             ]);
             if (! $updated) {
                 $cancellationService->stopIfRequested((int) $import->id, (int) $import->business_id);
-            } else {
+            } elseif ($isWebImport) {
                 $historyService->linkBatch((int) $import->id, (int) $import->business_id);
             }
         } catch (JournalImportCancellationRequestedException $e) {
@@ -198,14 +202,14 @@ class AnalyzeJournalImportJob implements ShouldQueue
                 ]);
             if (! $failed) {
                 $cancellationService->stopIfRequested((int) $import->id, (int) $import->business_id);
-            } else {
-                app(JournalImportHistoryService::class)->linkBatch((int) $import->id, (int) $import->business_id);
+            } elseif ($isWebImport) {
+                ($historyService ?: app(JournalImportHistoryService::class))->linkBatch((int) $import->id, (int) $import->business_id);
             }
 
             throw $e;
         } finally {
             if (isset($sourcePathToClean) && $sourcePathToClean !== null
-                && ($import->import_origin ?? 'web') === 'web') {
+                && $isWebImport) {
                 $this->cleanupSourceStaging($import, $sourcePathToClean, $controller);
             }
 
