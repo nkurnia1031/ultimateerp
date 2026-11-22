@@ -51,8 +51,7 @@
     <div class="modal fade" id="business_expense_category_import_modal" tabindex="-1" role="dialog" aria-labelledby="businessExpenseCategoryImportTitle">
         <div class="modal-dialog modal-lg" role="document">
             <div class="modal-content">
-                <form id="business_expense_category_import_form" action="{{ route('expense-categories.import.business') }}" data-preview-url="{{ route('expense-categories.import.business.preview') }}" method="post">
-                    @csrf
+                <div id="business_expense_category_import_form" data-preview-page-url="{{ route('expense-categories.import.business.preview-page') }}">
                     <div class="modal-header">
                         <button type="button" class="close" data-dismiss="modal" aria-label="Tutup"><span aria-hidden="true">&times;</span></button>
                         <h4 class="modal-title" id="businessExpenseCategoryImportTitle"><i class="fa fa-exchange"></i> Import Kategori Biaya dari Bisnis</h4>
@@ -69,29 +68,12 @@
                             </select>
                         </div>
                         <label class="checkbox-inline tw-mb-4"><input type="checkbox" name="skip_existing" value="1" checked> Lewati kategori yang sudah ada</label>
-                        <div id="business_expense_category_import_loading" class="alert alert-warning" style="display:none"><i class="fa fa-spinner fa-spin"></i> Memeriksa kategori sumber...</div>
-                        <div id="business_expense_category_import_error" class="alert alert-danger" style="display:none"></div>
-                        <div id="business_expense_category_import_preview" style="display:none">
-                            <div class="row">
-                                <div class="col-sm-4"><div class="small-box bg-blue"><div class="inner"><h3 data-expense-category-import-count="total">0</h3><p>Total sumber</p></div></div></div>
-                                <div class="col-sm-4"><div class="small-box bg-green"><div class="inner"><h3 data-expense-category-import-count="new">0</h3><p>Kategori baru</p></div></div></div>
-                                <div class="col-sm-4"><div class="small-box bg-yellow"><div class="inner"><h3 data-expense-category-import-count="existing">0</h3><p>Sudah ada / skip</p></div></div></div>
-                            </div>
-                            <div class="table-responsive">
-                                <table class="table table-condensed table-bordered" id="business_expense_category_import_preview_table">
-                                    <thead><tr><th>Path kategori</th><th>Nama</th><th>Kode</th><th>Status</th><th>Metode</th></tr></thead>
-                                    <tbody></tbody>
-                                </table>
-                            </div>
-                            <p class="text-muted" id="business_expense_category_import_truncated" style="display:none">Preview menampilkan maksimal 100 baris. Jumlah total tetap dihitung server.</p>
-                        </div>
                     </div>
                     <div class="modal-footer">
                         <button type="button" class="btn btn-default" data-dismiss="modal">Tutup</button>
-                        <button type="button" class="btn btn-primary" id="business_expense_category_import_preview_button"><i class="fa fa-search"></i> Cross-check</button>
-                        <button type="submit" class="btn btn-success" id="business_expense_category_import_submit" disabled><i class="fa fa-upload"></i> Import kategori baru</button>
+                        <button type="button" class="btn btn-primary" id="business_expense_category_import_preview_button"><i class="fa fa-search"></i> Lanjutkan ke preview</button>
                     </div>
-                </form>
+                </div>
             </div>
         </div>
     </div>

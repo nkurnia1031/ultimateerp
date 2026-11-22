@@ -28,7 +28,9 @@
                 { data: 'id' },
                 { data: 'file_name', render: escapeText },
                 { data: 'status', render: function (value, type, row) {
-                    return escapeText(value) + (row.last_message ? '<br><small>' + escapeText(row.last_message) + '</small>' : '');
+                    var message = row.error_message || row.last_message || '';
+                    if (type !== 'display') return (value || '') + ' ' + message;
+                    return escapeText(value) + (message ? '<br><small>' + window.importHistoryMessageCell(message, 'display') + '</small>' : '');
                 } },
                 { data: 'progress_percent', render: function (value, type, row) {
                     return escapeText(value) + '% (' + escapeText(row.progress_current) + '/' + escapeText(row.progress_total) + ')';

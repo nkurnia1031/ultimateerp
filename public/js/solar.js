@@ -409,7 +409,7 @@
             var percent = Math.max(0, Math.min(100, Number(row.progress_percent || 0)));
             return '<span class="label label-' + color + '">' + escapeHtml(statusLabel(state)) + '</span>' +
                 (active ? '<div class="progress progress-xs" style="margin:5px 0 0"><div class="progress-bar" style="width:' + percent + '%"></div></div>' : '') +
-                '<small class="text-muted">' + (active ? percent + '% · ' : '') + escapeHtml(row.last_message || row.error_message || '') + '</small>';
+                '<small class="text-muted">' + (active ? percent + '% · ' : '') + window.importHistoryMessageCell(row.error_message || row.last_message || '', 'display') + '</small>';
         }
 
         function rowActions(row) {
@@ -851,7 +851,19 @@
         }
         defs.push(
             { headerName: 'Hasil pencocokan', field: 'status_label', minWidth: 145, editable: false },
-            { headerName: 'Keterangan / alasan', field: 'detail', minWidth: 280, maxWidth: 420, flex: 1, editable: false, tooltipField: 'detail' }
+            {
+                headerName: 'Keterangan / alasan',
+                field: 'detail',
+                minWidth: 280,
+                maxWidth: 420,
+                flex: 1,
+                editable: false,
+                cellRenderer: function (params) {
+                    var cell = document.createElement('div');
+                    cell.innerHTML = window.importHistoryMessageCell(params.value || '', 'display');
+                    return cell;
+                }
+            }
         );
         return defs.map(function (definition) {
             if (definition.editable === true) {

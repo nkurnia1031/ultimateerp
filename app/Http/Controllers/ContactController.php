@@ -117,6 +117,25 @@ class ContactController extends Controller
      * currently selected business. Only superadmins can choose a different
      * source business; regular users are limited to their active business.
      */
+    public function businessImportPreviewPage(Request $request)
+    {
+        $validated = $request->validate([
+            'type' => ['required', 'in:customer,supplier'],
+            'source_business_id' => ['required', 'integer'],
+            'skip_existing' => ['nullable', 'boolean'],
+        ]);
+        $request->merge(['type' => $validated['type']]);
+        $targetBusinessId = (int) $request->session()->get('user.business_id');
+        $sourceBusinessId = (int) $validated['source_business_id'];
+        $this->authorizeBusinessContactImport($request, $targetBusinessId, $sourceBusinessId);
+
+        return view('contact.business_import_preview', [
+            'type' => $validated['type'],
+            'sourceBusiness' => Business::findOrFail($sourceBusinessId),
+            'skipExisting' => (bool) ($validated['skip_existing'] ?? true),
+        ]);
+    }
+
     public function previewBusinessImport(Request $request)
     {
         $type = $request->validate([

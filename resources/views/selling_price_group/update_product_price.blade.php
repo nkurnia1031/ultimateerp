@@ -89,7 +89,9 @@ $(function () {
                 var percent = Math.max(0, Math.min(100, parseInt(row.progress_percent || 0, 10)));
                 return '<div class="progress"><div class="progress-bar" style="width:' + percent + '%">' + percent + '%</div></div><small>' + parseInt(row.progress_current || 0, 10) + ' / ' + (parseInt(row.progress_total || 0, 10) || '—') + '</small>';
             }},
-            {data: 'last_message', name: 'last_message', defaultContent: '', render: $.fn.dataTable.render.text()},
+            {data: 'last_message', name: 'last_message', defaultContent: '', render: function (value, type, row) {
+                return window.importHistoryMessageCell(row.error_message || value || '', type);
+            }},
             {data: 'created_at', name: 'created_at', render: $.fn.dataTable.render.text()},
             {data: null, orderable: false, searchable: false, render: function (row) {
                 var escape = function (value) { return $('<div>').text(value || '').html(); };

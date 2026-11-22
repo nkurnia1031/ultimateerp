@@ -37,11 +37,12 @@
         return isNaN(date.getTime()) ? String(value) : date.toLocaleString('id-ID');
     }
 
-    function renderStatus(row) {
+    function renderStatus(row, type) {
         var label = row.status_label || row.status || 'Tidak diketahui';
         var message = row.status_message || '';
+        if (type !== 'display') { return label + ' ' + message; }
         return '<span class="label label-' + badgeClass(row.status) + '">' + escapeHtml(label) + '</span>'
-            + (message ? '<div class="small text-muted">' + escapeHtml(message) + '</div>' : '');
+            + (message ? '<div class="small text-muted">' + window.importHistoryMessageCell(message, 'display') + '</div>' : '');
     }
 
     function renderProgress(row) {
@@ -105,7 +106,7 @@
             { data: 'file_name', render: function (value) { return escapeHtml(value || 'Impor Expense'); } },
             { data: 'created_at', render: function (value) { return escapeHtml(dateLabel(value)); } },
             { data: 'created_by', render: function (value) { return escapeHtml(value || '-'); } },
-            { data: null, orderable: false, searchable: false, render: function (value, type, row) { return renderStatus(row); } },
+            { data: null, orderable: false, searchable: false, render: function (value, type, row) { return renderStatus(row, type); } },
             { data: null, orderable: false, searchable: false, render: function (value, type, row) { return renderProgress(row); } },
             { data: null, orderable: false, searchable: true, render: function (value, type, row) { return renderSummary(row); } },
             { data: null, orderable: false, searchable: false, render: function (value, type, row) { return renderActions(row); } }

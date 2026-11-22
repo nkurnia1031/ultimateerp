@@ -301,7 +301,11 @@
                     (existing.consolidation_issues || []).forEach(function (issue) {
                         details.push('Grup belum aman digabung: ' + escapeHtml(issue));
                     });
-                    return details.join('<br>') + renderJournalCandidateDetails(row.journal_match || {});
+                    var detailHtml = details.join('<br>') + renderJournalCandidateDetails(row.journal_match || {});
+                    var detailText = $('<div>').html(detailHtml
+                        .replace(/<br\s*\/?>/gi, '\n')
+                        .replace(/<\/(div|tr|p|li|summary)>/gi, '\n')).text();
+                    return window.importHistoryMessageCell(detailText, type);
                 } },
                 { data: null, orderable: false, searchable: false, render: function (value, type, row) {
                     var actions = '';

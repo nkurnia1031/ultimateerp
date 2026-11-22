@@ -1435,7 +1435,11 @@ if ($("div#import_product_dz").length) {
             columns: [
                 { data: 'id' },
                 { data: 'file_name', render: function (value) { return escapePurchaseImportText(value); } },
-                { data: 'status', render: function (value, type, row) { return escapePurchaseImportText(value) + (row.last_message ? '<br><small>' + escapePurchaseImportText(row.last_message) + '</small>' : ''); } },
+                { data: 'status', render: function (value, type, row) {
+                    var message = row.error_message || row.last_message || '';
+                    if (type !== 'display') return (value || '') + ' ' + message;
+                    return escapePurchaseImportText(value) + (message ? '<br><small>' + window.importHistoryMessageCell(message, 'display') + '</small>' : '');
+                } },
                 { data: 'progress_percent', render: function (value, type, row) { return escapePurchaseImportText(value) + '% (' + escapePurchaseImportText(row.progress_current) + '/' + escapePurchaseImportText(row.progress_total) + ')'; } },
                 { data: 'created_at', render: function (value) { return escapePurchaseImportText(value); } },
                 { data: null, orderable: false, searchable: false, render: function (row) {

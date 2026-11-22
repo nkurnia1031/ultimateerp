@@ -473,8 +473,14 @@
                     $panel.find('.import-detail-summary').text('Batch #' + payload.batch.id + ' · ' + (payload.batch.file_name || '') + ' · berhasil ' + (summary.imported_rows || 0) + ', dilewati ' + (summary.skipped_rows || 0) + ', gagal ' + (summary.failed_rows || 0));
                     let $body = $panel.find('tbody').empty();
                     (payload.results.row_outcomes || []).forEach(function(row) {
-                        let detail = escapeImportHtml(row.error || row.message || row.record_label || row.status);
-                        if (row.record_url) detail = '<a href="' + escapeImportHtml(row.record_url) + '">' + detail + '</a>';
+                        let hasMessage = !!(row.error || row.message);
+                        let detail = hasMessage
+                            ? window.importHistoryMessageCell(row.error || row.message, 'display')
+                            : escapeImportHtml(row.record_label || row.status);
+                        if (row.record_url) {
+                            let recordLink = '<a href="' + escapeImportHtml(row.record_url) + '">' + escapeImportHtml(row.record_label || row.status || 'Buka hasil') + '</a>';
+                            detail = hasMessage ? detail + '<br><small>' + recordLink + '</small>' : recordLink;
+                        }
                         $('<tr>').append($('<td>').text(row.sheet || '—'), $('<td>').text(row.source_row || '—'), $('<td>').text(row.status || '—'), $('<td>').html(detail)).appendTo($body);
                     });
                     $panel.removeClass('hidden');

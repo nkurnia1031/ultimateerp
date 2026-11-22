@@ -389,8 +389,7 @@
         <div class="modal fade" id="business_contact_import_modal" tabindex="-1" role="dialog" aria-labelledby="businessContactImportTitle">
             <div class="modal-dialog modal-lg" role="document">
                 <div class="modal-content">
-                    <form id="business_contact_import_form" action="{{ route('contacts.import.business') }}" data-preview-url="{{ route('contacts.import.business.preview') }}" method="post">
-                        @csrf
+                    <div id="business_contact_import_form" data-preview-page-url="{{ route('contacts.import.business.preview-page') }}">
                         <input type="hidden" name="type" value="{{ $type }}">
                         <div class="modal-header">
                             <button type="button" class="close" data-dismiss="modal" aria-label="Tutup"><span aria-hidden="true">&times;</span></button>
@@ -412,29 +411,12 @@
                             <label class="checkbox-inline" style="margin-bottom:15px">
                                 <input type="checkbox" name="skip_existing" value="1" checked> Lewati kontak yang sudah ada
                             </label>
-                            <div id="business_contact_import_loading" class="alert alert-warning" style="display:none"><i class="fa fa-spinner fa-spin"></i> Memeriksa kontak sumber...</div>
-                            <div id="business_contact_import_error" class="alert alert-danger" style="display:none"></div>
-                            <div id="business_contact_import_preview" style="display:none">
-                                <div class="row">
-                                    <div class="col-sm-4"><div class="small-box bg-blue"><div class="inner"><h3 data-import-count="total">0</h3><p>Total sumber</p></div></div></div>
-                                    <div class="col-sm-4"><div class="small-box bg-green"><div class="inner"><h3 data-import-count="new">0</h3><p>Kontak baru</p></div></div></div>
-                                    <div class="col-sm-4"><div class="small-box bg-yellow"><div class="inner"><h3 data-import-count="existing">0</h3><p>Sudah ada / skip</p></div></div></div>
-                                </div>
-                                <div class="table-responsive">
-                                    <table class="table table-condensed table-bordered" id="business_contact_import_preview_table">
-                                        <thead><tr><th>Nama</th><th>Business name</th><th>Contact ID</th><th>Email</th><th>Mobile</th><th>Status</th></tr></thead>
-                                        <tbody></tbody>
-                                    </table>
-                                </div>
-                                <p class="text-muted" id="business_contact_import_truncated" style="display:none">Preview menampilkan maksimal 100 baris. Jumlah total tetap dihitung oleh server.</p>
-                            </div>
                         </div>
                         <div class="modal-footer">
                             <button type="button" class="btn btn-default" data-dismiss="modal">Tutup</button>
-                            <button type="button" class="btn btn-primary" id="business_contact_import_preview_button"><i class="fa fa-search"></i> Cross-check</button>
-                            <button type="submit" class="btn btn-success" id="business_contact_import_submit" disabled><i class="fa fa-upload"></i> Import kontak baru</button>
+                            <button type="button" class="btn btn-primary" id="business_contact_import_preview_button"><i class="fa fa-search"></i> Lanjutkan ke preview</button>
                         </div>
-                    </form>
+                    </div>
                 </div>
             </div>
         </div>

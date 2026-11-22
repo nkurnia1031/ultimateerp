@@ -70,7 +70,7 @@
                         <td>
                             <strong>{{ $row['status'] ?? 'draft' }}</strong>
                             @foreach(($row['errors'] ?? []) as $error)
-                                <div class="text-danger">{{ is_array($error) ? ($error['message'] ?? json_encode($error)) : $error }}</div>
+                                <div class="text-danger"><span data-import-history-message-source>{{ is_array($error) ? ($error['message'] ?? json_encode($error)) : $error }}</span></div>
                             @endforeach
                         </td>
                     </tr>

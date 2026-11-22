@@ -304,6 +304,7 @@ Route::middleware(['setData', 'auth', 'SetSessionData', 'language', 'timezone', 
     Route::get('/contacts/import/history/{batch}/source', [ContactController::class, 'contactImportSource'])->name('contacts.import.source');
     Route::post('/contacts/import/history/{batch}/retry', [ContactController::class, 'retryContactImport'])->name('contacts.import.retry');
     Route::post('/contacts/import/history/{batch}/revert', [ContactController::class, 'revertContactImport'])->name('contacts.import.revert');
+    Route::get('/contacts/import/business/preview-page', [ContactController::class, 'businessImportPreviewPage'])->name('contacts.import.business.preview-page');
     Route::post('/contacts/import/business/preview', [ContactController::class, 'previewBusinessImport'])->name('contacts.import.business.preview');
     Route::post('/contacts/import/business', [ContactController::class, 'importFromBusiness'])->name('contacts.import.business');
     Route::get('/import-copies/{type}/history', [\App\Http\Controllers\BusinessCopyImportController::class, 'history'])
@@ -511,6 +512,7 @@ Route::middleware(['setData', 'auth', 'SetSessionData', 'language', 'timezone', 
     Route::post('get-expense-sub-categories', [ExpenseCategoryController::class, 'getSubCategories']);
 
     //Expense Categories...
+    Route::get('expense-categories/import/business/preview-page', [ExpenseCategoryController::class, 'businessImportPreviewPage'])->name('expense-categories.import.business.preview-page');
     Route::post('expense-categories/import/business/preview', [ExpenseCategoryController::class, 'previewBusinessImport'])->name('expense-categories.import.business.preview');
     Route::post('expense-categories/import/business', [ExpenseCategoryController::class, 'importFromBusiness'])->name('expense-categories.import.business');
     Route::resource('expense-categories', ExpenseCategoryController::class);

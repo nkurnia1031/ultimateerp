@@ -72,6 +72,22 @@ class ExpenseCategoryController extends Controller
         return response()->json($this->businessCategoryImport->preview($sourceBusinessId, $targetBusinessId));
     }
 
+    public function businessImportPreviewPage(Request $request)
+    {
+        $validated = $request->validate([
+            'source_business_id' => ['required', 'integer'],
+            'skip_existing' => ['nullable', 'boolean'],
+        ]);
+        $targetBusinessId = (int) $request->session()->get('user.business_id');
+        $sourceBusinessId = (int) $validated['source_business_id'];
+        $this->authorizeBusinessImport($sourceBusinessId, $targetBusinessId);
+
+        return view('expense_category.business_import_preview', [
+            'sourceBusiness' => Business::findOrFail($sourceBusinessId),
+            'skipExisting' => (bool) ($validated['skip_existing'] ?? true),
+        ]);
+    }
+
     public function importFromBusiness(Request $request, BusinessCopyImportBatchService $copyBatches)
     {
         $validated = $request->validate([

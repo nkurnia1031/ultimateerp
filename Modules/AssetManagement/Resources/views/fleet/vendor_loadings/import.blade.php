@@ -75,7 +75,10 @@ $(function () {
             else if (!supplierIsReady(source, key)) status.removeClass('label-success label-danger label-info').addClass('label-warning').text('Pilih supplier');
             else status.removeClass('label-danger label-warning label-info').addClass('label-success').text('Siap');
             $row.toggleClass('vendor-import-row-error', fatal).toggleClass('vendor-import-row-unmatched', !fatal && (!supplierIsReady(source, key) || (source.date_missing && !date)));
-            $row.find('.vendor-import-notes').toggleClass('vendor-import-error', messages.length > 0).toggleClass('text-muted', messages.length === 0).text(messages.length ? messages.join(' ') : 'Tidak ada catatan.');
+            $row.find('.vendor-import-notes')
+                .toggleClass('vendor-import-error', messages.length > 0)
+                .toggleClass('text-muted', messages.length === 0)
+                .html(messages.length ? window.importHistoryMessageCell(messages.join('\n'), 'display') : 'Tidak ada catatan.');
             $row.find('.vendor-import-date').text(source.date_missing ? (date || 'Perlu diisi') : (source.loading_date || '-'));
         });
     }
@@ -114,7 +117,7 @@ $(function () {
             var status = '<span class="label label-warning vendor-import-status">'+statusText(row.supplier_match_status)+'</span>';
             var tonnage = 'G '+(row.gross_tons == null ? '-' : row.gross_tons)+' / T '+(row.tare_tons == null ? '-' : row.tare_tons)+' / N '+(row.net_tons == null ? '-' : row.net_tons);
             var amount = 'Tarif: '+money(row.vendor_rate_per_ton)+' / Total: '+money(row.vendor_total_amount);
-            return '<tr data-vendor-import-key="'+escapeHtml(key)+'"><td>'+escapeHtml(row.source_sheet)+':'+escapeHtml(row.source_row)+'</td><td>'+escapeHtml(row.ticket_no || '-')+'</td><td>'+escapeHtml(row.supplier_label || '-')+'</td><td>'+escapeHtml(customer)+'</td><td>'+manifest+'</td><td>'+escapeHtml(row.vendor_unit_name || '-')+'</td><td>'+escapeHtml(row.vendor_driver_name || '-')+'</td><td class="vendor-import-date">'+escapeHtml(row.date_missing ? 'Perlu diisi' : (row.loading_date || '-'))+'</td><td>'+escapeHtml(tonnage)+'</td><td>'+escapeHtml(amount)+'</td><td>'+status+'</td><td>'+supplierControl+'</td><td><span class="vendor-import-notes">'+escapeHtml(errors.join(' '))+'</span></td></tr>';
+            return '<tr data-vendor-import-key="'+escapeHtml(key)+'"><td>'+escapeHtml(row.source_sheet)+':'+escapeHtml(row.source_row)+'</td><td>'+escapeHtml(row.ticket_no || '-')+'</td><td>'+escapeHtml(row.supplier_label || '-')+'</td><td>'+escapeHtml(customer)+'</td><td>'+manifest+'</td><td>'+escapeHtml(row.vendor_unit_name || '-')+'</td><td>'+escapeHtml(row.vendor_driver_name || '-')+'</td><td class="vendor-import-date">'+escapeHtml(row.date_missing ? 'Perlu diisi' : (row.loading_date || '-'))+'</td><td>'+escapeHtml(tonnage)+'</td><td>'+escapeHtml(amount)+'</td><td>'+status+'</td><td>'+supplierControl+'</td><td><span class="vendor-import-notes">'+window.importHistoryMessageCell(errors.join('\n'), 'display')+'</span></td></tr>';
         }).join('');
         if (table) { table.destroy(); table = null; }
         $('#vendor-import-preview-table tbody').html(rows);

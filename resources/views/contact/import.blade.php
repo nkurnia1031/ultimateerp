@@ -328,8 +328,14 @@
                 panel.find('.contact-import-summary').text('Batch #' + payload.batch.id + ' · dibuat ' + (summary.created_rows || 0) + ', cocok ' + (summary.matched_rows || 0) + ', dilewati ' + (summary.skipped_rows || 0) + ', gagal ' + (summary.failed_rows || 0));
                 var body = panel.find('tbody').empty();
                 (payload.results.row_outcomes || []).forEach(function(row) {
-                    var detail = escapeContactImport(row.error || row.message || row.record_label || row.status);
-                    if (row.record_url) detail = '<a href="' + escapeContactImport(row.record_url) + '">' + detail + '</a>';
+                    var hasMessage = !!(row.error || row.message);
+                    var detail = hasMessage
+                        ? window.importHistoryMessageCell(row.error || row.message, 'display')
+                        : escapeContactImport(row.record_label || row.status);
+                    if (row.record_url) {
+                        var recordLink = '<a href="' + escapeContactImport(row.record_url) + '">' + escapeContactImport(row.record_label || row.status || 'Buka kontak') + '</a>';
+                        detail = hasMessage ? detail + '<br><small>' + recordLink + '</small>' : recordLink;
+                    }
                     $('<tr>').append($('<td>').text(row.sheet || '—'), $('<td>').text(row.source_row || '—'), $('<td>').text(row.status || '—'), $('<td>').html(detail)).appendTo(body);
                 });
                 panel.removeClass('hidden');

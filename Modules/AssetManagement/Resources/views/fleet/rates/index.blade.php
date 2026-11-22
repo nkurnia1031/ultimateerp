@@ -371,9 +371,8 @@ $(function () {
             { data: null, name: 'progress', orderable: false, searchable: false, render: function (value, type, row) {
                 if (type !== 'display') return Number(row.progress_percent) || 0;
                 const percent = Math.max(0, Math.min(100, Number(row.progress_percent) || 0));
-                const message = escapeRateHtml(row.last_message || row.stage || 'Menunggu proses');
-                const error = row.error_message ? '<br><small class="text-danger">' + escapeRateHtml(row.error_message) + '</small>' : '';
-                return '<div class="progress" style="height:16px;margin-bottom:4px"><div class="progress-bar progress-bar-info" role="progressbar" aria-valuenow="' + percent + '" aria-valuemin="0" aria-valuemax="100" style="width:' + percent + '%">' + percent + '%</div></div><small title="' + message + '">' + message + '</small>' + error;
+                const message = row.error_message || row.last_message || row.stage || 'Menunggu proses';
+                return '<div class="progress" style="height:16px;margin-bottom:4px"><div class="progress-bar progress-bar-info" role="progressbar" aria-valuenow="' + percent + '" aria-valuemin="0" aria-valuemax="100" style="width:' + percent + '%">' + percent + '%</div></div><small>' + window.importHistoryMessageCell(message, 'display') + '</small>';
             } },
             { data: 'status', name: 'status', render: function (value, type) {
                 if (type !== 'display') return value;

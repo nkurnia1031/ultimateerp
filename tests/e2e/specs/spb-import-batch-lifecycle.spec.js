@@ -50,6 +50,27 @@ test('SPB upload flows through preview, queued import, restore, details, and rev
         await expect(page).toHaveURL(new RegExp(`/asset/fleet/trips/import\\?batch_id=${uploadPayload.batch.id}$`));
         await expect(page.locator('#spb-import-preview')).toBeVisible();
         await expect(page.locator('#fleet-spb-import-preview-table tbody tr')).toContainText('Siap');
+        const previewError = 'Sheet BMT baris 64: Rute, unit, dan sopir wajib cocok sebelum import. '
+            + '<img src=x onerror=window.__spbMessageXss=true> AKHIR-PESAN-UNIK';
+        await page.locator('#fleet-spb-import-preview-table').evaluate((table, error) => {
+            const dataTable = window.jQuery(table).DataTable();
+            const firstRow = dataTable.row(0);
+            const row = firstRow.data();
+            row.row_errors = [error];
+            firstRow.data(row).draw(false);
+        }, previewError);
+        const previewRow = page.locator('#fleet-spb-import-preview-table tbody tr').first();
+        const previewNote = previewRow.locator('td').nth(8);
+        await expect(previewNote.locator('.import-history-message-open')).toBeVisible();
+        await expect(previewNote).not.toContainText('AKHIR-PESAN-UNIK');
+        await previewNote.getByRole('button', { name: 'Lihat lengkap' }).click();
+        const previewMessageModal = page.locator('#import-history-message-modal');
+        await expect(previewMessageModal).toBeVisible();
+        await expect(previewMessageModal.locator('.import-history-message-body')).toHaveText(previewError);
+        await expect(previewMessageModal.locator('img')).toHaveCount(0);
+        expect(await page.evaluate(() => window.__spbMessageXss)).toBeUndefined();
+        await previewMessageModal.locator('[data-dismiss=\"modal\"]').click();
+        await expect(previewMessageModal).toBeHidden();
         await page.getByRole('link', { name: 'Kembali ke daftar import' }).click();
         await expect(page).toHaveURL(/\/asset\/fleet\/trips\/import$/);
         await expect(historyRow).toBeVisible();

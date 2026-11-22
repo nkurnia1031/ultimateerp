@@ -107,6 +107,7 @@
 <script src="{{ asset('js/app.js?v=' . $asset_v) }}"></script>
 <script src="{{ asset('js/help-tour.js?v=' . $asset_v) }}"></script>
 <script src="{{ asset('js/documents_and_note.js?v=' . $asset_v) }}"></script>
+<script src="{{ versioned_asset_url(asset('js/import-history-message.js'), $asset_v ?? null) }}"></script>
 
 <!-- TODO -->
 @if (file_exists(public_path('AdminLTE/plugins/select2/lang/' . session()->get('user.language', config('app.locale')) . '.js')))

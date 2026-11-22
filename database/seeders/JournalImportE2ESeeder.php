@@ -25,6 +25,8 @@ class JournalImportE2ESeeder extends Seeder
                 $this->seedReconciliationFixture($businessId);
                 $this->seedJournalImportReviewFixture($businessId, $userId, $now);
                 $this->seedSpbImportFixture($businessId, $userId, $now);
+                $this->seedBusinessCopyPreviewFixture($businessId, $userId, $now);
+                $this->seedVendorLoadingPreviewFixture($businessId, $userId, $now);
 
                 return;
             }
@@ -98,7 +100,79 @@ class JournalImportE2ESeeder extends Seeder
             $this->seedReconciliationFixture($businessId);
             $this->seedJournalImportReviewFixture($businessId, $userId, $now);
             $this->seedSpbImportFixture($businessId, $userId, $now);
+            $this->seedBusinessCopyPreviewFixture($businessId, $userId, $now);
+            $this->seedVendorLoadingPreviewFixture($businessId, $userId, $now);
         });
+    }
+
+    private function seedBusinessCopyPreviewFixture(int $businessId, int $userId, $now): void
+    {
+        $source = DB::table('business')->where('name', 'CI Import Source Business')->first();
+        $businessValues = [
+            'name' => 'CI Import Source Business',
+            'currency_id' => 2,
+            'tax_number_1' => 'CI-SOURCE-TAX',
+            'tax_label_1' => 'VAT',
+            'owner_id' => $userId,
+            'time_zone' => 'UTC',
+            'accounting_method' => 'fifo',
+            'sell_price_tax' => 'excludes',
+            'updated_at' => $now,
+        ];
+        if ($source) {
+            $sourceBusinessId = (int) $source->id;
+            DB::table('business')->where('id', $sourceBusinessId)->update($businessValues);
+        } else {
+            $sourceBusinessId = (int) DB::table('business')->insertGetId($businessValues + ['created_at' => $now]);
+        }
+
+        DB::table('contacts')->updateOrInsert([
+            'business_id' => $sourceBusinessId,
+            'type' => 'customer',
+            'mobile' => 'CI-SOURCE-CUSTOMER-001',
+        ], [
+            'name' => 'CI Source Customer',
+            'contact_id' => 'CI-SOURCE-CUSTOMER-001',
+            'email' => 'ci-source-customer@example.invalid',
+            'deleted_at' => null,
+            'created_by' => $userId,
+            'updated_at' => $now,
+            'created_at' => $now,
+        ]);
+
+        DB::table('expense_categories')->updateOrInsert([
+            'business_id' => $sourceBusinessId,
+            'name' => 'CI Source Expense Category',
+        ], [
+            'code' => 'CI-SOURCE-EXPENSE',
+            'deleted_at' => null,
+            'updated_at' => $now,
+            'created_at' => $now,
+        ]);
+    }
+
+    private function seedVendorLoadingPreviewFixture(int $businessId, int $userId, $now): void
+    {
+        DB::table('heavy_equipment_vendor_loading_import_batches')->updateOrInsert(['id' => 900001], [
+            'business_id' => $businessId,
+            'created_by' => $userId,
+            'file_name' => 'ci-vendor-loading-preview.xlsx',
+            'file_path' => null,
+            'preview_path' => null,
+            'user_import_batch_id' => null,
+            'status' => 'preview_ready',
+            'stage' => 'preview_ready',
+            'total_sheets' => 1,
+            'processed_sheets' => 1,
+            'total_rows' => 1,
+            'processed_rows' => 1,
+            'ready_rows' => 0,
+            'issue_rows' => 1,
+            'missing_date_rows' => 0,
+            'last_message' => 'Preview siap.',
+            'updated_at' => $now,
+            'created_at' => $now,
+        ]);
     }
 
     private function seedSpbImportFixture(int $businessId, int $userId, $now): void
@@ -278,6 +352,9 @@ class JournalImportE2ESeeder extends Seeder
             'accounting.view_reports',
             'accounting.manage_accounts',
             'product.create',
+            'customer.create',
+            'customer.view',
+            'expense.add',
             'superadmin',
         ])->map(fn ($name) => Permission::firstOrCreate([
             'name' => $name,

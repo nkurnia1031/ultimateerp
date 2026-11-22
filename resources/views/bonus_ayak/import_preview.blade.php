@@ -111,7 +111,7 @@
                                     @if(!empty($entry['valid']))
                                         <span class="badge bg-success">Siap disimpan</span>
                                     @else
-                                        <span class="badge bg-danger">{{ $entry['error'] ?? 'Tidak valid' }}</span>
+                                        <span class="badge bg-danger"><span data-import-history-message-source>{{ $entry['error'] ?? 'Tidak valid' }}</span></span>
                                     @endif
                                 </td>
                             </tr>

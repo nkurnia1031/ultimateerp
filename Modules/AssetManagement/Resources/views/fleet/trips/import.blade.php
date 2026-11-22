@@ -409,7 +409,7 @@ $(function () {
             { data: 'summary', render: function (value, type) { return type === 'display' ? escapeHtml(rowSummary(value)) : rowSummary(value); } },
             { data: 'last_message', defaultContent: '-', render: function (value, type, row) {
                 var message = row.error_message || value || '-';
-                return type === 'display' ? '<span class="spb-history-message">' + escapeHtml(message) + '</span>' : message;
+                return type === 'display' ? '<span class="spb-history-message">' + window.importHistoryMessageCell(message, 'display') + '</span>' : message;
             } },
             { data: null, searchable: false, orderable: false, render: function (value, type, row) { return type === 'display' ? rowActions(row) : ''; } }
         ]
@@ -478,7 +478,7 @@ $(function () {
                 var $tr = $('<tr>');
                 [$('<td>').text((row.sheet || '-') + ':' + (row.source_row || '-')),
                     $('<td>').text(row.ticket_no || '-'), $('<td>').text(row.asset || '-'), $('<td>').text(row.driver || '-'),
-                    $('<td>').text(row.status || '-'), $('<td>'), $('<td>').text(row.errors || '-')].forEach(function ($cell) { $tr.append($cell); });
+                    $('<td>').text(row.status || '-'), $('<td>'), $('<td>').html(window.importHistoryMessageCell(row.errors || '-', 'display'))].forEach(function ($cell) { $tr.append($cell); });
                 if (row.trip_url) $('<a>').attr('href', row.trip_url).text(row.trip_no || ('SPB #' + row.trip_id)).appendTo($tr.children().eq(5));
                 else $tr.children().eq(5).text('-');
                 $tbody.append($tr);
@@ -560,9 +560,10 @@ $(function () {
         return row.row_errors && row.row_errors.length ? 'Perlu koreksi' : 'Siap';
     }
 
-    function rowErrors(row) {
-        if (!row.row_errors || !row.row_errors.length) return '<span class="text-muted">Tidak ada catatan.</span>';
-        return '<ul class="spb-row-errors">' + row.row_errors.map(function (error) { return '<li>' + escapeHtml(error) + '</li>'; }).join('') + '</ul>';
+    function rowErrors(row, type) {
+        var messages = row.row_errors || [];
+        if (!messages.length) return type === 'display' ? '<span class="text-muted">Tidak ada catatan.</span>' : '';
+        return window.importHistoryMessageCell(messages.join('\n'), type);
     }
 
     var dataTable = initFleetDataTable('#fleet-spb-import-preview-table', {
@@ -590,7 +591,7 @@ $(function () {
             { data: 'actual_tons', defaultContent: '-', render: function (value, type) { return type === 'display' ? escapeHtml(value == null || value === '' ? '-' : value) : (value || ''); } },
             { data: 'sale_rate_per_ton', defaultContent: '-', render: function (value, type) { return type === 'display' ? escapeHtml(value == null || value === '' ? '-' : value) : (value || ''); } },
             { data: null, orderable: false, render: function (data, type, row) { return type === 'display' ? rowStatus(row) : rowStatusValue(row); } },
-            { data: null, orderable: false, render: function (data, type, row) { return type === 'display' ? rowErrors(row) : ((row.row_errors || []).join(' ')); } },
+            { data: null, orderable: false, render: function (data, type, row) { return rowErrors(row, type); } },
             { data: null, orderable: false, searchable: false, render: function (data, type, row) { return type === 'display' ? '<button type="button" class="btn btn-xs btn-primary spb-edit-row" data-row-index="' + Number(row.preview_index) + '"><i class="fas fa-edit"></i> Edit</button>' : ''; } }
         ],
         columnDefs: [{ targets: [7, 8, 9], orderable: false }]

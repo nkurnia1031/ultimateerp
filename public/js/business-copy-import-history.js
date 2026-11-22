@@ -61,8 +61,14 @@
                     );
                     var body = detailPanel.find('tbody').empty();
                     (payload.results.row_outcomes || []).forEach(function (row) {
-                        var target = escapeHtml(row.error || row.target_label || row.status);
-                        if (row.record_url) target = '<a href="' + escapeHtml(row.record_url) + '">' + target + '</a>';
+                        var hasMessage = !!(row.error || row.message);
+                        var target = hasMessage
+                            ? window.importHistoryMessageCell(row.error || row.message, 'display')
+                            : escapeHtml(row.target_label || row.status);
+                        if (row.record_url) {
+                            var recordLink = '<a href="' + escapeHtml(row.record_url) + '">' + escapeHtml(row.target_label || row.status || 'Buka hasil') + '</a>';
+                            target = hasMessage ? target + '<br><small>' + recordLink + '</small>' : recordLink;
+                        }
                         $('<tr>').append(
                             $('<td>').text(row.source_id || '—'),
                             $('<td>').text(row.source_label || '—'),

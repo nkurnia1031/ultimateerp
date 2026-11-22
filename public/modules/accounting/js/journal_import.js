@@ -201,7 +201,7 @@
         html += '<small id="journal-import-count-' + id + '" class="text-muted">'
             + escapeHtml(total > 0 ? current + ' / ' + total + ' ' + (phase.unit || 'entry') : (active ? 'Menunggu checkpoint worker' : ''))
             + '</small><br><small id="journal-import-message-' + id + '" class="' + (status === 'failed' ? 'text-danger' : 'text-muted') + '">'
-            + escapeHtml(row.error_message || row.last_message || '') + '</small>';
+            + window.importHistoryMessageCell(row.error_message || row.last_message || '', 'display') + '</small>';
         if (active) {
             html += '<br><small class="text-muted">Terakhir update: <span id="journal-import-heartbeat-' + id + '">' + escapeHtml(updatedAtText(row.updated_at)) + '</span></small>';
             html += '<br><small id="journal-import-stale-' + id + '" class="text-warning hide"></small>';
@@ -267,7 +267,7 @@
                     .append($('<td>').text(row.source_type || ''))
                     .append($('<td>').text(row.source_number || ''))
                     .append($('<td>').text(row.status || ''))
-                    .append($('<td>').text(message)));
+                    .append($('<td>').html(window.importHistoryMessageCell(message, 'display'))));
             });
             body.append(table);
             if (detail.problem_rows.length >= 100) {
@@ -762,11 +762,12 @@
             failed: 'Gagal'
         };
         var processCell = $('<td>').append($('<strong>').text(processLabels[row.processing_status] || row.processing_status || 'Menunggu'));
-        if (row.processing_message) {
-            processCell.append($('<small class="text-muted" style="display:block">').text(row.processing_message));
-        }
-        if (row.processing_error) {
-            processCell.append($('<small class="text-danger" style="display:block">').text(row.processing_error));
+        var processMessage = [row.processing_message, row.processing_error].filter(Boolean).join('\n');
+        if (processMessage) {
+            processCell.append($('<small>', {
+                'class': row.processing_error ? 'text-danger' : 'text-muted',
+                css: { display: 'block' }
+            }).html(window.importHistoryMessageCell(processMessage, 'display')));
         }
         if (row.reconciliation_status === 'mismatch') {
             processCell.append($('<span class="label label-warning" style="display:inline-block;margin-top:4px">').text('Selisih diproses · Journal menjadi acuan'));

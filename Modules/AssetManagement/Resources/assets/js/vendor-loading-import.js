@@ -296,7 +296,7 @@
                 { headerName: 'Nett', field: 'net_tons', width: 105, valueFormatter: function (p) { return formatNumber(p.value, 4); } },
                 { headerName: 'Harga / Ton (Rp)', field: 'vendor_rate_per_ton', width: 135, valueFormatter: function (p) { return p.value == null || p.value === '' ? '-' : 'Rp ' + formatNumber(p.value, 0); } },
                 { headerName: 'Total (Rp)', field: 'vendor_total_amount', width: 140, valueFormatter: function (p) { return p.value == null || p.value === '' ? '-' : 'Rp ' + formatNumber(p.value, 0); } },
-                { headerName: 'Kondisi baris', colId: 'row_issue', minWidth: 260, flex: 1, sortable: false, filter: false, valueGetter: function (p) { return issueText(p.data); }, cellStyle: function (p) { return rowReady(p.data, sheet) ? { color: '#247345' } : { color: '#a33c28', whiteSpace: 'normal' }; } }
+                { headerName: 'Kondisi baris', colId: 'row_issue', minWidth: 260, flex: 1, sortable: false, filter: false, valueGetter: function (p) { return issueText(p.data); }, cellRenderer: function (params) { var cell = document.createElement('div'); cell.innerHTML = window.importHistoryMessageCell(params.value || '', 'display'); return cell; }, cellStyle: function (p) { return rowReady(p.data, sheet) ? { color: '#247345' } : { color: '#a33c28', whiteSpace: 'normal' }; } }
             ],
             onCellValueChanged: function (params) { feedback.attr('hidden', true); refreshCounts(); }
         };
@@ -435,7 +435,10 @@
                     return '<div class="progress"><div class="progress-bar" role="progressbar" aria-valuenow="' + percent + '" aria-valuemin="0" aria-valuemax="100" style="width:' + percent + '%"></div></div><small>' + current + ' / ' + total + ' Â· ' + percent + '%</small>';
                 } },
                 { data: 'result_summary', defaultContent: '-', render: function (value, type) { return type === 'display' ? escapeHtml(value || '-') : (value || ''); } },
-                { data: 'error_message', defaultContent: '', render: function (value, type, row) { var messageText = value || row.last_message || '-'; return type === 'display' ? '<span class="vendor-import-history-message">' + escapeHtml(messageText) + '</span>' : messageText; } },
+                { data: 'error_message', defaultContent: '', render: function (value, type, row) {
+                    var messageText = value || row.last_message || '';
+                    return type === 'display' ? '<span class="vendor-import-history-message">' + window.importHistoryMessageCell(messageText, 'display') + '</span>' : messageText;
+                } },
                 { data: null, searchable: false, orderable: false, render: function (value, type, row) { return type === 'display' ? historyActions(row) : ''; } }
             ]
         });
@@ -451,7 +454,7 @@
             var body = rows.map(function (row) {
                 var doc = row.document_url ? '<a href="' + escapeHtml(row.document_url) + '">' + escapeHtml(row.document_no || ('Dokumen #' + row.document_id)) + '</a>' : (row.document_no ? escapeHtml(row.document_no) : '-');
                 if (row.line_id) doc += '<br><small>Line #' + Number(row.line_id) + '</small>';
-                return '<tr><td>' + escapeHtml(row.sheet || '-') + '</td><td>' + escapeHtml(row.source_row || '-') + '</td><td>' + escapeHtml(row.ticket_no || '-') + '</td><td>' + escapeHtml(row.status || '-') + '</td><td>' + doc + '</td><td>' + escapeHtml(row.error || '-') + '</td></tr>';
+                return '<tr><td>' + escapeHtml(row.sheet || '-') + '</td><td>' + escapeHtml(row.source_row || '-') + '</td><td>' + escapeHtml(row.ticket_no || '-') + '</td><td>' + escapeHtml(row.status || '-') + '</td><td>' + doc + '</td><td>' + window.importHistoryMessageCell(row.error || '-', 'display') + '</td></tr>';
             }).join('');
             $('#vendor-import-detail-table tbody').html(body);
             detailTable = initFleetDataTable('#vendor-import-detail-table', { pageLength: 10, order: [[0, 'asc']], columnDefs: [{ targets: [4, 5], orderable: false }] });

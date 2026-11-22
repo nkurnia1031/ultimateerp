@@ -390,7 +390,7 @@
                                 <span class="label label-{{ $batch->status === 'imported' ? 'success' : ($batch->status === 'rolled_back' ? 'default' : 'warning') }}">{{ ucfirst($batch->status) }}</span>
                                 <span class="label label-{{ $processColor }}">{{ ucfirst($processState) }}</span>
                                 @if (in_array($processState, ['queued', 'processing'], true))
-                                    <small class="text-muted">{{ (int) ($batch->progress_percent ?? 0) }}% · {{ $batch->progress_message }}</small>
+                                    <small class="text-muted">{{ (int) ($batch->progress_percent ?? 0) }}% · <span data-import-history-message-source>{{ $batch->progress_message }}</span></small>
                                 @elseif ($processState === 'failed')
                                     <small class="text-danger">Gagal diproses. Buka batch untuk mencoba ulang.</small>
                                 @endif

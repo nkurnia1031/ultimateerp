@@ -159,7 +159,7 @@
                                     <td>{{ $entry['date'] }}</td>
                                     <td>{{ ($entry['source_link_status'] ?? '') === 'ambiguous' ? 'Ambigu' : ((($entry['source_link_status'] ?? '') === 'suggested') ? 'Saran terdekat' : 'Tidak ditemukan') }}</td>
                                     <td>{{ implode(', ', $entry['source_link_candidates'] ?? []) ?: '—' }}</td>
-                                    <td>{{ $entry['source_link_note'] ?? '' }}</td>
+                                    <td><span data-import-history-message-source>{{ $entry['source_link_note'] ?? '' }}</span></td>
                                 </tr>
                             @endforeach
                         </tbody>

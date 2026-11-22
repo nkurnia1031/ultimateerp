@@ -638,7 +638,9 @@
                     return '<div class="progress"><div class="progress-bar" role="progressbar" style="width:' + percent + '%">' + percent + '%</div></div>' +
                         '<small>' + parseInt(row.progress_current || 0, 10) + ' / ' + (parseInt(row.progress_total || 0, 10) || '—') + '</small>';
                 }},
-                {data: 'last_message', name: 'last_message', defaultContent: '', render: $.fn.dataTable.render.text()},
+                {data: 'last_message', name: 'last_message', defaultContent: '', render: function (value, type, row) {
+                    return window.importHistoryMessageCell(row.error_message || value || '', type);
+                }},
                 {data: 'created_at', name: 'created_at', render: $.fn.dataTable.render.text()},
                 {data: null, orderable: false, searchable: false, render: function (row) {
                     var actions = '<button type="button" class="btn btn-xs btn-default attendance-import-detail" data-url="' + escapeAttendanceImportAttribute(row.detail_url) + '">Detail</button> ';
