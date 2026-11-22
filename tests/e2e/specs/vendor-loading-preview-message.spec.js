@@ -75,6 +75,9 @@ test('queued Vendor Loading preview shortens row issues and opens the full messa
 
     await page.goto(`/asset/fleet/vendor-loadings/import?batch_id=${batchId}`);
     await expect(page.locator('#vendor-import-preview-box')).toBeVisible();
+    await page.locator('#vendor-import-grid .ag-body-horizontal-scroll-viewport').evaluate(viewport => {
+        viewport.scrollLeft = viewport.scrollWidth;
+    });
     const issueCell = page.locator('#vendor-import-grid [col-id="row_issue"]');
     const openMessage = issueCell.locator('.import-history-message-open');
     await expect(openMessage).toBeVisible();
