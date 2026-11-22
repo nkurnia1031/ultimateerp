@@ -20,6 +20,9 @@
             'id' => 'import_sale_form',
         ]) !!}
         {!! Form::hidden('file_name', $file_name) !!}
+        @if (!empty($batch_id))
+            {!! Form::hidden('batch_id', $batch_id, ['id' => 'sales_import_batch_id']) !!}
+        @endif
         @component('components.widget')
             <div class="row">
                 <div class="col-md-6">
@@ -109,12 +112,16 @@
                     class="tw-dw-btn tw-dw-btn-primary tw-text-white pull-right">@lang('messages.submit')</button>
             </div>
         </div>
+        <div class="progress" id="sales_import_progress_wrap" style="display:none;margin-top:12px">
+            <div class="progress-bar" id="sales_import_progress" role="progressbar" style="width:0%">0%</div>
+        </div>
+        <p id="sales_import_status" class="text-muted" aria-live="polite"></p>
         {!! Form::close() !!}
     </section>
 @stop
 @section('javascript')
     <script type="text/javascript">
-        $(document).on('submit', 'form#import_sale_form', function() {
+        $(document).on('submit', 'form#import_sale_form', function(e) {
             var import_fields = [];
 
             $('.import_fields').each(function() {
@@ -145,6 +152,42 @@
                 alert("{{ __('lang_v1.cannot_select_a_field_twice') }}");
                 return false;
             }
+
+            if (!$('#sales_import_batch_id').val()) return;
+            e.preventDefault();
+            var form = $(this);
+            var button = form.find('[type="submit"]');
+            button.prop('disabled', true);
+            $('#sales_import_progress_wrap').show();
+            $.ajax({ url: form.attr('action'), method: 'POST', data: form.serialize(), dataType: 'json' })
+                .done(function(response) {
+                    $('#sales_import_status').text(response.msg || 'Konfirmasi masuk antrean.');
+                    var poll = setInterval(function() {
+                        $.getJSON(response.status_url).done(function(detail) {
+                            $('#sales_import_status').text(detail.batch.last_message || detail.batch.status);
+                            var progress = detail.batch.progress_percent || 0;
+                            $('#sales_import_progress').css('width', progress + '%').text(progress + '%');
+                            if (detail.batch.status === 'imported') {
+                                clearInterval(poll);
+                                window.location.assign(response.history_url);
+                            } else if (detail.batch.status === 'failed') {
+                                clearInterval(poll);
+                                button.prop('disabled', false);
+                                alert(detail.batch.error_message || 'Import gagal. Buka riwayat batch untuk detail.');
+                            }
+                        }).fail(function() {
+                            clearInterval(poll);
+                            button.prop('disabled', false);
+                            alert('Status batch tidak dapat dimuat.');
+                        });
+                    }, 1500);
+                }).fail(function(xhr) {
+                    button.prop('disabled', false);
+                    var message = xhr.responseJSON && xhr.responseJSON.message ? xhr.responseJSON.message : 'Konfirmasi import gagal.';
+                    $('#sales_import_status').text(message);
+                    alert(message);
+                });
+            return false;
 
         });
 

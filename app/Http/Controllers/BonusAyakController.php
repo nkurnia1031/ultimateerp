@@ -5,14 +5,17 @@ namespace App\Http\Controllers;
 use App\BonusAyak;
 use App\BonusAyakKasbon;
 use App\Exports\BonusAyakExport;
-use App\Imports\BonusAyakImportPreview;
+use App\Jobs\AnalyzeBonusAyakImportBatch;
+use App\Jobs\ProcessBonusAyakImportBatch;
+use App\Services\BonusAyakImportHistoryService;
+use App\Services\UserImportBatchService;
 use App\User;
+use App\UserImportBatch;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
-use Illuminate\Validation\ValidationException;
 use Maatwebsite\Excel\Facades\Excel;
 use Modules\AssetManagement\Entities\Asset;
 use Modules\Project\Entities\Project;
@@ -157,142 +160,195 @@ class BonusAyakController extends Controller
         return Excel::download(new BonusAyakExport($request->input('from'), $request->input('to'), $this->businessId()), 'bonus_ayak.xlsx');
     }
 
-    public function importExcel(Request $request)
+    public function importExcel(Request $request, BonusAyakImportHistoryService $history)
     {
         $this->authorizeAccess();
         $request->validate(['file' => 'required|file|mimes:xlsx,csv,xls|max:51200']);
 
+        $batch = null;
+        $stagingPath = null;
         try {
-            $import = new BonusAyakImportPreview($this->businessId(), (int) auth()->id());
-            $import->parseSheets(Excel::toCollection($import, $request->file('file')));
-
-            $entries = collect($import->entries)->values();
-            $seen = [];
-            $entries = $entries->map(function (array $entry, int $index) use (&$seen) {
-                $entry['preview_index'] = $index;
-                $fingerprint = (string) ($entry['source_fingerprint'] ?? '');
-                $reason = null;
-
-                if ($fingerprint === '' || isset($seen[$fingerprint])) {
-                    $reason = 'Duplikat di dalam file upload.';
-                } elseif (BonusAyak::where('business_id', $this->businessId())
-                    ->where('source_fingerprint', $fingerprint)
-                    ->exists()) {
-                    $reason = 'Data yang sama sudah ada pada business aktif.';
-                }
-
-                if ($reason !== null) {
-                    $entry['valid'] = false;
-                    $entry['error'] = "Baris {$entry['source_row']}: {$reason}";
-                } else {
-                    $seen[$fingerprint] = true;
-                    $entry['valid'] = true;
-                    $entry['error'] = null;
-                }
-
-                return $entry;
-            })->all();
-
-            $errors = array_values($import->errors);
-            if ($entries === [] && $errors === []) {
-                return back()->with('error', 'File tidak berisi baris yang dapat dipreview.');
+            $file = $request->file('file');
+            $extension = strtolower($file->getClientOriginalExtension()) ?: 'xlsx';
+            $stagingPath = $file->storeAs('user-import-staging/bonus-ayak', (string) Str::uuid().'.'.$extension, 'user_imports');
+            if (! $stagingPath) {
+                throw new \RuntimeException('Workbook Bonus Ayak tidak dapat disimpan ke storage privat.');
             }
-
-            $token = (string) Str::uuid();
-            $payload = [
-                'token' => $token,
-                'user_id' => (int) auth()->id(),
-                'business_id' => $this->businessId(),
-                'created_at' => now()->toIso8601String(),
-                'original_name' => $request->file('file')->getClientOriginalName(),
-                'entries' => $entries,
-                'errors' => $errors,
-            ];
-            Storage::disk('local')->put($this->importPreviewPath($token), json_encode($payload, JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT));
-
-            return redirect()->route('bonus-ayak.import-preview', $token)
-                ->with('success', 'Preview import sudah siap. Periksa baris valid sebelum menyimpan.');
+            $batch = $history->start(
+                $this->businessId(),
+                (int) auth()->id(),
+                $file->getClientOriginalName(),
+                $stagingPath
+            );
+            AnalyzeBonusAyakImportBatch::dispatch((int) $batch->id, $this->businessId());
         } catch (\Throwable $e) {
+            if (! $batch && $stagingPath) {
+                Storage::disk('user_imports')->delete($stagingPath);
+            }
+            if ($batch) {
+                $history->fail($batch, $e->getMessage());
+            }
             report($e);
+
+            if ($request->expectsJson()) {
+                return response()->json(['success' => false, 'message' => 'Workbook gagal dimasukkan ke antrean.'], 422);
+            }
 
             return back()->with('error', $e->getMessage());
         }
+
+        if ($request->expectsJson()) {
+            return response()->json([
+                'success' => true,
+                'batch_id' => $batch->id,
+                'token' => $batch->source_key,
+                'status' => $batch->status,
+                'status_url' => route('bonus-ayak.import-status', $batch->source_key),
+                'preview_url' => route('bonus-ayak.import-preview', $batch->source_key),
+            ], 202);
+        }
+
+        return redirect()->route('bonus-ayak.import-preview', $batch->source_key)
+            ->with('success', 'Workbook masuk antrean analisis. Halaman akan menampilkan preview setelah selesai.');
     }
 
-    public function importPreview(string $token)
+    public function importPreview(string $token, BonusAyakImportHistoryService $history)
     {
         $this->authorizeAccess();
-        $preview = $this->loadImportPreview($token);
+        $batch = UserImportBatch::where('business_id', $this->businessId())
+            ->where('created_by', auth()->id())
+            ->where('importer_key', 'bonus_ayak')
+            ->where('source_key', $token)
+            ->firstOrFail();
+        if (in_array($batch->status, ['imported', 'partial', 'reverted', 'cancelled'], true)) {
+            return redirect()->route('bonus-ayak.index');
+        }
+        if (in_array($batch->status, ['queued_preview', 'analyzing', 'queued_import', 'importing'], true)
+            || ($batch->status === 'failed' && blank($batch->preview_path))) {
+            return view('bonus_ayak.import_pending', [
+                'statusUrl' => route('bonus-ayak.import-status', $token),
+                'fileName' => $batch->file_name,
+            ]);
+        }
+        [, $preview] = $history->loadPreview($token, $this->businessId(), (int) auth()->id());
 
         return view('bonus_ayak.import_preview', compact('preview'));
     }
 
-    public function importConfirm(Request $request, string $token)
+    public function importStatus(string $token)
+    {
+        $this->authorizeAccess();
+        $batch = UserImportBatch::where('business_id', $this->businessId())
+            ->where('created_by', auth()->id())
+            ->where('importer_key', 'bonus_ayak')
+            ->where('source_key', $token)
+            ->firstOrFail();
+
+        return response()->json([
+            'status' => $batch->status,
+            'progress_percent' => (int) $batch->progress_percent,
+            'last_message' => $batch->last_message,
+            'error_message' => $batch->error_message,
+            'preview_url' => in_array($batch->status, ['preview_ready', 'failed'], true) && filled($batch->preview_path)
+                ? route('bonus-ayak.import-preview', $token) : null,
+        ]);
+    }
+
+    public function importConfirm(Request $request, string $token, BonusAyakImportHistoryService $history)
     {
         $this->authorizeAccess();
         $request->validate([
             'entries' => ['required', 'array', 'min:1'],
             'entries.*' => ['integer', 'min:0'],
         ]);
-        $preview = $this->loadImportPreview($token);
-        $selectedIndexes = collect($request->input('entries', []))
-            ->map(fn ($index) => (int) $index)
-            ->unique()
-            ->values();
-        $entries = collect($preview['entries'] ?? [])
-            ->filter(fn ($entry, $index) => $selectedIndexes->contains((int) $index) && ! empty($entry['valid']))
-            ->values();
-
-        if ($entries->isEmpty()) {
-            return redirect()->route('bonus-ayak.import-preview', $token)
-                ->with('error', 'Pilih minimal satu baris valid untuk diimpor.');
-        }
-
+        [$batch] = $history->loadPreview($token, $this->businessId(), (int) auth()->id());
         try {
-            DB::transaction(function () use ($entries) {
-                foreach ($entries as $entry) {
-                    $duplicate = BonusAyak::where('business_id', $this->businessId())
-                        ->where('source_fingerprint', $entry['source_fingerprint'])
-                        ->exists();
-                    if ($duplicate) {
-                        throw ValidationException::withMessages([
-                            'entries' => "Baris {$entry['source_row']} sudah diimpor oleh proses lain atau sudah ada sebelumnya.",
-                        ]);
-                    }
-
-                    BonusAyak::create([
-                        'business_id' => $this->businessId(),
-                        'tanggal' => $entry['tanggal'],
-                        'nama_operator' => $entry['nama_operator'],
-                        'driver_id' => $entry['driver_id'],
-                        'unit' => $entry['unit'],
-                        'asset_id' => $entry['asset_id'],
-                        'trip' => $entry['trip'],
-                        'bonus' => $entry['bonus'],
-                        'created_by' => auth()->id(),
-                        'source_fingerprint' => $entry['source_fingerprint'],
-                    ]);
-                }
-            });
-            Storage::disk('local')->delete($this->importPreviewPath($token));
-
-            return redirect()->route('bonus-ayak.index')->with('success', "Import Bonus Ayak berhasil: {$entries->count()} baris disimpan.");
-        } catch (ValidationException $e) {
-            return redirect()->route('bonus-ayak.import-preview', $token)->withErrors($e->errors());
+            $history->queueImport($batch, $request->input('entries', []));
+            ProcessBonusAyakImportBatch::dispatch((int) $batch->id, $this->businessId());
         } catch (\Throwable $e) {
-            report($e);
+            if ($request->expectsJson()) {
+                return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+            }
 
-            return redirect()->route('bonus-ayak.import-preview', $token)->with('error', 'Import gagal disimpan. Periksa data dan coba lagi.');
+            return redirect()->route('bonus-ayak.import-preview', $token)->with('error', $e->getMessage());
         }
+
+        if ($request->expectsJson()) {
+            return response()->json(['success' => true, 'status' => 'queued_import'], 202);
+        }
+
+        return redirect()->route('bonus-ayak.import-preview', $token)
+            ->with('success', 'Baris Bonus Ayak masuk antrean untuk disimpan.');
     }
 
-    public function importCancel(string $token)
+    public function importCancel(string $token, BonusAyakImportHistoryService $history)
     {
         $this->authorizeAccess();
-        $this->loadImportPreview($token);
-        Storage::disk('local')->delete($this->importPreviewPath($token));
+        $batch = UserImportBatch::where('business_id', $this->businessId())
+            ->where('created_by', auth()->id())
+            ->where('importer_key', 'bonus_ayak')
+            ->where('source_key', $token)->firstOrFail();
+        abort_unless(in_array($batch->status, ['queued_preview', 'analyzing', 'preview_ready'], true), 422, 'Batch Bonus Ayak tidak dapat dibatalkan pada status ini.');
+        $history->cancel($batch);
+        if (filled($batch->staging_path)) {
+            Storage::disk('user_imports')->delete($batch->staging_path);
+            $batch->forceFill(['staging_path' => null])->save();
+        }
 
         return redirect()->route('bonus-ayak.index')->with('success', 'Preview import dibatalkan. Tidak ada data yang disimpan.');
+    }
+
+    public function importHistory(Request $request, BonusAyakImportHistoryService $history)
+    {
+        $this->authorizeAccess();
+
+        return response()->json($history->history($request, $this->businessId()));
+    }
+
+    public function importHistoryDetail(int $batchId, BonusAyakImportHistoryService $history)
+    {
+        $this->authorizeAccess();
+        $detail = $history->detail($batchId, $this->businessId());
+
+        return response()->json(['batch' => $detail['batch'], 'results' => $detail['results'], 'preview' => $detail['preview']]);
+    }
+
+    public function importHistorySource(int $batchId, UserImportBatchService $batches)
+    {
+        $this->authorizeAccess();
+        $batch = $batches->findForBusiness($batchId, $this->businessId(), 'bonus_ayak');
+        abort_unless($batch->hasSourceSnapshot(), 404);
+
+        return $batches->workbookDownload($batch);
+    }
+
+    public function importHistoryRetry(int $batchId, UserImportBatchService $batches)
+    {
+        $this->authorizeAccess();
+        $batch = $batches->findForBusiness($batchId, $this->businessId(), 'bonus_ayak');
+        abort_unless($batch->status === 'failed', 422, 'Hanya batch gagal yang dapat dicoba ulang.');
+
+        if (filled($batch->preview_path)) {
+            $selection = $batch->results_path ? $batches->readPayload($batch, 'results') : [];
+            abort_if(empty($selection['selected_preview_indexes']), 422, 'Pilihan baris untuk retry tidak tersedia.');
+            $batch->forceFill(['status' => 'queued_import', 'stage' => 'queued_import', 'failed_at' => null, 'completed_at' => null, 'error_message' => null, 'heartbeat_at' => now()])->save();
+            ProcessBonusAyakImportBatch::dispatch((int) $batch->id, $this->businessId());
+        } else {
+            abort_unless($batch->hasSourceSnapshot() || filled($batch->staging_path), 422, 'Sumber batch tidak tersedia untuk retry.');
+            $batch->forceFill(['status' => 'queued_preview', 'stage' => 'queued', 'failed_at' => null, 'completed_at' => null, 'error_message' => null, 'heartbeat_at' => null])->save();
+            AnalyzeBonusAyakImportBatch::dispatch((int) $batch->id, $this->businessId());
+        }
+
+        return response()->json(['success' => true, 'status' => $batch->fresh()->status], 202);
+    }
+
+    public function importHistoryRevert(int $batchId, BonusAyakImportHistoryService $history, UserImportBatchService $batches)
+    {
+        $this->authorizeAccess();
+        $batch = $batches->findForBusiness($batchId, $this->businessId(), 'bonus_ayak');
+        $history->revert($batch);
+
+        return response()->json(['success' => true, 'status' => 'reverted']);
     }
 
     public function exportPdf(Request $request)
@@ -435,42 +491,6 @@ class BonusAyakController extends Controller
     private function scopedKasbonQuery()
     {
         return BonusAyakKasbon::query()->where('business_id', $this->businessId());
-    }
-
-    private function importPreviewPath(string $token): string
-    {
-        abort_unless((bool) preg_match('/^[a-f0-9-]{36}$/i', $token), 404);
-
-        return 'bonus-ayak-import-previews/'.auth()->id().'-'.$this->businessId().'-'.$token.'.json';
-    }
-
-    private function loadImportPreview(string $token): array
-    {
-        $path = $this->importPreviewPath($token);
-        abort_unless(Storage::disk('local')->exists($path), 404);
-
-        try {
-            $preview = json_decode(Storage::disk('local')->get($path), true, 512, JSON_THROW_ON_ERROR);
-        } catch (\Throwable) {
-            Storage::disk('local')->delete($path);
-            abort(404);
-        }
-
-        if (! is_array($preview)) {
-            Storage::disk('local')->delete($path);
-            abort(404);
-        }
-
-        $createdAt = isset($preview['created_at']) ? Carbon::parse($preview['created_at']) : null;
-        if (($preview['user_id'] ?? null) !== (int) auth()->id()
-            || ($preview['business_id'] ?? null) !== $this->businessId()
-            || ! $createdAt
-            || $createdAt->lt(now()->subHours(2))) {
-            Storage::disk('local')->delete($path);
-            abort(404);
-        }
-
-        return $preview;
     }
 
 }

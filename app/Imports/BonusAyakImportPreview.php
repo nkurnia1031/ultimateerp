@@ -24,9 +24,13 @@ class BonusAyakImportPreview implements ToCollection, WithHeadingRow
 
     public function parseSheets(Collection $sheets): void
     {
-        foreach ($sheets as $rows) {
+        foreach ($sheets as $index => $rows) {
             if ($rows instanceof Collection) {
+                $offset = count($this->entries);
                 $this->collection($rows);
+                for ($entryIndex = $offset; $entryIndex < count($this->entries); $entryIndex++) {
+                    $this->entries[$entryIndex]['source_sheet'] = 'Sheet '.((int) $index + 1);
+                }
             }
         }
     }

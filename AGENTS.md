@@ -1,3 +1,23 @@
+## Session start — read before any task
+
+This file is the required startup entry point. At the beginning of a new session, read it first, then read the task handoff linked below when the request continues that work.
+
+### Active task handoff — import standardization
+
+For work on standardizing import features, read [`Rencana/HANDOFF-IMPORT-STANDARDIZATION-2026-11-21.md`](Rencana/HANDOFF-IMPORT-STANDARDIZATION-2026-11-21.md) before editing. As of 2026-11-21, `main` is clean at `5072881`; Journal shared history is implemented and its PHPUnit GitHub Actions run `44926358818` passed. The import-standardization refactor has not started and no pilot importer has been selected. Recheck Git and CI because these values can change.
+
+The active request is to establish one shared import pattern and migrate one importer as a pilot, then stop for user confirmation before migrating another. Preserve existing business behavior. For this refactor, do not introduce new user features such as preview UI or import undo/revert. Avoid speculative abstractions and micro-optimizations; record uncertain opportunities as suggestions. PHPUnit runs through GitHub Actions only, with no local test run. Run E2E once at the end of the full task.
+
+### Required startup sequence
+
+1. Confirm the repository with `Get-Location`, `git branch --show-current`, `git status --short`, and `git log -5 --oneline`. Preserve all existing worktree changes; never use destructive reset/checkout/clean commands.
+2. Read the task handoff above when it matches the request. If another current handoff is referenced by a task-specific section below, read that one too; older dated handoffs are historical unless explicitly named as current.
+3. Inspect `.env` locally without printing passwords, tokens, or other secrets. Confirm database and queue configuration before any database or import diagnostic; do not assume the local database is production.
+4. For codebase questions, run a focused Graphify query before raw source searches. Use `graphify path` or `graphify explain` for relationships or concepts.
+5. Before feature or issue work, run the `/ask-matt` router, read its selected skills in full, then follow `docs/agents/engineering-workflow.md` and the relevant GitHub issue/spec/ADR. Search the listed skill roots if the router file is missing; if unavailable, state that fact and use the repository workflow without claiming the skill ran.
+6. Inspect the current routes, controllers, jobs, services, views, and tests before changing code. Reuse existing patterns where evidence supports them.
+7. Follow the verification and issue checkpoints below. For the active import-standardization task, use GitHub Actions for PHPUnit, defer Playwright E2E until the end, and pause after the pilot for user confirmation before any second importer.
+
 ## graphify
 
 This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
@@ -37,10 +57,12 @@ This section is the canonical starting point for a new coding session. Read it b
 - Repository root is `D:\\Laragon\\www\\2025\\ultimateerp` in the local Windows/Laragon setup. Confirm the current directory before running Artisan commands.
 - The editor may show a deployment worktree such as `panel.koperasi-ppt.com/.env`; do not assume that file is the local application or that the local database represents production. Inspect the active root and `.env` first, and never copy local demo credentials into production documentation.
 - This is a Laravel application with module code under `Modules/`, Blade views under `resources/views/`, application JavaScript under `public/js/`, and published module JavaScript under `public/modules/`.
-- The worktree is intentionally dirty and contains several related feature changes. Preserve existing user changes; do not use `git reset --hard`, `git checkout --`, or broad destructive cleanup.
+- The worktree may contain user changes. Always inspect `git status --short` and preserve them; do not use `git reset --hard`, `git checkout --`, or broad destructive cleanup.
 - `graphify-out/` is generated state and may be dirty after hooks or `graphify update .`; that is expected.
 
-### Current session handoff — 2026-09-24
+### Historical handoff — 2026-09-24
+
+This section records the Loading Vendor state from 2026-09-24. For the active import-standardization work, use the current handoff at `Rencana/HANDOFF-IMPORT-STANDARDIZATION-2026-11-21.md` instead.
 
 - Loading Vendor from the latest client request is implemented in commit `78c49d0` (`update`). The alias fix for the `Tiket` import header and the two handoff documents are changes made after that commit and are intentionally left for the next session to review/commit; Graphify output may also be dirty.
 - Loading Vendor is separate from internal SPB. Its entry point is `Asset Management → Loading Vendor`; the separate `Import SPB Angkutan` navigation item was removed, while the import button remains on the SPB page.
@@ -58,15 +80,16 @@ This section is the canonical starting point for a new coding session. Read it b
 
 ### First actions in a new session
 
-1. Read this file and run `Get-Location`, `git status --short`, and a safe inspection of `.env` (do not print passwords in reports).
-2. Check `QUEUE_CONNECTION`, database connection, and whether a queue worker is running before testing any import.
-3. For a codebase question, query the existing graph first, for example:
+1. Read this file, then the current task handoff named in **Session start**.
+2. Run `Get-Location`, `git branch --show-current`, `git status --short`, and `git log -5 --oneline`; inspect `.env` safely without printing secrets.
+3. Check `QUEUE_CONNECTION`, database connection, and whether a queue worker is running before testing any import.
+4. For a codebase question, query the existing graph first, for example:
    `graphify query "<focused question>"`.
    Use `graphify path` or `graphify explain` for relationships or one concept instead of scanning the whole repository.
-4. Inspect existing routes, controllers, services, jobs, and views before adding a parallel implementation.
-5. For automated UI verification, use the GitHub Actions Playwright workflow. Use the local demo for a Playwright reproduction only when the user requests it or remote artifacts and logs cannot explain a failure.
-6. After code changes run the relevant lint/tests, publish module JavaScript when applicable, and finish with `graphify update .`.
-7. If the user asks to reset Codex sessions/cache, follow [`docs/agents/codex-cache-cleanup.md`](docs/agents/codex-cache-cleanup.md) and use `scripts/clear-codex-session-cache.ps1`. Run its `-Preview` first; the manual reset closes active Codex processes and preserves authentication and settings.
+5. Read the `/ask-matt` router and selected skills, then inspect existing routes, controllers, services, jobs, views, and tests before adding a parallel implementation.
+6. Use GitHub Actions for canonical PHPUnit/E2E. Run tests locally only when the user explicitly requests local tests; follow task-specific timing instructions for E2E.
+7. After code changes run relevant static checks, publish module JavaScript when applicable, and finish with `graphify update .`.
+8. If the user asks to reset Codex sessions/cache, follow [`docs/agents/codex-cache-cleanup.md`](docs/agents/codex-cache-cleanup.md) and use `scripts/clear-codex-session-cache.ps1`. Run its `-Preview` first; the manual reset closes active Codex processes and preserves authentication and settings.
 
 ### Local demo and testing
 

@@ -10,12 +10,13 @@
     <h1>Impor Jurnal dari Workbook</h1>
 </section>
 
-<section id="journal_import_page" class="content no-print" data-status-url-base="{{ url('accounting/journal-entry/import') }}" data-terminate-url-base="{{ url('accounting/journal-entry/import') }}" data-active-statuses="{{ implode(',', \Modules\Accounting\Entities\JournalImportBatchStatus::activeStatuses()) }}" data-waiting-statuses="{{ implode(',', \Modules\Accounting\Entities\JournalImportBatchStatus::waitingStatuses()) }}" data-queued-statuses="{{ implode(',', \Modules\Accounting\Entities\JournalImportBatchStatus::queuedStatuses()) }}">
+<section id="journal_import_page" class="content no-print" data-status-url-base="{{ url('accounting/journal-entry/import') }}" data-terminate-url-base="{{ url('accounting/journal-entry/import') }}" data-history-url="{{ url('accounting/journal-entry/import/history') }}" data-history-detail-url-base="{{ url('accounting/journal-entry/import/history') }}" data-csrf-token="{{ csrf_token() }}" data-active-statuses="{{ implode(',', \Modules\Accounting\Entities\JournalImportBatchStatus::activeStatuses()) }}" data-waiting-statuses="{{ implode(',', \Modules\Accounting\Entities\JournalImportBatchStatus::waitingStatuses()) }}" data-queued-statuses="{{ implode(',', \Modules\Accounting\Entities\JournalImportBatchStatus::queuedStatuses()) }}">
     @component('components.widget', ['class' => 'box-primary', 'title' => 'Upload & Analisa XLSX'])
         {!! Form::open([
             'url' => action([\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'analyzeImport']),
             'method' => 'post',
             'files' => true,
+            'id' => 'journal_import_upload_form',
         ]) !!}
             <div class="row">
                 <div class="col-md-6">
@@ -27,10 +28,11 @@
                 </div>
                 <div class="col-md-6">
                     <button type="submit" class="btn btn-primary" style="margin-top: 25px;">
-                        <i class="fas fa-search"></i> Analisa File
+                        <i class="fas fa-search"></i> Unggah & Analisa di Background
                     </button>
                 </div>
             </div>
+            <p id="journal_import_upload_feedback" class="help-block" role="status" aria-live="polite"></p>
         {!! Form::close() !!}
     @endcomponent
 
@@ -646,144 +648,73 @@
     @endif
 
     @component('components.widget', ['class' => 'box-solid', 'title' => 'Riwayat Import'])
+        <style>
+            #journal_import_history_table th,
+            #journal_import_history_table td { vertical-align: top; white-space: normal; overflow-wrap: anywhere; }
+            .journal-import-history-actions,
+            .journal-import-history-detail-links { display: flex; flex-wrap: wrap; gap: 4px; align-items: flex-start; }
+        </style>
+        <div class="row" style="margin-bottom: 12px;">
+            <div class="col-sm-4 col-md-3">
+                <label for="journal_import_history_status">Filter status</label>
+                <select id="journal_import_history_status" class="form-control">
+                    <option value="">Semua status</option>
+                    <option value="queued_preview">Menunggu analisis</option>
+                    <option value="analyzing">Menganalisis</option>
+                    <option value="preview_ready">Siap ditinjau</option>
+                    <option value="queued_import">Menunggu import</option>
+                    <option value="importing">Mengimpor</option>
+                    <option value="imported">Selesai</option>
+                    <option value="partial">Sebagian selesai</option>
+                    <option value="failed">Gagal</option>
+                    <option value="cancelled">Dihentikan</option>
+                    <option value="reverted">Direvert</option>
+                </select>
+            </div>
+            <div class="col-sm-8 col-md-9" style="padding-top: 25px;">
+                <button type="button" class="btn btn-default btn-sm" id="journal_import_history_refresh">
+                    <i class="fas fa-sync"></i> Perbarui riwayat
+                </button>
+                <span id="journal_import_history_message" class="text-muted" role="status" aria-live="polite"></span>
+            </div>
+        </div>
         <div class="table-responsive">
-            <table class="table table-bordered table-striped">
+            <table class="table table-bordered table-striped" id="journal_import_history_table" style="width:100%;">
                 <thead>
                     <tr>
                         <th>Tanggal</th>
                         <th>File</th>
                         <th>Periode</th>
+                        <th>Total entry</th>
                         <th>Imported</th>
                         <th>Skipped</th>
-                        <th>Relasi perlu review</th>
-                        <th>Tax perlu review</th>
-                        <th>Status</th>
-                        <th>Oleh</th>
+                        <th>Status dan progres</th>
                         <th>@lang('messages.action')</th>
                     </tr>
                 </thead>
                 <tbody>
-                    @forelse($imports as $import)
-                        @php
-                            $isJournalImportActive = \Modules\Accounting\Entities\JournalImportBatchStatus::isActive((string) $import->status);
-                            $isJournalImportWaiting = \Modules\Accounting\Entities\JournalImportBatchStatus::isWaiting((string) $import->status);
-                            $journalImportProgressData = json_decode((string) ($import->progress_data ?? ''), true) ?: [];
-                            $journalImportPhase = $journalImportProgressData['phase'] ?? null;
-                            $journalImportPhaseProgress = is_string($journalImportPhase)
-                                ? ($journalImportProgressData['phases'][$journalImportPhase] ?? null)
-                                : null;
-                            $journalImportProgressTotal = is_array($journalImportPhaseProgress)
-                                ? (int) ($journalImportPhaseProgress['total'] ?? 0)
-                                : null;
-                            $journalImportProgressIndeterminate = is_array($journalImportPhaseProgress)
-                                && $journalImportProgressTotal <= 0;
-                            $journalImportPercent = is_array($journalImportPhaseProgress)
-                                ? ($journalImportProgressTotal > 0
-                                    ? min(100, (int) round(((int) ($journalImportPhaseProgress['processed'] ?? 0) / $journalImportProgressTotal) * 100))
-                                    : 0)
-                                : (!empty($import->total_entries)
-                                    ? min(100, (int) round(((int) $import->processed_entries / (int) $import->total_entries) * 100))
-                                    : 0);
-                            $journalImportProgressCount = is_array($journalImportPhaseProgress)
-                                ? ((int) ($journalImportPhaseProgress['processed'] ?? 0).' / '.(int) ($journalImportPhaseProgress['total'] ?? 0).' '.($journalImportPhaseProgress['unit'] ?? 'baris'))
-                                : ((int) $import->processed_entries.' / '.(int) $import->total_entries.' entry');
-                        @endphp
-                        <tr>
-                            @php
-                                $importSummary = json_decode((string) $import->summary, true) ?: [];
-                            @endphp
-                            <td>{{ @format_datetime($import->created_at) }}</td>
-                            <td>{{ $import->file_name }}</td>
-                            <td>{{ $import->source_date_range }}</td>
-                            <td>{{ $import->imported_entries }}</td>
-                            <td>{{ $import->skipped_entries }}</td>
-                            <td>{{ $importSummary['source_link_review_count'] ?? '—' }}</td>
-                            <td>{{ (int) ($import->tax_reconciliation_review_count ?? 0) }}</td>
-                            <td>
-                                @if($isJournalImportActive)
-                                    <span class="label bg-yellow" id="journal-import-status-{{ $import->id }}">{{ $import->status }}</span>
-                                @elseif($import->status == 'analyzed')
-                                    <span class="label bg-aqua" id="journal-import-status-{{ $import->id }}">analyzed</span>
-                                @elseif($import->status == 'imported')
-                                    <span class="label bg-green" id="journal-import-status-{{ $import->id }}">imported</span>
-                                @elseif($import->status == 'partially_imported')
-                                    <span class="label bg-aqua" id="journal-import-status-{{ $import->id }}">partially_imported</span>
-                                @elseif($import->status == 'failed')
-                                    <span class="label bg-red" id="journal-import-status-{{ $import->id }}">failed</span>
-                                @elseif($import->status == 'cancelled')
-                                    <span class="label bg-gray" id="journal-import-status-{{ $import->id }}">cancelled</span>
-                                @else
-                                    <span class="label bg-gray" id="journal-import-status-{{ $import->id }}">{{ $import->status }}</span>
-                                @endif
-                                @if($isJournalImportActive)
-                                    <div class="progress" style="margin-top: 5px; margin-bottom: 0;">
-                                        <div id="journal-import-progress-{{ $import->id }}" class="progress-bar progress-bar-striped active" role="progressbar" aria-valuenow="{{ $journalImportPercent }}" aria-valuemin="0" aria-valuemax="100" style="width: {{ ($isJournalImportWaiting && !is_array($journalImportPhaseProgress)) || $journalImportProgressIndeterminate ? '100' : $journalImportPercent }}%;">
-                                            {{ (($isJournalImportWaiting && !is_array($journalImportPhaseProgress)) || $journalImportProgressIndeterminate) ? '' : $journalImportPercent.'%' }}
-                                        </div>
-                                    </div>
-                                    <small id="journal-import-count-{{ $import->id }}" class="text-muted">
-                                        @if(is_array($journalImportPhaseProgress))
-                                            {{ $journalImportProgressIndeterminate ? 'Menyiapkan total '.($journalImportPhaseProgress['unit'] ?? 'baris') : $journalImportProgressCount }}
-                                        @elseif(in_array($import->status, ['preparing_import', 'importing', 'reconciling', 'processing']))
-                                            {{ $journalImportProgressCount }}
-                                        @else
-                                            Menunggu update worker
-                                        @endif
-                                    </small><br>
-                                    <small id="journal-import-message-{{ $import->id }}" class="text-muted" aria-live="polite">{{ $import->last_message ?: 'Menunggu worker queue imports.' }}</small><br>
-                                    <small class="text-muted">Pembaruan terakhir: <span id="journal-import-heartbeat-{{ $import->id }}">{{ $import->updated_at }}</span></small><br>
-                                    <small id="journal-import-stale-{{ $import->id }}" class="text-warning hide"></small>
-                                @elseif($import->status === 'failed')
-                                    <small class="text-danger">{{ $import->last_message ?: 'Import gagal.' }}</small>
-                                    @if(!empty($import->error_message))
-                                        <details><summary>Detail error</summary><small class="text-danger">{{ \Illuminate\Support\Str::limit($import->error_message, 500) }}</small></details>
-                                    @endif
-                                @elseif(!empty($import->last_message))
-                                    <br><small class="text-muted">{{ $import->last_message }}</small>
-                                @endif
-                            </td>
-                            <td>{{ $import->added_by }}</td>
-                            <td id="journal-import-action-{{ $import->id }}"
-                                data-review-url="{{ action([\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'reviewImport'], [$import->id]) }}"
-                                data-revert-url="{{ action([\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'revertImport'], [$import->id]) }}"
-                                data-terminate-url="{{ action([\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'terminateImport'], [$import->id]) }}"
-                                data-csrf-token="{{ csrf_token() }}">
-                                @if(in_array($import->status, ['analyzed', 'partially_imported', 'failed', 'cancelled'], true))
-                                    <a href="{{ action([\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'reviewImport'], [$import->id]) }}" class="btn btn-primary btn-xs">
-                                        <i class="fas fa-check"></i> {{ $import->status === 'analyzed' ? 'Review & Import' : 'Review & Continue' }}
-                                    </a>
-                                @elseif($isJournalImportActive)
-                                    <button type="button" class="btn btn-default btn-xs journal-import-watch" data-id="{{ $import->id }}">
-                                        <i class="fas fa-sync"></i> Pantau progres
-                                    </button>
-                                    <button type="button" class="btn btn-warning btn-xs journal-import-terminate" data-id="{{ $import->id }}" data-cancel-requested="{{ !empty($import->cancel_requested_at) ? '1' : '0' }}" disabled>
-                                        <i class="fas fa-stop"></i> {{ !empty($import->cancel_requested_at) ? 'Menunggu berhenti' : 'Terminate' }}
-                                    </button>
-                                @elseif($import->status == 'imported')
-                                    {!! Form::open([
-                                        'url' => action([\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'revertImport'], [$import->id]),
-                                        'method' => 'post',
-                                        'style' => 'display:inline;',
-                                        'onsubmit' => 'return confirm("Revert import ini? Journal yang dibuat dari batch ini akan dihapus.")',
-                                    ]) !!}
-                                        <button type="submit" class="btn btn-danger btn-xs">
-                                            <i class="fas fa-undo"></i> Revert
-                                        </button>
-                                    {!! Form::close() !!}
-                                @else
-                                    -
-                                @endif
-                            </td>
-                        </tr>
-                    @empty
-                        <tr>
-                            <td colspan="10" class="text-center">@lang('purchase.no_records_found')</td>
-                        </tr>
-                    @endforelse
+                    <tr><td colspan="8" class="text-center text-muted">Memuat riwayat impor...</td></tr>
                 </tbody>
             </table>
         </div>
     @endcomponent
+
+    <div class="modal fade" id="journal_import_history_detail_modal" tabindex="-1" role="dialog" aria-labelledby="journal_import_history_detail_title" aria-modal="true">
+        <div class="modal-dialog modal-lg" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Tutup"><span aria-hidden="true">&times;</span></button>
+                    <h4 class="modal-title" id="journal_import_history_detail_title">Detail batch Journal Import</h4>
+                </div>
+                <div class="modal-body" id="journal_import_history_detail_body">
+                    <p class="text-muted">Memuat detail batch...</p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-default" data-dismiss="modal">Tutup</button>
+                </div>
+            </div>
+        </div>
+    </div>
 
     @if($taxReconciliationReviews->isNotEmpty())
         @component('components.widget', ['class' => 'box-warning', 'title' => 'Rekonsiliasi Pajak Perlu Ditinjau'])

@@ -86,6 +86,7 @@
             </div>
         </div>
     </div>
+    @include('import_copies.history', ['copyType' => 'users', 'historyTitle' => 'Riwayat salin user'])
 </section>
 @endsection
 
@@ -393,9 +394,14 @@
             button.prop('disabled', true).html('<i class="fa fa-spinner fa-spin" aria-hidden="true"></i> Menyimpan user…');
             $.ajax({ method: 'POST', url: urls.store, dataType: 'json', data: payload })
                 .done(function (result) {
-                    $('#import_success').removeClass('hide').text(result.message || 'User berhasil diimpor.');
-                    if (window.toastr) toastr.success(result.message || 'User berhasil diimpor.');
-                    window.setTimeout(function () { window.location.href = result.redirect; }, 700);
+                    $('#import_success').removeClass('hide').text(result.message || 'Salin user masuk antrean.');
+                    if (window.toastr) toastr.success(result.message || 'Salin user masuk antrean.');
+                    if (window.businessCopyImportHistories && window.businessCopyImportHistories.users) {
+                        window.businessCopyImportHistories.users.ajax.reload(null, false);
+                    }
+                    isSubmitting = false;
+                    button.html(originalText);
+                    updateImportButton();
                 })
                 .fail(function (xhr) {
                     const response = xhr.responseJSON || {};

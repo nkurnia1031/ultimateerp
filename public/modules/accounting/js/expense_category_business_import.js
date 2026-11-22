@@ -88,10 +88,13 @@
         }).done(function (result) {
             modal.modal('hide');
             if (window.toastr) {
-                toastr.success(result.message || result.msg || 'Kategori biaya berhasil diimpor.');
+                toastr.success(result.message || result.msg || 'Salin kategori biaya masuk antrean.');
             }
             if ($.fn.dataTable && $.fn.dataTable.isDataTable('#expense_category_table')) {
                 $('#expense_category_table').DataTable().ajax.reload(null, false);
+            }
+            if (window.businessCopyImportHistories && window.businessCopyImportHistories.expense_categories) {
+                window.businessCopyImportHistories.expense_categories.ajax.reload(null, false);
             }
         }).fail(function (xhr) {
             var message = xhr.responseJSON && (xhr.responseJSON.message || xhr.responseJSON.msg) ? (xhr.responseJSON.message || xhr.responseJSON.msg) : 'Import kategori biaya gagal.';

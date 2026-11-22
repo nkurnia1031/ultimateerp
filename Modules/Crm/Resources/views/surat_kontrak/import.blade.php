@@ -49,40 +49,48 @@
                     </ul>
                 </div>
             </div>
-            <div class="col-lg-7 col-sm-12" style="max-height:250px; overflow:auto;">
+            <div class="col-lg-7 col-sm-12" style="max-height:300px; overflow:auto;">
                 <div class="well">
-                   <table class="table table-bordered table-striped table-hover" style="width:100%; font-size:12px;">
+                   <div class="form-group">
+                       <label for="surat_kontrak_import_status">Filter status</label>
+                       <select id="surat_kontrak_import_status" class="form-control input-sm">
+                           <option value="">Semua status</option>
+                           <option value="queued_preview">queued</option>
+                           <option value="analyzing">memproses</option>
+                           <option value="imported">selesai</option>
+                           <option value="partial">sebagian gagal</option>
+                           <option value="failed">gagal</option>
+                           <option value="reverted">direvert</option>
+                       </select>
+                   </div>
+                   <table id="surat_kontrak_import_history" class="table table-bordered table-striped table-hover" style="width:100%; font-size:12px;">
                     <thead >
                         <tr>
-                            <th>Batch</th>
-                            <th>Nomor</th>
-                            <th>Tanggal</th>
+                            <th>ID</th>
+                            <th>File</th>
+                            <th>Status</th>
+                            <th>Progres</th>
+                            <th>Dibuat</th>
                             <th>Aksi</th>
                         </tr>
                     </thead>
-                    <tbody>
-                        @foreach ( $listBatch as $item)
-                            
-                        <tr>
-                            <td>{{$item['import_batch']}}</td>
-                            <td>{{$item['nomor_list']}}</td>
-
-                            <td>{{$item['created_at']}}</td>
-                            <td>
-                                <button type="button" 
-                                class="btn btn-danger btn-sm delete-batch" 
-                                data-batch="{{ $item['import_batch'] }}">
-                                <i class="fa fa-trash"></i>
-                            </button> </td>
-
-                        </tr>
-                        @endforeach
-
-                    </tbody>
+                    <tbody></tbody>
                    </table>
                 </div>
             </div>
           </div>
+
+            <div id="surat_kontrak_import_detail" class="well hidden">
+                <button type="button" class="close close-import-detail"><span>&times;</span></button>
+                <h4>Detail hasil import</h4>
+                <div class="import-detail-summary"></div>
+                <div class="table-responsive">
+                    <table class="table table-condensed table-bordered import-detail-rows">
+                        <thead><tr><th>Sheet</th><th>Baris</th><th>Status</th><th>Hasil / error</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
 
             <hr>
 
@@ -97,6 +105,9 @@
                 <p class="help-block">
                     Maksimal ukuran file: 5MB
                 </p>
+                <div id="surat_kontrak_upload_progress" class="progress hidden" aria-live="polite">
+                    <div class="progress-bar" role="progressbar" style="width:0%">0%</div>
+                </div>
             </div>
 
         </div>

@@ -28,7 +28,7 @@
     <div class="row">
         <div class="col-sm-12">
             @component('components.widget', ['class' => 'box-primary'])
-                {!! Form::open(['url' => action([\App\Http\Controllers\ImportOpeningStockController::class, 'store']), 'method' => 'post', 'enctype' => 'multipart/form-data' ]) !!}
+                {!! Form::open(['url' => action([\App\Http\Controllers\ImportOpeningStockController::class, 'store']), 'method' => 'post', 'enctype' => 'multipart/form-data', 'id' => 'legacy-import-batch-form' ]) !!}
                     <div class="row">
                         <div class="col-sm-6">
                         <div class="col-sm-8">
@@ -46,6 +46,10 @@
                     </div>
 
                 {!! Form::close() !!}
+                <div class="progress" id="legacy_import_progress_wrap" style="display:none;margin-top:12px">
+                    <div class="progress-bar" id="legacy_import_progress" role="progressbar" style="width:0%">0%</div>
+                </div>
+                <p id="legacy_import_status" class="text-muted" aria-live="polite"></p>
                 <br><br>
                 <div class="row">
                     <div class="col-sm-4">
@@ -55,6 +59,7 @@
             @endcomponent
         </div>
     </div>
+    @include('import_batches.legacy_history', ['historyUrl' => route('import.opening-stock.history')])
     <div class="row">
         <div class="col-sm-12">
             @component('components.widget', ['class' => 'box-primary', 'title' => __('lang_v1.instructions')])
@@ -104,4 +109,8 @@
 </section>
 <!-- /.content -->
 
+@endsection
+
+@section('javascript')
+    <script src="{{ asset('js/legacy-import-batches.js?v=' . $asset_v) }}"></script>
 @endsection

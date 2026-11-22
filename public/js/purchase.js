@@ -1395,6 +1395,62 @@ function set_po_values(po) {
 }
 
 if ($("div#import_product_dz").length) {
+    var purchaseProductImportTable = null;
+    var purchaseProductImportPollTimer = null;
+    var purchaseProductImportActiveBatch = null;
+    var escapePurchaseImportText = function (value) {
+        return $('<div>').text(value == null ? '' : String(value)).html();
+    };
+    var refreshPurchaseProductImportHistory = function () {
+        if (purchaseProductImportTable) {
+            purchaseProductImportTable.ajax.reload(null, false);
+        }
+    };
+    var showPurchaseProductImportDetail = function (url) {
+        $.getJSON(url).done(function (detail) {
+            var messages = (detail.rows || []).map(function (row) {
+                return 'Baris ' + row.source_row + ' [' + (row.sku || '-') + '] ' + row.status + (row.message ? ': ' + row.message : '');
+            });
+            var summary = detail.summary || {};
+            var content = 'Status: ' + detail.batch.status + '\n' +
+                'Baris: ' + (summary.ready_rows || 0) + ' siap, ' + (summary.error_rows || 0) + ' error\n\n' +
+                messages.join('\n');
+            if (window.swal) {
+                swal({ title: detail.batch.file_name, text: content, icon: detail.batch.error_message ? 'error' : 'info' });
+            } else {
+                window.alert(content);
+            }
+        }).fail(function (xhr) {
+            toastr.error(xhr.responseJSON && xhr.responseJSON.message ? xhr.responseJSON.message : 'Detail batch tidak dapat dimuat.');
+        });
+    };
+
+    if ($.fn.DataTable && !$.fn.DataTable.isDataTable('#purchase_product_import_history')) {
+        purchaseProductImportTable = $('#purchase_product_import_history').DataTable({
+            processing: true,
+            serverSide: true,
+            searching: true,
+            pageLength: 10,
+            ajax: { url: base_path + '/import-purchase-products/history', data: function (data) { data.status = $('#purchase_product_import_status_filter').val() || ''; } },
+            columns: [
+                { data: 'id' },
+                { data: 'file_name', render: function (value) { return escapePurchaseImportText(value); } },
+                { data: 'status', render: function (value, type, row) { return escapePurchaseImportText(value) + (row.last_message ? '<br><small>' + escapePurchaseImportText(row.last_message) + '</small>' : ''); } },
+                { data: 'progress_percent', render: function (value, type, row) { return escapePurchaseImportText(value) + '% (' + escapePurchaseImportText(row.progress_current) + '/' + escapePurchaseImportText(row.progress_total) + ')'; } },
+                { data: 'created_at', render: function (value) { return escapePurchaseImportText(value); } },
+                { data: null, orderable: false, searchable: false, render: function (row) {
+                    var actions = '<button type="button" class="btn btn-xs btn-info js-purchase-import-detail" data-url="' + escapePurchaseImportText(row.detail_url) + '">Detail</button> ';
+                    if (row.restore_url) actions += '<a class="btn btn-xs btn-default" href="' + escapePurchaseImportText(row.restore_url) + '">Workbook</a> ';
+                    if (row.can_retry) actions += '<button type="button" class="btn btn-xs btn-warning js-purchase-import-retry" data-url="' + escapePurchaseImportText(row.retry_url) + '">Retry</button> ';
+                    if (row.can_revert) actions += '<button type="button" class="btn btn-xs btn-danger js-purchase-import-revert" data-url="' + escapePurchaseImportText(row.revert_url) + '">Batalkan preview</button>';
+                    return actions;
+                } },
+            ],
+            order: [[0, 'desc']],
+        });
+        $('#import_purchase_products_modal').on('shown.bs.modal', refreshPurchaseProductImportHistory);
+    }
+
     $("div#import_product_dz").dropzone({
         url: base_path + '/import-purchase-products',
         paramName: 'file',
@@ -1403,6 +1459,10 @@ if ($("div#import_product_dz").length) {
         uploadMultiple: false,
         maxFiles: 1,
         init: function () {
+            this.on('uploadprogress', function (file, progress) {
+                $('#purchase_product_import_progress_wrap').show();
+                $('#purchase_product_import_progress').css('width', progress + '%').text(Math.round(progress) + '%');
+            });
             this.on("addedfile", function (file) {
                 if ($('#location_id').val() == '') {
                     this.removeFile(file);
@@ -1423,18 +1483,51 @@ if ($("div#import_product_dz").length) {
             'X-CSRF-TOKEN': $('meta[name="csrf-token"]').attr('content')
         },
         success: function (file, response) {
-            if (response.success) {
+            if (response.success && response.queued && response.batch_id) {
+                purchaseProductImportActiveBatch = response.batch_id;
+                $('#purchase_product_import_status').text(response.msg);
                 toastr.success(response.msg);
-                var row_count = $('#row_count').val();
-                append_purchase_lines(response.html, row_count, true);
-
                 this.removeAllFiles();
-
-                $('#import_purchase_products_modal').modal('hide');
+                refreshPurchaseProductImportHistory();
+                if (purchaseProductImportPollTimer) clearInterval(purchaseProductImportPollTimer);
+                purchaseProductImportPollTimer = setInterval(function () {
+                    $.getJSON(response.status_url).done(function (detail) {
+                        if (detail.batch.status === 'preview_ready') {
+                            clearInterval(purchaseProductImportPollTimer);
+                            purchaseProductImportPollTimer = null;
+                            append_purchase_lines(detail.html, $('#row_count').val(), true);
+                            $('#purchase_product_import_status').text(detail.batch.last_message || 'Baris siap dimasukkan ke Purchase.');
+                            $('#import_purchase_products_modal').modal('hide');
+                            if ((detail.summary.error_rows || 0) > 0) showPurchaseProductImportDetail(response.status_url);
+                        } else if (detail.batch.status === 'failed' || detail.batch.status === 'reverted') {
+                            clearInterval(purchaseProductImportPollTimer);
+                            purchaseProductImportPollTimer = null;
+                            $('#purchase_product_import_status').text(detail.batch.error_message || detail.batch.last_message || detail.batch.status);
+                            toastr.error(detail.batch.error_message || 'Analisis workbook gagal. Periksa riwayat impor.');
+                        } else {
+                            $('#purchase_product_import_status').text(detail.batch.last_message || 'Analisis workbook berjalan...');
+                        }
+                        refreshPurchaseProductImportHistory();
+                    });
+                }, 1500);
             } else {
                 toastr.error(response.msg);
             }
         },
+        error: function (file, message, xhr) {
+            var payload = xhr && xhr.responseJSON ? xhr.responseJSON : null;
+            var errorMessage = payload && payload.message ? payload.message : (typeof message === 'string' ? message : 'Upload workbook gagal.');
+            $('#purchase_product_import_status').text(errorMessage);
+            toastr.error(errorMessage);
+        },
+    });
+
+    $(document).on('click', '.js-purchase-import-detail', function () { showPurchaseProductImportDetail($(this).data('url')); });
+    $(document).on('click', '.js-purchase-import-retry, .js-purchase-import-revert', function () {
+        var button = $(this);
+        $.post(button.data('url'), { _token: $('meta[name="csrf-token"]').attr('content') })
+            .done(function () { toastr.success('Aksi batch berhasil diproses.'); refreshPurchaseProductImportHistory(); })
+            .fail(function (xhr) { toastr.error(xhr.responseJSON && xhr.responseJSON.message ? xhr.responseJSON.message : 'Aksi batch gagal.'); });
     });
 }
 

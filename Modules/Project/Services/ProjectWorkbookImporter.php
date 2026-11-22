@@ -53,24 +53,47 @@ class ProjectWorkbookImporter
 
     protected $tags;
 
+    protected $rowOutcomes = [];
+
+    protected $progressListener;
+
+    protected $progressCurrent = 0;
+
+    protected $progressTotal = 1;
+
     public function __construct(ProjectUtil $projectUtil, TransactionUtil $transactionUtil)
     {
         $this->projectUtil = $projectUtil;
         $this->transactionUtil = $transactionUtil;
     }
 
-    public function import(string $path, int $businessId, int $userId): array
+    public function import(string $path, int $businessId, int $userId, ?callable $progressListener = null): array
     {
         $this->businessId = $businessId;
         $this->importedBy = $userId;
+        $this->rowOutcomes = [];
+        $this->progressListener = $progressListener;
+        $this->progressCurrent = 0;
         $this->loadLookups();
 
         $workbook = IOFactory::load($path);
         $this->validateWorkbook($workbook);
+        $invoiceValues = $this->readForm($workbook->getSheetByName('Invoice'));
+        $this->progressTotal = 1
+            + count($this->readTable($workbook->getSheetByName('Tasks'), ['task_key', 'subject']))
+            + count($this->readTable($workbook->getSheetByName('Time Logs'), ['task_key', 'worker_ref', 'work_date', 'shift', 'start_1', 'end_1', 'start_2', 'end_2', 'note', 'tag_names']));
+        if ($this->yesNoValue($invoiceValues['generate_invoice'] ?? null, false)) {
+            $this->progressTotal++;
+            $this->progressTotal += count($this->readTable(
+                $workbook->getSheetByName('Invoice Lines'),
+                ['task_key', 'item_name', 'quantity_source', 'manual_quantity', 'rate', 'tax_ref', 'description']
+            ));
+        }
 
         return DB::transaction(function () use ($workbook) {
             $projectValues = $this->readForm($workbook->getSheetByName('Project'));
             $project = $this->createProject($projectValues);
+            $this->reportProgress('project', 2, 'Project utama berhasil divalidasi dan dibuat.');
             $tasks = $this->createTasks($workbook->getSheetByName('Tasks'), $project);
             $timeLogCount = $this->createTimeLogs($workbook->getSheetByName('Time Logs'), $project, $tasks);
             $invoice = $this->createInvoice(
@@ -80,11 +103,46 @@ class ProjectWorkbookImporter
                 $tasks
             );
 
+            $taskRecords = collect($tasks)->values();
+            $taskSnapshots = $taskRecords->map(fn (ProjectTask $task) => [
+                'id' => (int) $task->id,
+                'updated_at' => (string) $task->fresh()->updated_at,
+                'attributes' => $task->fresh()->getAttributes(),
+            ])->all();
+            $timeLogSnapshots = $project->timeLogs()->get()->map(fn (ProjectTimeLog $timeLog) => [
+                'id' => (int) $timeLog->id,
+                'updated_at' => (string) $timeLog->updated_at,
+                'attributes' => $timeLog->getAttributes(),
+            ])->all();
+            $this->rowOutcomes[] = [
+                'sheet' => 'Project',
+                'source_row' => 2,
+                'status' => 'created',
+                'record_type' => 'project',
+                'record_id' => (int) $project->id,
+            ];
+            if ($invoice) {
+                $this->rowOutcomes[] = [
+                    'sheet' => 'Invoice',
+                    'source_row' => 2,
+                    'status' => 'created',
+                    'record_type' => 'invoice',
+                    'record_id' => (int) $invoice->id,
+                ];
+                $this->reportProgress('invoice', 2, 'Invoice Project selesai dibuat.');
+            }
+
             return [
                 'project' => $project,
                 'tasks' => count($tasks),
                 'time_logs' => $timeLogCount,
                 'invoice' => $invoice,
+                'task_ids' => $taskRecords->map(fn (ProjectTask $task) => (int) $task->id)->all(),
+                'tasks_snapshot' => $taskSnapshots,
+                'time_log_ids' => array_column($timeLogSnapshots, 'id'),
+                'time_logs_snapshot' => $timeLogSnapshots,
+                'source_rows' => count($this->rowOutcomes),
+                'row_outcomes' => $this->rowOutcomes,
             ];
         });
     }
@@ -226,6 +284,14 @@ class ProjectWorkbookImporter
             $task->members()->sync($this->resolveUserList($row['member_refs'] ?? null, "Tasks baris {$rowNumber}: Pekerja"));
             $task->tags()->sync($this->resolveNameList($row['tag_names'] ?? null, $this->tags, "Tasks baris {$rowNumber}: Tag"));
             $tasks[$normalizedKey] = $task;
+            $this->rowOutcomes[] = [
+                'sheet' => 'Tasks',
+                'source_row' => (int) $rowNumber,
+                'status' => 'created',
+                'record_type' => 'task',
+                'record_id' => (int) $task->id,
+            ];
+            $this->reportProgress('tasks', (int) $rowNumber, "Memproses Tasks baris {$rowNumber}.");
         }
 
         return $tasks;
@@ -280,6 +346,14 @@ class ProjectWorkbookImporter
                 'created_by' => $this->importedBy,
             ]);
             $timeLog->tags()->sync($this->resolveNameList($row['tag_names'] ?? null, $this->tags, "Time Logs baris {$rowNumber}: Tag"));
+            $this->rowOutcomes[] = [
+                'sheet' => 'Time Logs',
+                'source_row' => (int) $rowNumber,
+                'status' => 'created',
+                'record_type' => 'time_log',
+                'record_id' => (int) $timeLog->id,
+            ];
+            $this->reportProgress('time_logs', (int) $rowNumber, "Memproses Time Logs baris {$rowNumber}.");
             $count++;
         }
 
@@ -315,6 +389,7 @@ class ProjectWorkbookImporter
         }
 
         $lineInputs = [];
+        $invoiceLineRows = [];
         $subtotal = 0;
         foreach ($this->readTable($linesSheet, ['task_key', 'item_name', 'quantity_source', 'manual_quantity', 'rate', 'tax_ref', 'description']) as $rowNumber => $row) {
             $task = null;
@@ -372,6 +447,7 @@ class ProjectWorkbookImporter
                 $lineInput['project_task_id'] = $task->id;
             }
             $lineInputs[] = $lineInput;
+            $invoiceLineRows[] = (int) $rowNumber;
         }
 
         if ($lineInputs === []) {
@@ -424,9 +500,34 @@ class ProjectWorkbookImporter
             'sub_type' => 'project_invoice',
             'payment_status' => 'due',
         ]);
-        $transaction->invoiceLines()->createMany($lineInputs);
+        $createdLines = $transaction->invoiceLines()->createMany($lineInputs);
+        foreach ($createdLines as $index => $line) {
+            $sourceRow = $invoiceLineRows[$index] ?? null;
+            $this->rowOutcomes[] = [
+                'sheet' => 'Invoice Lines',
+                'source_row' => $sourceRow,
+                'status' => 'created',
+                'record_type' => 'invoice_line',
+                'record_id' => (int) $line->id,
+            ];
+            $this->reportProgress('invoice_lines', (int) $sourceRow, 'Menyimpan Invoice Lines.');
+        }
 
         return $transaction;
+    }
+
+    private function reportProgress(string $stage, int $sourceRow, string $message): void
+    {
+        $this->progressCurrent++;
+        if ($this->progressListener !== null) {
+            call_user_func($this->progressListener, [
+                'stage' => $stage,
+                'current' => $this->progressCurrent,
+                'total' => $this->progressTotal,
+                'source_row' => $sourceRow,
+                'message' => $message,
+            ]);
+        }
     }
 
     private function readForm(Worksheet $sheet): array

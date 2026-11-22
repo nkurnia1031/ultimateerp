@@ -193,7 +193,7 @@ class UserBusinessImportService
         ];
     }
 
-    public function import(int $sourceBusinessId, int $targetBusinessId, int $sourceUserId, array $mapping): User
+    public function import(int $sourceBusinessId, int $targetBusinessId, int $sourceUserId, array $mapping, ?int $batchId = null): User
     {
         $this->assertDifferentBusinesses($sourceBusinessId, $targetBusinessId);
 
@@ -278,7 +278,8 @@ class UserBusinessImportService
         $attributes['business_id'] = $targetBusinessId;
         $attributes['user_type'] = 'user';
         $attributes['is_cmmsn_agnt'] = 0;
-        $attributes['account_id'] = null;
+        // The users schema keeps its account relation as a non-null 0 sentinel.
+        $attributes['account_id'] = 0;
         $attributes['crm_contact_id'] = null;
         $attributes['allow_login'] = (bool) $sourceUser->allow_login;
         $attributes['username'] = $sourceUser->allow_login ? $username : null;
@@ -287,9 +288,14 @@ class UserBusinessImportService
         $attributes['selected_contacts'] = (bool) $sourceUser->selected_contacts;
 
         try {
-            return DB::transaction(function () use ($attributes, $targetRoles, $sourceLocationAccess, $targetLocationIds, $targetContactIds) {
+            return DB::transaction(function () use ($attributes, $targetRoles, $sourceLocationAccess, $targetLocationIds, $targetContactIds, $batchId, $sourceUserId) {
                 if (! empty($attributes['username']) && User::withTrashed()->where('username', $attributes['username'])->lockForUpdate()->exists()) {
                     throw ValidationException::withMessages(['username' => 'Username tujuan sudah digunakan. Pilih username lain.']);
+                }
+
+                if ($batchId) {
+                    $attributes['user_import_batch_id'] = $batchId;
+                    $attributes['user_import_source_id'] = $sourceUserId;
                 }
 
                 $newUser = User::create($attributes);
@@ -310,8 +316,10 @@ class UserBusinessImportService
                 return $newUser;
             });
         } catch (QueryException $exception) {
-            if (($exception->errorInfo[0] ?? null) === '23000'
-                && str_contains(strtolower($exception->getMessage()), 'username')) {
+            $databaseMessage = strtolower($exception->getMessage());
+            $usernameConflict = str_contains($databaseMessage, 'users_username_unique')
+                || str_contains($databaseMessage, 'unique constraint failed: users.username');
+            if (($exception->errorInfo[0] ?? null) === '23000' && $usernameConflict) {
                 throw ValidationException::withMessages(['username' => 'Username tujuan baru saja digunakan. Pilih username lain.']);
             }
             throw $exception;

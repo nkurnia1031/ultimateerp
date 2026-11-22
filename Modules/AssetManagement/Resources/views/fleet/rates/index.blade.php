@@ -135,7 +135,7 @@
         <div class="box-header with-border"><h3 class="box-title"><i class="fas fa-file-import me-2" aria-hidden="true"></i>Import Workbook Tarif</h3></div>
         <div class="box-body">
             <p class="text-muted">Workbook akan menjadi draft preview. <strong>Berlaku mulai</strong> wajib diisi manual; tanggal pada keterangan Excel tidak ditebak oleh sistem. Untuk satu atau beberapa unit, gunakan <strong>Tambah Tarif Manual</strong>.</p>
-            <form id="fleet-rate-upload-form" method="POST" action="{{ route('asset.fleet.rates.upload') }}" enctype="multipart/form-data" class="rate-ajax-form" data-reload-page="true">
+            <form id="fleet-rate-upload-form" method="POST" action="{{ route('asset.fleet.rates.upload') }}" enctype="multipart/form-data" class="rate-ajax-form">
                 @csrf
                 <div class="row">
                     <div class="col-md-5 form-group">
@@ -166,47 +166,41 @@
     </div>
 
     <div class="box box-solid">
-        <div class="box-header with-border"><h3 class="box-title">Batch Import</h3></div>
+        <div class="box-header with-border" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+            <h3 class="box-title">Riwayat Import Tarif</h3>
+            <label for="fleet-rate-batch-status" class="sr-only">Filter status import</label>
+            <select id="fleet-rate-batch-status" class="form-control" style="max-width:220px">
+                <option value="">Semua status</option>
+                <option value="queued_preview">Menunggu analisis</option>
+                <option value="analyzing">Menganalisis</option>
+                <option value="preview_ready">Preview siap</option>
+                <option value="queued_import">Menunggu import</option>
+                <option value="importing">Mengaktifkan</option>
+                <option value="imported">Selesai</option>
+                <option value="failed">Gagal</option>
+                <option value="reverted">Di-revert</option>
+            </select>
+        </div>
         <div class="box-body table-responsive fleet-datatable-wrap">
-            <table id="fleet-rate-batches-table" class="table table-bordered table-striped fleet-datatable">
-                <thead><tr><th>ID</th><th>File</th><th>Berlaku mulai</th><th>Baris</th><th>Rute</th><th>Unit</th><th>Status</th><th>Aksi</th></tr></thead>
-                <tbody>
-                @forelse($batches as $batch)
-                    @php($issues = $batchIssues[$batch->id] ?? [])
-                    <tr class="{{ count($issues) ? 'rate-row--problem' : '' }}">
-                        <td>{{ $batch->id }}</td><td>{{ $batch->file_name }}</td>
-                        <td>{{ optional($batch->effective_from)->format('d/m/Y') }}</td>
-                        <td>{{ $batch->valid_row_count }}/{{ $batch->source_row_count }}</td>
-                        <td>{{ $batch->route_count }}</td><td>{{ $batch->unit_count }}</td>
-                        <td><span class="label label-{{ $batch->status === 'active' ? 'success' : ($batch->status === 'draft' ? 'warning' : 'default') }}">{{ strtoupper($batch->status) }}</span>
-                            @if(count($issues))
-                                @php($batchErrorId = 'fleet-rate-batch-error-'.$batch->id)
-                                <span class="label label-danger">{{ count($issues) }} masalah</span>
-                                <button type="button" class="fleet-table-detail-toggle" aria-expanded="false" aria-controls="{{ $batchErrorId }}">Lihat detail</button>
-                                <div id="{{ $batchErrorId }}" class="fleet-table-detail" hidden>
-                                    <ul class="rate-issue-list">
-                                        @foreach($issues as $issue)
-                                            <li>
-                                                @if($issue['row'])<strong>Baris {{ $issue['row'] }}:</strong> @endif{{ $issue['message'] }}
-                                            </li>
-                                        @endforeach
-                                    </ul>
-                                </div>
-                            @endif
-                        </td>
-                        <td>
-                            @if($batch->status === 'draft')
-                                <form method="POST" action="{{ route('asset.fleet.rates.confirm', $batch->id) }}" class="rate-ajax-form" data-reload-page="true" style="display:inline" onsubmit="return confirm('Aktifkan batch tarif ini?')">@csrf<button class="btn btn-success rate-crud-btn" aria-label="Konfirmasi batch tarif">Konfirmasi Aktif</button></form>
-                                <form method="POST" action="{{ route('asset.fleet.rates.cancel', $batch->id) }}" class="rate-ajax-form" data-reload-page="true" style="display:inline" onsubmit="return confirm('Batalkan batch ini?')">@csrf<button class="btn btn-danger rate-crud-btn" aria-label="Batalkan batch tarif">Batal</button></form>
-                            @endif
-                        </td>
-                    </tr>
-                @empty
-                    <tr><td colspan="8" class="text-center">Belum ada batch tarif.</td></tr>
-                @endforelse
-                </tbody>
+            <table id="fleet-rate-batches-table" class="table table-bordered table-striped fleet-datatable"
+                data-details-template="{{ route('asset.fleet.rates.import.batches.details', ['id' => '__ID__']) }}"
+                data-download-template="{{ route('asset.fleet.rates.import.batches.download', ['id' => '__ID__']) }}"
+                data-confirm-template="{{ route('asset.fleet.rates.import.batches.confirm', ['id' => '__ID__']) }}"
+                data-retry-template="{{ route('asset.fleet.rates.import.batches.retry', ['id' => '__ID__']) }}"
+                data-cancel-template="{{ route('asset.fleet.rates.import.batches.cancel', ['id' => '__ID__']) }}"
+                data-revert-template="{{ route('asset.fleet.rates.import.batches.revert', ['id' => '__ID__']) }}">
+                <thead><tr><th>ID</th><th>File</th><th>Berlaku mulai</th><th>Ringkasan</th><th>Progres</th><th>Status</th><th>Dibuat</th><th>Aksi</th></tr></thead>
+                <tbody></tbody>
             </table>
         </div>
+    </div>
+
+    <div class="modal fade" id="fleet-rate-batch-details-modal" tabindex="-1" role="dialog" aria-labelledby="fleet-rate-batch-details-title" aria-hidden="true">
+        <div class="modal-dialog modal-lg" role="document"><div class="modal-content">
+            <div class="modal-header"><button type="button" class="close" data-dismiss="modal" aria-label="Tutup"><span aria-hidden="true">&times;</span></button><h4 class="modal-title" id="fleet-rate-batch-details-title">Detail batch tarif</h4></div>
+            <div class="modal-body" id="fleet-rate-batch-details-body"><p class="text-muted">Memuat detail...</p></div>
+            <div class="modal-footer"><button type="button" class="btn btn-default" data-dismiss="modal">Tutup</button></div>
+        </div></div>
     </div>
 
     @if($hasPreviewIssues)
@@ -325,9 +319,84 @@
 @push('scripts')
 <script>
 $(function () {
-    initFleetDataTable('#fleet-rate-batches-table', {
-        order: [[2, 'desc']],
-        columnDefs: [{ targets: [0, 3, 4, 5, 6, 7], orderable: false }]
+    const historyNode = document.getElementById('fleet-rate-batches-table');
+    let historyPollTimer = null;
+
+    function escapeRateHtml(value) {
+        return String(value == null ? '' : value).replace(/[&<>"']/g, function (character) {
+            return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[character];
+        });
+    }
+
+    function historyUrl(action, id) {
+        const template = historyNode ? historyNode.getAttribute('data-' + action + '-template') : '';
+        return String(template || '').replace('__ID__', encodeURIComponent(id));
+    }
+
+    function scheduleHistoryPoll() {
+        if (historyPollTimer || !historyNode || !$.fn.DataTable.isDataTable(historyNode)) return;
+        historyPollTimer = window.setTimeout(function () {
+            historyPollTimer = null;
+            $(historyNode).DataTable().ajax.reload(null, false);
+        }, 2200);
+    }
+
+    function renderBatchActions(row) {
+        const id = Number(row.id) || 0;
+        const actions = [];
+        if (row.can_details) actions.push('<button type="button" class="btn btn-default btn-xs rate-history-action" data-action="details" data-id="' + id + '"><i class="fas fa-eye"></i> Detail</button>');
+        if (row.can_download) actions.push('<button type="button" class="btn btn-success btn-xs rate-history-action" data-action="download" data-id="' + id + '"><i class="fas fa-file-excel"></i> Unduh ulang</button>');
+        if (row.can_confirm) actions.push('<button type="button" class="btn btn-primary btn-xs rate-history-action" data-action="confirm" data-id="' + id + '">Konfirmasi</button>');
+        if (row.can_retry) actions.push('<button type="button" class="btn btn-warning btn-xs rate-history-action" data-action="retry" data-id="' + id + '">Coba lagi</button>');
+        if (row.can_cancel) actions.push('<button type="button" class="btn btn-danger btn-xs rate-history-action" data-action="cancel" data-id="' + id + '">Batalkan</button>');
+        if (row.can_revert) actions.push('<button type="button" class="btn btn-danger btn-xs rate-history-action" data-action="revert" data-id="' + id + '">Revert</button>');
+        return '<div class="rate-actions">' + (actions.join(' ') || '<span class="text-muted">—</span>') + '</div>';
+    }
+
+    const historyTable = initFleetDataTable('#fleet-rate-batches-table', {
+        processing: true,
+        serverSide: true,
+        searchDelay: 350,
+        pageLength: 25,
+        lengthMenu: [[10, 25, 50, 100], [10, 25, 50, 100]],
+        order: [[6, 'desc']],
+        ajax: {
+            url: "{{ route('asset.fleet.rates.import.batches.index') }}",
+            data: function (request) {
+                request.status = $('#fleet-rate-batch-status').val() || '';
+            },
+            dataSrc: function (json) {
+                const rows = Array.isArray(json.data) ? json.data : [];
+                if (rows.some(function (row) { return row.active; })) scheduleHistoryPoll();
+                return rows;
+            }
+        },
+        columns: [
+            { data: 'id', name: 'id' },
+            { data: 'file_name', name: 'file_name', render: function (value, type) { return type === 'display' ? escapeRateHtml(value) : value; } },
+            { data: 'effective_from', name: 'effective_from', defaultContent: '—', render: function (value, type) { return type === 'display' ? escapeRateHtml(value || '—') : value; } },
+            { data: 'result_summary', name: 'summary', orderable: false, searchable: false, defaultContent: '—', render: function (value, type) { return type === 'display' ? escapeRateHtml(value || 'Menunggu analisis') : value; } },
+            { data: null, name: 'progress', orderable: false, searchable: false, render: function (value, type, row) {
+                if (type !== 'display') return Number(row.progress_percent) || 0;
+                const percent = Math.max(0, Math.min(100, Number(row.progress_percent) || 0));
+                const message = escapeRateHtml(row.last_message || row.stage || 'Menunggu proses');
+                const error = row.error_message ? '<br><small class="text-danger">' + escapeRateHtml(row.error_message) + '</small>' : '';
+                return '<div class="progress" style="height:16px;margin-bottom:4px"><div class="progress-bar progress-bar-info" role="progressbar" aria-valuenow="' + percent + '" aria-valuemin="0" aria-valuemax="100" style="width:' + percent + '%">' + percent + '%</div></div><small title="' + message + '">' + message + '</small>' + error;
+            } },
+            { data: 'status', name: 'status', render: function (value, type) {
+                if (type !== 'display') return value;
+                const labels = { queued_preview: 'Menunggu analisis', analyzing: 'Menganalisis', preview_ready: 'Preview siap', queued_import: 'Menunggu import', importing: 'Mengaktifkan', imported: 'Selesai', failed: 'Gagal', reverted: 'Di-revert' };
+                const colors = { imported: 'success', preview_ready: 'primary', failed: 'danger', reverted: 'default', queued_preview: 'info', analyzing: 'info', queued_import: 'info', importing: 'info' };
+                return '<span class="label label-' + (colors[value] || 'default') + '">' + escapeRateHtml(labels[value] || value) + '</span>';
+            } },
+            { data: 'created_at', name: 'created_at', render: function (value, type) { return type === 'display' ? escapeRateHtml(value || '—') : value; } },
+            { data: null, name: 'actions', orderable: false, searchable: false, render: function (value, type, row) { return type === 'display' ? renderBatchActions(row) : ''; } }
+        ],
+        columnDefs: [{ targets: [3, 4, 7], orderable: false }]
+    });
+
+    $('#fleet-rate-batch-status').on('change', function () {
+        if ($.fn.DataTable.isDataTable(historyNode)) $(historyNode).DataTable().ajax.reload();
     });
     initFleetDataTable('#fleet-rate-issues-table', {
         processing: true,
@@ -499,14 +568,86 @@ $(function () {
         window.alert(message);
     }
 
-    function reloadRateTables() {
-        ['#fleet-rates-table', '#fleet-rate-issues-table'].forEach(function (selector) {
+    function reloadRateTables(resetHistoryPage) {
+        ['#fleet-rate-batches-table', '#fleet-rates-table', '#fleet-rate-issues-table'].forEach(function (selector) {
             const table = $(selector);
             if (table.length && $.fn.DataTable.isDataTable(table[0])) {
-                table.DataTable().ajax.reload(null, false);
+                table.DataTable().ajax.reload(null, selector === '#fleet-rate-batches-table' ? Boolean(resetHistoryPage) : false);
             }
         });
     }
+
+    function renderRateBatchDetails(payload) {
+        const batch = payload.batch || {};
+        const rows = Array.isArray(payload.rows) ? payload.rows : [];
+        let html = '<div class="row"><div class="col-sm-6"><strong>File:</strong> ' + escapeRateHtml(batch.file_name || '—') + '</div><div class="col-sm-3"><strong>Status:</strong> ' + escapeRateHtml(batch.status || '—') + '</div><div class="col-sm-3"><strong>Batch tarif:</strong> #' + escapeRateHtml(batch.domain_batch_id || '—') + '</div></div>';
+        html += '<p style="margin-top:10px">' + escapeRateHtml(batch.message || '') + '</p>';
+        if (batch.error) html += '<div class="alert alert-danger">' + escapeRateHtml(batch.error) + '</div>';
+        html += '<div class="table-responsive"><table class="table table-bordered table-condensed"><thead><tr><th>Baris</th><th>Rute / Unit</th><th>Tarif</th><th>Status / Masalah</th></tr></thead><tbody>';
+        if (!rows.length) {
+            html += '<tr><td colspan="4" class="text-muted">Tidak ada rincian baris untuk batch ini.</td></tr>';
+        }
+        rows.forEach(function (row) {
+            const units = (row.units || []).map(function (unit) {
+                return escapeRateHtml(unit.label || 'Unit') + (unit.asset ? ' → ' + escapeRateHtml(unit.asset) : ' <span class="text-danger">(belum dicocokkan)</span>');
+            }).join('<br>');
+            const rates = 'Supir/ton: ' + escapeRateHtml(row.driver_rate_per_ton == null ? '—' : row.driver_rate_per_ton)
+                + '<br>Uang jalan: ' + escapeRateHtml(row.travel_allowance == null ? '—' : row.travel_allowance)
+                + '<br>Harga/ton: ' + escapeRateHtml(row.sale_rate_per_ton == null ? '—' : row.sale_rate_per_ton);
+            const errors = (row.errors || []).map(function (error) { return escapeRateHtml(error.message || error); }).join('<br>');
+            html += '<tr><td>' + escapeRateHtml(row.source_row || '—') + '</td><td>' + escapeRateHtml(row.route || row.unit_source || '—') + (units ? '<br>' + units : '') + '</td><td>' + rates + '</td><td>' + escapeRateHtml(row.status || 'draft') + (errors ? '<br><span class="text-danger">' + errors + '</span>' : '') + '</td></tr>';
+        });
+        html += '</tbody></table></div>';
+        return html;
+    }
+
+    $(document).on('click', '.rate-history-action', function () {
+        const button = this;
+        const action = button.getAttribute('data-action');
+        const id = Number(button.getAttribute('data-id'));
+        if (!id || button.disabled) return;
+        if (action === 'confirm' && !window.confirm('Aktifkan tarif pada batch ini? Tarif sebelumnya untuk unit/rute yang sama akan ditutup.')) return;
+        if (action === 'cancel' && !window.confirm('Batalkan draft batch tarif ini?')) return;
+        if (action === 'revert' && !window.confirm('Revert batch ini? Proses hanya berjalan jika tarif belum berubah dan belum dipakai SPB.')) return;
+
+        const urls = { details: historyUrl('details', id), download: historyUrl('download', id), confirm: historyUrl('confirm', id), retry: historyUrl('retry', id), cancel: historyUrl('cancel', id), revert: historyUrl('revert', id) };
+        if (action === 'download') {
+            window.location.assign(urls.download);
+            return;
+        }
+        if (action === 'details') {
+            $('#fleet-rate-batch-details-title').text('Detail batch import #' + id);
+            $('#fleet-rate-batch-details-body').html('<p class="text-muted">Memuat detail...</p>');
+            $('#fleet-rate-batch-details-modal').modal('show');
+        }
+
+        button.disabled = true;
+        fetch(urls[action], {
+            method: action === 'details' ? 'GET' : 'POST',
+            headers: {
+                'Accept': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest',
+                'X-CSRF-TOKEN': $('meta[name="csrf-token"]').attr('content') || ''
+            },
+            credentials: 'same-origin'
+        }).then(function (response) {
+            return response.json().catch(function () { return {}; }).then(function (data) { return { response: response, data: data }; });
+        }).then(function (result) {
+            const data = result.data || {};
+            if (!result.response.ok || data.success === false) throw new Error(data.msg || 'Permintaan batch belum berhasil.');
+            if (action === 'details') {
+                $('#fleet-rate-batch-details-body').html(renderRateBatchDetails(data));
+                return;
+            }
+            notifyRateAction(data.msg || 'Aksi batch berhasil diproses.', true);
+            reloadRateTables();
+        }).catch(function (error) {
+            notifyRateAction(error.message || 'Permintaan batch belum berhasil.', false);
+            if (action === 'details') $('#fleet-rate-batch-details-body').html('<div class="alert alert-danger">' + escapeRateHtml(error.message) + '</div>');
+        }).finally(function () {
+            button.disabled = false;
+        });
+    });
 
     $(document).on('submit', '.rate-ajax-form', function (event) {
         event.preventDefault();
@@ -541,13 +682,21 @@ $(function () {
             }
 
             notifyRateAction(data.msg || 'Perubahan berhasil disimpan.', true);
+            if (form.id === 'fleet-rate-upload-form') {
+                form.reset();
+                $('#fleet-rate-file-name').text('Belum ada file dipilih');
+                $('#rate_effective_from').val('');
+                const historySection = document.getElementById('fleet-rate-batches-table');
+                if (historySection) historySection.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
             if (form.dataset.reloadPage === 'true') {
                 window.setTimeout(function () { window.location.reload(); }, 450);
             } else {
-                reloadRateTables();
+                reloadRateTables(form.id === 'fleet-rate-upload-form');
             }
         }).catch(function (error) {
             notifyRateAction(error.message || 'Permintaan belum berhasil diproses.', false);
+            if (form.id === 'fleet-rate-upload-form') reloadRateTables(true);
         }).finally(function () {
             form.dataset.submitting = 'false';
             submitButtons.prop('disabled', false).each(function (index) { $(this).text(originalLabels[index]); });

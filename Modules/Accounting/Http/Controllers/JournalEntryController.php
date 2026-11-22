@@ -24,6 +24,7 @@ use Modules\Accounting\Jobs\AnalyzeJournalImportJob;
 use Modules\Accounting\Jobs\ProcessJournalImportJob;
 use Modules\Accounting\Services\JournalImportDraftService;
 use Modules\Accounting\Services\JournalImportInvoiceService;
+use Modules\Accounting\Services\JournalImportHistoryService;
 use Modules\Accounting\Services\JournalImportQueueService;
 use Modules\Accounting\Services\JournalImportCancellationService;
 use Modules\Accounting\Services\JournalImportSourceGroupService;
@@ -155,33 +156,12 @@ class JournalEntryController extends Controller
             abort(403, 'Unauthorized action.');
         }
 
-        $taxReviewCounts = DB::table('accounting_acc_trans_mappings')
-            ->where('business_id', $business_id)
-            ->where('tax_reconciliation_status', 'review')
-            ->select('journal_import_id', DB::raw('COUNT(*) as tax_reconciliation_review_count'))
-            ->groupBy('journal_import_id');
-
-        $imports = DB::table('accounting_journal_imports as aji')
-            ->leftJoin('users as u', 'aji.created_by', '=', 'u.id')
-            ->leftJoinSub($taxReviewCounts, 'tax_review_counts', function ($join) {
-                $join->on('tax_review_counts.journal_import_id', '=', 'aji.id');
-            })
-            ->where('aji.business_id', $business_id)
-            ->select(
-                'aji.*',
-                DB::raw("CONCAT(COALESCE(u.surname, ''),' ',COALESCE(u.first_name, ''),' ',COALESCE(u.last_name,'')) as added_by"),
-                DB::raw('COALESCE(tax_review_counts.tax_reconciliation_review_count, 0) as tax_reconciliation_review_count')
-            )
-            ->orderBy('aji.id', 'desc')
-            ->limit(25)
-            ->get();
-
         $taxReconciliationReviews = $this->getTaxReconciliationReviews($business_id);
 
-        return view('accounting::journal_entry.import')->with(compact('imports', 'taxReconciliationReviews'));
+        return view('accounting::journal_entry.import')->with(compact('taxReconciliationReviews'));
     }
 
-    public function analyzeImport(Request $request)
+    public function analyzeImport(Request $request, JournalImportHistoryService $historyService)
     {
         $business_id = request()->session()->get('user.business_id');
 
@@ -204,6 +184,7 @@ class JournalEntryController extends Controller
             'business_id' => $business_id,
             'file_name' => $file->getClientOriginalName(),
             'file_path' => $path,
+            'import_origin' => 'web',
             'status' => 'queued',
             'last_message' => 'File diterima; menunggu worker queue imports.',
             'created_by' => request()->session()->get('user.id'),
@@ -211,16 +192,77 @@ class JournalEntryController extends Controller
             'updated_at' => now(),
         ]);
 
-        AnalyzeJournalImportJob::dispatch($journal_import_id);
+        $historyService->linkBatch(
+            (int) $journal_import_id,
+            (int) $business_id,
+            (int) $request->session()->get('user.id')
+        );
 
-        return redirect()->action([\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'import'])
-            ->with('status', [
-                'success' => 1,
-                'msg' => 'File berhasil diupload. Analisa berjalan di background.',
-            ]);
+        try {
+            AnalyzeJournalImportJob::dispatch($journal_import_id);
+        } catch (\Throwable $exception) {
+            DB::table('accounting_journal_imports')
+                ->where('business_id', $business_id)
+                ->where('id', $journal_import_id)
+                ->update([
+                    'status' => 'failed',
+                    'last_message' => 'Analisis belum masuk ke worker queue.',
+                    'error_message' => mb_substr($exception->getMessage(), 0, 2000),
+                    'updated_at' => now(),
+                ]);
+            $historyService->linkBatch((int) $journal_import_id, (int) $business_id);
+
+            return response()->json([
+                'success' => 0,
+                'msg' => 'File tersimpan, tetapi job analisis gagal dikirim ke worker queue.',
+                'batch_id' => (int) $journal_import_id,
+            ], 500);
+        }
+
+        $sharedBatch = $historyService->linkBatch((int) $journal_import_id, (int) $business_id);
+
+        return response()->json([
+            'success' => 1,
+            'batch_id' => (int) $journal_import_id,
+            'import_id' => (int) $journal_import_id,
+            'history_id' => $sharedBatch ? (int) $sharedBatch->id : null,
+            'status' => 'queued',
+            'msg' => 'File diterima. Analisis berjalan di background dan progres tersedia di riwayat import.',
+        ], 202);
     }
 
-    public function reviewImport($id)
+    public function importHistoryData(Request $request, JournalImportHistoryService $historyService)
+    {
+        $businessId = (int) $request->session()->get('user.business_id');
+        $this->authorizeJournalImportDraftAccess($businessId);
+
+        $canRevert = auth()->user()->can('superadmin') || auth()->user()->can('accounting.delete_journal');
+
+        return response()->json($historyService->dataTable($request, $businessId, $canRevert));
+    }
+
+    public function importHistoryDetail(Request $request, int $batchId, JournalImportHistoryService $historyService, \App\Services\UserImportBatchService $batchService)
+    {
+        $businessId = (int) $request->session()->get('user.business_id');
+        $this->authorizeJournalImportDraftAccess($businessId);
+        $batch = $batchService->findForBusiness($batchId, $businessId, 'journal');
+
+        return response()->json($historyService->detail($batch));
+    }
+
+    public function downloadImportSource(Request $request, int $batchId, \App\Services\UserImportBatchService $batchService)
+    {
+        $businessId = (int) $request->session()->get('user.business_id');
+        $this->authorizeJournalImportDraftAccess($businessId);
+        $batch = $batchService->findForBusiness($batchId, $businessId, 'journal');
+        if (! $batch->hasSourceSnapshot()) {
+            abort(404);
+        }
+
+        return $batchService->workbookDownload($batch);
+    }
+
+    public function reviewImport($id, JournalImportHistoryService $historyService)
     {
         $business_id = request()->session()->get('user.business_id');
 
@@ -248,16 +290,18 @@ class JournalEntryController extends Controller
             ? $this->readTemporaryJournalAnalysis($batch->analysis_path)
             : $this->analysisFromJournalDraftRows((int) $batch->id, (int) $business_id, $batch->summary);
         if (empty($analysis['entries'])) {
-            if ($batch->status === 'cancelled' && ! empty($batch->file_path)) {
-                $filePath = $this->resolveJournalImportFilePath($batch->file_path);
-                if (! empty($filePath) && file_exists($filePath)) {
+            if (in_array($batch->status, ['cancelled', 'failed'], true)) {
+                $shared = $historyService->linkBatch((int) $batch->id, (int) $business_id);
+                $filePath = ! empty($batch->file_path) ? $this->resolveJournalImportFilePath($batch->file_path) : null;
+                $hasStagedWorkbook = ! empty($filePath) && file_exists($filePath);
+                if ($hasStagedWorkbook || ($shared && $shared->hasSourceSnapshot())) {
                     $restarted = DB::transaction(function () use ($batch, $business_id) {
                         $lockedBatch = DB::table('accounting_journal_imports')
                             ->where('business_id', $business_id)
                             ->where('id', $batch->id)
                             ->lockForUpdate()
                             ->first();
-                        if (empty($lockedBatch) || $lockedBatch->status !== 'cancelled') {
+                        if (empty($lockedBatch) || ! in_array($lockedBatch->status, ['cancelled', 'failed'], true)) {
                             return false;
                         }
 
@@ -310,17 +354,6 @@ class JournalEntryController extends Controller
         $original_file_name = $batch->file_name;
         $account_options = $this->getAccountingAccountOptions($business_id);
         $main_account_options = $this->getMainAccountOptions($business_id);
-        $imports = DB::table('accounting_journal_imports as aji')
-            ->leftJoin('users as u', 'aji.created_by', '=', 'u.id')
-            ->where('aji.business_id', $business_id)
-            ->select(
-                'aji.*',
-                DB::raw("CONCAT(COALESCE(u.surname, ''),' ',COALESCE(u.first_name, ''),' ',COALESCE(u.last_name,'')) as added_by")
-            )
-            ->orderBy('aji.id', 'desc')
-            ->limit(25)
-            ->get();
-
         $taxReconciliationReviews = $this->getTaxReconciliationReviews($business_id);
 
         $draftTypeCounts = array_fill_keys($this->journalImportDraftService->sourceTypes(), 0);
@@ -338,7 +371,7 @@ class JournalEntryController extends Controller
             });
 
         return view('accounting::journal_entry.import')
-            ->with(compact('batch', 'analysis', 'path', 'analysis_path', 'imports', 'original_file_name', 'account_options', 'main_account_options', 'taxReconciliationReviews', 'draftTypeCounts'));
+            ->with(compact('batch', 'analysis', 'path', 'analysis_path', 'original_file_name', 'account_options', 'main_account_options', 'taxReconciliationReviews', 'draftTypeCounts'));
     }
 
     public function draftRows(Request $request, $id)
@@ -522,7 +555,7 @@ class JournalEntryController extends Controller
         $savedOptions = ! empty($batch->import_options) ? json_decode($batch->import_options, true) : [];
         $request->merge(is_array($savedOptions) ? $savedOptions : []);
         $request->merge(['import_id' => (int) $batch->id]);
-        $startResponse = $this->startImport($request);
+        $startResponse = $this->startImport($request, app(JournalImportHistoryService::class));
         $startData = $startResponse->getData(true) ?: [];
         if ($startResponse->getStatusCode() >= 400 || empty($startData['success'])) {
             return response()->json([
@@ -624,7 +657,7 @@ class JournalEntryController extends Controller
         // Reuse the normal batch preparation path so eligible rows are retried
         // with the same account mappings and bounded worker chunks as a manual run.
         $request->merge(['import_id' => (int) $batch->id]);
-        $startResponse = $this->startImport($request);
+        $startResponse = $this->startImport($request, app(JournalImportHistoryService::class));
         $startData = $startResponse->getData(true) ?: [];
         if ($startResponse->getStatusCode() >= 400 || empty($startData['success'])) {
             return response()->json([
@@ -1981,7 +2014,7 @@ class JournalEntryController extends Controller
         return $counts;
     }
 
-    public function startImport(Request $request)
+    public function startImport(Request $request, JournalImportHistoryService $historyService)
     {
         $business_id = request()->session()->get('user.business_id');
 
@@ -2091,6 +2124,8 @@ class JournalEntryController extends Controller
             return response()->json(['success' => 0, 'msg' => 'Gagal mengirim persiapan import ke worker queue.'], 500);
         }
 
+        $historyService->linkBatch((int) $batch->id, (int) $business_id);
+
         return response()->json([
             'success' => 1,
             'import_id' => $batch->id,
@@ -2100,7 +2135,7 @@ class JournalEntryController extends Controller
         ]);
     }
 
-    public function importStatus($id)
+    public function importStatus($id, JournalImportHistoryService $historyService)
     {
         $business_id = (int) request()->session()->get('user.business_id');
         $this->authorizeJournalImportDraftAccess($business_id);
@@ -2113,6 +2148,8 @@ class JournalEntryController extends Controller
         if (empty($batch)) {
             abort(404);
         }
+
+        $historyService->linkBatch((int) $batch->id, $business_id);
 
         $queueCounts = $this->journalDraftProcessingCounts((int) $batch->id, $business_id);
         $progressData = app(\Modules\Accounting\Services\JournalImportProgressService::class)
@@ -2149,7 +2186,7 @@ class JournalEntryController extends Controller
         ]);
     }
 
-    public function terminateImport(Request $request, $id, JournalImportCancellationService $cancellationService)
+    public function terminateImport(Request $request, $id, JournalImportCancellationService $cancellationService, JournalImportHistoryService $historyService)
     {
         $business_id = (int) $request->session()->get('user.business_id');
         $this->authorizeJournalImportDraftAccess($business_id);
@@ -2163,6 +2200,8 @@ class JournalEntryController extends Controller
         if ($result['result'] === 'not_found') {
             abort(404);
         }
+
+        $historyService->linkBatch((int) $id, $business_id);
 
         if ($result['result'] === 'not_active') {
             return response()->json([
@@ -2184,17 +2223,17 @@ class JournalEntryController extends Controller
         ]);
     }
 
-    public function processImport(Request $request)
+    public function processImport(Request $request, JournalImportHistoryService $historyService)
     {
         // Preserve the old endpoint while ensuring all Journal imports use the
         // same persistent row state and background worker as the new UI.
-        return $this->startImport($request);
+        return $this->startImport($request, $historyService);
     }
 
-    public function storeImport(Request $request)
+    public function storeImport(Request $request, JournalImportHistoryService $historyService)
     {
         // Keep older form submissions on the persistent draft queue path.
-        return $this->startImport($request);
+        return $this->startImport($request, $historyService);
     }
 
     private function processJournalImportEntries(Request $request, $analysis, $entries)
@@ -2389,7 +2428,7 @@ class JournalEntryController extends Controller
         return app(JournalTaxReconciliationService::class)->revertImport($journalImportId, $businessId);
     }
 
-    public function revertImport($id)
+    public function revertImport(Request $request, $id, JournalImportHistoryService $historyService)
     {
         $business_id = request()->session()->get('user.business_id');
 
@@ -2445,6 +2484,8 @@ class JournalEntryController extends Controller
 
             DB::commit();
 
+            $historyService->linkBatch((int) $id, (int) $business_id);
+
             $output = [
                 'success' => 1,
                 'msg' => 'Import journal berhasil direvert.',
@@ -2457,6 +2498,10 @@ class JournalEntryController extends Controller
                 'success' => 0,
                 'msg' => __('messages.something_went_wrong').': '.$e->getMessage(),
             ];
+        }
+
+        if ($request->expectsJson()) {
+            return response()->json($output, $output['success'] ? 200 : 422);
         }
 
         return redirect()->back()->with('status', $output);
@@ -3363,7 +3408,7 @@ class JournalEntryController extends Controller
         return $directory;
     }
 
-    private function resolveJournalImportFilePath($path): ?string
+    public function resolveJournalImportFilePath($path): ?string
     {
         $path = str_replace('\\', '/', trim((string) $path));
         if ($path === '' || strpos($path, "\0") !== false || preg_match('#(^|/)\.\.?(/|$)#', $path)) {
@@ -3381,6 +3426,10 @@ class JournalEntryController extends Controller
             $filename = substr($path, strlen('uploads/temp/journal_imports/'));
             if ($filename === '' || basename($filename) !== $filename) {
                 return null;
+            }
+            $privatePath = Storage::disk('user_imports')->path('temp/journal_imports/'.$filename);
+            if (is_file($privatePath)) {
+                return $privatePath;
             }
             $root = public_path('uploads/temp/journal_imports');
         } elseif (preg_match('/^[a-zA-Z]:\//', $path) === 1 || Str::startsWith($path, '/')) {

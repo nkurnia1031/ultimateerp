@@ -6,17 +6,26 @@ use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 use Modules\AssetManagement\Entities\Asset;
 use Modules\AssetManagement\Entities\HeavyEquipmentRateBatch;
 use Modules\AssetManagement\Entities\HeavyEquipmentRateUnit;
 use Modules\AssetManagement\Entities\HeavyEquipmentRoute;
 use Modules\AssetManagement\Entities\HeavyEquipmentRouteRate;
+use Modules\AssetManagement\Jobs\AnalyzeHeavyEquipmentRateImportJob;
+use Modules\AssetManagement\Jobs\ProcessHeavyEquipmentRateImportJob;
+use Modules\AssetManagement\Services\HeavyEquipmentRateImportHistoryService;
 use Modules\AssetManagement\Services\HeavyEquipmentRateService;
+use App\Services\UserImportBatchService;
+use App\UserImportBatch;
 
 class HeavyEquipmentRateController extends Controller
 {
-    public function __construct(private HeavyEquipmentRateService $rateService)
+    public function __construct(
+        private HeavyEquipmentRateService $rateService,
+        private HeavyEquipmentRateImportHistoryService $importHistoryService
+    )
     {
     }
 
@@ -24,18 +33,15 @@ class HeavyEquipmentRateController extends Controller
     {
         $this->authorizeView();
         $businessId = $this->businessId();
-        $batches = HeavyEquipmentRateBatch::where('business_id', $businessId)->with('uploader')->latest()->get();
-        $batchIssues = $batches->mapWithKeys(function (HeavyEquipmentRateBatch $batch) {
-            return [$batch->id => $this->parseBatchIssues($batch->error_message)];
-        })->all();
-        $hasPreviewIssues = collect($batchIssues)
-            ->contains(fn (array $issues) => count($issues) > 0)
-            || HeavyEquipmentRouteRate::where('business_id', $businessId)
-                ->where('status', 'draft')
-                ->whereHas('units', fn ($query) => $query->whereNull('asset_id'))
-                ->exists();
+        $hasBatchIssues = HeavyEquipmentRateBatch::where('business_id', $businessId)
+            ->where('status', 'draft')->whereNotNull('error_message')->get(['error_message'])
+            ->contains(fn (HeavyEquipmentRateBatch $batch) => $this->parseBatchIssues($batch->error_message) !== []);
+        $hasPreviewIssues = $hasBatchIssues || HeavyEquipmentRateBatch::where('business_id', $businessId)
+            ->where('status', 'draft')
+            ->whereHas('rates.units', fn ($units) => $units->whereNull('asset_id'))
+            ->exists();
 
-        return view('assetmanagement::fleet.rates.index', compact('batches', 'batchIssues', 'hasPreviewIssues'));
+        return view('assetmanagement::fleet.rates.index', compact('hasPreviewIssues'));
     }
 
     /**
@@ -380,29 +386,38 @@ class HeavyEquipmentRateController extends Controller
     public function upload(Request $request)
     {
         $this->authorizeManage();
-        $request->validate([
+        $validated = $request->validate([
             'file' => 'required|file|mimes:xlsx,xls,csv|max:20480',
             'effective_from' => 'required|date',
         ]);
 
+        $batch = null;
         try {
-            $batch = $this->rateService->import(
+            $batch = $this->importHistoryService->createUploadBatch(
                 $request->file('file'),
-                Carbon::parse($request->input('effective_from')),
+                Carbon::parse($validated['effective_from'])->toDateString(),
                 $this->businessId(),
-                auth()->id()
+                (int) auth()->id()
             );
-            $issueCount = count($this->parseBatchIssues($batch->error_message))
-                + $batch->rates->flatMap(fn ($rate) => $rate->units)->filter(fn ($unit) => ! $unit->asset_id)->count();
-            $message = $issueCount > 0
-                ? "Preview batch #{$batch->id} dibuat. {$issueCount} baris atau unit perlu diperiksa pada tabel preview."
-                : "Preview batch #{$batch->id} dibuat. Periksa datanya sebelum konfirmasi.";
+            AnalyzeHeavyEquipmentRateImportJob::dispatch((int) $batch->id);
 
-            return $this->respond($request, true, $message, [
-                'batch_id' => $issueCount > 0 ? $batch->id : null,
-            ], 200, 'asset.fleet.rates.index');
+            return response()->json([
+                'success' => true,
+                'queued' => true,
+                'batch_id' => (int) $batch->id,
+                'status' => $batch->status,
+                'msg' => 'Upload diterima. Analisis workbook tarif berjalan di latar belakang.',
+            ], 202);
         } catch (\Throwable $e) {
             report($e);
+            if ($batch) {
+                $this->importHistoryService->markPreviewFailed((int) $batch->id, $e->getMessage());
+                return response()->json([
+                    'success' => false,
+                    'batch_id' => (int) $batch->id,
+                    'msg' => 'Upload tersimpan, tetapi analisis tidak dapat dimasukkan ke antrean.',
+                ], 422);
+            }
 
             return $this->respond($request, false, $this->friendlyRateExceptionMessage($e), [], 422, 'asset.fleet.rates.index');
         }
@@ -411,23 +426,10 @@ class HeavyEquipmentRateController extends Controller
     public function confirm(Request $request, $id)
     {
         $this->authorizeManage();
-        $batch = HeavyEquipmentRateBatch::where('business_id', $this->businessId())->findOrFail($id);
+        $domain = HeavyEquipmentRateBatch::where('business_id', $this->businessId())->findOrFail($id);
+        $shared = $this->importHistoryService->ensureHistoryEnvelope($domain);
 
-        try {
-            $this->rateService->confirm($batch);
-
-            return $this->respond($request, true, 'Tarif berhasil diaktifkan.');
-        } catch (\Throwable $e) {
-            report($e);
-
-            $failedBatch = $batch->fresh();
-            $issueCount = count($this->parseBatchIssues($failedBatch?->error_message));
-            $message = $issueCount > 0
-                ? "Batch belum diaktifkan. {$issueCount} masalah ditandai pada tabel preview; perbaiki atau cocokkan baris tersebut lalu coba lagi."
-                : 'Batch belum diaktifkan. Periksa data preview dan coba lagi.';
-
-            return $this->respond($request, false, $message, ['batch_id' => $batch->id], 422);
-        }
+        return $this->queueConfirm($shared->id, $request);
     }
 
     public function cancel(Request $request, $id)
@@ -437,12 +439,211 @@ class HeavyEquipmentRateController extends Controller
 
         try {
             $this->rateService->cancel($batch);
+            $this->importHistoryService->syncFromDomainBatch((int) $batch->id);
 
             return $this->respond($request, true, 'Batch tarif dibatalkan.');
         } catch (\Throwable $e) {
             report($e);
 
             return $this->respond($request, false, $e->getMessage(), [], 422);
+        }
+    }
+
+    public function importBatchHistory(Request $request)
+    {
+        $this->authorizeView();
+
+        return response()->json($this->importHistoryService->dataTable(
+            $request,
+            $this->businessId(),
+            $this->canManageRates()
+        ));
+    }
+
+    public function importBatchDetails(int $id)
+    {
+        $this->authorizeView();
+
+        return response()->json($this->importHistoryService->details($id, $this->businessId()));
+    }
+
+    public function downloadImportBatch(int $id)
+    {
+        $this->authorizeView();
+        $batch = app(UserImportBatchService::class)->findForBusiness(
+            $id,
+            $this->businessId(),
+            HeavyEquipmentRateImportHistoryService::IMPORTER_KEY
+        );
+        abort_if(! $batch->hasSourceSnapshot() || ! Storage::disk('user_imports')->exists($batch->source_snapshot_path), 404, 'Snapshot workbook belum tersedia untuk batch lama ini.');
+
+        return app(UserImportBatchService::class)->workbookDownload($batch);
+    }
+
+    public function confirmImportBatch(Request $request, int $id)
+    {
+        $this->authorizeManage();
+
+        return $this->queueConfirm($id, $request);
+    }
+
+    public function retryImportBatch(int $id)
+    {
+        $this->authorizeManage();
+        $batch = app(UserImportBatchService::class)->findForBusiness(
+            $id,
+            $this->businessId(),
+            HeavyEquipmentRateImportHistoryService::IMPORTER_KEY
+        );
+        $domain = $this->importHistoryService->domainBatchForSharedBatch($id, $this->businessId());
+        if ($batch->status !== 'failed' || $domain->status !== 'draft'
+            || ! $batch->preview_path || ! Storage::disk('user_imports')->exists($batch->preview_path)
+            || ! $batch->hasSourceSnapshot() || ! Storage::disk('user_imports')->exists($batch->source_snapshot_path)) {
+            return response()->json(['success' => false, 'msg' => 'Retry hanya tersedia untuk aktivasi batch gagal yang masih berstatus draft dan memiliki preview serta snapshot.'], 409);
+        }
+
+        try {
+            DB::transaction(function () use ($id) {
+                $locked = UserImportBatch::where('business_id', $this->businessId())
+                    ->where('importer_key', HeavyEquipmentRateImportHistoryService::IMPORTER_KEY)
+                    ->lockForUpdate()->find($id);
+                $domain = HeavyEquipmentRateBatch::where('business_id', $this->businessId())
+                    ->where('user_import_batch_id', $id)->lockForUpdate()->first();
+                if (! $locked || $locked->status !== 'failed' || ! $domain || $domain->status !== 'draft'
+                    || ! $locked->preview_path || ! Storage::disk('user_imports')->exists($locked->preview_path)
+                    || ! $locked->source_snapshot_path || ! Storage::disk('user_imports')->exists($locked->source_snapshot_path)) {
+                    throw new \InvalidArgumentException('Batch sudah berubah status atau tidak lagi memenuhi syarat retry.');
+                }
+                $locked->forceFill([
+                    'status' => 'queued_import',
+                    'stage' => 'queued',
+                    'progress_current' => 0,
+                    'progress_total' => max(1, (int) $domain->source_row_count),
+                    'progress_percent' => 0,
+                    'last_message' => 'Retry aktivasi diterima. Menunggu worker queue imports.',
+                    'error_message' => null,
+                    'failed_at' => null,
+                    'completed_at' => null,
+                    'heartbeat_at' => now(),
+                ])->save();
+            });
+
+            ProcessHeavyEquipmentRateImportJob::dispatch($id);
+
+            return response()->json(['success' => true, 'queued' => true, 'batch_id' => $id, 'msg' => 'Retry aktivasi batch tarif diterima.'], 202);
+        } catch (\InvalidArgumentException $exception) {
+            return response()->json(['success' => false, 'msg' => $exception->getMessage()], 409);
+        } catch (\Throwable $exception) {
+            report($exception);
+            UserImportBatch::where('business_id', $this->businessId())->whereKey($id)->where('status', 'queued_import')->update([
+                'status' => 'failed', 'stage' => 'failed', 'last_message' => 'Retry tidak dapat dimasukkan ke antrean.',
+                'error_message' => $exception->getMessage(), 'failed_at' => now(), 'updated_at' => now(),
+            ]);
+
+            return response()->json(['success' => false, 'msg' => 'Retry tidak dapat dimasukkan ke antrean import.'], 409);
+        }
+    }
+
+    public function cancelImportBatch(int $id)
+    {
+        $this->authorizeManage();
+        $domain = $this->importHistoryService->domainBatchForSharedBatch($id, $this->businessId());
+        if ($domain->status !== 'draft') {
+            return response()->json(['success' => false, 'msg' => 'Hanya draft tarif yang dapat dibatalkan.'], 409);
+        }
+
+        try {
+            $batch = $this->importHistoryService->cancelOrRevert($id, $this->businessId());
+
+            return response()->json(['success' => true, 'status' => $batch->status, 'msg' => 'Draft batch tarif dibatalkan.']);
+        } catch (\Throwable $exception) {
+            report($exception);
+
+            return response()->json(['success' => false, 'msg' => $exception->getMessage()], 409);
+        }
+    }
+
+    public function revertImportBatch(int $id)
+    {
+        $this->authorizeManage();
+        $batch = app(UserImportBatchService::class)->findForBusiness(
+            $id,
+            $this->businessId(),
+            HeavyEquipmentRateImportHistoryService::IMPORTER_KEY
+        );
+        if ($batch->status !== 'imported') {
+            return response()->json(['success' => false, 'msg' => 'Batch belum berstatus imported.'], 409);
+        }
+
+        try {
+            $updated = $this->importHistoryService->cancelOrRevert($id, $this->businessId());
+
+            return response()->json(['success' => true, 'status' => $updated->status, 'msg' => 'Batch tarif berhasil di-revert.']);
+        } catch (\Throwable $exception) {
+            report($exception);
+
+            return response()->json(['success' => false, 'msg' => $exception->getMessage()], 409);
+        }
+    }
+
+    private function queueConfirm(int $id, Request $request)
+    {
+        $batch = app(UserImportBatchService::class)->findForBusiness(
+            $id,
+            $this->businessId(),
+            HeavyEquipmentRateImportHistoryService::IMPORTER_KEY
+        );
+        $domain = $this->importHistoryService->domainBatchForSharedBatch($id, $this->businessId());
+        if ($batch->status !== 'preview_ready') {
+            return response()->json(['success' => false, 'msg' => 'Batch tarif tidak lagi siap dikonfirmasi. Muat ulang riwayat import.'], 409);
+        }
+
+        try {
+            DB::transaction(function () use ($id, $domain) {
+                $locked = UserImportBatch::where('business_id', $this->businessId())
+                    ->where('importer_key', HeavyEquipmentRateImportHistoryService::IMPORTER_KEY)
+                    ->lockForUpdate()->find($id);
+                $domain = HeavyEquipmentRateBatch::where('business_id', $this->businessId())
+                    ->where('user_import_batch_id', $id)->lockForUpdate()->first();
+                if (! $locked || $locked->status !== 'preview_ready' || ! $domain || $domain->status !== 'draft') {
+                    throw new \InvalidArgumentException('Konfirmasi sudah dikirim atau batch tidak lagi berstatus draft.');
+                }
+                if (! $domain->rates()->where('status', '!=', 'cancelled')->exists()) {
+                    throw new \InvalidArgumentException('Batch tarif tidak memiliki baris yang dapat diaktifkan.');
+                }
+                $locked->forceFill([
+                    'status' => 'queued_import',
+                    'stage' => 'queued',
+                    'progress_current' => 0,
+                    'progress_total' => max(1, (int) $domain->source_row_count),
+                    'progress_percent' => 0,
+                    'last_message' => 'Konfirmasi diterima. Menunggu worker queue imports.',
+                    'heartbeat_at' => now(),
+                    'started_at' => null,
+                    'completed_at' => null,
+                    'failed_at' => null,
+                ])->save();
+            });
+
+            ProcessHeavyEquipmentRateImportJob::dispatch($id);
+
+            return response()->json([
+                'success' => true,
+                'queued' => true,
+                'batch_id' => $id,
+                'msg' => 'Konfirmasi batch tarif diterima dan berjalan di latar belakang.',
+            ], 202);
+        } catch (\InvalidArgumentException $exception) {
+            return response()->json(['success' => false, 'msg' => $exception->getMessage()], 409);
+        } catch (\Throwable $exception) {
+            report($exception);
+            UserImportBatch::where('business_id', $this->businessId())->whereKey($id)->where('status', 'queued_import')->update([
+                'status' => 'failed', 'stage' => 'failed', 'last_message' => 'Batch tidak dapat dimasukkan ke antrean import.',
+                'error_message' => $exception->getMessage(), 'failed_at' => now(), 'updated_at' => now(),
+            ]);
+            $this->importHistoryService->syncFromDomainBatch((int) $domain->id);
+
+            return response()->json(['success' => false, 'msg' => 'Batch tidak dapat dimasukkan ke antrean import.'], 409);
         }
     }
 

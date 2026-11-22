@@ -16,7 +16,7 @@ use Modules\AssetManagement\Entities\HeavyEquipmentRouteRate;
 
 class HeavyEquipmentRateService
 {
-    public function import(UploadedFile $file, Carbon $effectiveFrom, int $businessId, int $userId): HeavyEquipmentRateBatch
+    public function import(UploadedFile $file, Carbon $effectiveFrom, int $businessId, int $userId, ?int $userImportBatchId = null): HeavyEquipmentRateBatch
     {
         $extension = strtolower($file->getClientOriginalExtension());
         if (! in_array($extension, ['xlsx', 'xls', 'csv'], true)) {
@@ -114,8 +114,9 @@ class HeavyEquipmentRateService
             throw new \InvalidArgumentException('Tidak ada baris tarif yang dapat diproses.');
         }
 
-        $batch = DB::transaction(function () use ($file, $sourceHash, $effectiveFrom, $businessId, $userId, $sourceRows, $errors, $routeNames, $unitLabels, $sourceRowCount, $validRowCount) {
+        $batch = DB::transaction(function () use ($file, $sourceHash, $effectiveFrom, $businessId, $userId, $userImportBatchId, $sourceRows, $errors, $routeNames, $unitLabels, $sourceRowCount, $validRowCount) {
             $batch = HeavyEquipmentRateBatch::create([
+                'user_import_batch_id' => $userImportBatchId,
                 'business_id' => $businessId,
                 'file_name' => $file->getClientOriginalName(),
                 'source_hash' => $sourceHash,
@@ -167,23 +168,111 @@ class HeavyEquipmentRateService
 
     public function confirm(HeavyEquipmentRateBatch $batch): HeavyEquipmentRateBatch
     {
-        $batch->load(['rates.units', 'rates.route']);
         if ($batch->status !== 'draft') {
             throw new \RuntimeException('Batch tarif ini sudah tidak berada pada status draft.');
         }
 
-        $storedErrors = json_decode($batch->error_message ?: '[]', true) ?: [];
-        $importErrors = array_values(array_filter($storedErrors, fn ($error) => ! $this->isConfirmationError((string) $error)));
-        $errors = [];
-        $seen = [];
-        $effectiveFrom = Carbon::parse($batch->effective_from);
-        $ratesToConfirm = $batch->rates->filter(fn (HeavyEquipmentRouteRate $rate) => $rate->status !== 'cancelled');
+        $confirmationErrors = [];
+        $importErrors = [];
+        try {
+            DB::transaction(function () use ($batch, &$confirmationErrors, &$importErrors) {
+            $lockedBatch = HeavyEquipmentRateBatch::where('business_id', $batch->business_id)
+                ->lockForUpdate()->findOrFail($batch->id);
+            if ($lockedBatch->status !== 'draft') {
+                throw new \RuntimeException('Batch tarif ini sudah tidak berada pada status draft.');
+            }
 
-        if ($ratesToConfirm->isEmpty()) {
-            throw new \RuntimeException('Batch tarif tidak memiliki baris yang dapat diaktifkan.');
+            $effectiveFrom = Carbon::parse($lockedBatch->effective_from);
+            $storedErrors = json_decode($lockedBatch->error_message ?: '[]', true) ?: [];
+            $importErrors = array_values(array_filter($storedErrors, fn ($error) => ! $this->isConfirmationError((string) $error)));
+            $lockedRates = $lockedBatch->rates()->where('status', '!=', 'cancelled')->orderBy('id')->lockForUpdate()->get();
+            if ($lockedRates->isEmpty()) {
+                throw new \RuntimeException('Batch tarif tidak memiliki baris yang dapat diaktifkan.');
+            }
+            $lockedUnits = HeavyEquipmentRateUnit::whereIn('route_rate_id', $lockedRates->pluck('id')->all())
+                ->orderBy('id')->lockForUpdate()->get()->groupBy('route_rate_id');
+            foreach ($lockedRates as $rate) {
+                $rate->setRelation('units', $lockedUnits->get($rate->id, collect()));
+            }
+            $lockedRates->load('route');
+            $confirmationErrors = $this->confirmationErrors($lockedBatch, $lockedRates, $effectiveFrom);
+            if ($confirmationErrors !== []) {
+                throw new \RuntimeException(implode(' ', array_values(array_unique(array_merge($importErrors, $confirmationErrors)))));
+            }
+
+            $previousChanges = [];
+            foreach ($lockedRates as $rate) {
+                foreach ($rate->units as $unit) {
+                    $previousRates = HeavyEquipmentRouteRate::where('business_id', $batch->business_id)
+                        ->where('route_id', $rate->route_id)
+                        ->where('effective_from', '<', $effectiveFrom->toDateString())
+                        ->where('status', 'active')
+                        ->whereHas('units', function ($query) use ($unit) {
+                            $query->where('asset_id', $unit->asset_id);
+                        })
+                        ->lockForUpdate()
+                        ->get();
+
+                    foreach ($previousRates as $previous) {
+                        $previousChanges[(int) $previous->id] = [
+                            'before' => [
+                                'status' => $previous->status,
+                                'effective_to' => $previous->effective_to ? Carbon::parse($previous->effective_to)->toDateString() : null,
+                            ],
+                        ];
+                        $previous->update([
+                            'effective_to' => $effectiveFrom->copy()->subDay()->toDateString(),
+                            'status' => 'expired',
+                        ]);
+                    }
+                }
+                $rate->update(['status' => 'active']);
+            }
+
+            $affectedRateIds = array_values(array_unique(array_merge(
+                $lockedRates->pluck('id')->map(fn ($id) => (int) $id)->all(),
+                array_map('intval', array_keys($previousChanges))
+            )));
+            HeavyEquipmentRateUnit::whereIn('route_rate_id', $affectedRateIds)
+                ->orderBy('id')->lockForUpdate()->get();
+
+            foreach (array_keys($previousChanges) as $previousId) {
+                $previous = HeavyEquipmentRouteRate::with('units')->find($previousId);
+                $previousChanges[$previousId]['after_fingerprint'] = $previous ? $this->rateFingerprint($previous) : null;
+            }
+            $importedRateFingerprints = [];
+            $importedRateIds = $lockedRates->pluck('id')->map(fn ($id) => (int) $id)->all();
+            foreach (HeavyEquipmentRouteRate::with('units')->whereIn('id', $importedRateIds)->orderBy('id')->get() as $importedRate) {
+                $importedRateFingerprints[(int) $importedRate->id] = $this->rateFingerprint($importedRate);
+            }
+            $lockedBatch->update([
+                'status' => 'active',
+                'imported_at' => now(),
+                'error_message' => $importErrors === [] ? null : json_encode($importErrors, JSON_UNESCAPED_UNICODE),
+                'revert_snapshot_json' => json_encode([
+                    'version' => 1,
+                    'rate_fingerprints' => $importedRateFingerprints,
+                    'previous_rates' => $previousChanges,
+                ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR),
+            ]);
+            });
+        } catch (\Throwable $exception) {
+            if ($confirmationErrors !== []) {
+                $batch->update([
+                    'error_message' => json_encode(array_values(array_unique(array_merge($importErrors, $confirmationErrors))), JSON_UNESCAPED_UNICODE),
+                ]);
+            }
+            throw $exception;
         }
 
-        foreach ($ratesToConfirm as $rate) {
+        return $batch->fresh(['rates.route', 'rates.units.asset']);
+    }
+
+    private function confirmationErrors(HeavyEquipmentRateBatch $batch, $rates, Carbon $effectiveFrom): array
+    {
+        $errors = [];
+        $seen = [];
+        foreach ($rates as $rate) {
             if ($rate->units->isEmpty()) {
                 $errors[] = "Baris {$rate->source_row}: tidak memiliki unit.";
                 continue;
@@ -194,7 +283,7 @@ class HeavyEquipmentRateService
                     continue;
                 }
 
-                $key = $rate->route_id . ':' . $unit->asset_id;
+                $key = $rate->route_id.':'.$unit->asset_id;
                 if (isset($seen[$key])) {
                     $errors[] = "Duplikasi pada workbook: rute '{$rate->route->name}' dan unit '{$unit->unit_label}'.";
                     continue;
@@ -206,9 +295,7 @@ class HeavyEquipmentRateService
                     ->where('effective_from', $effectiveFrom->toDateString())
                     ->where('id', '!=', $rate->id)
                     ->whereIn('status', ['active', 'expired'])
-                    ->whereHas('units', function ($query) use ($unit) {
-                        $query->where('asset_id', $unit->asset_id);
-                    })
+                    ->whereHas('units', fn ($query) => $query->where('asset_id', $unit->asset_id))
                     ->exists();
                 if ($duplicate) {
                     $errors[] = "Tarif sudah ada untuk rute '{$rate->route->name}' dan unit '{$unit->unit_label}' pada tanggal berlaku yang sama.";
@@ -216,41 +303,7 @@ class HeavyEquipmentRateService
             }
         }
 
-        if ($errors !== []) {
-            $allErrors = array_values(array_unique(array_merge($importErrors, $errors)));
-            $batch->update(['error_message' => json_encode($allErrors, JSON_UNESCAPED_UNICODE)]);
-            throw new \RuntimeException(implode(' ', $allErrors));
-        }
-
-        DB::transaction(function () use ($batch, $effectiveFrom, $importErrors, $ratesToConfirm) {
-            foreach ($ratesToConfirm as $rate) {
-                foreach ($rate->units as $unit) {
-                    $previousRates = HeavyEquipmentRouteRate::where('business_id', $batch->business_id)
-                        ->where('route_id', $rate->route_id)
-                        ->where('effective_from', '<', $effectiveFrom->toDateString())
-                        ->where('status', 'active')
-                        ->whereHas('units', function ($query) use ($unit) {
-                            $query->where('asset_id', $unit->asset_id);
-                        })
-                        ->get();
-
-                    foreach ($previousRates as $previous) {
-                        $previous->update([
-                            'effective_to' => $effectiveFrom->copy()->subDay()->toDateString(),
-                            'status' => 'expired',
-                        ]);
-                    }
-                }
-                $rate->update(['status' => 'active']);
-            }
-            $batch->update([
-                'status' => 'active',
-                'imported_at' => now(),
-                'error_message' => $importErrors === [] ? null : json_encode($importErrors, JSON_UNESCAPED_UNICODE),
-            ]);
-        });
-
-        return $batch->fresh(['rates.route', 'rates.units.asset']);
+        return array_values(array_unique($errors));
     }
 
     private function isConfirmationError(string $error): bool
@@ -266,31 +319,140 @@ class HeavyEquipmentRateService
         if ($batch->status === 'cancelled') {
             return;
         }
+        if ($batch->status === 'active') {
+            $this->revert($batch);
+
+            return;
+        }
+        if ($batch->status !== 'draft') {
+            throw new \RuntimeException('Batch tarif ini tidak dapat dibatalkan dari status saat ini.');
+        }
         if ($batch->rates()->whereHas('trips')->exists()) {
             throw new \RuntimeException('Batch tidak dapat dibatalkan karena sudah dipakai oleh trip.');
         }
 
         DB::transaction(function () use ($batch) {
-            $rates = $batch->rates()->with('units')->get();
-            foreach ($rates as $rate) {
-                foreach ($rate->units as $unit) {
-                    $previous = HeavyEquipmentRouteRate::where('business_id', $batch->business_id)
-                        ->where('route_id', $rate->route_id)
-                        ->where('effective_from', '<', $rate->effective_from)
-                        ->where('status', 'expired')
-                        ->whereHas('units', function ($query) use ($unit) {
-                            $query->where('asset_id', $unit->asset_id);
-                        })
-                        ->orderByDesc('effective_from')
-                        ->first();
-                    if ($previous) {
-                        $previous->update(['effective_to' => null, 'status' => 'active']);
-                    }
-                }
-                $rate->update(['status' => 'cancelled', 'source_status' => 'cancelled']);
+            $lockedBatch = HeavyEquipmentRateBatch::where('business_id', $batch->business_id)
+                ->lockForUpdate()->findOrFail($batch->id);
+            if ($lockedBatch->status !== 'draft') {
+                throw new \RuntimeException('Batch tarif berubah status; muat ulang riwayat sebelum membatalkan.');
             }
-            $batch->update(['status' => 'cancelled']);
+            $lockedBatch->rates()->where('status', 'draft')->update(['status' => 'cancelled', 'source_status' => 'cancelled']);
+            $lockedBatch->update(['status' => 'cancelled']);
         });
+    }
+
+    public function revert(HeavyEquipmentRateBatch $batch): void
+    {
+        DB::transaction(function () use ($batch) {
+            $lockedBatch = HeavyEquipmentRateBatch::where('business_id', $batch->business_id)
+                ->lockForUpdate()->findOrFail($batch->id);
+            if ($lockedBatch->status === 'cancelled') {
+                return;
+            }
+            if ($lockedBatch->status !== 'active') {
+                throw new \RuntimeException('Hanya batch tarif aktif yang dapat di-revert.');
+            }
+
+            $snapshot = json_decode((string) $lockedBatch->revert_snapshot_json, true) ?: [];
+            $expectedRates = $snapshot['rate_fingerprints'] ?? [];
+            if ($expectedRates === []) {
+                throw new \RuntimeException('Revert diblokir: batch lama tidak memiliki fingerprint untuk membuktikan bahwa tarif belum berubah.');
+            }
+
+            $rateIds = array_map('intval', array_keys($expectedRates));
+            $rates = HeavyEquipmentRouteRate::with(['units', 'route'])
+                ->where('business_id', $lockedBatch->business_id)
+                ->where('batch_id', $lockedBatch->id)
+                ->whereIn('id', $rateIds)
+                ->lockForUpdate()->get()->keyBy('id');
+            $blocked = [];
+            if ($rates->count() !== count($rateIds)) {
+                $blocked[] = 'sebagian tarif hasil import sudah tidak tersedia';
+            }
+            foreach ($expectedRates as $rateId => $expectedFingerprint) {
+                $rate = $rates->get((int) $rateId);
+                if (! $rate || ! hash_equals((string) $expectedFingerprint, $this->rateFingerprint($rate))) {
+                    $blocked[] = 'tarif #'.$rateId.' berubah sejak import';
+                    continue;
+                }
+                $tripNumbers = $rate->trips()->pluck('trip_no')->all();
+                if ($tripNumbers !== []) {
+                    $blocked[] = 'tarif #'.$rateId.' sudah dipakai SPB '.implode(', ', $tripNumbers);
+                }
+            }
+
+            $previousRates = $snapshot['previous_rates'] ?? [];
+            $previousIds = array_map('intval', array_keys($previousRates));
+            $previous = $previousIds === [] ? collect() : HeavyEquipmentRouteRate::with('units')
+                ->where('business_id', $lockedBatch->business_id)
+                ->whereIn('id', $previousIds)
+                ->lockForUpdate()->get()->keyBy('id');
+            HeavyEquipmentRateUnit::whereIn('route_rate_id', array_values(array_unique(array_merge($rateIds, $previousIds))))
+                ->orderBy('id')->lockForUpdate()->get();
+            if ($previous->count() !== count($previousIds)) {
+                $blocked[] = 'sebagian tarif sebelumnya yang perlu dipulihkan sudah tidak tersedia';
+            }
+            foreach ($previousRates as $rateId => $values) {
+                $rate = $previous->get((int) $rateId);
+                $expectedFingerprint = $values['after_fingerprint'] ?? null;
+                if (! $rate || ! $expectedFingerprint || ! hash_equals((string) $expectedFingerprint, $this->rateFingerprint($rate))) {
+                    $blocked[] = 'tarif sebelumnya #'.$rateId.' berubah sejak aktivasi import';
+                }
+            }
+            if ($blocked !== []) {
+                throw new \RuntimeException('Revert diblokir; '.implode('; ', array_unique($blocked)).'.');
+            }
+
+            foreach ($rates as $rate) {
+                $rate->update([
+                    'status' => 'cancelled',
+                    'source_status' => 'cancelled',
+                    'source_modified_at' => now(),
+                    'source_modified_by' => auth()->id(),
+                ]);
+            }
+            foreach ($previousRates as $rateId => $values) {
+                $previousRate = $previous->get((int) $rateId);
+                $previousRate->update([
+                    'status' => $values['before']['status'],
+                    'effective_to' => $values['before']['effective_to'],
+                ]);
+            }
+            $lockedBatch->update(['status' => 'cancelled']);
+        });
+    }
+
+    private function rateFingerprint(HeavyEquipmentRouteRate $rate): string
+    {
+        $attributes = $rate->getAttributes();
+        $fields = [
+            'business_id', 'route_id', 'batch_id', 'effective_from', 'effective_to',
+            'driver_rate_per_ton', 'travel_allowance', 'sale_rate_per_ton',
+            'source_row', 'source_unit_text', 'source_status', 'source_modified_at',
+            'source_modified_by', 'notes', 'status', 'updated_at',
+        ];
+        $values = [];
+        foreach ($fields as $field) {
+            if (array_key_exists($field, $attributes)) {
+                $values[$field] = $attributes[$field];
+            }
+        }
+        $units = $rate->units()->orderBy('id')->get()->map(function (HeavyEquipmentRateUnit $unit) {
+            $attributes = $unit->getAttributes();
+
+            return [
+                'id' => (int) $unit->id,
+                'asset_id' => isset($unit->asset_id) ? (int) $unit->asset_id : null,
+                'unit_label' => (string) $unit->unit_label,
+                'updated_at' => $attributes['updated_at'] ?? null,
+            ];
+        })->values()->all();
+
+        return hash('sha256', json_encode([
+            'rate' => $values,
+            'units' => $units,
+        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR));
     }
 
     public function findRate(int $businessId, int $routeId, int $assetId, Carbon $date): ?HeavyEquipmentRouteRate

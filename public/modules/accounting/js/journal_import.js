@@ -7,6 +7,7 @@
     var waitingStatuses = String(page.data('waiting-statuses') || '').split(',').filter(Boolean);
     var queuedStatuses = String(page.data('queued-statuses') || '').split(',').filter(Boolean);
     var watchers = {};
+    var historyTable = null;
 
     function statusUrl(importId) {
         return statusBase + '/' + encodeURIComponent(importId) + '/status';
@@ -124,11 +125,26 @@
     }
 
     function actionForStatus(actionCell, response) {
+        var detailButton = $('<button type="button" class="btn btn-info btn-xs journal-import-detail">')
+            .attr('data-id', response.id)
+            .text('Detail');
+        var restoreUrl = actionCell.data('restore-url');
+        var canRevert = String(actionCell.attr('data-can-revert') || '0') === '1';
+
+        actionCell.empty().append(detailButton);
+        if (restoreUrl) {
+            actionCell.append($('<a class="btn btn-success btn-xs" target="_blank" rel="noopener">')
+                .attr('href', restoreUrl)
+                .text('Unduh workbook'));
+        }
+
         if (isActive(response.status)) {
-            var activeContent = $('<span class="text-muted">').text(statusLabel(response.status) + '... ');
-            actionCell.empty().append(activeContent);
+            actionCell.append($('<button type="button" class="btn btn-default btn-xs journal-import-watch">')
+                .attr('data-id', response.id)
+                .text('Pantau progres'));
             if (response.cancel_requested) {
                 actionCell.append($('<button type="button" class="btn btn-default btn-xs journal-import-terminate" disabled>')
+                    .attr('data-id', response.id)
                     .text('Menunggu berhenti'));
             } else {
                 actionCell.append($('<button type="button" class="btn btn-warning btn-xs journal-import-terminate">')
@@ -136,13 +152,14 @@
                     .text('Terminate'));
             }
         } else if (['analyzed', 'partially_imported', 'failed', 'cancelled'].indexOf(response.status) !== -1) {
-            actionCell.empty().append($('<a class="btn btn-primary btn-xs">')
+            actionCell.append($('<a class="btn btn-primary btn-xs">')
                 .attr('href', actionCell.data('review-url'))
                 .text(response.status === 'analyzed' ? 'Review & Import' : (response.status === 'cancelled' ? 'Lanjutkan import' : 'Review & Continue')));
-        } else if (response.status === 'imported') {
+        } else if (response.status === 'imported' && canRevert) {
             var form = $('<form>', {
                 action: actionCell.data('revert-url'),
                 method: 'POST',
+                'class': 'journal-import-revert',
                 style: 'display:inline;'
             });
             form.append($('<input>', {
@@ -156,8 +173,116 @@
                     event.preventDefault();
                 }
             });
-            actionCell.empty().append(form);
+            actionCell.append(form);
         }
+    }
+
+    function escapeHtml(value) {
+        return $('<div>').text(value === null || value === undefined ? '' : String(value)).html();
+    }
+
+    function historyStatusCell(row, type) {
+        if (type !== 'display') {
+            return row.domain_status || row.status || '';
+        }
+
+        var id = Number(row.domain_batch_id || 0);
+        var status = String(row.domain_status || row.status || '');
+        var active = isActive(status);
+        var phase = row.phase_progress || {};
+        var total = Number(phase.total || row.total_entries || 0);
+        var current = Number(phase.processed || row.processed_entries || 0);
+        var percent = total > 0 ? Math.max(0, Math.min(100, Math.round(current / total * 100))) : 0;
+        var badgeClass = status === 'imported' ? 'bg-green' : (status === 'failed' ? 'bg-red' : (status === 'cancelled' || status === 'reverted' ? 'bg-gray' : (status === 'analyzed' || status === 'partially_imported' ? 'bg-aqua' : 'bg-yellow')));
+        var html = '<span class="label ' + badgeClass + '" id="journal-import-status-' + id + '">' + escapeHtml(statusLabel(status)) + '</span>';
+        html += '<div class="progress" style="margin:5px 0 2px; min-width:95px;">'
+            + '<div id="journal-import-progress-' + id + '" class="progress-bar' + (active ? ' progress-bar-striped active' : '') + '" role="progressbar" aria-valuenow="' + percent + '" aria-valuemin="0" aria-valuemax="100" style="width:' + (active && total <= 0 ? 100 : percent) + '%">'
+            + (active && total <= 0 ? '' : percent + '%') + '</div></div>';
+        html += '<small id="journal-import-count-' + id + '" class="text-muted">'
+            + escapeHtml(total > 0 ? current + ' / ' + total + ' ' + (phase.unit || 'entry') : (active ? 'Menunggu checkpoint worker' : ''))
+            + '</small><br><small id="journal-import-message-' + id + '" class="' + (status === 'failed' ? 'text-danger' : 'text-muted') + '">'
+            + escapeHtml(row.error_message || row.last_message || '') + '</small>';
+        if (active) {
+            html += '<br><small class="text-muted">Terakhir update: <span id="journal-import-heartbeat-' + id + '">' + escapeHtml(updatedAtText(row.updated_at)) + '</span></small>';
+            html += '<br><small id="journal-import-stale-' + id + '" class="text-warning hide"></small>';
+        }
+
+        return html;
+    }
+
+    function historyActionsCell(row, type) {
+        if (type !== 'display') {
+            return '';
+        }
+
+        var id = Number(row.domain_batch_id || 0);
+        var actionCell = $('<div class="journal-import-history-actions">')
+            .attr('id', 'journal-import-action-' + id)
+            .attr('data-review-url', row.review_url || '')
+            .attr('data-revert-url', row.revert_url || '')
+            .attr('data-terminate-url', row.terminate_url || '')
+            .attr('data-detail-url', row.detail_url || '')
+            .attr('data-restore-url', row.restore_url || '')
+            .attr('data-file-name', row.file_name || '')
+            .attr('data-can-revert', row.can_revert_permission ? '1' : '0')
+            .attr('data-csrf-token', page.data('csrf-token') || '');
+
+        actionForStatus(actionCell, {
+            id: id,
+            status: row.domain_status || row.status,
+            cancel_requested: !!row.cancel_requested
+        });
+
+        return actionCell[0].outerHTML;
+    }
+
+    function renderHistoryDetail(detail) {
+        var body = $('#journal_import_history_detail_body').empty();
+        body.append($('<h4>').text(detail.file_name || ('Journal import #' + detail.domain_batch_id)));
+        body.append($('<p>').text('Status: ' + (detail.domain_status || detail.status || '-') + ' · Periode: ' + (detail.source_date_range || '-')));
+        if (detail.phase_progress) {
+            var phase = detail.phase_progress;
+            body.append($('<p>').text('Tahap: ' + (phase.phase || detail.phase || '-') + ' · ' + Number(phase.processed || 0) + ' / ' + Number(phase.total || 0) + ' ' + (phase.unit || 'baris')));
+        }
+
+        var outcomes = detail.row_outcomes || {};
+        var outcomeList = $('<ul class="list-inline">');
+        Object.keys(outcomes).sort().forEach(function (status) {
+            outcomeList.append($('<li>').text(status + ': ' + Number(outcomes[status] || 0)));
+        });
+        body.append($('<h5>').text('Hasil baris')).append(outcomeList);
+        if (detail.last_message) {
+            body.append($('<p class="text-muted">').text(detail.last_message));
+        }
+        if (detail.error_message) {
+            body.append($('<div class="alert alert-danger">').text(detail.error_message));
+        }
+
+        if (Array.isArray(detail.problem_rows) && detail.problem_rows.length) {
+            var table = $('<div class="table-responsive"><table class="table table-condensed table-bordered"><thead><tr><th>Baris</th><th>Jenis</th><th>Referensi</th><th>Status</th><th>Catatan</th></tr></thead><tbody></tbody></table></div>');
+            detail.problem_rows.forEach(function (row) {
+                var message = row.error || row.message || '';
+                table.find('tbody').append($('<tr>')
+                    .append($('<td>').text(row.entry_index))
+                    .append($('<td>').text(row.source_type || ''))
+                    .append($('<td>').text(row.source_number || ''))
+                    .append($('<td>').text(row.status || ''))
+                    .append($('<td>').text(message)));
+            });
+            body.append(table);
+            if (detail.problem_rows.length >= 100) {
+                body.append($('<p class="help-block">').text('Maksimal 100 baris bermasalah ditampilkan. Buka Review untuk melihat seluruh draft.'));
+            }
+        }
+
+        var links = $('<div class="journal-import-history-detail-links">');
+        if (detail.review_url) {
+            links.append($('<a class="btn btn-primary btn-sm">').attr('href', detail.review_url).text('Buka Review Journal'));
+        }
+        if (detail.restore_url) {
+            links.append($('<a class="btn btn-success btn-sm" target="_blank" rel="noopener">').attr('href', detail.restore_url).text('Unduh workbook'));
+        }
+        body.append(links);
     }
 
     function updateRow(response) {
@@ -308,6 +433,9 @@
                     window.setTimeout(poll, 2000);
                 } else {
                     delete watchers[id];
+                    if (historyTable) {
+                        historyTable.ajax.reload(null, false);
+                    }
                 }
             }).fail(function () {
                 $('#journal-import-message-' + id).text('Gagal mengambil update status; mencoba lagi.');
@@ -1890,6 +2018,59 @@
         }
     });
 
+    $(document).on('submit', '#journal_import_upload_form', function (event) {
+        event.preventDefault();
+
+        var form = $(this);
+        var button = form.find('button[type="submit"]');
+        var feedback = $('#journal_import_upload_feedback');
+        var formData = new FormData(this);
+        button.prop('disabled', true).text('Mengunggah dan mengantrekan…');
+        feedback.removeClass('text-danger text-success').text('Upload berjalan. Analisis akan diproses oleh worker imports.');
+
+        $.ajax({
+            method: 'POST',
+            url: form.attr('action'),
+            data: formData,
+            processData: false,
+            contentType: false,
+            dataType: 'json'
+        }).done(function (response) {
+            button.prop('disabled', false).html('<i class="fas fa-search"></i> Unggah & Analisa di Background');
+            if (!response.success) {
+                feedback.addClass('text-danger').text(response.msg || 'File belum dapat dianalisis.');
+                return;
+            }
+
+            form.find('input[type="file"]').val('');
+            feedback.addClass('text-success').text(response.msg || 'File diterima dan analisis berjalan di background.');
+            if (historyTable) {
+                $('#journal_import_history_status').val('');
+                historyTable.search('').ajax.reload(function () {
+                    var history = document.getElementById('journal_import_history_table');
+                    if (history && typeof history.scrollIntoView === 'function') {
+                        history.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }
+                    pollWatch(response.import_id || response.batch_id);
+                }, true);
+            } else {
+                pollWatch(response.import_id || response.batch_id);
+            }
+            if (window.toastr) {
+                toastr.success('Batch Journal Import masuk ke antrean.');
+            }
+        }).fail(function (xhr) {
+            button.prop('disabled', false).html('<i class="fas fa-search"></i> Unggah & Analisa di Background');
+            var message = xhr.responseJSON && (xhr.responseJSON.msg || xhr.responseJSON.message)
+                ? (xhr.responseJSON.msg || xhr.responseJSON.message)
+                : 'Upload gagal. Periksa format file, lalu coba kembali.';
+            feedback.addClass('text-danger').text(message);
+            if (window.toastr) {
+                toastr.error(message);
+            }
+        });
+    });
+
     $(document).on('submit', '#journal_import_form', function (event) {
         event.preventDefault();
 
@@ -1934,6 +2115,27 @@
         pollWatch(button.data('id'));
     });
 
+    $(document).on('click', '.journal-import-detail', function () {
+        var button = $(this);
+        var actionCell = $('#journal-import-action-' + String(button.data('id')));
+        var url = actionCell.data('detail-url');
+        var body = $('#journal_import_history_detail_body').empty().append($('<p class="text-muted">').text('Memuat detail batch...'));
+        $('#journal_import_history_detail_modal').modal('show');
+        if (!url) {
+            body.empty().append($('<div class="alert alert-danger">').text('Alamat detail batch tidak tersedia.'));
+            return;
+        }
+
+        $.getJSON(url).done(function (detail) {
+            renderHistoryDetail(detail);
+        }).fail(function (xhr) {
+            var message = xhr.responseJSON && xhr.responseJSON.message
+                ? xhr.responseJSON.message
+                : 'Detail batch tidak dapat dimuat. Periksa izin dan business aktif.';
+            body.empty().append($('<div class="alert alert-danger">').text(message));
+        });
+    });
+
     function terminateImport(importId, button) {
         if (!window.confirm('Hentikan import setelah baris yang sedang berjalan selesai? Hasil yang sudah tersimpan akan dipertahankan.')) {
             return;
@@ -1975,14 +2177,127 @@
         terminateImport($(this).data('id'), $(this));
     });
 
+    $(document).on('submit', '.journal-import-revert', function (event) {
+        event.preventDefault();
+        var form = $(this);
+        var actionCell = form.closest('[id^="journal-import-action-"]');
+        var fileName = actionCell.data('file-name') || 'batch Journal Import ini';
+        if (!window.confirm('Revert ' + fileName + '? Journal yang dibuat dari batch ini akan dihapus.')) {
+            return;
+        }
+
+        var button = form.find('button[type="submit"]');
+        button.prop('disabled', true).text('Merevert…');
+        $.ajax({
+            method: 'POST',
+            url: form.attr('action'),
+            data: form.serialize(),
+            dataType: 'json',
+            headers: { Accept: 'application/json' }
+        }).done(function (response) {
+            if (!response.success) {
+                button.prop('disabled', false).text('Revert');
+                if (window.toastr) {
+                    toastr.error(response.msg || 'Revert tidak dapat dilakukan.');
+                }
+                return;
+            }
+            if (window.toastr) {
+                toastr.success(response.msg || 'Import Journal berhasil direvert.');
+            }
+            if (historyTable) {
+                historyTable.ajax.reload(null, false);
+            }
+        }).fail(function (xhr) {
+            button.prop('disabled', false).text('Revert');
+            var message = xhr.responseJSON && xhr.responseJSON.msg
+                ? xhr.responseJSON.msg
+                : 'Revert gagal. Muat ulang status batch sebelum mencoba kembali.';
+            if (window.toastr) {
+                toastr.error(message);
+            }
+        });
+    });
+
     // Server-rendered controls stay disabled until this handler is ready.
     $('.journal-import-terminate[data-cancel-requested="0"]').prop('disabled', false);
 
     $(function () {
-        var button = $('.journal-import-watch').first();
-        if (button.length) {
-            button.prop('disabled', true).text('Memantau...');
-            pollWatch(button.data('id'));
+        var tableElement = $('#journal_import_history_table');
+        if (!page.length || !tableElement.length || !$.fn.DataTable) {
+            return;
         }
+
+        function watchVisibleBatches() {
+            tableElement.find('.journal-import-watch').each(function () {
+                var button = $(this);
+                var id = String(button.data('id') || '');
+                if (id && !watchers[id]) {
+                    button.prop('disabled', true).text('Memantau...');
+                    pollWatch(id);
+                }
+            });
+        }
+
+        historyTable = tableElement.DataTable({
+            processing: true,
+            serverSide: true,
+            searching: true,
+            pageLength: 25,
+                ordering: false,
+            ajax: {
+                url: page.data('history-url'),
+                data: function (request) {
+                    request.status = $('#journal_import_history_status').val() || '';
+                },
+                error: function () {
+                    $('#journal_import_history_message').addClass('text-danger').text('Riwayat import gagal dimuat. Coba perbarui atau periksa izin akses.');
+                }
+            },
+            columns: [
+                {
+                    data: 'created_at',
+                    render: function (value, type) {
+                        if (type !== 'display' || !value) {
+                            return value || '';
+                        }
+                        var date = new Date(String(value).replace(' ', 'T'));
+                        return isNaN(date.getTime()) ? escapeHtml(value) : escapeHtml(date.toLocaleString());
+                    }
+                },
+                { data: 'file_name', render: function (value, type) { return type === 'display' ? escapeHtml(value || 'Impor tanpa nama file') : (value || ''); } },
+                { data: 'period', defaultContent: '', render: function (value, type) { return type === 'display' ? escapeHtml(value || '—') : (value || ''); } },
+                { data: 'total_entries', defaultContent: 0 },
+                { data: 'imported_entries', defaultContent: 0 },
+                { data: 'skipped_entries', defaultContent: 0 },
+                { data: 'domain_status', render: function (value, type, row) { return historyStatusCell(row, type); } },
+                { data: null, orderable: false, searchable: false, render: function (row, type, data) { return historyActionsCell(data || row, type); } }
+            ],
+            language: {
+                processing: 'Memuat…',
+                search: 'Cari:',
+                lengthMenu: 'Tampilkan _MENU_ batch',
+                info: 'Menampilkan _START_–_END_ dari _TOTAL_ batch',
+                infoEmpty: 'Belum ada batch import',
+                zeroRecords: 'Tidak ada batch yang cocok',
+                paginate: { first: 'Awal', last: 'Akhir', next: 'Berikutnya', previous: 'Sebelumnya' }
+            },
+            drawCallback: watchVisibleBatches
+        });
+
+        $('#journal_import_history_status').on('change', function () {
+            historyTable.ajax.reload(null, true);
+        });
+        $('#journal_import_history_refresh').on('click', function () {
+            $('#journal_import_history_message').removeClass('text-danger').text('Memperbarui riwayat…');
+            historyTable.ajax.reload(function () {
+                $('#journal_import_history_message').text('Riwayat diperbarui.');
+            }, false);
+        });
+        window.setInterval(function () {
+            if (historyTable && document.visibilityState !== 'hidden') {
+                historyTable.ajax.reload(null, false);
+            }
+        }, 12000);
     });
 })(jQuery);

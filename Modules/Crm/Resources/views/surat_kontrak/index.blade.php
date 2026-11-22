@@ -325,53 +325,56 @@
                         });
                     }
                 });
-                $('#surat_kontrak_import_form').validate({
-                    rules: {
-                        import_file: {
-                            required: true,
-                            extension: "xlsx|xls"
-                        }
-                    },
-                    messages: {
-                        import_file: {
-                            required: "File wajib dipilih",
-                            extension: "File harus berformat Excel (.xlsx atau .xls)"
-                        }
-                    },
-                    submitHandler: function(form) {
-
-                        let formData = new FormData(form);
-
-                        $(form).find('button[type="submit"]').attr('disabled', true);
-
-                        $.ajax({
-                            method: "POST",
-                            url: $(form).attr("action"),
-                            data: formData,
-                            processData: false, // WAJIB untuk file upload
-                            contentType: false, // WAJIB untuk file upload
-                            dataType: "json",
-                            success: function(result) {
-
-                                if (result.success == true) {
-                                    $('.contact_modal').modal('hide');
-                                    toastr.success(result.msg);
-                                    surat_kontrak_table.ajax.reload();
-                                } else {
-                                    toastr.error(result.msg);
-                                }
-
-                                $(form).find('button[type="submit"]').attr(
-                                    'disabled', false);
-                                form.reset();
-                            },
-                            error: function(xhr) {
-                                toastr.error("Terjadi kesalahan saat import.");
-                                $(form).find('button[type="submit"]').attr(
-                                    'disabled', false);
-                            }
+                $(document).on('submit', '#surat_kontrak_import_form', function(event) {
+                    event.preventDefault();
+                    let form = this;
+                    let $form = $(form);
+                    if (!$form.data('validator')) {
+                        $form.validate({
+                            rules: {import_file: {required: true, extension: 'xlsx|xls'}},
+                            messages: {import_file: {required: 'File wajib dipilih', extension: 'File harus berformat Excel (.xlsx atau .xls)'}}
                         });
                     }
+                    if (!$form.valid()) return;
+
+                    let formData = new FormData(form);
+                    $form.find('button[type="submit"]').attr('disabled', true);
+                    $.ajax({
+                        method: 'POST',
+                        url: $form.attr('action'),
+                        data: formData,
+                        processData: false,
+                        contentType: false,
+                        dataType: 'json',
+                        xhr: function() {
+                            let xhr = $.ajaxSettings.xhr();
+                            if (xhr.upload) {
+                                xhr.upload.addEventListener('progress', function(progress) {
+                                    if (progress.lengthComputable) {
+                                        let percent = Math.round(progress.loaded / progress.total * 100);
+                                        $('#surat_kontrak_upload_progress').removeClass('hidden').find('.progress-bar').css('width', percent + '%').text(percent + '%');
+                                    }
+                                });
+                            }
+                            return xhr;
+                        },
+                        success: function(result) {
+                            if (result.success) {
+                                toastr.success(result.msg);
+                                $('#surat_kontrak_upload_progress').removeClass('hidden').find('.progress-bar').css('width', '100%').text('Upload selesai; batch #' + result.batch_id + ' berjalan di latar belakang');
+                                if (window.suratKontrakImportHistory) window.suratKontrakImportHistory.ajax.reload(null, false);
+                                if (typeof surat_kontrak_table !== 'undefined') surat_kontrak_table.ajax.reload();
+                                form.reset();
+                            } else {
+                                toastr.error(result.msg || 'Import gagal.');
+                            }
+                            $form.find('button[type="submit"]').attr('disabled', false);
+                        },
+                        error: function(xhr) {
+                            toastr.error((xhr.responseJSON && (xhr.responseJSON.msg || xhr.responseJSON.message)) || 'Terjadi kesalahan saat import.');
+                            $form.find('button[type="submit"]').attr('disabled', false);
+                        }
+                    });
                 });
             });
 
@@ -410,35 +413,89 @@
     </script>
     <script src="{{ asset('modules/crm/js/jQuery.print.js?v=' . $asset_v) }}"></script>
     <script>
-        $(document).on('click', '.delete-batch', function () {
-        
-            let batch = $(this).data('batch');
-        
-            if (!confirm('Yakin mau hapus batch #' + batch + '?')) {
-                return;
+        (function() {
+            function escapeImportHtml(value) {
+                return $('<div>').text(value == null ? '' : value).html();
             }
-        
-            $.ajax({
-                url: '/crm/surat-kontrak/destroy-batch/' + batch,
-                method: 'POST',
-                data: {
-                    _token: $('meta[name="csrf-token"]').attr('content'),
-                     _method: 'DELETE'
-                },
-                success: function (res) {
-                    if (res.success) {
-                        alert(res.msg);
-                        location.reload(); // refresh
-                    } else {
-                        alert(res.msg);
-                    }
-                },
-                error: function () {
-                    alert('Terjadi kesalahan');
+
+            function initSuratKontrakImportHistory() {
+                if (!$('#surat_kontrak_import_history').length || $.fn.DataTable.isDataTable('#surat_kontrak_import_history')) {
+                    return;
                 }
+                window.suratKontrakImportHistory = $('#surat_kontrak_import_history').DataTable({
+                    processing: true,
+                    serverSide: true,
+                    searchDelay: 350,
+                    pageLength: 10,
+                    order: [[0, 'desc']],
+                    ajax: {
+                        url: @json(route('crm.surat-kontrak-import.history')),
+                        data: function(data) {
+                            data.status = $('#surat_kontrak_import_status').val();
+                        }
+                    },
+                    columns: [
+                        {data: 'id', name: 'id'},
+                        {data: 'file_name', name: 'file_name', render: function(value) { return escapeImportHtml(value); }},
+                        {data: 'status', name: 'status'},
+                        {data: 'progress_percent', name: 'progress_percent', orderable: false, render: function(value, type, row) {
+                            return escapeImportHtml(value || 0) + '% (' + escapeImportHtml(row.progress_current || 0) + '/' + escapeImportHtml(row.progress_total || 0) + ')';
+                        }},
+                        {data: 'created_at', name: 'created_at'},
+                        {data: null, orderable: false, searchable: false, render: function(row) {
+                            let actions = '<button type="button" class="btn btn-xs btn-info show-contract-import-detail" data-url="' + escapeImportHtml(row.detail_url) + '">Detail</button> ';
+                            if (row.restore_url) actions += '<a class="btn btn-xs btn-default" href="' + escapeImportHtml(row.restore_url) + '">Unduh sumber</a> ';
+                            if (row.can_retry) actions += '<button type="button" class="btn btn-xs btn-warning retry-contract-import" data-url="' + escapeImportHtml(row.retry_url) + '">Coba ulang</button> ';
+                            if (row.can_revert) actions += '<button type="button" class="btn btn-xs btn-danger revert-contract-import" data-url="' + escapeImportHtml(row.revert_url) + '">Revert</button>';
+                            return actions;
+                        }}
+                    ],
+                    drawCallback: function() {
+                        if (window.suratKontrakImportHistory && window.suratKontrakImportHistory.rows().data().toArray().some(function(row) { return row.active; })) {
+                            if (!window.suratKontrakImportPoll) {
+                                window.suratKontrakImportPoll = window.setInterval(function() {
+                                    if (window.suratKontrakImportHistory) window.suratKontrakImportHistory.ajax.reload(null, false);
+                                }, 5000);
+                            }
+                        }
+                    }
+                });
+            }
+
+            $(document).on('shown.bs.modal', '.contact_modal', initSuratKontrakImportHistory);
+            $(document).on('change', '#surat_kontrak_import_status', function() {
+                if (window.suratKontrakImportHistory) window.suratKontrakImportHistory.ajax.reload();
             });
-        
-        });
-        </script>
+            $(document).on('click', '.show-contract-import-detail', function() {
+                let $panel = $('#surat_kontrak_import_detail');
+                $.get($(this).data('url')).done(function(payload) {
+                    let summary = payload.results.summary || {};
+                    $panel.find('.import-detail-summary').text('Batch #' + payload.batch.id + ' · ' + (payload.batch.file_name || '') + ' · berhasil ' + (summary.imported_rows || 0) + ', dilewati ' + (summary.skipped_rows || 0) + ', gagal ' + (summary.failed_rows || 0));
+                    let $body = $panel.find('tbody').empty();
+                    (payload.results.row_outcomes || []).forEach(function(row) {
+                        let detail = escapeImportHtml(row.error || row.message || row.record_label || row.status);
+                        if (row.record_url) detail = '<a href="' + escapeImportHtml(row.record_url) + '">' + detail + '</a>';
+                        $('<tr>').append($('<td>').text(row.sheet || '—'), $('<td>').text(row.source_row || '—'), $('<td>').text(row.status || '—'), $('<td>').html(detail)).appendTo($body);
+                    });
+                    $panel.removeClass('hidden');
+                }).fail(function(xhr) { toastr.error((xhr.responseJSON && xhr.responseJSON.message) || 'Detail batch tidak dapat dimuat.'); });
+            });
+            $(document).on('click', '.close-import-detail', function() { $('#surat_kontrak_import_detail').addClass('hidden'); });
+            $(document).on('click', '.retry-contract-import, .revert-contract-import', function() {
+                let $button = $(this);
+                let isRevert = $button.hasClass('revert-contract-import');
+                if (isRevert && !confirm('Revert batch hanya berjalan jika data belum berubah dan belum dipakai proses lain. Lanjutkan?')) return;
+                $.ajax({
+                    url: $button.data('url'),
+                    method: 'POST',
+                    data: {_token: $('meta[name="csrf-token"]').attr('content')}
+                }).done(function() {
+                    toastr.success(isRevert ? 'Batch berhasil direvert.' : 'Baris gagal masuk antrean ulang.');
+                    if (window.suratKontrakImportHistory) window.suratKontrakImportHistory.ajax.reload(null, false);
+                    if (typeof surat_kontrak_table !== 'undefined') surat_kontrak_table.ajax.reload();
+                }).fail(function(xhr) { toastr.error((xhr.responseJSON && xhr.responseJSON.message) || 'Aksi batch gagal.'); });
+            });
+        })();
+    </script>
 
 @endsection

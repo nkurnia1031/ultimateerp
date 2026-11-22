@@ -114,6 +114,8 @@ class ImportJournalWorkbook extends Command
                 'business_id' => $businessId,
                 'file_name' => basename($sourcePath),
                 'file_path' => $relativePath,
+                'import_origin' => 'cli',
+                'import_options' => json_encode(['execution_mode' => 'cli'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
                 'status' => 'queued',
                 'last_message' => 'CLI menerima workbook; analisis dimulai langsung.',
                 'created_by' => $userId,

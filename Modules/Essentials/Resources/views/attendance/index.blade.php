@@ -614,5 +614,89 @@
         $(this).closest('tr').remove();
     });
 
+    if ($('#attendance_import_history_table').length) {
+        var attendanceImportCsrf = $('meta[name="csrf-token"]').attr('content');
+        var escapeAttendanceImportAttribute = function (value) {
+            return String(value || '').replace(/[&<>"']/g, function (character) {
+                return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[character];
+            });
+        };
+        var attendanceImportHistory = $('#attendance_import_history_table').DataTable({
+            processing: true,
+            serverSide: true,
+            ajax: {
+                url: @json(route('attendance.import.history')),
+                data: function (data) {
+                    data.status = $('#attendance_import_status').val() || '';
+                }
+            },
+            columns: [
+                {data: 'file_name', name: 'file_name', render: $.fn.dataTable.render.text()},
+                {data: 'status', name: 'status', render: $.fn.dataTable.render.text()},
+                {data: null, orderable: false, searchable: false, render: function (row) {
+                    var percent = Math.max(0, Math.min(100, parseInt(row.progress_percent || 0, 10)));
+                    return '<div class="progress"><div class="progress-bar" role="progressbar" style="width:' + percent + '%">' + percent + '%</div></div>' +
+                        '<small>' + parseInt(row.progress_current || 0, 10) + ' / ' + (parseInt(row.progress_total || 0, 10) || '—') + '</small>';
+                }},
+                {data: 'last_message', name: 'last_message', defaultContent: '', render: $.fn.dataTable.render.text()},
+                {data: 'created_at', name: 'created_at', render: $.fn.dataTable.render.text()},
+                {data: null, orderable: false, searchable: false, render: function (row) {
+                    var actions = '<button type="button" class="btn btn-xs btn-default attendance-import-detail" data-url="' + escapeAttendanceImportAttribute(row.detail_url) + '">Detail</button> ';
+                    if (row.restore_url) actions += '<a class="btn btn-xs btn-success" href="' + escapeAttendanceImportAttribute(row.restore_url) + '">Unduh sumber</a> ';
+                    if (row.can_retry) actions += '<button type="button" class="btn btn-xs btn-warning attendance-import-retry" data-url="' + escapeAttendanceImportAttribute(row.retry_url) + '">Coba lagi</button> ';
+                    if (row.can_revert) actions += '<button type="button" class="btn btn-xs btn-danger attendance-import-revert" data-url="' + escapeAttendanceImportAttribute(row.revert_url) + '">Revert</button>';
+                    return actions;
+                }}
+            ],
+            order: [[4, 'desc']]
+        });
+
+        $('#attendance_import_status').on('change', function () { attendanceImportHistory.ajax.reload(); });
+        $('#attendance_import_form').on('submit', function (event) {
+            event.preventDefault();
+            var form = this;
+            var progress = $('#attendance_import_upload_progress').removeClass('hidden').find('.progress-bar').css('width', '0%').text('0%');
+            $('#attendance_import_upload_message').text('Mengunggah workbook…');
+            $.ajax({
+                url: $(form).attr('action'), method: 'POST', data: new FormData(form),
+                processData: false, contentType: false, dataType: 'json',
+                headers: {'Accept': 'application/json', 'X-CSRF-TOKEN': attendanceImportCsrf},
+                xhr: function () {
+                    var xhr = $.ajaxSettings.xhr();
+                    if (xhr.upload) xhr.upload.addEventListener('progress', function (event) {
+                        if (event.lengthComputable) {
+                            var percent = Math.round((event.loaded / event.total) * 100);
+                            progress.css('width', percent + '%').text(percent + '%');
+                        }
+                    });
+                    return xhr;
+                }
+            }).done(function (result) {
+                $('#attendance_import_upload_message').text(result.message || 'Batch import dibuat.');
+                form.reset();
+                attendanceImportHistory.ajax.reload(null, false);
+            }).fail(function (xhr) {
+                $('#attendance_import_upload_message').text((xhr.responseJSON && (xhr.responseJSON.message || xhr.responseJSON.errors && xhr.responseJSON.errors.attendance && xhr.responseJSON.errors.attendance[0])) || 'Workbook gagal dimasukkan ke antrean.');
+            });
+        });
+        $(document).on('click', '.attendance-import-detail', function () {
+            $.getJSON($(this).data('url')).done(function (result) {
+                $('#attendance_import_detail_body').text(JSON.stringify(result, null, 2));
+                $('#attendance_import_detail_modal').modal('show');
+            });
+        });
+        $(document).on('click', '.attendance-import-retry, .attendance-import-revert', function () {
+            var button = $(this);
+            var reverting = button.hasClass('attendance-import-revert');
+            swal({title: LANG.sure, icon: 'warning', buttons: true, dangerMode: reverting}).then(function (confirmed) {
+                if (!confirmed) return;
+                $.ajax({url: button.data('url'), method: 'POST', headers: {'Accept': 'application/json', 'X-CSRF-TOKEN': attendanceImportCsrf}})
+                    .done(function (result) { toastr.success(result.message || 'Selesai.'); attendanceImportHistory.ajax.reload(null, false); })
+                    .fail(function (xhr) { toastr.error((xhr.responseJSON && xhr.responseJSON.message) || 'Aksi gagal.'); });
+            });
+        });
+        window.setInterval(function () { attendanceImportHistory.ajax.reload(null, false); }, 5000);
+    }
+
 </script>
 @endsection

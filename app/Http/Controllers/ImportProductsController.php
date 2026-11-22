@@ -16,6 +16,7 @@ use App\VariationValueTemplate;
 use DB;
 use Excel;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 
 class ImportProductsController extends Controller
 {
@@ -79,6 +80,14 @@ class ImportProductsController extends Controller
     {
         if (! auth()->user()->can('product.create')) {
             abort(403, 'Unauthorized action.');
+        }
+        if (! $request->attributes->get('process_import_batch')) {
+            $business = (array) $request->session()->get('business', []);
+            $context = [
+                'business' => array_intersect_key($business, array_flip(['default_profit_percent', 'enable_inline_tax', 'date_format', 'currency_id', 'currency_symbol_placement', 'currency_precision', 'quantity_precision'])),
+            ];
+
+            return app(\App\Services\LegacyImportBatchService::class)->queue($request, 'products', $context);
         }
 
         try {
@@ -621,6 +630,8 @@ class ImportProductsController extends Controller
                 }
 
                 if (! empty($formated_data)) {
+                    $progressCurrent = 0;
+                    $progressTotal = count($formated_data);
                     foreach ($formated_data as $index => $product_data) {
                         $variation_data = $product_data['variation'];
                         unset($product_data['variation']);
@@ -635,6 +646,11 @@ class ImportProductsController extends Controller
 
                         //Create new product
                         $product = Product::create($product_data);
+                        if ($request->attributes->get('process_import_batch')) {
+                            $createdProductIds = (array) $request->attributes->get('batch_created_product_ids', []);
+                            $createdProductIds[] = (int) $product->id;
+                            $request->attributes->set('batch_created_product_ids', $createdProductIds);
+                        }
                         //If auto generate sku generate new sku
                         if ($product->sku == ' ') {
                             $sku = $this->productUtil->generateProductSku($product->id);
@@ -696,6 +712,17 @@ class ImportProductsController extends Controller
                                 $this->addOpeningStockForVariable($variation_data, $product, $business_id);
                             }
                         }
+
+                        $progressCurrent++;
+                        $batchId = (int) $request->attributes->get('import_batch_id', 0);
+                        if ($batchId > 0) {
+                            Cache::put('legacy_import_progress_'.$batchId, [
+                                'progress_current' => $progressCurrent,
+                                'progress_total' => max($progressTotal, $progressCurrent),
+                                'progress_percent' => min(95, (int) floor(($progressCurrent / max(1, $progressTotal)) * 95)),
+                                'last_message' => "Produk {$progressCurrent} dari {$progressTotal} selesai diproses.",
+                            ], 3600);
+                        }
                     }
                 }
             }
@@ -717,6 +744,50 @@ class ImportProductsController extends Controller
         }
 
         return redirect('import-products')->with('status', $output);
+    }
+
+    public function importBatchHistory(Request $request)
+    {
+        abort_unless(auth()->user()->can('product.create'), 403, 'Unauthorized action.');
+
+        return response()->json(app(\App\Services\LegacyImportBatchService::class)
+            ->history($request, (int) $request->session()->get('user.business_id'), 'products'));
+    }
+
+    public function importBatchDetail(Request $request, int $batchId)
+    {
+        abort_unless(auth()->user()->can('product.create'), 403, 'Unauthorized action.');
+
+        return response()->json(app(\App\Services\LegacyImportBatchService::class)
+            ->detail($batchId, (int) $request->session()->get('user.business_id'), 'products'));
+    }
+
+    public function importBatchSource(Request $request, int $batchId)
+    {
+        abort_unless(auth()->user()->can('product.create'), 403, 'Unauthorized action.');
+        $batch = app(\App\Services\UserImportBatchService::class)
+            ->findForBusiness($batchId, (int) $request->session()->get('user.business_id'), 'products');
+
+        return app(\App\Services\UserImportBatchService::class)->workbookDownload($batch);
+    }
+
+    public function retryImportBatch(Request $request, int $batchId)
+    {
+        abort_unless(auth()->user()->can('product.create'), 403, 'Unauthorized action.');
+        app(\App\Services\LegacyImportBatchService::class)
+            ->retry($batchId, (int) $request->session()->get('user.business_id'), 'products');
+
+        return response()->json(['success' => true, 'status' => 'queued_import']);
+    }
+
+    public function revertImportBatch(Request $request, int $batchId)
+    {
+        abort_unless(auth()->user()->can('product.create'), 403, 'Unauthorized action.');
+        $batch = app(\App\Services\UserImportBatchService::class)
+            ->findForBusiness($batchId, (int) $request->session()->get('user.business_id'), 'products');
+        app(\App\Services\LegacyImportBatchService::class)->revert($batch);
+
+        return response()->json(['success' => true, 'status' => 'reverted']);
     }
 
     private function calculateVariationPrices($dpp_exc_tax, $dpp_inc_tax, $selling_price, $tax_amount, $tax_type, $margin)

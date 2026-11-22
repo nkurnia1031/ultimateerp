@@ -31,13 +31,14 @@
                         'url' => $link . '/preview',
                         'method' => 'post',
                         'enctype' => 'multipart/form-data',
+                        'id' => 'legacy-import-batch-form',
                     ]) !!}
                     <div class="row">
                         <div class="col-sm-6">
                             <div class="col-sm-8">
                                 <div class="form-group">
                                     {!! Form::label('name', __('product.file_to_import') . ':') !!}
-                                    {!! Form::file('sales', ['required' => 'required']) !!}
+                                    {!! Form::file('sales', ['required' => 'required', 'accept' => '.csv,.xls,.xlsx']) !!}
                                 </div>
                             </div>
                             <div class="col-sm-4">
@@ -63,9 +64,14 @@
                     </div>
 
                     {!! Form::close() !!}
+                    <div class="progress" id="legacy_import_progress_wrap" style="display:none;margin-top:12px">
+                        <div class="progress-bar" id="legacy_import_progress" role="progressbar" style="width:0%">0%</div>
+                    </div>
+                    <p id="legacy_import_status" class="text-muted" aria-live="polite"></p>
                 @endcomponent
             </div>
         </div>
+        @include('import_batches.legacy_history', ['historyUrl' => route(request()->is('import-pembelian') ? 'purchase.import.batch.history' : 'sales.import.batch.history')])
         <div class="row">
             <div class="col-md-12">
                 @component('components.widget', ['title' => __('lang_v1.instructions')])
@@ -160,15 +166,17 @@
                                         </p>
                                     </td>
                                     @can('sell.delete')
-                                        @if (request()->is('import-pembelian'))
-                                            <td><a href="{{ action([\App\Http\Controllers\ImportSalesController::class, 'revertPembelianImport'], $key) }}"
-                                                    class="tw-dw-btn tw-dw-btn-outline tw-dw-btn-xs tw-dw-btn-error revert_import"><i
-                                                        class="fas fa-undo"></i> @lang('lang_v1.revert_import')</a></td>
-                                        @else
-                                            <td><a href="{{ action([\App\Http\Controllers\ImportSalesController::class, 'revertSaleImport'], $key) }}"
-                                                    class="tw-dw-btn tw-dw-btn-outline tw-dw-btn-xs tw-dw-btn-error revert_import"><i
-                                                        class="fas fa-undo"></i> @lang('lang_v1.revert_import')</a></td>
-                                        @endif
+                                        <td>
+                                            {!! Form::open([
+                                                'url' => request()->is('import-pembelian') ? route('purchases.import.revert', $key) : route('sales.import.revert', $key),
+                                                'method' => 'post',
+                                                'class' => 'revert_import_form',
+                                            ]) !!}
+                                            <button type="submit" class="tw-dw-btn tw-dw-btn-outline tw-dw-btn-xs tw-dw-btn-error revert_import">
+                                                <i class="fas fa-undo"></i> @lang('lang_v1.revert_import')
+                                            </button>
+                                            {!! Form::close() !!}
+                                        </td>
                                     @endcan
                                 </tr>
                             @endforeach
@@ -180,8 +188,9 @@
     </section>
 @stop
 @section('javascript')
+    <script src="{{ asset('js/legacy-import-batches.js?v=' . $asset_v) }}"></script>
     <script type="text/javascript">
-        $(document).on('click', 'a.revert_import', function(e) {
+        $(document).on('submit', 'form.revert_import_form', function(e) {
             e.preventDefault();
             swal({
                 title: LANG.sure,
@@ -190,7 +199,7 @@
                 dangerMode: true,
             }).then(willDelete => {
                 if (willDelete) {
-                    window.location = $(this).attr('href');
+                    this.submit();
                 } else {
                     return false;
                 }

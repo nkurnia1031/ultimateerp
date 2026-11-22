@@ -13,7 +13,7 @@ class CleanupVendorLoadingImportFiles extends Command
 
     public function handle(): int
     {
-        $disk = Storage::disk('local');
+        $disk = Storage::disk('user_imports');
         DB::table('heavy_equipment_vendor_loading_import_batches')
             ->whereNotNull('expires_at')
             ->where('expires_at', '<=', now())

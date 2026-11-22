@@ -15,7 +15,6 @@ class HeavyEquipmentVendorLoadingImportReverseService
             $batch = DB::table('heavy_equipment_vendor_loading_import_batches')
                 ->where('id', $batchId)
                 ->where('business_id', $businessId)
-                ->where('created_by', $userId)
                 ->lockForUpdate()
                 ->first();
 
@@ -43,6 +42,18 @@ class HeavyEquipmentVendorLoadingImportReverseService
                         'Dokumen batch lama tidak dapat dipetakan dengan aman. Preview sumber mungkin sudah kedaluwarsa atau workbook yang sama pernah diimpor lebih dari sekali; data tidak dihapus.'
                     );
                 }
+            }
+
+            $blockedDocuments = $documents->filter(function ($document) {
+                return ! empty($document->verified_at)
+                    || in_array((string) $document->status, ['verified', 'cancelled'], true)
+                    || ! empty($document->expense_transaction_id)
+                    || (string) ($document->expense_status ?: 'not_linked') !== 'not_linked';
+            })->pluck('document_no')->values()->all();
+            if ($blockedDocuments !== []) {
+                throw new \InvalidArgumentException(
+                    'Reverse diblokir; dokumen sudah diverifikasi, dibatalkan, atau terkait dengan Expense: '.implode(', ', $blockedDocuments).'.'
+                );
             }
 
             $documentIds = $documents->pluck('id')->all();
@@ -96,12 +107,12 @@ class HeavyEquipmentVendorLoadingImportReverseService
      */
     private function resolveUnambiguousLegacyDocuments(object $batch, int $businessId)
     {
-        if (! $batch->preview_path || ! Storage::disk('local')->exists($batch->preview_path)) {
+        if (! $batch->preview_path || ! Storage::disk('user_imports')->exists($batch->preview_path)) {
             return collect();
         }
 
         try {
-            $preview = json_decode(Storage::disk('local')->get($batch->preview_path), true, 512, JSON_THROW_ON_ERROR);
+            $preview = json_decode(Storage::disk('user_imports')->get($batch->preview_path), true, 512, JSON_THROW_ON_ERROR);
             $results = json_decode($batch->results_json ?: '{}', true, 512, JSON_THROW_ON_ERROR);
         } catch (\Throwable $exception) {
             return collect();
@@ -173,7 +184,7 @@ class HeavyEquipmentVendorLoadingImportReverseService
             ->get(['file_name', 'preview_path']);
 
         foreach ($otherBatches as $other) {
-            if (! $other->preview_path || ! Storage::disk('local')->exists($other->preview_path)) {
+            if (! $other->preview_path || ! Storage::disk('user_imports')->exists($other->preview_path)) {
                 if ((string) $other->file_name === (string) $batch->file_name) {
                     return true;
                 }
@@ -181,7 +192,7 @@ class HeavyEquipmentVendorLoadingImportReverseService
             }
 
             try {
-                $preview = json_decode(Storage::disk('local')->get($other->preview_path), true, 512, JSON_THROW_ON_ERROR);
+                $preview = json_decode(Storage::disk('user_imports')->get($other->preview_path), true, 512, JSON_THROW_ON_ERROR);
             } catch (\Throwable $exception) {
                 if ((string) $other->file_name === (string) $batch->file_name) {
                     return true;

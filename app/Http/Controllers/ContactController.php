@@ -17,6 +17,11 @@ use App\Utils\NotificationUtil;
 use App\Utils\TransactionUtil;
 use App\Utils\Util;
 use App\Services\ContactBusinessImportService;
+use App\Services\BusinessCopyImportBatchService;
+use App\Services\ContactCsvImportBatchService;
+use App\Services\UserImportBatchService;
+use App\UserImportBatch;
+use App\Jobs\ProcessContactCsvImportBatch;
 use DB;
 use Excel;
 use Illuminate\Http\Request;
@@ -133,7 +138,7 @@ class ContactController extends Controller
      * Copy contacts from the selected source business. Existing contacts are
      * skipped by default and the response contains an actionable summary.
      */
-    public function importFromBusiness(Request $request)
+    public function importFromBusiness(Request $request, BusinessCopyImportBatchService $copyBatches)
     {
         $validated = $request->validate([
             'type' => ['required', 'in:customer,supplier'],
@@ -144,26 +149,31 @@ class ContactController extends Controller
         $sourceBusinessId = (int) $validated['source_business_id'];
         $this->authorizeBusinessContactImport($request, $targetBusinessId, $sourceBusinessId);
 
-        $result = $this->businessContactImport->import(
-            $sourceBusinessId,
-            $targetBusinessId,
-            (int) $request->session()->get('user.id'),
-            $validated['type'],
-            (bool) ($validated['skip_existing'] ?? true)
-        );
+        try {
+            $queued = $copyBatches->queue('contacts', $sourceBusinessId, $targetBusinessId, (int) auth()->id(), [
+                'contact_type' => $validated['type'],
+                'skip_existing' => (bool) ($validated['skip_existing'] ?? true),
+            ]);
+        } catch (\Throwable $exception) {
+            if ($request->expectsJson()) {
+                return response()->json(['success' => false, 'message' => $exception->getMessage()], 422);
+            }
+
+            return redirect()->route('contacts.index', ['type' => $validated['type']])->withErrors(['import' => $exception->getMessage()]);
+        }
+        $batch = $queued['batch'];
+        $message = $queued['duplicate']
+            ? 'Salinan ini sudah tercatat pada batch #'.$batch->id.'.'
+            : 'Salin kontak masuk antrean pada batch #'.$batch->id.'.';
 
         if ($request->expectsJson()) {
-            return response()->json([
-                'success' => true,
-                'message' => sprintf('%d kontak diimpor, %d dilewati karena sudah ada.', $result['created'], $result['skipped']),
-                'result' => $result,
-            ]);
+            return response()->json(['success' => true, 'batch_id' => $batch->id, 'status' => $batch->status, 'message' => $message], 202);
         }
 
         return redirect()->route('contacts.index', ['type' => $validated['type']])
             ->with('status', [
                 'success' => true,
-                'msg' => sprintf('%d kontak diimpor, %d dilewati karena sudah ada.', $result['created'], $result['skipped']),
+                'msg' => $message,
             ]);
     }
 
@@ -1356,6 +1366,113 @@ class ContactController extends Controller
         $type = ! empty($contact->type) && $contact->type != 'both' ? $contact->type : 'supplier';
 
         return redirect()->action([\App\Http\Controllers\ContactController::class, 'index'], ['type' => $type])->with('status', $output);
+    }
+
+    public function queueImportContacts(Request $request, UserImportBatchService $batches)
+    {
+        $this->authorizeContactImport();
+        $notAllowed = $this->commonUtil->notAllowedInDemo();
+        if (! empty($notAllowed)) {
+            return $notAllowed;
+        }
+        $request->validate(['contacts_csv' => 'required|file|mimes:xls,xlsx,csv']);
+
+        $file = $request->file('contacts_csv');
+        $businessId = (int) $request->session()->get('user.business_id');
+        $sourceKey = hash_file('sha256', $file->getRealPath());
+        $existing = UserImportBatch::where('business_id', $businessId)
+            ->where('importer_key', ContactCsvImportBatchService::IMPORTER_KEY)
+            ->where('source_key', $sourceKey)->first();
+        if ($existing) {
+            if ($existing->status === 'reverted') {
+                return response()->json(['success' => false, 'message' => 'File ini sudah pernah direvert. Perbarui file sebelum membuat batch baru.'], 409);
+            }
+
+            return response()->json(['success' => true, 'batch_id' => $existing->id, 'status' => $existing->status,
+                'message' => 'File ini sudah tercatat pada batch #'.$existing->id.'.'], 202);
+        }
+
+        $batch = $batches->create([
+            'business_id' => $businessId,
+            'created_by' => auth()->id(),
+            'importer_key' => ContactCsvImportBatchService::IMPORTER_KEY,
+            'source_key' => $sourceKey,
+            'file_name' => $file->getClientOriginalName(),
+            'status' => 'queued_preview',
+            'stage' => 'queued',
+            'last_message' => 'File diterima dan menunggu worker import.',
+        ]);
+        try {
+            $batches->captureWorkbook($batch, $file->getRealPath());
+            ProcessContactCsvImportBatch::dispatch((int) $batch->id, $businessId);
+        } catch (\Throwable $exception) {
+            app(ContactCsvImportBatchService::class)->fail($batch, $exception);
+            report($exception);
+
+            return response()->json(['success' => false, 'message' => 'File belum dapat dimasukkan ke antrean import.'], 422);
+        }
+
+        return response()->json(['success' => true, 'batch_id' => $batch->id, 'status' => 'queued_preview',
+            'message' => 'File diterima pada batch #'.$batch->id.'. Import berjalan di latar belakang.'], 202);
+    }
+
+    public function contactImportHistory(Request $request, ContactCsvImportBatchService $service)
+    {
+        $this->authorizeContactImport();
+
+        return response()->json($service->history($request, (int) $request->session()->get('user.business_id'), true));
+    }
+
+    public function contactImportDetail(Request $request, int $batch, ContactCsvImportBatchService $service)
+    {
+        $this->authorizeContactImport();
+        $detail = $service->detail($batch, (int) $request->session()->get('user.business_id'));
+        $detail['results']['row_outcomes'] = collect($detail['results']['row_outcomes'] ?? [])->map(function ($row) {
+            if (! empty($row['record_id'])) {
+                $row['record_url'] = action([self::class, 'show'], $row['record_id']);
+            }
+
+            return $row;
+        })->values();
+
+        return response()->json($detail);
+    }
+
+    public function contactImportSource(Request $request, int $batch, UserImportBatchService $batches)
+    {
+        $this->authorizeContactImport();
+        $record = $batches->findForBusiness($batch, (int) $request->session()->get('user.business_id'), ContactCsvImportBatchService::IMPORTER_KEY);
+
+        return $batches->workbookDownload($record);
+    }
+
+    public function retryContactImport(Request $request, int $batch, UserImportBatchService $batches)
+    {
+        $this->authorizeContactImport();
+        $businessId = (int) $request->session()->get('user.business_id');
+        $record = $batches->findForBusiness($batch, $businessId, ContactCsvImportBatchService::IMPORTER_KEY);
+        abort_unless(in_array($record->status, ['failed', 'partial'], true) && $record->hasSourceSnapshot(), 422, 'Batch kontak ini tidak dapat dicoba ulang.');
+        $record->forceFill(['status' => 'queued_preview', 'stage' => 'retry_queued', 'failed_at' => null, 'completed_at' => null,
+            'error_message' => null, 'last_message' => 'Baris gagal dijadwalkan ulang.'])->save();
+        ProcessContactCsvImportBatch::dispatch((int) $record->id, $businessId);
+
+        return response()->json(['success' => true, 'status' => 'queued_preview']);
+    }
+
+    public function revertContactImport(Request $request, int $batch, UserImportBatchService $batches, ContactCsvImportBatchService $service)
+    {
+        $this->authorizeContactImport();
+        $record = $batches->findForBusiness($batch, (int) $request->session()->get('user.business_id'), ContactCsvImportBatchService::IMPORTER_KEY);
+        $service->revert($record);
+
+        return response()->json(['success' => true, 'status' => 'reverted']);
+    }
+
+    private function authorizeContactImport(): void
+    {
+        if (! auth()->user()->can('supplier.create') && ! auth()->user()->can('customer.create')) {
+            abort(403, 'Unauthorized action.');
+        }
     }
 
     /**

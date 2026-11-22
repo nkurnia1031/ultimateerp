@@ -9,7 +9,7 @@ class BonusAyak extends Model
     protected $table = 'bonus_ayak';
 
     protected $fillable = [
-        'business_id', 'project_id', 'tanggal', 'nama_operator', 'driver_id', 'unit', 'asset_id', 'trip', 'bonus', 'created_by', 'source_fingerprint'
+        'business_id', 'project_id', 'tanggal', 'nama_operator', 'driver_id', 'unit', 'asset_id', 'trip', 'bonus', 'created_by', 'source_fingerprint', 'user_import_batch_id'
     ];
 
     protected $casts = [
@@ -51,5 +51,10 @@ class BonusAyak extends Model
     public function creator()
     {
         return $this->belongsTo(User::class, 'created_by');
+    }
+
+    public function userImportBatch()
+    {
+        return $this->belongsTo(UserImportBatch::class);
     }
 }

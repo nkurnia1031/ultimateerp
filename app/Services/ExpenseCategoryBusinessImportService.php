@@ -102,6 +102,153 @@ class ExpenseCategoryBusinessImportService
         });
     }
 
+    public function importTracked(
+        int $sourceBusinessId,
+        int $targetBusinessId,
+        int $createdBy,
+        bool $skipExisting = true,
+        array $previous = [],
+        ?callable $progress = null,
+        ?int $batchId = null
+    ): array {
+        $this->guardBusinesses($sourceBusinessId, $targetBusinessId);
+        $source = $this->orderedCategories($sourceBusinessId);
+        $target = ExpenseCategory::query()->where('business_id', $targetBusinessId)->get();
+        $sourcePaths = $this->categoryPaths($source);
+        $index = $this->buildIndex($target, $this->categoryPaths($target));
+        $outcomes = collect($previous['row_outcomes'] ?? [])->keyBy('source_id');
+        $createdRecords = collect($previous['created_records'] ?? [])->keyBy('target_id');
+        $sourceToTarget = [];
+        $current = 0;
+
+        foreach ($source as $category) {
+            $sourceId = (int) $category->id;
+            $path = $sourcePaths[$sourceId] ?? $this->normalized($category->name);
+            $prior = $outcomes->get($sourceId);
+            if ($prior && in_array($prior['status'] ?? '', ['created', 'skipped'], true)) {
+                $sourceToTarget[$sourceId] = (int) ($prior['target_id'] ?? 0) ?: null;
+                $current++;
+                if ($progress) $progress($current, $source->count(), $outcomes->values()->all(), $createdRecords->values()->all());
+                continue;
+            }
+
+            // Recover a row committed just before a worker interruption, even if
+            // its result payload had not yet been written to durable storage.
+            $recovered = $batchId
+                ? ExpenseCategory::where('business_id', $targetBusinessId)->where('user_import_batch_id', $batchId)
+                    ->where('user_import_source_id', $sourceId)->first()
+                : null;
+            if ($recovered) {
+                $sourceToTarget[$sourceId] = (int) $recovered->id;
+                $snapshot = [
+                    'target_id' => (int) $recovered->id,
+                    'attributes' => $this->modelAttributes($recovered),
+                    'updated_at' => (string) $recovered->updated_at,
+                ];
+                $outcomes->put($sourceId, [
+                    'source_id' => $sourceId,
+                    'source_label' => (string) $category->name,
+                    'status' => 'created',
+                    'target_id' => (int) $recovered->id,
+                    'target_label' => (string) $recovered->name,
+                    'attributes' => $snapshot['attributes'],
+                    'updated_at' => $snapshot['updated_at'],
+                ]);
+                $createdRecords->put($recovered->id, $snapshot);
+                $this->addToIndex($index, $recovered, $path, $recovered);
+                $current++;
+                if ($progress) $progress($current, $source->count(), $outcomes->values()->all(), $createdRecords->values()->all());
+                continue;
+            }
+
+            $match = $this->findMatch($category, $path, $index);
+            if ($match && $skipExisting) {
+                $targetId = (int) $match['category']->id;
+                $sourceToTarget[$sourceId] = $targetId;
+                $outcomes->put($sourceId, [
+                    'source_id' => $sourceId,
+                    'source_label' => (string) $category->name,
+                    'status' => 'skipped',
+                    'target_id' => $targetId,
+                    'target_label' => (string) $match['category']->name,
+                    'matched_by' => $match['matched_by'],
+                ]);
+            } else {
+                $parentId = null;
+                if (! empty($category->parent_id)) {
+                    $parentId = $sourceToTarget[(int) $category->parent_id] ?? null;
+                    if ($parentId === null) {
+                        $outcomes->put($sourceId, [
+                            'source_id' => $sourceId,
+                            'source_label' => (string) $category->name,
+                            'status' => 'failed',
+                            'error' => 'Parent kategori tidak berhasil dipetakan.',
+                        ]);
+                        $current++;
+                        if ($progress) $progress($current, $source->count(), $outcomes->values()->all(), $createdRecords->values()->all());
+                        continue;
+                    }
+                }
+
+                try {
+                    $created = DB::transaction(function () use ($category, $targetBusinessId, $parentId, $batchId, $sourceId) {
+                        $attributes = [
+                            'business_id' => $targetBusinessId,
+                            'name' => trim((string) $category->name),
+                            'code' => $this->nullableString($category->code),
+                            'parent_id' => $parentId,
+                        ];
+                        if ($batchId) {
+                            $attributes['user_import_batch_id'] = $batchId;
+                            $attributes['user_import_source_id'] = $sourceId;
+                        }
+
+                        return ExpenseCategory::create($attributes)->fresh();
+                    });
+                    $sourceToTarget[$sourceId] = (int) $created->id;
+                    $outcomes->put($sourceId, [
+                        'source_id' => $sourceId,
+                        'source_label' => (string) $category->name,
+                        'status' => 'created',
+                        'target_id' => (int) $created->id,
+                        'target_label' => (string) $created->name,
+                        'attributes' => $this->modelAttributes($created),
+                        'updated_at' => (string) $created->updated_at,
+                    ]);
+                    $createdRecords->put($created->id, [
+                        'target_id' => (int) $created->id,
+                        'attributes' => $this->modelAttributes($created),
+                        'updated_at' => (string) $created->updated_at,
+                    ]);
+                    $this->addToIndex($index, $created, $path, $created);
+                } catch (\Throwable $exception) {
+                    $outcomes->put($sourceId, [
+                        'source_id' => $sourceId,
+                        'source_label' => (string) $category->name,
+                        'status' => 'failed',
+                        'error' => mb_substr($exception->getMessage(), 0, 2000),
+                    ]);
+                }
+            }
+
+            $current++;
+            if ($progress) $progress($current, $source->count(), $outcomes->values()->all(), $createdRecords->values()->all());
+        }
+
+        $rows = $outcomes->values()->all();
+
+        return [
+            'summary' => [
+                'source_rows' => count($rows),
+                'created_rows' => $outcomes->where('status', 'created')->count(),
+                'skipped_rows' => $outcomes->where('status', 'skipped')->count(),
+                'failed_rows' => $outcomes->where('status', 'failed')->count(),
+            ],
+            'row_outcomes' => $rows,
+            'created_records' => $createdRecords->values()->all(),
+        ];
+    }
+
     private function guardBusinesses(int $sourceBusinessId, int $targetBusinessId): void
     {
         if ($sourceBusinessId < 1 || $targetBusinessId < 1 || $sourceBusinessId === $targetBusinessId) {
@@ -240,5 +387,10 @@ class ExpenseCategoryBusinessImportService
         $value = trim((string) $value);
 
         return $value === '' ? null : $value;
+    }
+
+    private function modelAttributes($model): array
+    {
+        return json_decode(json_encode($model->getAttributes(), JSON_THROW_ON_ERROR), true, 512, JSON_THROW_ON_ERROR);
     }
 }

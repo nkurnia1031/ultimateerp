@@ -3,7 +3,6 @@
 namespace App\Services;
 
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Storage;
 use RuntimeException;
 
 class SolarImportService
@@ -12,7 +11,8 @@ class SolarImportService
         private SolarLedgerService $ledgerService,
         private SolarImportPreviewService $previewService,
         private SolarImportProcessService $processService,
-        private SolarWorkbookService $workbookService
+        private SolarWorkbookService $workbookService,
+        private SolarImportHistoryService $historyService
     ) {
     }
 
@@ -34,89 +34,94 @@ class SolarImportService
             throw new RuntimeException('Import sudah berjalan atau dibatalkan.');
         }
 
-        $path = $batch->file_path;
-        if (! $path || ! Storage::disk('local')->exists($path)) {
-            throw new RuntimeException('File preview sudah tidak tersedia.');
-        }
-        $rows = $this->previewService->importableRows($batchId, $businessId);
-        $total = count($rows);
-        $this->processService->update($batchId, $businessId, 'reading', 'Memuat baris yang sudah disetujui dari preview.', 8, 0, $total, ['stage_detail' => 'load_preview_rows']);
+        [$workbookPath, $temporary] = $this->historyService->sourceWorkbookPath($batchId, $businessId);
+        try {
+            $rows = $this->previewService->importableRows($batchId, $businessId);
+            $total = count($rows);
+            $this->processService->update($batchId, $businessId, 'reading', 'Memuat baris yang sudah disetujui dari preview.', 8, 0, $total, ['stage_detail' => 'load_preview_rows']);
 
-        $inserted = DB::transaction(function () use ($batch, $businessId, $batchId, $rows, $total, $path) {
-            $this->processService->update($batchId, $businessId, 'saving', 'Menyimpan transaksi baru ke ledger.', 32, 0, $total, ['stage_detail' => 'save_start']);
-            $inserted = ['stock' => 0, 'pool' => 0, 'mess' => 0, 'usage' => 0];
-            $snapshot = $this->ledgerService->openingSnapshot($businessId);
-            DB::table('solar_import_batches')->where('id', $batchId)->update([
-                'opening_snapshot' => json_encode($snapshot),
-                'updated_at' => now(),
-            ]);
+            $inserted = DB::transaction(function () use ($batch, $businessId, $batchId, $rows, $total, $workbookPath) {
+                $this->processService->update($batchId, $businessId, 'saving', 'Menyimpan transaksi baru ke ledger.', 32, 0, $total, ['stage_detail' => 'save_start']);
+                $inserted = ['stock' => 0, 'pool' => 0, 'mess' => 0, 'usage' => 0];
+                $snapshot = $this->ledgerService->openingSnapshot($businessId);
+                DB::table('solar_import_batches')->where('id', $batchId)->update([
+                    'opening_snapshot' => json_encode($snapshot),
+                    'updated_at' => now(),
+                ]);
 
-            $overrides = json_decode((string) ($batch->date_overrides ?? '[]'), true) ?: [];
-            $parsed = $this->workbookService->parse(Storage::disk('local')->path($path), $overrides, function ($stage, $message, $percent, $current = null, $rowTotal = null, $context = []) use ($batchId, $businessId): void {
-                $this->processService->update($batchId, $businessId, $stage, 'Membaca workbook untuk saldo awal: '.$message, min(30, max(12, $percent)), $current, $rowTotal, $context + ['stage_detail' => 'opening_balance_read']);
-            });
-            foreach (SolarLedgerService::LEDGERS as $ledger) {
-                $this->guardCancellation($batchId, $businessId);
-                $table = $this->ledgerService->table($ledger);
-                $opening = $parsed['opening'][$ledger] ?? null;
-                if (DB::table($table)->where('business_id', $businessId)->doesntExist() && $opening) {
-                    $this->ledgerService->setOpeningBalance(
-                        $businessId,
-                        $ledger,
-                        $opening,
-                        $opening['date'],
-                        $batchId
-                    );
-                }
-            }
-
-            foreach (array_chunk($rows, 250) as $chunkIndex => $chunk) {
-                $this->guardCancellation($batchId, $businessId);
-                foreach (collect($chunk)->groupBy(fn ($row) => $row['ledger'] ?? 'stock') as $ledger => $ledgerRows) {
-                    $payloads = $ledgerRows->map(function ($row) use ($businessId, $batchId, $ledger) {
-                        return $this->payload($ledger, $row) + [
-                            'business_id' => $businessId,
-                            'source' => 'excel',
-                            'source_sheet' => $row['source_sheet'] ?? null,
-                            'source_row' => $row['source_row'] ?? null,
-                            'source_hash' => $this->ledgerService->rowHash($ledger, $row),
-                            'source_key' => $row['source_key'] ?? null,
-                            'import_batch_id' => $batchId,
-                            'created_at' => now(),
-                            'updated_at' => now(),
-                        ];
-                    })->all();
-                    foreach (array_chunk($payloads, 100) as $payloadChunk) {
-                        $table = $ledger === 'usage' ? 'solar_equipment_usages' : $this->ledgerService->table($ledger);
-                        $inserted[$ledger] += DB::table($table)->insertOrIgnore($payloadChunk);
+                $overrides = json_decode((string) ($batch->date_overrides ?? '[]'), true) ?: [];
+                $parsed = $this->workbookService->parse($workbookPath, $overrides, function ($stage, $message, $percent, $current = null, $rowTotal = null, $context = []) use ($batchId, $businessId): void {
+                    $this->processService->update($batchId, $businessId, $stage, 'Membaca workbook untuk saldo awal: '.$message, min(30, max(12, $percent)), $current, $rowTotal, $context + ['stage_detail' => 'opening_balance_read']);
+                });
+                foreach (SolarLedgerService::LEDGERS as $ledger) {
+                    $this->guardCancellation($batchId, $businessId);
+                    $table = $this->ledgerService->table($ledger);
+                    $opening = $parsed['opening'][$ledger] ?? null;
+                    if (DB::table($table)->where('business_id', $businessId)->doesntExist() && $opening) {
+                        $this->ledgerService->setOpeningBalance(
+                            $businessId,
+                            $ledger,
+                            $opening,
+                            $opening['date'],
+                            $batchId
+                        );
                     }
                 }
-                $current = min($total, ($chunkIndex + 1) * 250);
-                $percent = $total > 0 ? 35 + (int) floor(($current / $total) * 50) : 85;
-                $this->processService->update($batchId, $businessId, 'saving', 'Menyimpan transaksi baru: '.$current.' dari '.$total.' baris.', $percent, $current, $total, ['stage_detail' => 'save_rows', 'chunk' => $chunkIndex + 1, 'ledger_counts' => $inserted]);
-            }
 
-            $ledgerIndex = 0;
-            foreach (SolarLedgerService::LEDGERS as $ledger) {
-                $ledgerIndex++;
-                $this->processService->update($batchId, $businessId, 'recalculating', 'Menghitung ulang saldo ledger '.$ledger.'.', 88 + (int) floor((($ledgerIndex - 1) / count(SolarLedgerService::LEDGERS)) * 10), $ledgerIndex - 1, count(SolarLedgerService::LEDGERS), ['ledger' => $ledger, 'stage_detail' => 'recalculate_start']);
-                $this->ledgerService->recalculate($businessId, $ledger);
-                $this->processService->update($batchId, $businessId, 'recalculating', 'Saldo ledger '.$ledger.' selesai dihitung ulang.', 88 + (int) floor(($ledgerIndex / count(SolarLedgerService::LEDGERS)) * 10), $ledgerIndex, count(SolarLedgerService::LEDGERS), ['ledger' => $ledger, 'stage_detail' => 'recalculate_complete']);
-            }
+                foreach (array_chunk($rows, 250) as $chunkIndex => $chunk) {
+                    $this->guardCancellation($batchId, $businessId);
+                    foreach (collect($chunk)->groupBy(fn ($row) => $row['ledger'] ?? 'stock') as $ledger => $ledgerRows) {
+                        $payloads = $ledgerRows->map(function ($row) use ($businessId, $batchId, $ledger) {
+                            return $this->payload($ledger, $row) + [
+                                'business_id' => $businessId,
+                                'source' => 'excel',
+                                'source_sheet' => $row['source_sheet'] ?? null,
+                                'source_row' => $row['source_row'] ?? null,
+                                'source_hash' => $this->ledgerService->rowHash($ledger, $row),
+                                'source_key' => $row['source_key'] ?? null,
+                                'import_batch_id' => $batchId,
+                                'created_at' => now(),
+                                'updated_at' => now(),
+                            ];
+                        })->all();
+                        foreach (array_chunk($payloads, 100) as $payloadChunk) {
+                            $table = $ledger === 'usage' ? 'solar_equipment_usages' : $this->ledgerService->table($ledger);
+                            $inserted[$ledger] += DB::table($table)->insertOrIgnore($payloadChunk);
+                        }
+                    }
+                    $current = min($total, ($chunkIndex + 1) * 250);
+                    $percent = $total > 0 ? 35 + (int) floor(($current / $total) * 50) : 85;
+                    $this->processService->update($batchId, $businessId, 'saving', 'Menyimpan transaksi baru: '.$current.' dari '.$total.' baris.', $percent, $current, $total, ['stage_detail' => 'save_rows', 'chunk' => $chunkIndex + 1, 'ledger_counts' => $inserted]);
+                }
 
-            DB::table('solar_import_batches')->where('id', $batchId)->update([
-                'status' => 'imported',
-                'operation' => 'import',
-                'counts' => json_encode($inserted),
-                'confirmed_at' => now(),
-                'updated_at' => now(),
-            ]);
+                $ledgerIndex = 0;
+                foreach (SolarLedgerService::LEDGERS as $ledger) {
+                    $ledgerIndex++;
+                    $this->processService->update($batchId, $businessId, 'recalculating', 'Menghitung ulang saldo ledger '.$ledger.'.', 88 + (int) floor((($ledgerIndex - 1) / count(SolarLedgerService::LEDGERS)) * 10), $ledgerIndex - 1, count(SolarLedgerService::LEDGERS), ['ledger' => $ledger, 'stage_detail' => 'recalculate_start']);
+                    $this->ledgerService->recalculate($businessId, $ledger);
+                    $this->processService->update($batchId, $businessId, 'recalculating', 'Saldo ledger '.$ledger.' selesai dihitung ulang.', 88 + (int) floor(($ledgerIndex / count(SolarLedgerService::LEDGERS)) * 10), $ledgerIndex, count(SolarLedgerService::LEDGERS), ['ledger' => $ledger, 'stage_detail' => 'recalculate_complete']);
+                }
+
+                DB::table('solar_import_batches')->where('id', $batchId)->update([
+                    'status' => 'imported',
+                    'operation' => 'import',
+                    'counts' => json_encode($inserted),
+                    'confirmed_at' => now(),
+                    'updated_at' => now(),
+                ]);
+
+                return $inserted;
+            });
+
+            $stagingRemoved = $this->historyService->deleteStaging($batchId, $businessId, $batch->file_path);
+            if (! $stagingRemoved) {
+                $inserted['staging_cleanup_warning'] = true;
+            }
 
             return $inserted;
-        });
-
-        Storage::disk('local')->delete($path);
-        return $inserted;
+        } finally {
+            $this->historyService->cleanupTemporaryWorkbook($workbookPath, $temporary);
+        }
     }
 
     private function guardCancellation(string $batchId, int $businessId): void

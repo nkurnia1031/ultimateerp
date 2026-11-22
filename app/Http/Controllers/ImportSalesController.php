@@ -21,6 +21,8 @@ use App\Variation;
 use DB;
 use Excel;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Storage;
 use App\Events\PurchaseCreatedOrModified;
 
 
@@ -65,7 +67,8 @@ class ImportSalesController extends Controller
      */
     public function index()
     {
-        if (! auth()->user()->can('sell.create')) {
+        $indexPermission = request()->is('import-pembelian') ? 'purchase.create' : 'sell.create';
+        if (! auth()->user()->can($indexPermission)) {
             abort(403, 'Unauthorized action.');
         }
 
@@ -118,7 +121,8 @@ class ImportSalesController extends Controller
             $judul = "Preview Import Purchases";
             $link = 'import-pembelian';
         }
-        if (! auth()->user()->can('sell.create')) {
+        $previewPermission = request()->is('import-pembelian/preview') ? 'purchase.create' : 'sell.create';
+        if (! auth()->user()->can($previewPermission)) {
             abort(403, 'Unauthorized action.');
         }
 
@@ -127,11 +131,21 @@ class ImportSalesController extends Controller
             return $notAllowed;
         }
 
+        if (! $request->attributes->get('process_import_batch')) {
+            $importerKey = request()->is('import-pembelian/preview') ? 'purchase' : 'sales';
+
+            return app(\App\Services\SalesPurchaseImportBatchService::class)->queuePreview($request, $importerKey);
+        }
+
         $business_id = request()->session()->get('user.business_id');
 
         if ($request->hasFile('sales')) {
-            $file_name = time() . '_' . $request->sales->getClientOriginalName();
-            $request->sales->storeAs('temp', $file_name);
+            if ($request->attributes->get('process_import_batch')) {
+                $file_name = (string) $request->attributes->get('batch_file_name', $request->sales->getClientOriginalName());
+            } else {
+                $file_name = time() . '_' . $request->sales->getClientOriginalName();
+                $request->sales->storeAs('temp', $file_name, 'user_imports');
+            }
 
             $parsed_array = $this->__parseData($file_name);
 
@@ -163,7 +177,9 @@ class ImportSalesController extends Controller
 
     public function __parseData($file_name)
     {
-        $array = Excel::toArray([], public_path('uploads/temp/' . $file_name))[0];
+        $sourcePath = request()->attributes->get('import_batch_source_path');
+        $path = $sourcePath ?: $this->resolvePreviewWorkbookPath((string) $file_name);
+        $array = Excel::toArray([], $path)[0];
 
         //remove blank columns from headers
         $headers = array_filter($array[0]);
@@ -184,6 +200,19 @@ class ImportSalesController extends Controller
         return $parsed_array;
     }
 
+    private function resolvePreviewWorkbookPath(string $fileName): string
+    {
+        abort_unless($fileName !== '' && basename($fileName) === $fileName, 404);
+
+        $relativePath = 'temp/'.$fileName;
+        $private = Storage::disk('user_imports');
+        if ($private->exists($relativePath)) {
+            return $private->path($relativePath);
+        }
+
+        return public_path('uploads/'.$relativePath);
+    }
+
     /**
      * Import sales to database
      *
@@ -191,13 +220,26 @@ class ImportSalesController extends Controller
      */
     public function import(Request $request)
     {
-        if (! auth()->user()->can('sell.create')) {
+        $importPermission = request()->is('import-pembelian') ? 'purchase.create' : 'sell.create';
+        if (! auth()->user()->can($importPermission)) {
             abort(403, 'Unauthorized action.');
         }
         $link = 'import-sales';
         if (request()->is('import-pembelian')) {
             $link = 'import-pembelian';
         }
+
+        if ($request->filled('batch_id') && ! $request->attributes->get('process_import_batch')) {
+            $importerKey = $link === 'import-pembelian' ? 'purchase' : 'sales';
+
+            return app(\App\Services\SalesPurchaseImportBatchService::class)->queueImport($request, (int) $request->input('batch_id'), $importerKey);
+        }
+
+        abort_unless(
+            $request->attributes->get('process_import_batch') || $request->filled('batch_id'),
+            422,
+            'Konfirmasi import harus menggunakan batch yang valid.'
+        );
 
         try {
             DB::beginTransaction();
@@ -209,7 +251,7 @@ class ImportSalesController extends Controller
             $location_id = $request->input('location_id');
             $business_id = $request->session()->get('user.business_id');
 
-            $file_path = public_path('uploads/temp/' . $file_name);
+            $file_path = $request->attributes->get('import_batch_source_path') ?: $this->resolvePreviewWorkbookPath((string) $file_name);
             $parsed_array = $this->__parseData($file_name);
             //Remove header row
             unset($parsed_array[0]);
@@ -235,15 +277,90 @@ class ImportSalesController extends Controller
                 'msg' => $e->getMessage(),
             ];
 
-            @unlink($file_path);
+            if (! $request->attributes->get('process_import_batch')) {
+                @unlink($file_path);
+            }
 
             return redirect($link)->with('notification', $output);
         }
 
-        @unlink($file_path);
+        if (! $request->attributes->get('process_import_batch')) {
+            @unlink($file_path);
+        }
 
         return redirect($link)->with('status', $output);
     }
+
+    public function importBatchHistory(Request $request, string $importerKey)
+    {
+        abort_unless(auth()->user()->can($importerKey === 'purchase' ? 'purchase.create' : 'sell.create'), 403, 'Unauthorized action.');
+        abort_unless(in_array($importerKey, ['sales', 'purchase'], true), 404);
+
+        return response()->json(app(\App\Services\SalesPurchaseImportBatchService::class)
+            ->history($request, (int) $request->session()->get('user.business_id'), $importerKey));
+    }
+
+    public function importBatchDetail(Request $request, string $importerKey, int $batchId)
+    {
+        abort_unless(auth()->user()->can($importerKey === 'purchase' ? 'purchase.create' : 'sell.create'), 403, 'Unauthorized action.');
+        abort_unless(in_array($importerKey, ['sales', 'purchase'], true), 404);
+
+        return response()->json(app(\App\Services\SalesPurchaseImportBatchService::class)
+            ->detail($batchId, (int) $request->session()->get('user.business_id'), $importerKey));
+    }
+
+    public function importBatchSource(Request $request, string $importerKey, int $batchId)
+    {
+        abort_unless(auth()->user()->can($importerKey === 'purchase' ? 'purchase.create' : 'sell.create'), 403, 'Unauthorized action.');
+        $batch = app(\App\Services\UserImportBatchService::class)->findForBusiness(
+            $batchId, (int) $request->session()->get('user.business_id'), 'sales_'.$importerKey
+        );
+
+        return app(\App\Services\UserImportBatchService::class)->workbookDownload($batch);
+    }
+
+    public function importBatchPreview(Request $request, string $importerKey, int $batchId)
+    {
+        abort_unless(auth()->user()->can($importerKey === 'purchase' ? 'purchase.create' : 'sell.create'), 403, 'Unauthorized action.');
+        $data = app(\App\Services\SalesPurchaseImportBatchService::class)
+            ->previewPageData($batchId, (int) $request->session()->get('user.business_id'), $importerKey);
+
+        return view('import_sales.preview')->with($data);
+    }
+
+    public function retryImportBatch(Request $request, string $importerKey, int $batchId)
+    {
+        abort_unless(auth()->user()->can($importerKey === 'purchase' ? 'purchase.create' : 'sell.create'), 403, 'Unauthorized action.');
+        app(\App\Services\SalesPurchaseImportBatchService::class)
+            ->retry($batchId, (int) $request->session()->get('user.business_id'), $importerKey);
+
+        return response()->json(['success' => true, 'status' => 'queued']);
+    }
+
+    public function revertImportBatch(Request $request, string $importerKey, int $batchId)
+    {
+        $permission = $importerKey === 'purchase' ? 'purchase.delete' : 'sell.delete';
+        abort_unless(auth()->user()->can($permission), 403, 'Unauthorized action.');
+        $batch = app(\App\Services\UserImportBatchService::class)->findForBusiness(
+            $batchId, (int) $request->session()->get('user.business_id'), 'sales_'.$importerKey
+        );
+        app(\App\Services\SalesPurchaseImportBatchService::class)->revert($batch);
+
+        return response()->json(['success' => true, 'status' => 'reverted']);
+    }
+
+    public function salesImportBatchHistory(Request $request) { return $this->importBatchHistory($request, 'sales'); }
+    public function salesImportBatchDetail(Request $request, int $batchId) { return $this->importBatchDetail($request, 'sales', $batchId); }
+    public function salesImportBatchSource(Request $request, int $batchId) { return $this->importBatchSource($request, 'sales', $batchId); }
+    public function salesImportBatchPreview(Request $request, int $batchId) { return $this->importBatchPreview($request, 'sales', $batchId); }
+    public function salesImportBatchRetry(Request $request, int $batchId) { return $this->retryImportBatch($request, 'sales', $batchId); }
+    public function salesImportBatchRevert(Request $request, int $batchId) { return $this->revertImportBatch($request, 'sales', $batchId); }
+    public function purchaseImportBatchHistory(Request $request) { return $this->importBatchHistory($request, 'purchase'); }
+    public function purchaseImportBatchDetail(Request $request, int $batchId) { return $this->importBatchDetail($request, 'purchase', $batchId); }
+    public function purchaseImportBatchSource(Request $request, int $batchId) { return $this->importBatchSource($request, 'purchase', $batchId); }
+    public function purchaseImportBatchPreview(Request $request, int $batchId) { return $this->importBatchPreview($request, 'purchase', $batchId); }
+    public function purchaseImportBatchRetry(Request $request, int $batchId) { return $this->retryImportBatch($request, 'purchase', $batchId); }
+    public function purchaseImportBatchRevert(Request $request, int $batchId) { return $this->revertImportBatch($request, 'purchase', $batchId); }
 
     private function __importSales($formated_data, $business_id, $location_id, $filename)
     {
@@ -256,8 +373,12 @@ class ImportSalesController extends Controller
         }
 
         $now = \Carbon::now()->toDateTimeString();
+        $progressBatchId = (int) request()->attributes->get('import_batch_id', 0);
+        $processedGroups = 0;
+        $totalGroups = count($formated_data);
         $row_index = 2;
         foreach ($formated_data as $data) {
+            $groupSourceRows = [];
             $order_total = 0;
             $sell_lines = [];
             foreach ($data as $line_data) {
@@ -314,6 +435,7 @@ class ImportSalesController extends Controller
                     }
 
                     $product = Product::create($product_details);
+                    $this->trackImportBatchValue('product_ids', (int) $product->id);
                     event(new ProductsCreatedOrModified($product_details, 'added'));
 
                     if (empty(trim($line_data['sku']))) {
@@ -408,6 +530,7 @@ class ImportSalesController extends Controller
 
 
                 $sell_lines[] = $temp;
+                $groupSourceRows[] = $row_index;
 
                 $row_index++;
             }
@@ -437,6 +560,7 @@ class ImportSalesController extends Controller
                     'mobile' => $first_sell_line['customer_phone_number'],
                     'created_by' => auth()->user()->id,
                 ]);
+                $this->trackImportBatchValue('contact_ids', (int) $contact->id);
             }
 
             $sale_data = [
@@ -528,6 +652,7 @@ class ImportSalesController extends Controller
                 $enable_product_editing = request()->session()->get('business.enable_editing_product_from_purchase');
                 // $sale_data['total_before_tax']= $invoice_total['total_before_tax'];
                 $transaction = $this->transactionUtil->createSellTransaction($business_id, $sale_data, $invoice_total, auth()->user()->id, false);
+                $this->trackImportBatchValue('transaction_ids', (int) $transaction->id);
                 $this->productUtil->createOrUpdatePurchaseLines($transaction, $purchases, $currency_details, $enable_product_editing);
                 $this->productUtil->adjustStockOverSelling($transaction);
 
@@ -538,6 +663,7 @@ class ImportSalesController extends Controller
                 $sale_data['type'] = 'sell';
 
                 $transaction = $this->transactionUtil->createSellTransaction($business_id, $sale_data, $invoice_total, auth()->user()->id, false);
+                $this->trackImportBatchValue('transaction_ids', (int) $transaction->id);
                 $this->transactionUtil->createOrUpdateSellLines($transaction, $sell_lines, $location_id, false, null, [], false);
                 foreach ($sell_lines as $line) {
                     if ($line['enable_stock']) {
@@ -671,7 +797,47 @@ class ImportSalesController extends Controller
                 'pos_settings' => $pos_settings,
             ];
             $this->transactionUtil->mapPurchaseSell($business, $transaction->sell_lines, 'purchase');
+            foreach ($groupSourceRows as $sourceRow) {
+                $this->trackImportBatchOutcome([
+                    'source_row' => $sourceRow,
+                    'status' => 'imported',
+                    'transaction_id' => (int) $transaction->id,
+                    'message' => null,
+                ]);
+            }
+            if ($progressBatchId > 0) {
+                $processedGroups++;
+                $percent = $totalGroups > 0 ? min(95, (int) floor(($processedGroups / $totalGroups) * 95)) : 95;
+                Cache::put('sales_purchase_import_progress_'.$progressBatchId, [
+                    'progress_current' => $processedGroups,
+                    'progress_total' => max($totalGroups, $processedGroups),
+                    'progress_percent' => $percent,
+                    'last_message' => "Transaksi {$processedGroups} dari {$totalGroups} selesai diproses.",
+                ], 3600);
+            }
         }
+    }
+
+    private function trackImportBatchValue(string $key, int $value): void
+    {
+        $request = app('request');
+        if (! $request->attributes->get('import_batch_id')) {
+            return;
+        }
+        $values = (array) $request->attributes->get('import_batch_'.$key, []);
+        $values[] = $value;
+        $request->attributes->set('import_batch_'.$key, array_values(array_unique($values)));
+    }
+
+    private function trackImportBatchOutcome(array $outcome): void
+    {
+        $request = app('request');
+        if (! $request->attributes->get('import_batch_id')) {
+            return;
+        }
+        $outcomes = (array) $request->attributes->get('import_batch_row_outcomes', []);
+        $outcomes[] = $outcome;
+        $request->attributes->set('import_batch_row_outcomes', $outcomes);
     }
 
     private function __formatSaleData($imported_data, $import_fields, $group_by)
@@ -820,11 +986,11 @@ class ImportSalesController extends Controller
      * @return \Illuminate\Http\Response
      */
 
-    public function revertPembelianImport($batch)
+    public function revertPembelianImport(Request $request, $batch)
     {
-        return $this->revertSaleImport($batch);
+        return $this->revertSaleImport($request, $batch);
     }
-    public function revertSaleImport($batch)
+    public function revertSaleImport(Request $request, $batch)
     {
         $type = 'sell';
         if (request()->is('revert-pembelian-import/*')) {
@@ -877,6 +1043,10 @@ class ImportSalesController extends Controller
                 'success' => 0,
                 'msg' => trans('messages.something_went_wrong'),
             ];
+        }
+
+        if ($request->expectsJson()) {
+            return response()->json($output, $output['success'] ? 200 : 422);
         }
 
         return back()->with('status', $output);

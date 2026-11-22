@@ -3,12 +3,18 @@
 namespace App\Http\Controllers;
 
 use App\SellingPriceGroup;
+use App\Jobs\ProcessSellingPriceGroupImportBatch;
+use App\Services\SellingPriceGroupImportBatchService;
+use App\Services\UserImportBatchService;
+use App\UserImportBatch;
 use App\Utils\Util;
 use App\Variation;
 use App\VariationGroupPrice;
 use DB;
 use Excel;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Spatie\Permission\Models\Permission;
 use Yajra\DataTables\Facades\DataTables;
 
@@ -288,111 +294,94 @@ class SellingPriceGroupController extends Controller
      */
     public function import(Request $request)
     {
-        try {
-            $notAllowed = $this->commonUtil->notAllowedInDemo();
-            if (! empty($notAllowed)) {
-                return $notAllowed;
-            }
+        abort_unless($request->user()->can('product.update'), 403, 'Unauthorized action.');
+        $notAllowed = $this->commonUtil->notAllowedInDemo();
+        if (! empty($notAllowed)) {
+            return $notAllowed;
+        }
+        $request->validate(['product_group_prices' => 'required|file|mimes:xlsx,xls|max:51200']);
 
-            //Set maximum php execution time
-            ini_set('max_execution_time', 0);
-            ini_set('memory_limit', -1);
+        $file = $request->file('product_group_prices');
+        $stagingPath = $file->storeAs(
+            'user-import-staging/selling-price-group',
+            (string) Str::uuid().'.'.(strtolower($file->getClientOriginalExtension()) ?: 'xlsx'),
+            'local'
+        );
+        abort_unless($stagingPath, 422, 'Workbook harga tidak dapat disimpan ke storage privat.');
 
-            if ($request->hasFile('product_group_prices')) {
-                $file = $request->file('product_group_prices');
+        $batch = UserImportBatch::create([
+            'business_id' => (int) $request->user()->business_id,
+            'created_by' => (int) $request->user()->id,
+            'importer_key' => SellingPriceGroupImportBatchService::IMPORTER_KEY,
+            'source_key' => (string) Str::uuid(),
+            'file_name' => $file->getClientOriginalName(),
+            'staging_path' => $stagingPath,
+            'status' => 'queued_preview',
+            'stage' => 'queued',
+            'last_message' => 'Workbook harga masuk antrean import.',
+            'heartbeat_at' => now(),
+        ]);
+        ProcessSellingPriceGroupImportBatch::dispatch((int) $batch->id, (int) $batch->business_id);
 
-                $parsed_array = Excel::toArray([], $file);
-
-                $headers = $parsed_array[0][0];
-
-                //Remove header row
-                $imported_data = array_splice($parsed_array[0], 1);
-
-                $business_id = request()->user()->business_id;
-                $price_groups = SellingPriceGroup::where('business_id', $business_id)->active()->get();
-
-                //Get price group names from headers
-                $imported_pgs = [];
-                foreach ($headers as $key => $value) {
-                    if (! empty($value) && $key > 2) {
-                        $imported_pgs[$key] = $value;
-                    }
-                }
-
-                $error_msg = '';
-                DB::beginTransaction();
-
-                foreach ($imported_data as $key => $value) {
-                    $variation = Variation::where('sub_sku', $value[1])
-                                        ->first();
-                    if (empty($variation)) {
-                        $row = $key + 1;
-                        $error_msg = __('lang_v1.product_not_found_exception', ['sku' => $value[1], 'row' => $row]);
-
-                        throw new \Exception($error_msg);
-                    }
-
-                    //Check if product base price is changed
-                    if($variation->sell_price_inc_tax != $value[2]){
-                        //update price for base selling price, adjust default_sell_price, profit %
-                        $variation->sell_price_inc_tax = $value[2];
-                        $tax = $variation->product->product_tax()->get();
-                        $tax_percent = !empty($tax) && !empty($tax->first()) ? $tax->first()->amount : 0;
-                        $variation->default_sell_price = $this->commonUtil->calc_percentage_base($value[2], $tax_percent);
-                        $variation->profit_percent = $this->commonUtil
-                                        ->get_percent($variation->default_purchase_price, $variation->default_sell_price);
-                        $variation->update();
-                    }
-
-                    //update selling price
-                    foreach ($imported_pgs as $k => $v) {
-                        $price_group = $price_groups->filter(function ($item) use ($v) {
-                            return strtolower($item->name) == strtolower($v);
-                        });
-
-                        if ($price_group->isNotEmpty()) {
-                            //Check if price is numeric
-                            if (! is_null($value[$k]) && ! is_numeric($value[$k])) {
-                                $row = $key + 1;
-                                $error_msg = __('lang_v1.price_group_non_numeric_exception', ['row' => $row]);
-
-                                throw new \Exception($error_msg);
-                            }
-
-                            if (! is_null($value[$k])) {
-                                VariationGroupPrice::updateOrCreate(
-                                    ['variation_id' => $variation->id,
-                                        'price_group_id' => $price_group->first()->id,
-                                    ],
-                                    ['price_inc_tax' => $value[$k],
-                                    ]
-                                );
-                            }
-                        } else {
-                            $row = $key + 1;
-                            $error_msg = __('lang_v1.price_group_not_found_exception', ['pg' => $v, 'row' => $row]);
-
-                            throw new \Exception($error_msg);
-                        }
-                    }
-                }
-                DB::commit();
-            }
-            $output = ['success' => 1,
-                'msg' => __('lang_v1.product_prices_imported_successfully'),
-            ];
-        } catch (\Exception $e) {
-            DB::rollBack();
-            \Log::emergency('File:'.$e->getFile().'Line:'.$e->getLine().'Message:'.$e->getMessage());
-
-            $output = ['success' => 0,
-                'msg' => $e->getMessage(),
-            ];
-
-            return redirect('update-product-price')->with('notification', $output);
+        if ($request->expectsJson()) {
+            return response()->json([
+                'success' => true,
+                'batch_id' => $batch->id,
+                'status' => 'queued_preview',
+                'message' => 'Workbook masuk antrean. Status dapat dilihat pada riwayat import.',
+            ], 202);
         }
 
-        return redirect('update-product-price')->with('status', $output);
+        return redirect('update-product-price')->with('status', [
+            'success' => 1,
+            'msg' => 'Workbook masuk antrean. Status dapat dilihat pada riwayat import.',
+        ]);
+    }
+
+    public function importHistory(Request $request, SellingPriceGroupImportBatchService $history)
+    {
+        abort_unless($request->user()->can('product.update'), 403, 'Unauthorized action.');
+
+        return response()->json($history->history($request, (int) $request->user()->business_id));
+    }
+
+    public function importHistoryDetail(Request $request, int $batch, SellingPriceGroupImportBatchService $history)
+    {
+        abort_unless($request->user()->can('product.update'), 403, 'Unauthorized action.');
+        $detail = $history->detail($batch, (int) $request->user()->business_id);
+
+        return response()->json($detail);
+    }
+
+    public function importHistorySource(Request $request, int $batch, UserImportBatchService $batches)
+    {
+        abort_unless($request->user()->can('product.update'), 403, 'Unauthorized action.');
+        $record = $batches->findForBusiness($batch, (int) $request->user()->business_id, SellingPriceGroupImportBatchService::IMPORTER_KEY);
+        abort_unless($record->hasSourceSnapshot(), 404);
+
+        return $batches->workbookDownload($record);
+    }
+
+    public function importHistoryRetry(Request $request, int $batch)
+    {
+        abort_unless($request->user()->can('product.update'), 403, 'Unauthorized action.');
+        $record = UserImportBatch::where('business_id', $request->user()->business_id)
+            ->where('importer_key', SellingPriceGroupImportBatchService::IMPORTER_KEY)
+            ->findOrFail($batch);
+        abort_unless($record->status === 'failed' && $record->hasSourceSnapshot(), 422, 'Batch ini tidak dapat dicoba ulang.');
+        $record->forceFill(['status' => 'queued_preview', 'stage' => 'queued', 'failed_at' => null, 'completed_at' => null, 'error_message' => null, 'heartbeat_at' => now()])->save();
+        ProcessSellingPriceGroupImportBatch::dispatch((int) $record->id, (int) $record->business_id);
+
+        return response()->json(['success' => true, 'status' => 'queued_preview'], 202);
+    }
+
+    public function importHistoryRevert(Request $request, int $batch, SellingPriceGroupImportBatchService $history, UserImportBatchService $batches)
+    {
+        abort_unless($request->user()->can('product.update'), 403, 'Unauthorized action.');
+        $record = $batches->findForBusiness($batch, (int) $request->user()->business_id, SellingPriceGroupImportBatchService::IMPORTER_KEY);
+        $history->revert($record);
+
+        return response()->json(['success' => true, 'status' => 'reverted']);
     }
 
     /**

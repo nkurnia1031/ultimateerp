@@ -9,10 +9,14 @@
 <section class="content" id="solar-import-detail"
     data-status-url="{{ route('solar.imports.status', $batch->id) }}"
     data-events-url="{{ route('solar.imports.events', $batch->id) }}"
+    data-rows-url="{{ route('solar.imports.rows', $batch->id) }}"
     data-last-event-id="{{ $events->max('sequence') ?? 0 }}">
     <div class="box box-primary">
         <div class="box-header with-border">
             <a href="{{ route('solar.imports') }}" class="btn btn-default btn-sm"><i class="fa fa-arrow-left"></i> Kembali</a>
+            @if ($hasWorkbookSnapshot)
+                <a href="{{ route('solar.imports.restore', $batch->id) }}" class="btn btn-success btn-sm"><i class="fa fa-file-excel-o"></i> Unduh ulang workbook</a>
+            @endif
             <span class="label label-{{ $batch->status === 'imported' ? 'success' : ($batch->status === 'rolled_back' ? 'default' : 'warning') }} pull-right">{{ ucfirst($batch->status) }}</span>
         </div>
         <div class="box-body">
@@ -32,6 +36,36 @@
                 @endforelse
             </ol>
             <div id="solar-import-detail-connection" class="text-muted" aria-live="polite"></div>
+            <h4>Pemetaan unit dan supir</h4>
+            @php $mappingRows = array_merge($mappings['asset'] ?? [], $mappings['driver'] ?? []); @endphp
+            @if ($mappingRows === [])
+                <p class="text-muted">Tidak ada pemetaan referensi pada batch ini.</p>
+            @else
+                <div class="table-responsive">
+                    <table class="table table-condensed table-bordered">
+                        <thead><tr><th>Jenis</th><th>Nilai workbook</th><th>ID terpilih</th><th>Saran</th><th>Baris</th></tr></thead>
+                        <tbody>
+                            @foreach ($mappingRows as $mapping)
+                                <tr>
+                                    <td>{{ ($mapping['type'] ?? '') === 'asset' ? 'Unit/Asset' : 'Supir' }}</td>
+                                    <td>{{ $mapping['source_value'] ?? '—' }}</td>
+                                    <td>{{ !empty($mapping['has_conflict']) ? 'Konflik' : ($mapping['target_id'] ?? '—') }}</td>
+                                    <td>{{ collect($mapping['suggestions'] ?? [])->pluck('label')->implode(', ') ?: '—' }}</td>
+                                    <td>{{ (int) ($mapping['row_count'] ?? 0) }}</td>
+                                </tr>
+                            @endforeach
+                        </tbody>
+                    </table>
+                </div>
+            @endif
+            <h4>Baris sumber dan hasil pencocokan</h4>
+            <p class="text-muted">Rincian Excel, padanan di aplikasi, dan kesalahan tiap baris tersedia melalui detail.</p>
+            <div class="table-responsive">
+                <table id="solar-import-source-rows" class="table table-condensed table-bordered table-striped" style="width:100%">
+                    <thead><tr><th>Sheet</th><th>Baris</th><th>Ledger</th><th>Tanggal</th><th>Status</th><th>Dicocokkan via</th><th>Perbedaan / Error</th><th>Excel</th><th>Aplikasi</th><th>Import</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
             @foreach ($rows as $ledger => $records)
                 <h4>{{ $ledger === 'usage' ? 'PEMAKAIAN ALAT' : strtoupper($ledger) }} ({{ $records->count() }} baris)</h4>
                 @if ($records->isEmpty())

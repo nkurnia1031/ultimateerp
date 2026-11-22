@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Bus;
 use Mockery;
 use Modules\Accounting\Jobs\ProcessJournalImportJob;
+use Modules\Accounting\Services\JournalImportHistoryService;
 use Tests\TestCase;
 
 class JournalImportDraftRowsTest extends TestCase
@@ -51,6 +52,9 @@ class JournalImportDraftRowsTest extends TestCase
         $moduleUtil = Mockery::mock(ModuleUtil::class);
         $moduleUtil->shouldReceive('hasThePermissionInSubscription')->byDefault()->andReturn(true);
         $this->app->instance(ModuleUtil::class, $moduleUtil);
+        $historyService = Mockery::mock(JournalImportHistoryService::class);
+        $historyService->shouldReceive('linkBatch')->zeroOrMoreTimes()->andReturn(null);
+        $this->app->instance(JournalImportHistoryService::class, $historyService);
     }
 
     protected function tearDown(): void

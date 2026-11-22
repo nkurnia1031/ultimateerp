@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
+use Modules\AssetManagement\Entities\HeavyEquipmentRoute;
 use Modules\AssetManagement\Entities\HeavyEquipmentTrip;
 use Modules\AssetManagement\Jobs\ProcessHeavyEquipmentSpbImportJob;
 use Modules\AssetManagement\Jobs\ProcessHeavyEquipmentSpbPreviewJob;
@@ -23,7 +24,10 @@ class HeavyEquipmentSpbImportBatchLifecycleTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->withoutMiddleware(\App\Http\Middleware\AdminSidebarMenu::class);
+        $this->withoutMiddleware([
+            \App\Http\Middleware\AdminSidebarMenu::class,
+            \App\Http\Middleware\Timezone::class,
+        ]);
 
         if (! in_array('sqlite', \PDO::getAvailableDrivers(), true)) {
             $this->markTestSkipped('PDO SQLite is required for isolated SPB import batch tests.');
@@ -42,6 +46,7 @@ class HeavyEquipmentSpbImportBatchLifecycleTest extends TestCase
         DB::purge('sqlite');
         DB::setDefaultConnection('sqlite');
         Storage::fake('local');
+        Storage::fake('user_imports');
 
         Schema::create('user_import_batches', function (Blueprint $table) {
             $table->bigIncrements('id');
@@ -124,9 +129,13 @@ class HeavyEquipmentSpbImportBatchLifecycleTest extends TestCase
         });
         Schema::create('heavy_equipment_vendor_loadings', function (Blueprint $table) {
             $table->increments('id');
+            $table->unsignedInteger('loading_document_id');
+            $table->string('loading_no');
+        });
+        Schema::create('heavy_equipment_vendor_loading_documents', function (Blueprint $table) {
+            $table->increments('id');
             $table->unsignedInteger('business_id');
             $table->unsignedInteger('route_id')->nullable();
-            $table->string('loading_no');
         });
     }
 
@@ -145,7 +154,7 @@ class HeavyEquipmentSpbImportBatchLifecycleTest extends TestCase
         $batch = UserImportBatch::findOrFail($batchId);
         $this->assertSame(7, (int) $batch->business_id);
         $this->assertSame('spb', $batch->importer_key);
-        $this->assertTrue(Storage::disk('local')->exists($batch->staging_path));
+        $this->assertTrue(Storage::disk('user_imports')->exists($batch->staging_path));
         Bus::assertDispatched(ProcessHeavyEquipmentSpbPreviewJob::class);
 
         DB::table('assets')->insert(['business_id' => 7, 'asset_code' => 'BM 9133', 'name' => 'BM 9133']);
@@ -281,6 +290,18 @@ class HeavyEquipmentSpbImportBatchLifecycleTest extends TestCase
         $trip->save();
         $this->saveImportedResult($batch, $trip);
 
+        $this->assertDatabaseHas('heavy_equipment_routes', [
+            'id' => $route->id,
+            'business_id' => 7,
+            'source_import_batch_id' => $batch->id,
+        ]);
+        $this->assertSame(
+            [(int) $route->id],
+            HeavyEquipmentRoute::where('business_id', 7)
+                ->where('source_import_batch_id', $batch->id)
+                ->pluck('id')->map(fn ($id) => (int) $id)->all()
+        );
+
         $this->batchService()->revert($batch, 7);
 
         $this->assertDatabaseMissing('heavy_equipment_trips', ['id' => $trip->id]);
@@ -299,11 +320,29 @@ class HeavyEquipmentSpbImportBatchLifecycleTest extends TestCase
         $trip->route_id = $route->id;
         $trip->save();
         $this->saveImportedResult($batch, $trip);
-        DB::table('heavy_equipment_vendor_loadings')->insert([
+        $documentId = DB::table('heavy_equipment_vendor_loading_documents')->insertGetId([
             'business_id' => 7,
             'route_id' => $route->id,
+        ]);
+        DB::table('heavy_equipment_vendor_loadings')->insert([
+            'loading_document_id' => $documentId,
             'loading_no' => 'LV-USED-1',
         ]);
+
+        $this->assertSame(
+            [(int) $route->id],
+            HeavyEquipmentRoute::where('business_id', 7)
+                ->where('source_import_batch_id', $batch->id)
+                ->pluck('id')->map(fn ($id) => (int) $id)->all()
+        );
+        $this->assertSame(
+            ['LV-USED-1'],
+            DB::table('heavy_equipment_vendor_loadings as loading')
+                ->join('heavy_equipment_vendor_loading_documents as document', 'document.id', '=', 'loading.loading_document_id')
+                ->where('document.business_id', 7)
+                ->where('document.route_id', $route->id)
+                ->pluck('loading.loading_no')->all()
+        );
 
         try {
             $this->batchService()->revert($batch, 7);

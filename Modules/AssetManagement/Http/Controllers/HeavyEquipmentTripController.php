@@ -263,7 +263,7 @@ class HeavyEquipmentTripController extends Controller
                 'heartbeat_at' => now(),
             ]);
             $extension = strtolower($file->getClientOriginalExtension());
-            $stagingPath = $file->storeAs('user-import-staging', 'spb-'.$batch->id.'.'.$extension, 'local');
+            $stagingPath = $file->storeAs('user-import-staging', 'spb-'.$batch->id.'.'.$extension, 'user_imports');
             if (! $stagingPath) {
                 throw new \RuntimeException('File upload tidak dapat disimpan ke staging privat.');
             }
@@ -286,7 +286,7 @@ class HeavyEquipmentTripController extends Controller
         } catch (\Throwable $e) {
             report($e);
             if ($stagingPath) {
-                Storage::disk('local')->delete($stagingPath);
+                Storage::disk('user_imports')->delete($stagingPath);
             }
             if ($batch) {
                 $this->spbImportBatchService->markFailed((int) $batch->id, $e->getMessage());
