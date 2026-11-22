@@ -76,7 +76,7 @@ test('queued Vendor Loading preview shortens row issues and opens the full messa
     await page.setViewportSize({ width: 2000, height: 1000 });
     await page.goto(`/asset/fleet/vendor-loadings/import?batch_id=${batchId}`);
     await expect(page.locator('#vendor-import-preview-box')).toBeVisible();
-    const issueCell = page.locator('#vendor-import-grid [col-id="row_issue"]');
+    const issueCell = page.locator('#vendor-import-grid .ag-cell[col-id="row_issue"]');
     const openMessage = issueCell.locator('.import-history-message-open');
     await expect(openMessage).toBeVisible();
     await expect(issueCell).not.toContainText('AKHIR-PESAN-UNIK');
