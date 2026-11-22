@@ -529,13 +529,13 @@ class SolarController extends Controller
             $directory = "solar-imports/{$businessId}";
             $this->cleanupImports($directory);
             $extension = strtolower($request->file('file')->getClientOriginalExtension());
-            $path = $request->file('file')->storeAs($directory, "{$token}.{$extension}", 'local');
+            $path = $request->file('file')->storeAs($directory, "{$token}.{$extension}", 'user_imports');
             DB::table('solar_import_batches')->insert([
                 'id' => $token,
                 'business_id' => $businessId,
                 'created_by' => optional($request->user())->id,
                 'file_name' => $request->file('file')->getClientOriginalName(),
-                'file_hash' => hash_file('sha256', Storage::disk('local')->path($path)),
+                'file_hash' => hash_file('sha256', Storage::disk('user_imports')->path($path)),
                 'file_path' => $path,
                 'status' => 'preview',
                 'operation' => 'preview',
@@ -643,7 +643,7 @@ class SolarController extends Controller
             abort_unless($batch->status === 'preview', 409, 'Batch import yang sudah selesai tidak dapat diulang.');
             abort_unless(
                 app(SolarImportHistoryService::class)->hasSourceSnapshot($batchId, $businessId)
-                || ($batch->file_path && Storage::disk('local')->exists($batch->file_path)),
+                || ($batch->file_path && Storage::disk('user_imports')->exists($batch->file_path)),
                 409,
                 'Sumber workbook tidak tersedia. Unggah ulang file untuk memulai batch baru.'
             );
@@ -1351,7 +1351,7 @@ class SolarController extends Controller
 
     private function cleanupImports(string $directory): void
     {
-        $disk = Storage::disk('local');
+        $disk = Storage::disk('user_imports');
         $referenced = DB::table('solar_import_batches')
             ->where('file_path', 'like', rtrim($directory, '/').'/%')
             ->get(['id', 'file_path', 'user_import_batch_id', 'process_state'])

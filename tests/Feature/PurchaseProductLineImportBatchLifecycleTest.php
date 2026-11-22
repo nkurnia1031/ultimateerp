@@ -33,6 +33,7 @@ class PurchaseProductLineImportBatchLifecycleTest extends TestCase
         DB::purge('purchase_product_import_test');
         DB::setDefaultConnection('purchase_product_import_test');
         Storage::fake('local');
+        Storage::fake('user_imports');
         $this->withoutMiddleware([
             \App\Http\Middleware\IsInstalled::class,
             \App\Http\Middleware\SetSessionData::class,

@@ -334,12 +334,12 @@ class BonusAyakImportHistoryService
     private function adoptLegacyPreview(string $token, int $businessId, int $userId): ?UserImportBatch
     {
         $legacyPath = 'bonus-ayak-import-previews/'.$userId.'-'.$businessId.'-'.$token.'.json';
-        if (! Storage::disk('local')->exists($legacyPath)) {
+        if (! Storage::disk('user_imports')->exists($legacyPath)) {
             return null;
         }
 
         try {
-            $preview = json_decode(Storage::disk('local')->get($legacyPath), true, 512, JSON_THROW_ON_ERROR);
+            $preview = json_decode(Storage::disk('user_imports')->get($legacyPath), true, 512, JSON_THROW_ON_ERROR);
             if (! is_array($preview)) {
                 throw new \UnexpectedValueException('Preview import tidak lagi tersedia.');
             }
@@ -352,7 +352,7 @@ class BonusAyakImportHistoryService
                 throw new \UnexpectedValueException('Preview import tidak lagi tersedia.');
             }
         } catch (\Throwable) {
-            Storage::disk('local')->delete($legacyPath);
+            Storage::disk('user_imports')->delete($legacyPath);
             abort(404);
         }
 
@@ -377,7 +377,7 @@ class BonusAyakImportHistoryService
         if (! filled($batch->preview_path)) {
             $this->storePreview($batch, $preview);
         }
-        Storage::disk('local')->delete($legacyPath);
+        Storage::disk('user_imports')->delete($legacyPath);
 
         return $batch;
     }
@@ -454,7 +454,7 @@ class BonusAyakImportHistoryService
 
     public function discardPreview(UserImportBatch $batch): void
     {
-        if (filled($batch->preview_path) && Storage::disk('local')->delete($batch->preview_path)) {
+        if (filled($batch->preview_path) && Storage::disk('user_imports')->delete($batch->preview_path)) {
             $batch->forceFill(['preview_path' => null])->save();
         }
     }

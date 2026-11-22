@@ -40,7 +40,7 @@ class HeavyEquipmentRateImportHistoryService
         ]);
         $extension = strtolower($file->getClientOriginalExtension());
         $relativeDirectory = 'heavy-equipment-rate-imports/'.$businessId.'/'.$userId;
-        $stagingPath = Storage::disk('local')->putFileAs($relativeDirectory, $file, $batch->id.'.'.$extension);
+        $stagingPath = Storage::disk('user_imports')->putFileAs($relativeDirectory, $file, $batch->id.'.'.$extension);
         if (! $stagingPath) {
             $batch->forceFill([
                 'status' => 'failed',
@@ -85,12 +85,12 @@ class HeavyEquipmentRateImportHistoryService
 
         $stagingPath = (string) $batch->staging_path;
         try {
-            if ($stagingPath === '' || ! Storage::disk('local')->exists($stagingPath)) {
+            if ($stagingPath === '' || ! Storage::disk('user_imports')->exists($stagingPath)) {
                 throw new \RuntimeException('File upload tidak tersedia untuk dianalisis. Upload ulang workbook tarif.');
             }
 
             if (! $batch->hasSourceSnapshot()) {
-                $snapshot = $this->sourceSnapshot(Storage::disk('local')->path($stagingPath));
+                $snapshot = $this->sourceSnapshot(Storage::disk('user_imports')->path($stagingPath));
                 $this->batchService->storePayload($batch, 'source_snapshot', $snapshot);
             }
             $batch->forceFill([
@@ -103,7 +103,7 @@ class HeavyEquipmentRateImportHistoryService
 
             $options = json_decode((string) $batch->options_json, true) ?: [];
             $effectiveFrom = Carbon::createFromFormat('!Y-m-d', (string) ($options['effective_from'] ?? ''));
-            $path = Storage::disk('local')->path($stagingPath);
+            $path = Storage::disk('user_imports')->path($stagingPath);
             $upload = new UploadedFile(
                 $path,
                 (string) $batch->file_name,
@@ -346,7 +346,7 @@ class HeavyEquipmentRateImportHistoryService
             $row['effective_from'] = $domain?->effective_from?->format('Y-m-d');
             $row['active'] = $shared?->isActive() ?? false;
             $hasSnapshot = (bool) $row['has_snapshot'] && filled($shared?->source_snapshot_path)
-                && Storage::disk('local')->exists((string) $shared->source_snapshot_path);
+                && Storage::disk('user_imports')->exists((string) $shared->source_snapshot_path);
             $row['has_snapshot'] = $hasSnapshot;
             $row['can_download'] = $hasSnapshot;
             $row['can_preview'] = (bool) $domain && $domain->status === 'draft' && $row['status'] === 'preview_ready';
@@ -535,9 +535,9 @@ class HeavyEquipmentRateImportHistoryService
 
     private function deleteStaging(UserImportBatch $batch, string $path): void
     {
-        if ($path !== '' && Storage::disk('local')->exists($path)) {
+        if ($path !== '' && Storage::disk('user_imports')->exists($path)) {
             try {
-                if (! Storage::disk('local')->delete($path)) {
+                if (! Storage::disk('user_imports')->delete($path)) {
                     throw new \RuntimeException('File staging tarif gagal dihapus: '.$path);
                 }
             } catch (\Throwable $exception) {

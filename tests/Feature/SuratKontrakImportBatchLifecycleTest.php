@@ -26,6 +26,7 @@ class SuratKontrakImportBatchLifecycleTest extends TestCase
         parent::setUp();
         Bus::fake();
         Storage::fake('local');
+        Storage::fake('user_imports');
         $this->withoutMiddleware([
             \App\Http\Middleware\SetSessionData::class,
             \App\Http\Middleware\AdminSidebarMenu::class,

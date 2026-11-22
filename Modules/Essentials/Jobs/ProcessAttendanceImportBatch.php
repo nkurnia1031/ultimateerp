@@ -61,8 +61,8 @@ class ProcessAttendanceImportBatch implements ShouldQueue
         $stagingPath = (string) $batch->staging_path;
         try {
             $batch = $batch->fresh();
-            if (filled($batch->staging_path) && Storage::disk('local')->exists($batch->staging_path)) {
-                $path = Storage::disk('local')->path($batch->staging_path);
+            if (filled($batch->staging_path) && Storage::disk('user_imports')->exists($batch->staging_path)) {
+                $path = Storage::disk('user_imports')->path($batch->staging_path);
             } else {
                 abort_unless($batch->hasSourceSnapshot(), 422, 'Snapshot workbook Attendance tidak tersedia untuk diproses ulang.');
                 $temporaryPath = $batches->restoredWorkbookPath($batch);
@@ -251,7 +251,7 @@ class ProcessAttendanceImportBatch implements ShouldQueue
             return;
         }
 
-        Storage::disk('local')->delete($path);
+        Storage::disk('user_imports')->delete($path);
         UserImportBatch::where('business_id', $this->businessId)
             ->where('importer_key', AttendanceImportBatchService::IMPORTER_KEY)
             ->where('id', $this->batchId)

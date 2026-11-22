@@ -69,8 +69,8 @@ class ProcessProjectImportBatch implements ShouldQueue
         $temporaryPath = null;
         try {
             $batch = $batch->fresh();
-            if (filled($batch->staging_path) && Storage::disk('local')->exists($batch->staging_path)) {
-                $sourcePath = Storage::disk('local')->path($batch->staging_path);
+            if (filled($batch->staging_path) && Storage::disk('user_imports')->exists($batch->staging_path)) {
+                $sourcePath = Storage::disk('user_imports')->path($batch->staging_path);
             } else {
                 abort_unless($batch->hasSourceSnapshot(), 422, 'Snapshot workbook Project tidak tersedia untuk diproses ulang.');
                 $temporaryPath = $batches->restoredWorkbookPath($batch);
@@ -186,7 +186,7 @@ class ProcessProjectImportBatch implements ShouldQueue
             return;
         }
 
-        Storage::disk('local')->delete($path);
+        Storage::disk('user_imports')->delete($path);
         UserImportBatch::where('business_id', $this->businessId)
             ->where('importer_key', ProjectImportBatchService::IMPORTER_KEY)
             ->where('id', $this->batchId)

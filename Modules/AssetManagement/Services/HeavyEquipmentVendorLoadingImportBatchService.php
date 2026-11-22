@@ -40,7 +40,7 @@ class HeavyEquipmentVendorLoadingImportBatchService
         $this->historyService->syncFromDomainBatch($batchId);
 
         try {
-            $preview = json_decode(Storage::disk('local')->get($batch->preview_path), true, 512, JSON_THROW_ON_ERROR);
+            $preview = json_decode(Storage::disk('user_imports')->get($batch->preview_path), true, 512, JSON_THROW_ON_ERROR);
             $options = json_decode($batch->overrides_json ?: '{}', true, 512, JSON_THROW_ON_ERROR);
             $permissions = json_decode($batch->permissions_json ?: '{}', true, 512, JSON_THROW_ON_ERROR);
             $results = json_decode($batch->results_json ?: '{}', true) ?: [];

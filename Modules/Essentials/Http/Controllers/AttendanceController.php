@@ -627,13 +627,12 @@ class AttendanceController extends Controller
 
         try {
             $extension = strtolower($file->getClientOriginalExtension()) ?: 'xls';
-            $path = $file->storeAs('user-imports/'.$batch->id.'/staging', 'source.'.$extension, 'local');
+            $path = $file->storeAs('user-imports/'.$batch->id.'/staging', 'source.'.$extension, 'user_imports');
             if (! $path) {
                 throw new \RuntimeException('Workbook Attendance tidak dapat disimpan ke storage privat.');
             }
             $batch->staging_path = $path;
             $batch->save();
-            app(UserImportBatchService::class)->captureWorkbook($batch, Storage::disk('local')->path($path));
             ProcessAttendanceImportBatch::dispatch((int) $batch->id, $businessId);
         } catch (\Throwable $exception) {
             app(AttendanceImportBatchService::class)->fail($batch, $exception);

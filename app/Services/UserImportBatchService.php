@@ -14,6 +14,8 @@ use PhpOffice\PhpSpreadsheet\RichText\RichText;
 
 class UserImportBatchService
 {
+    public const STORAGE_DISK = 'user_imports';
+
     private const PAYLOAD_FIELDS = [
         'source_snapshot' => 'source_snapshot_path',
         'preview' => 'preview_path',
@@ -43,7 +45,7 @@ class UserImportBatchService
 
         $relativePath = 'user-imports/'.$batch->id.'/'.$key.'.json';
         $contents = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
-        if (! Storage::disk('local')->put($relativePath, $contents)) {
+        if (! Storage::disk(self::STORAGE_DISK)->put($relativePath, $contents)) {
             throw new \RuntimeException('Payload batch import tidak dapat disimpan ke storage privat.');
         }
 
@@ -60,11 +62,11 @@ class UserImportBatchService
         }
 
         $path = $batch->{self::PAYLOAD_FIELDS[$key]};
-        if (! $path || ! Storage::disk('local')->exists($path)) {
+        if (! $path || ! Storage::disk(self::STORAGE_DISK)->exists($path)) {
             throw new \RuntimeException('Data batch import tidak tersedia.');
         }
 
-        return json_decode(Storage::disk('local')->get($path), true, 512, JSON_THROW_ON_ERROR);
+        return json_decode(Storage::disk(self::STORAGE_DISK)->get($path), true, 512, JSON_THROW_ON_ERROR);
     }
 
     public function dataTable(Request $request, int $businessId, string $importerKey): array

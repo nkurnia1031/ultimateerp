@@ -20,6 +20,7 @@ class ProjectImportBatchLifecycleTest extends TestCase
         parent::setUp();
         Bus::fake();
         Storage::fake('local');
+        Storage::fake('user_imports');
         $this->withoutMiddleware([
             \App\Http\Middleware\IsInstalled::class,
             \App\Http\Middleware\SetSessionData::class,
@@ -44,11 +45,11 @@ class ProjectImportBatchLifecycleTest extends TestCase
                 ->assertJsonPath('status', 'queued_preview');
             Bus::assertDispatchedTimes(ProcessProjectImportBatch::class, 1);
 
-            $batch = UserImportBatch::where('importer_key', 'project')->firstOrFail();
+            $batch = UserImportBatch::findOrFail($response->json('batch_id'));
             $this->assertSame(7, (int) $batch->business_id);
             $this->assertSame('queued_preview', $batch->status);
-            $this->assertTrue($batch->hasSourceSnapshot());
-            $this->assertTrue(Storage::disk('local')->exists($batch->staging_path));
+            $this->assertNull($batch->source_snapshot_path, 'The HTTP upload must leave workbook parsing to the queued job.');
+            $this->assertTrue(Storage::disk('user_imports')->exists($batch->staging_path));
 
             $history = $this->actingAs($this->admin())
                 ->withSession($this->businessSession(7))
@@ -62,12 +63,12 @@ class ProjectImportBatchLifecycleTest extends TestCase
                 ->assertJsonPath('draw', 4)
                 ->assertJsonPath('recordsTotal', 1)
                 ->assertJsonPath('data.0.file_name', 'project-import.xlsx')
-                ->assertJsonPath('data.0.has_snapshot', true);
+                ->assertJsonPath('data.0.has_snapshot', false);
 
             $this->actingAs($this->admin())
                 ->withSession($this->businessSession(7))
                 ->get(route('project.import.history.source', $batch->id))
-                ->assertOk();
+                ->assertNotFound();
         } finally {
             @unlink($path);
         }
@@ -128,7 +129,7 @@ class ProjectImportBatchLifecycleTest extends TestCase
             $response->assertStatus(202);
             $batch = UserImportBatch::findOrFail($response->json('batch_id'));
             $stagingPath = $batch->staging_path;
-            $this->assertTrue($batch->hasSourceSnapshot());
+            $this->assertNull($batch->source_snapshot_path, 'The HTTP upload must not parse the workbook.');
 
             (new ProcessProjectImportBatch((int) $batch->id, 7))->handle(
                 app(\Modules\Project\Services\ProjectWorkbookImporter::class),
@@ -138,7 +139,7 @@ class ProjectImportBatchLifecycleTest extends TestCase
             $batch->refresh();
             $this->assertSame('failed', $batch->status);
             $this->assertNull($batch->staging_path);
-            $this->assertFalse(Storage::disk('local')->exists($stagingPath));
+            $this->assertFalse(Storage::disk('user_imports')->exists($stagingPath));
             $this->assertTrue($batch->hasSourceSnapshot());
             $this->actingAs($this->admin())
                 ->withSession($this->businessSession(7))
@@ -237,6 +238,7 @@ class ProjectImportBatchLifecycleTest extends TestCase
     {
         return [
             'user' => ['business_id' => $businessId, 'id' => 999],
+            'business' => ['time_zone' => 'UTC'],
         ];
     }
 }

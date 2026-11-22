@@ -61,8 +61,8 @@ class AnalyzeBonusAyakImportBatch implements ShouldQueue
             $user = User::where('business_id', $this->businessId)->findOrFail((int) $batch->created_by);
             Auth::setUser($user);
 
-            if (filled($batch->staging_path) && Storage::disk('local')->exists($batch->staging_path)) {
-                $sourcePath = Storage::disk('local')->path($batch->staging_path);
+            if (filled($batch->staging_path) && Storage::disk('user_imports')->exists($batch->staging_path)) {
+                $sourcePath = Storage::disk('user_imports')->path($batch->staging_path);
             } else {
                 abort_unless($batch->hasSourceSnapshot(), 422, 'Workbook sumber Bonus Ayak tidak tersedia.');
                 $temporaryPath = $batches->restoredWorkbookPath($batch);
@@ -82,7 +82,7 @@ class AnalyzeBonusAyakImportBatch implements ShouldQueue
             report($exception);
         } finally {
             if ($batch && filled($batch->staging_path) && $batch->fresh()->hasSourceSnapshot()) {
-                Storage::disk('local')->delete($batch->staging_path);
+                Storage::disk('user_imports')->delete($batch->staging_path);
                 UserImportBatch::whereKey($batch->id)->update(['staging_path' => null]);
             }
             if ($temporaryPath && is_file($temporaryPath)) {

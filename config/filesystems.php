@@ -36,6 +36,12 @@ return [
             'throw' => false,
         ],
 
+        'user_imports' => [
+            'driver' => 'local',
+            'root' => storage_path('app/private'),
+            'throw' => true,
+        ],
+
         // Keep finance workbooks outside the public document root. In a
         // multi-host deployment, mount this same directory on web and CLI hosts.
         'journal_imports' => [

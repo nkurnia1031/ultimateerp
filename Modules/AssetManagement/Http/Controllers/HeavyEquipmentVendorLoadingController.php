@@ -599,7 +599,7 @@ class HeavyEquipmentVendorLoadingController extends Controller
                 $file->getClientOriginalName()
             );
             $relativeDirectory = 'vendor-loading-imports/'.$businessId.'/'.$userId;
-            $storedPath = \Illuminate\Support\Facades\Storage::disk('local')->putFileAs($relativeDirectory, $file, $batchId.'.'.$extension);
+            $storedPath = \Illuminate\Support\Facades\Storage::disk('user_imports')->putFileAs($relativeDirectory, $file, $batchId.'.'.$extension);
             if (! $storedPath) {
                 throw new \RuntimeException('File gagal disimpan di penyimpanan privat.');
             }
@@ -620,7 +620,7 @@ class HeavyEquipmentVendorLoadingController extends Controller
         } catch (\Throwable $e) {
             report($e);
             if ($storedPath) {
-                \Illuminate\Support\Facades\Storage::disk('local')->delete($storedPath);
+                \Illuminate\Support\Facades\Storage::disk('user_imports')->delete($storedPath);
             }
             if ($batchId) {
                 DB::table('heavy_equipment_vendor_loading_import_batches')->where('id', $batchId)->whereIn('status', ['queued_preview', 'analyzing'])->update([
@@ -730,7 +730,7 @@ class HeavyEquipmentVendorLoadingController extends Controller
         $this->authorizeImport();
         $batch = $this->ownedImportBatch($id);
         if ($batch->status !== 'failed' || empty($batch->preview_path)
-            || ! \Illuminate\Support\Facades\Storage::disk('local')->exists($batch->preview_path)) {
+            || ! \Illuminate\Support\Facades\Storage::disk('user_imports')->exists($batch->preview_path)) {
             return response()->json(['success' => false, 'msg' => 'Batch ini tidak memiliki preview gagal yang dapat dicoba ulang.'], 409);
         }
 
@@ -741,7 +741,7 @@ class HeavyEquipmentVendorLoadingController extends Controller
                 if (! $locked || $locked->status !== 'failed' || empty($locked->preview_path)) {
                     throw new \InvalidArgumentException('Batch sudah berubah status dan tidak dapat dicoba ulang.');
                 }
-                if (! \Illuminate\Support\Facades\Storage::disk('local')->exists($locked->preview_path)) {
+                if (! \Illuminate\Support\Facades\Storage::disk('user_imports')->exists($locked->preview_path)) {
                     throw new \InvalidArgumentException('File preview batch sudah tidak tersedia. Upload ulang workbook untuk menjalankan import kembali.');
                 }
                 if ((int) $locked->imported_documents > 0
@@ -897,7 +897,7 @@ class HeavyEquipmentVendorLoadingController extends Controller
     {
         $this->authorizeImport();
         $batch = $this->ownedImportBatch($id);
-        if (! $batch->preview_path || ! \Illuminate\Support\Facades\Storage::disk('local')->exists($batch->preview_path)) {
+        if (! $batch->preview_path || ! \Illuminate\Support\Facades\Storage::disk('user_imports')->exists($batch->preview_path)) {
             return response()->json(['success' => false, 'msg' => 'Preview sudah kedaluwarsa atau belum selesai dianalisis.'], 404);
         }
         if (! in_array($batch->status, ['preview_ready', 'queued_import', 'importing'], true)) {
@@ -907,7 +907,7 @@ class HeavyEquipmentVendorLoadingController extends Controller
         return response()->json([
             'success' => true,
             'batch_id' => (int) $batch->id,
-            'preview' => json_decode(\Illuminate\Support\Facades\Storage::disk('local')->get($batch->preview_path), true),
+            'preview' => json_decode(\Illuminate\Support\Facades\Storage::disk('user_imports')->get($batch->preview_path), true),
         ]);
     }
 
@@ -924,7 +924,7 @@ class HeavyEquipmentVendorLoadingController extends Controller
         if ($batch->status !== 'preview_ready' || ! $batch->preview_path) {
             return response()->json(['success' => false, 'msg' => 'Batch tidak lagi siap dikonfirmasi. Muat ulang status import.'], 409);
         }
-        $preview = json_decode(\Illuminate\Support\Facades\Storage::disk('local')->get($batch->preview_path), true);
+        $preview = json_decode(\Illuminate\Support\Facades\Storage::disk('user_imports')->get($batch->preview_path), true);
         $sheets = $preview['sheets'] ?? [];
         if ($sheets === []) {
             return response()->json(['success' => false, 'msg' => 'Preview kosong atau sudah tidak kompatibel. Upload ulang workbook.'], 422);

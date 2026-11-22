@@ -13,7 +13,6 @@ use App\Utils\ModuleUtil;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
-use Modules\Crm\Entities\SuratKontrak;
 use RuntimeException;
 
 class BusinessCopyImportBatchService
@@ -28,7 +27,8 @@ class BusinessCopyImportBatchService
         private UserImportBatchService $batches,
         private ContactBusinessImportService $contacts,
         private ExpenseCategoryBusinessImportService $categories,
-        private UserBusinessImportService $users
+        private UserBusinessImportService $users,
+        private ContactImportDependencyChecker $contactDependencies
     ) {
     }
 
@@ -267,10 +267,7 @@ class BusinessCopyImportBatchService
                 || (string) $contact->updated_at !== (string) ($snapshot['updated_at'] ?? ''),
                 422, 'Contact '.$contact->contact_id.' berubah setelah disalin.');
             abort_unless((int) $contact->user_import_batch_id === (int) $batch->id, 422, 'Contact bukan hasil batch salin ini.');
-            if (DB::table('transactions')->where('contact_id', $contact->id)->exists()
-                || (Schema::hasTable('user_contact_access') && DB::table('user_contact_access')->where('contact_id', $contact->id)->exists())
-                || (Schema::hasTable('document_and_notes') && DB::table('document_and_notes')->where('notable_type', Contact::class)->where('notable_id', $contact->id)->exists())
-                || (Schema::hasTable('surat_kontrak') && SuratKontrak::where('contact_id', $contact->id)->exists())) {
+            if ($this->contactDependencies->hasReferences([(int) $contact->id])) {
                 abort(422, 'Contact '.$contact->contact_id.' sudah dipakai transaksi atau record lain.');
             }
         }
@@ -333,7 +330,10 @@ class BusinessCopyImportBatchService
                 continue;
             }
             $columns = Schema::getColumnListing($table);
-            foreach (['created_by', 'user_id'] as $column) {
+            foreach ([
+                'created_by', 'user_id', 'expense_for', 'assigned_to', 'driver_id',
+                'commission_agent', 'delivery_person', 'approved_by', 'verified_by',
+            ] as $column) {
                 if (in_array($column, $columns, true) && DB::table($table)->where($column, $userId)->exists()) {
                     return true;
                 }

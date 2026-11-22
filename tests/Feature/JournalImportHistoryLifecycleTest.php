@@ -47,6 +47,7 @@ class JournalImportHistoryLifecycleTest extends TestCase
         DB::purge('journal_import_history_test');
         DB::setDefaultConnection('journal_import_history_test');
         Storage::fake('local');
+        Storage::fake('user_imports');
         $this->withoutMiddleware([
             \App\Http\Middleware\SetSessionData::class,
             \App\Http\Middleware\Language::class,

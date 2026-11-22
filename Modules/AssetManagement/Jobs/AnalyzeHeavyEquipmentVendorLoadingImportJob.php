@@ -44,7 +44,7 @@ class AnalyzeHeavyEquipmentVendorLoadingImportJob implements ShouldQueue
         ]);
         $historyService->syncFromDomainBatch((int) $batch->id);
 
-        $disk = Storage::disk('local');
+        $disk = Storage::disk('user_imports');
         try {
             $fullPath = $disk->path($batch->file_path);
             if (! is_file($fullPath)) {
@@ -133,7 +133,7 @@ class AnalyzeHeavyEquipmentVendorLoadingImportJob implements ShouldQueue
 
         try {
             if (! empty($batch->file_path)) {
-                $disk = Storage::disk('local');
+                $disk = Storage::disk('user_imports');
                 if ($disk->exists($batch->file_path) && ! $disk->delete($batch->file_path)) {
                     throw new \RuntimeException('File staging Vendor Loading tidak dapat dihapus.');
                 }

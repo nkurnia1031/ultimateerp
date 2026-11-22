@@ -29,6 +29,7 @@ class SalesPurchaseImportBatchLifecycleTest extends TestCase
         DB::purge('sales_purchase_import_test');
         DB::setDefaultConnection('sales_purchase_import_test');
         Storage::fake('local');
+        Storage::fake('user_imports');
         $this->withoutMiddleware([
             \App\Http\Middleware\IsInstalled::class,
             \App\Http\Middleware\SetSessionData::class,
@@ -233,6 +234,24 @@ class SalesPurchaseImportBatchLifecycleTest extends TestCase
         } finally {
             @unlink($sourcePath);
         }
+    }
+
+    public function test_sales_and_purchase_imports_reject_unscoped_legacy_file_names(): void
+    {
+        Storage::disk('user_imports')->put('temp/foreign-business.xlsx', 'private workbook');
+        $payload = [
+            'file_name' => 'foreign-business.xlsx',
+            'import_fields' => ['customer_phone_number', 'product', 'quantity', 'unit_price'],
+            'group_by' => 0,
+            'location_id' => 2,
+        ];
+
+        foreach (['/import-sales', '/import-pembelian'] as $uri) {
+            $this->asBusiness(7)->postJson($uri, $payload)->assertStatus(422);
+            Storage::disk('user_imports')->assertExists('temp/foreign-business.xlsx');
+        }
+
+        $this->assertDatabaseCount('transactions', 0);
     }
 
     public function test_purchase_confirmation_retry_and_source_routes_use_purchase_scope_and_permission(): void

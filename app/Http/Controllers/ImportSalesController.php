@@ -22,6 +22,7 @@ use DB;
 use Excel;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Storage;
 use App\Events\PurchaseCreatedOrModified;
 
 
@@ -143,7 +144,7 @@ class ImportSalesController extends Controller
                 $file_name = (string) $request->attributes->get('batch_file_name', $request->sales->getClientOriginalName());
             } else {
                 $file_name = time() . '_' . $request->sales->getClientOriginalName();
-                $request->sales->storeAs('temp', $file_name);
+                $request->sales->storeAs('temp', $file_name, 'user_imports');
             }
 
             $parsed_array = $this->__parseData($file_name);
@@ -177,7 +178,7 @@ class ImportSalesController extends Controller
     public function __parseData($file_name)
     {
         $sourcePath = request()->attributes->get('import_batch_source_path');
-        $path = $sourcePath ?: public_path('uploads/temp/' . $file_name);
+        $path = $sourcePath ?: $this->resolvePreviewWorkbookPath((string) $file_name);
         $array = Excel::toArray([], $path)[0];
 
         //remove blank columns from headers
@@ -197,6 +198,19 @@ class ImportSalesController extends Controller
         }
 
         return $parsed_array;
+    }
+
+    private function resolvePreviewWorkbookPath(string $fileName): string
+    {
+        abort_unless($fileName !== '' && basename($fileName) === $fileName, 404);
+
+        $relativePath = 'temp/'.$fileName;
+        $private = Storage::disk('user_imports');
+        if ($private->exists($relativePath)) {
+            return $private->path($relativePath);
+        }
+
+        return public_path('uploads/'.$relativePath);
     }
 
     /**
@@ -221,6 +235,12 @@ class ImportSalesController extends Controller
             return app(\App\Services\SalesPurchaseImportBatchService::class)->queueImport($request, (int) $request->input('batch_id'), $importerKey);
         }
 
+        abort_unless(
+            $request->attributes->get('process_import_batch') || $request->filled('batch_id'),
+            422,
+            'Konfirmasi import harus menggunakan batch yang valid.'
+        );
+
         try {
             DB::beginTransaction();
             // DB::enableQueryLog();
@@ -231,7 +251,7 @@ class ImportSalesController extends Controller
             $location_id = $request->input('location_id');
             $business_id = $request->session()->get('user.business_id');
 
-            $file_path = $request->attributes->get('import_batch_source_path') ?: public_path('uploads/temp/' . $file_name);
+            $file_path = $request->attributes->get('import_batch_source_path') ?: $this->resolvePreviewWorkbookPath((string) $file_name);
             $parsed_array = $this->__parseData($file_name);
             //Remove header row
             unset($parsed_array[0]);

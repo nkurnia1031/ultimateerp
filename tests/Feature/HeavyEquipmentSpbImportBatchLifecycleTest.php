@@ -24,7 +24,10 @@ class HeavyEquipmentSpbImportBatchLifecycleTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->withoutMiddleware(\App\Http\Middleware\AdminSidebarMenu::class);
+        $this->withoutMiddleware([
+            \App\Http\Middleware\AdminSidebarMenu::class,
+            \App\Http\Middleware\Timezone::class,
+        ]);
 
         if (! in_array('sqlite', \PDO::getAvailableDrivers(), true)) {
             $this->markTestSkipped('PDO SQLite is required for isolated SPB import batch tests.');
@@ -43,6 +46,7 @@ class HeavyEquipmentSpbImportBatchLifecycleTest extends TestCase
         DB::purge('sqlite');
         DB::setDefaultConnection('sqlite');
         Storage::fake('local');
+        Storage::fake('user_imports');
 
         Schema::create('user_import_batches', function (Blueprint $table) {
             $table->bigIncrements('id');
@@ -150,7 +154,7 @@ class HeavyEquipmentSpbImportBatchLifecycleTest extends TestCase
         $batch = UserImportBatch::findOrFail($batchId);
         $this->assertSame(7, (int) $batch->business_id);
         $this->assertSame('spb', $batch->importer_key);
-        $this->assertTrue(Storage::disk('local')->exists($batch->staging_path));
+        $this->assertTrue(Storage::disk('user_imports')->exists($batch->staging_path));
         Bus::assertDispatched(ProcessHeavyEquipmentSpbPreviewJob::class);
 
         DB::table('assets')->insert(['business_id' => 7, 'asset_code' => 'BM 9133', 'name' => 'BM 9133']);

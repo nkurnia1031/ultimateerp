@@ -105,13 +105,12 @@ class ProjectImportController extends Controller
 
         try {
             $extension = strtolower($file->getClientOriginalExtension()) ?: 'xlsx';
-            $relativePath = $file->storeAs('user-imports/'.$batch->id.'/staging', 'source.'.$extension, 'local');
+            $relativePath = $file->storeAs('user-imports/'.$batch->id.'/staging', 'source.'.$extension, 'user_imports');
             if (! $relativePath) {
                 throw new \RuntimeException('Workbook Project tidak dapat disimpan ke storage privat.');
             }
             $batch->staging_path = $relativePath;
             $batch->save();
-            $batchService->captureWorkbook($batch, Storage::disk('local')->path($relativePath));
             ProcessProjectImportBatch::dispatch((int) $batch->id, $businessId);
         } catch (Throwable $exception) {
             $batch->forceFill([

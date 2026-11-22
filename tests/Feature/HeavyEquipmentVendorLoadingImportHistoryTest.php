@@ -42,9 +42,11 @@ class HeavyEquipmentVendorLoadingImportHistoryTest extends TestCase
         DB::purge('sqlite');
         DB::setDefaultConnection('sqlite');
         Storage::fake('local');
+        Storage::fake('user_imports');
         $this->withoutMiddleware([
             \App\Http\Middleware\SetSessionData::class,
             \App\Http\Middleware\AdminSidebarMenu::class,
+            \App\Http\Middleware\Timezone::class,
         ]);
 
         $this->createSchemas();
@@ -149,7 +151,7 @@ class HeavyEquipmentVendorLoadingImportHistoryTest extends TestCase
             'preview_path' => 'vendor-loading-imports/7/111/legacy.preview.json',
             'results_json' => json_encode(['old-sheet' => ['title' => 'Old', 'documents' => 1, 'lines' => 2, 'rows' => 2]]),
         ]);
-        Storage::disk('local')->put('vendor-loading-imports/7/111/legacy.preview.json', json_encode([
+        Storage::disk('user_imports')->put('vendor-loading-imports/7/111/legacy.preview.json', json_encode([
             'sheets' => [['sheet_key' => 'old-sheet', 'title' => 'Old', 'rows' => []]],
         ]));
 
@@ -170,14 +172,14 @@ class HeavyEquipmentVendorLoadingImportHistoryTest extends TestCase
             'status' => 'analyzing',
             'file_path' => 'vendor-loading-imports/7/111/failed.xlsx',
         ]);
-        Storage::disk('local')->put('vendor-loading-imports/7/111/failed.xlsx', 'workbook');
+        Storage::disk('user_imports')->put('vendor-loading-imports/7/111/failed.xlsx', 'workbook');
         $shared = app(HeavyEquipmentVendorLoadingImportHistoryService::class)
             ->createForDomainBatch($legacyId, 7, 111, 'failed.xlsx');
         $shared->forceFill(['staging_path' => 'vendor-loading-imports/7/111/failed.xlsx'])->save();
 
         (new AnalyzeHeavyEquipmentVendorLoadingImportJob($legacyId))->failed(new \RuntimeException('worker stopped'));
 
-        Storage::disk('local')->assertMissing('vendor-loading-imports/7/111/failed.xlsx');
+        Storage::disk('user_imports')->assertMissing('vendor-loading-imports/7/111/failed.xlsx');
         $this->assertNull(DB::table('heavy_equipment_vendor_loading_import_batches')->where('id', $legacyId)->value('file_path'));
         $this->assertNull($shared->fresh()->staging_path);
         $this->assertSame('failed', $shared->fresh()->status);
@@ -187,7 +189,7 @@ class HeavyEquipmentVendorLoadingImportHistoryTest extends TestCase
     {
         Queue::fake();
         $previewPath = 'vendor-loading-imports/7/111/51.preview.json';
-        Storage::disk('local')->put($previewPath, json_encode(['sheets' => [['sheet_key' => 'sheet-a', 'rows' => []]]]));
+        Storage::disk('user_imports')->put($previewPath, json_encode(['sheets' => [['sheet_key' => 'sheet-a', 'rows' => []]]]));
         $legacyId = $this->domainBatch([
             'business_id' => 7,
             'created_by' => 111,
@@ -227,7 +229,7 @@ class HeavyEquipmentVendorLoadingImportHistoryTest extends TestCase
     {
         Queue::fake();
         $previewPath = 'vendor-loading-imports/7/111/52.preview.json';
-        Storage::disk('local')->put($previewPath, json_encode(['sheets' => []]));
+        Storage::disk('user_imports')->put($previewPath, json_encode(['sheets' => []]));
         $legacyId = $this->domainBatch([
             'business_id' => 7,
             'created_by' => 111,

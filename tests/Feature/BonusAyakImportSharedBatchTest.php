@@ -38,6 +38,7 @@ class BonusAyakImportSharedBatchTest extends TestCase
         DB::purge('bonus_ayak_import_test');
         DB::setDefaultConnection('bonus_ayak_import_test');
         Storage::fake('local');
+        Storage::fake('user_imports');
         $this->withoutMiddleware([
             \App\Http\Middleware\SetSessionData::class,
             \App\Http\Middleware\AdminSidebarMenu::class,
@@ -63,8 +64,8 @@ class BonusAyakImportSharedBatchTest extends TestCase
             $this->assertNotEmpty($batch->preview_path);
             $this->assertNotEmpty($batch->source_snapshot_path);
             $this->assertNull($batch->staging_path);
-            Storage::disk('local')->assertExists($batch->preview_path);
-            Storage::disk('local')->assertExists($batch->source_snapshot_path);
+            Storage::disk('user_imports')->assertExists($batch->preview_path);
+            Storage::disk('user_imports')->assertExists($batch->source_snapshot_path);
         } finally {
             @unlink($path);
         }
@@ -94,7 +95,7 @@ class BonusAyakImportSharedBatchTest extends TestCase
             $this->assertSame('queued_preview', $batch->status);
             $this->assertNull($batch->preview_path);
             $this->assertNotEmpty($batch->staging_path);
-            Storage::disk('local')->assertExists($batch->staging_path);
+            Storage::disk('user_imports')->assertExists($batch->staging_path);
             Queue::assertPushed(\App\Jobs\AnalyzeBonusAyakImportBatch::class);
         } finally {
             @unlink($path);
@@ -126,7 +127,7 @@ class BonusAyakImportSharedBatchTest extends TestCase
             $this->assertSame('imported', $batch->fresh()->status);
             $this->assertSame(1, json_decode($batch->fresh()->summary_json, true)['imported_rows']);
             $this->assertSame($previewPath, $batch->fresh()->preview_path);
-            Storage::disk('local')->assertExists($previewPath);
+            Storage::disk('user_imports')->assertExists($previewPath);
         } finally {
             @unlink($path);
         }
@@ -148,7 +149,7 @@ class BonusAyakImportSharedBatchTest extends TestCase
             $this->assertSame('cancelled', $batch->fresh()->status);
             $this->assertNull($batch->fresh()->preview_path);
             $this->assertSame(0, BonusAyak::count());
-            Storage::disk('local')->assertMissing($previewPath);
+            Storage::disk('user_imports')->assertMissing($previewPath);
         } finally {
             @unlink($path);
         }
@@ -265,7 +266,7 @@ class BonusAyakImportSharedBatchTest extends TestCase
             'entries' => [['valid' => true, 'source_row' => 2]],
             'errors' => [],
         ];
-        Storage::disk('local')->put($legacyPath, json_encode($payload, JSON_THROW_ON_ERROR));
+        Storage::disk('user_imports')->put($legacyPath, json_encode($payload, JSON_THROW_ON_ERROR));
 
         [$batch, $preview] = app(BonusAyakImportHistoryService::class)->loadPreview($token, 7, 999);
 
@@ -273,8 +274,8 @@ class BonusAyakImportSharedBatchTest extends TestCase
         $this->assertSame('preview_ready', $batch->status);
         $this->assertSame('legacy-bonus-ayak.xlsx', $batch->file_name);
         $this->assertSame($payload, $preview);
-        Storage::disk('local')->assertMissing($legacyPath);
-        Storage::disk('local')->assertExists($batch->preview_path);
+        Storage::disk('user_imports')->assertMissing($legacyPath);
+        Storage::disk('user_imports')->assertExists($batch->preview_path);
     }
 
     private function uploadPreview(string $path): UserImportBatch

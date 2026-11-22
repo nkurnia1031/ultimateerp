@@ -44,9 +44,11 @@ class SolarImportHistoryLifecycleTest extends TestCase
         DB::purge('solar_import_history_test');
         DB::setDefaultConnection('solar_import_history_test');
         Storage::fake('local');
+        Storage::fake('user_imports');
         $this->withoutMiddleware([
             \App\Http\Middleware\SetSessionData::class,
             \App\Http\Middleware\AdminSidebarMenu::class,
+            \App\Http\Middleware\Timezone::class,
         ]);
         $this->createSchemas();
 
@@ -88,7 +90,7 @@ class SolarImportHistoryLifecycleTest extends TestCase
             $this->assertSame('domain:'.$domain->id, $shared->source_key);
             $this->assertSame('queued_preview', $shared->status);
             $stagingPath = $domain->file_path;
-            Storage::disk('local')->assertExists($stagingPath);
+            Storage::disk('user_imports')->assertExists($stagingPath);
             $queuedStatus = $this->asBusiness(7)->get(route('solar.imports.status', $domain->id));
             $queuedStatus->assertOk()->assertJsonPath('state', 'queued')->assertJsonPath('operation', 'preview');
 
@@ -105,7 +107,7 @@ class SolarImportHistoryLifecycleTest extends TestCase
             $this->assertSame('preview_ready', $shared->status);
             $this->assertTrue($shared->hasSourceSnapshot());
             $this->assertNull($shared->staging_path);
-            Storage::disk('local')->assertMissing($stagingPath);
+            Storage::disk('user_imports')->assertMissing($stagingPath);
             $previewStatus = $this->asBusiness(7)->get(route('solar.imports.status', $domain->id));
             $previewStatus->assertOk()->assertJsonPath('state', 'completed')->assertJsonPath('domain_status', 'preview')->assertJsonPath('percent', 100);
 

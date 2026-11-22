@@ -12,6 +12,7 @@ class HeavyEquipmentTripActionsTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        $this->withoutMiddleware(\App\Http\Middleware\Timezone::class);
 
         if (! in_array('sqlite', \PDO::getAvailableDrivers(), true)) {
             $this->markTestSkipped('PDO SQLite is required for isolated SPB action tests.');

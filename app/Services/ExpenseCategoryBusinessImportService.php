@@ -123,6 +123,7 @@ class ExpenseCategoryBusinessImportService
 
         foreach ($source as $category) {
             $sourceId = (int) $category->id;
+            $path = $sourcePaths[$sourceId] ?? $this->normalized($category->name);
             $prior = $outcomes->get($sourceId);
             if ($prior && in_array($prior['status'] ?? '', ['created', 'skipped'], true)) {
                 $sourceToTarget[$sourceId] = (int) ($prior['target_id'] ?? 0) ?: null;
@@ -160,7 +161,6 @@ class ExpenseCategoryBusinessImportService
                 continue;
             }
 
-            $path = $sourcePaths[$sourceId] ?? $this->normalized($category->name);
             $match = $this->findMatch($category, $path, $index);
             if ($match && $skipExisting) {
                 $targetId = (int) $match['category']->id;

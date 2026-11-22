@@ -16,8 +16,12 @@ class ContactCsvImportBatchService
 {
     public const IMPORTER_KEY = 'contacts_csv';
 
-    public function __construct(private UserImportBatchService $batches, private Util $commonUtil, private TransactionUtil $transactionUtil)
-    {
+    public function __construct(
+        private UserImportBatchService $batches,
+        private Util $commonUtil,
+        private TransactionUtil $transactionUtil,
+        private ContactImportDependencyChecker $contactDependencies
+    ) {
     }
 
     public function history(Request $request, int $businessId, bool $canRevert): array
@@ -197,9 +201,10 @@ class ContactCsvImportBatchService
                 abort_if($this->modelAttributes($contact) !== ($snapshot['attributes'] ?? [])
                     || (string) $contact->updated_at !== (string) ($snapshot['updated_at'] ?? ''),
                     422, 'Contact '.$contact->contact_id.' telah berubah setelah import.');
-                if (DB::table('transactions')->where('contact_id', $contact->id)->whereNotIn('id', $transactions->keys()->all() ?: [0])->exists()
-                    || (DB::getSchemaBuilder()->hasTable('document_and_notes')
-                        && DB::table('document_and_notes')->where('notable_type', Contact::class)->where('notable_id', $contact->id)->exists())) {
+                if ($this->contactDependencies->hasReferences(
+                    [(int) $contact->id],
+                    $transactions->keys()->map(fn ($id) => (int) $id)->all()
+                )) {
                     abort(422, 'Contact '.$contact->contact_id.' sudah dipakai transaksi atau catatan lain.');
                 }
             }

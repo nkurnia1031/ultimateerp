@@ -24,6 +24,9 @@
     # commonly used to bypass a rule that only blocks the .php extension.
     RewriteRule ^uploads/.*\.(htaccess|htpasswd|user\.ini|ini|phps?|fla|psd|log|sh|zip|exe|pl|jsp|asp|aspx|htm|html|cgi|py|php[0-9]*|phtml|phar)$ - [NC,F,L]
 
+    # User import files contain private workbook rows and business data.
+    RewriteRule ^uploads/(user-imports|user-import-staging|expense-imports|solar-imports|bonus-ayak-import-previews|vendor-loading-imports|heavy-equipment-rate-imports|temp)(/|$) - [NC,F,L]
+
     # Send Requests To Front Controller...
     RewriteCond %{REQUEST_FILENAME} !-d
     RewriteCond %{REQUEST_FILENAME} !-f

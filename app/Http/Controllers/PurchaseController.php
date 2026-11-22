@@ -1322,7 +1322,7 @@ class PurchaseController extends Controller
         abort_unless($permittedLocations === 'all' || in_array($location->id, $permittedLocations, true) || in_array((string) $location->id, $permittedLocations, true), 403, 'Lokasi tidak diizinkan.');
 
         $file = $request->file('file');
-        $stagingPath = $file->storeAs('user-imports/staging', (string) \Illuminate\Support\Str::uuid().'.'.$file->getClientOriginalExtension(), 'local');
+        $stagingPath = $file->storeAs('user-imports/staging', (string) \Illuminate\Support\Str::uuid().'.'.$file->getClientOriginalExtension(), 'user_imports');
         $batches = app(\App\Services\UserImportBatchService::class);
         $batch = $batches->create([
             'business_id' => $businessId,

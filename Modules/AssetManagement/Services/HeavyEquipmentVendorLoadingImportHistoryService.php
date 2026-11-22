@@ -73,8 +73,8 @@ class HeavyEquipmentVendorLoadingImportHistoryService
     {
         try {
             if (! $batch->preview_path && ! empty($domainBatch->preview_path)
-                && Storage::disk('local')->exists($domainBatch->preview_path)) {
-                $preview = json_decode(Storage::disk('local')->get($domainBatch->preview_path), true, 512, JSON_THROW_ON_ERROR);
+                && Storage::disk('user_imports')->exists($domainBatch->preview_path)) {
+                $preview = json_decode(Storage::disk('user_imports')->get($domainBatch->preview_path), true, 512, JSON_THROW_ON_ERROR);
                 $this->batchService->storePayload($batch, 'preview', $preview);
             }
 
@@ -198,7 +198,7 @@ class HeavyEquipmentVendorLoadingImportHistoryService
             $row['can_retry'] = $domain
                 && $domain->status === 'failed'
                 && filled($domain->preview_path)
-                && Storage::disk('local')->exists($domain->preview_path)
+                && Storage::disk('user_imports')->exists($domain->preview_path)
                 && (int) $domain->imported_documents === 0
                 && ! in_array((int) $domain->id, $domainBatchesWithDocuments, true);
             $row['can_revert'] = $canReverse && $domain && in_array($domain->status, ['imported', 'partial'], true);

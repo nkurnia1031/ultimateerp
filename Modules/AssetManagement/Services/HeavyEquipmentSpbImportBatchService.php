@@ -38,12 +38,12 @@ class HeavyEquipmentSpbImportBatchService
 
         $batch = UserImportBatch::where('id', $batchId)->where('importer_key', 'spb')->first();
         try {
-            if (! $batch || ! $batch->staging_path || ! Storage::disk('local')->exists($batch->staging_path)) {
+            if (! $batch || ! $batch->staging_path || ! Storage::disk('user_imports')->exists($batch->staging_path)) {
                 throw new \RuntimeException('File staging import SPB tidak ditemukan.');
             }
 
             $preview = $this->importService->previewPath(
-                Storage::disk('local')->path($batch->staging_path),
+                Storage::disk('user_imports')->path($batch->staging_path),
                 (string) $batch->file_name,
                 (int) $batch->business_id,
                 function (int $current, int $total, string $sheet, $rowNumber) use ($batchId): void {
@@ -87,7 +87,7 @@ class HeavyEquipmentSpbImportBatchService
             $this->markFailed($batchId, $exception->getMessage());
         } finally {
             if ($batch && $batch->staging_path) {
-                Storage::disk('local')->delete($batch->staging_path);
+                Storage::disk('user_imports')->delete($batch->staging_path);
                 UserImportBatch::whereKey($batchId)->update(['staging_path' => null, 'updated_at' => now()]);
             }
         }
@@ -343,7 +343,7 @@ class HeavyEquipmentSpbImportBatchService
 
     private function readResults(UserImportBatch $batch): array
     {
-        if (! $batch->results_path || ! Storage::disk('local')->exists($batch->results_path)) {
+        if (! $batch->results_path || ! Storage::disk('user_imports')->exists($batch->results_path)) {
             return [];
         }
 

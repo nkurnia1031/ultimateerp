@@ -14,22 +14,10 @@ use Illuminate\Support\Facades\Schema;
 
 class SalesPurchaseImportBatchService
 {
-    private const CONTACT_REFERENCE_COLUMNS = [
-        ['bookings', 'contact_id'],
-        ['crm_proposals', 'contact_id'],
-        ['crm_lead_users', 'contact_id'],
-        ['crm_schedules', 'contact_id'],
-        ['surat_kontrak', 'contact_id'],
-        ['projects', 'contact_id'],
-        ['journal_entries', 'contact_id'],
-        ['user_contact_access', 'contact_id'],
-        ['users', 'crm_contact_id'],
-        ['heavy_equipment_trips', 'customer_id'],
-        ['heavy_equipment_vendor_loading_documents', 'customer_id'],
-        ['transactions', 'contact_id'],
-    ];
-
-    public function __construct(private UserImportBatchService $batches)
+    public function __construct(
+        private UserImportBatchService $batches,
+        private ContactImportDependencyChecker $contactDependencies
+    )
     {
     }
 
@@ -65,7 +53,7 @@ class SalesPurchaseImportBatchService
         $request->validate(['sales' => 'required|file|mimes:csv,xls,xlsx|max:51200']);
         $businessId = (int) $request->session()->get('user.business_id');
         $file = $request->file('sales');
-        $stagingPath = $file->storeAs('user-imports/staging', (string) \Illuminate\Support\Str::uuid().'.'.$file->getClientOriginalExtension(), 'local');
+        $stagingPath = $file->storeAs('user-imports/staging', (string) \Illuminate\Support\Str::uuid().'.'.$file->getClientOriginalExtension(), 'user_imports');
         $batch = $this->batches->create([
             'business_id' => $businessId,
             'created_by' => (int) $request->session()->get('user.id'),
@@ -446,25 +434,8 @@ class SalesPurchaseImportBatchService
 
     private function assertNoExternalContactReferences(array $contactIds, array $transactionIds): void
     {
-        foreach (self::CONTACT_REFERENCE_COLUMNS as [$table, $column]) {
-            if (! Schema::hasTable($table) || ! Schema::hasColumn($table, $column)) {
-                continue;
-            }
-
-            $query = DB::table($table)->whereIn($column, $contactIds);
-            if ($table === 'transactions' && $transactionIds !== []) {
-                $query->whereNotIn('id', $transactionIds);
-            }
-            abort_if($query->exists(), 422, 'Kontak hasil import sudah dipakai data bisnis lain; revert diblokir.');
-        }
-
-        if (Schema::hasTable('crm_campaigns') && Schema::hasColumn('crm_campaigns', 'contact_ids')) {
-            $contactIds = array_map('strval', $contactIds);
-            foreach (DB::table('crm_campaigns')->whereNotNull('contact_ids')->pluck('contact_ids') as $storedIds) {
-                $campaignContactIds = preg_split('/[^0-9]+/', (string) $storedIds, -1, PREG_SPLIT_NO_EMPTY) ?: [];
-                abort_if(array_intersect($contactIds, $campaignContactIds) !== [], 422, 'Kontak hasil import sudah dipakai kampanye CRM; revert diblokir.');
-            }
-        }
+        abort_if($this->contactDependencies->hasReferences($contactIds, $transactionIds), 422,
+            'Kontak hasil import sudah dipakai data bisnis lain; revert diblokir.');
     }
 
     private function deleteProductRelations(int $productId): void

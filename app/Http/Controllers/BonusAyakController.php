@@ -170,7 +170,7 @@ class BonusAyakController extends Controller
         try {
             $file = $request->file('file');
             $extension = strtolower($file->getClientOriginalExtension()) ?: 'xlsx';
-            $stagingPath = $file->storeAs('user-import-staging/bonus-ayak', (string) Str::uuid().'.'.$extension, 'local');
+            $stagingPath = $file->storeAs('user-import-staging/bonus-ayak', (string) Str::uuid().'.'.$extension, 'user_imports');
             if (! $stagingPath) {
                 throw new \RuntimeException('Workbook Bonus Ayak tidak dapat disimpan ke storage privat.');
             }
@@ -183,7 +183,7 @@ class BonusAyakController extends Controller
             AnalyzeBonusAyakImportBatch::dispatch((int) $batch->id, $this->businessId());
         } catch (\Throwable $e) {
             if (! $batch && $stagingPath) {
-                Storage::disk('local')->delete($stagingPath);
+                Storage::disk('user_imports')->delete($stagingPath);
             }
             if ($batch) {
                 $history->fail($batch, $e->getMessage());
@@ -291,7 +291,7 @@ class BonusAyakController extends Controller
         abort_unless(in_array($batch->status, ['queued_preview', 'analyzing', 'preview_ready'], true), 422, 'Batch Bonus Ayak tidak dapat dibatalkan pada status ini.');
         $history->cancel($batch);
         if (filled($batch->staging_path)) {
-            Storage::disk('local')->delete($batch->staging_path);
+            Storage::disk('user_imports')->delete($batch->staging_path);
             $batch->forceFill(['staging_path' => null])->save();
         }
 

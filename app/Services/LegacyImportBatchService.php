@@ -63,7 +63,7 @@ class LegacyImportBatchService
         ]);
         $businessId = (int) $request->session()->get('user.business_id');
         $file = $validated['products_csv'];
-        $stagingPath = $file->storeAs('user-imports/staging', (string) \Illuminate\Support\Str::uuid().'.'.$file->getClientOriginalExtension(), 'local');
+        $stagingPath = $file->storeAs('user-imports/staging', (string) \Illuminate\Support\Str::uuid().'.'.$file->getClientOriginalExtension(), 'user_imports');
         $batch = $this->batches->create([
             'business_id' => $businessId,
             'created_by' => (int) $request->session()->get('user.id'),

@@ -88,6 +88,13 @@ SPB driver matching normalizes honorifics, punctuation, spacing, and case, then 
 - Reuse existing feature tests for Expense, Solar, Journal, Vendor, SPB, and importer-specific transaction behavior. Add equivalent route-level feature tests for importers being migrated.
 - CI PHPUnit runs on each push. Playwright E2E remains a separate user-directed workflow after the repository checkpoint.
 
+## Rollout existing import files
+
+After deploying the private-storage change, run `php artisan user-imports:privatize-storage` on each host that holds existing files under `public/uploads`. The command copies the allowlisted import folders and legacy Sales/Purchase preview workbooks to `storage/app/private`, verifies each copy with SHA-256, and only then removes the public copy; it is safe to rerun. Keep web and queue hosts on the same private storage volume so history downloads and queued jobs can read the migrated snapshots. Do not leave old import files in the public upload tree after rollout.
+
+- The migrated folders include `bonus-ayak-import-previews` and `temp/journal_imports`; timestamp-prefixed CSV/XLS/XLSX files directly inside `temp` are also migrated.
+- Apache deployments deny direct requests to `uploads/temp` and the other import paths through `public/.htaccess`.
+
 ## Out of Scope
 
 - Storing the original uploaded binary indefinitely or reproducing its exact formatting, macros, or formulas.

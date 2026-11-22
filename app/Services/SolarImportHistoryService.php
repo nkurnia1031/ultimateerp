@@ -185,8 +185,8 @@ class SolarImportHistoryService
             $processState = $domain->process_state ?: 'completed';
             $operation = $domain->operation ?: 'preview';
             $snapshotPath = $sharedRows->get((int) $row['id'])->source_snapshot_path ?? null;
-            $snapshot = $snapshotPath && Storage::disk('local')->exists($snapshotPath);
-            $hasSource = $snapshot || ($domain->file_path && Storage::disk('local')->exists($domain->file_path));
+            $snapshot = $snapshotPath && Storage::disk('user_imports')->exists($snapshotPath);
+            $hasSource = $snapshot || ($domain->file_path && Storage::disk('user_imports')->exists($domain->file_path));
             $progress = [
                 'percent' => (int) $row['progress_percent'],
                 'current' => (int) $row['progress_current'],
@@ -284,8 +284,8 @@ class SolarImportHistoryService
             ->first();
         abort_if(! $domain, 404, 'Batch import Solar tidak ditemukan.');
 
-        if ($domain->file_path && Storage::disk('local')->exists($domain->file_path)) {
-            return [Storage::disk('local')->path($domain->file_path), false];
+        if ($domain->file_path && Storage::disk('user_imports')->exists($domain->file_path)) {
+            return [Storage::disk('user_imports')->path($domain->file_path), false];
         }
 
         $shared = $this->sharedBatchForDomainBatch($domainBatchId, $businessId);
@@ -317,7 +317,7 @@ class SolarImportHistoryService
 
             return false;
         }
-        if ($path && Storage::disk('local')->exists($path) && ! Storage::disk('local')->delete($path)) {
+        if ($path && Storage::disk('user_imports')->exists($path) && ! Storage::disk('user_imports')->delete($path)) {
             Log::warning('Solar import staging file could not be deleted.', [
                 'batch_id' => $domainBatchId,
                 'business_id' => $businessId,
@@ -363,7 +363,7 @@ class SolarImportHistoryService
         $shared = $this->sharedBatchForDomainBatch($domainBatchId, $businessId);
 
         return $shared->hasSourceSnapshot()
-            && Storage::disk('local')->exists((string) $shared->source_snapshot_path);
+            && Storage::disk('user_imports')->exists((string) $shared->source_snapshot_path);
     }
 
     private function findSharedForDomain(object $domain, int $businessId): ?UserImportBatch

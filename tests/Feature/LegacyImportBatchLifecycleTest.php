@@ -30,6 +30,7 @@ class LegacyImportBatchLifecycleTest extends TestCase
         DB::purge('legacy_import_test');
         DB::setDefaultConnection('legacy_import_test');
         Storage::fake('local');
+        Storage::fake('user_imports');
         $this->withoutMiddleware([
             \App\Http\Middleware\IsInstalled::class,
             \App\Http\Middleware\SetSessionData::class,

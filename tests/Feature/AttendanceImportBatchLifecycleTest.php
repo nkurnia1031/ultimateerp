@@ -20,6 +20,7 @@ class AttendanceImportBatchLifecycleTest extends TestCase
         parent::setUp();
         Bus::fake();
         Storage::fake('local');
+        Storage::fake('user_imports');
         $this->withoutMiddleware([
             \App\Http\Middleware\IsInstalled::class,
             \App\Http\Middleware\SetSessionData::class,
@@ -41,8 +42,8 @@ class AttendanceImportBatchLifecycleTest extends TestCase
             $batch = UserImportBatch::findOrFail($first->json('batch_id'));
             $this->assertSame(7, (int) $batch->business_id);
             $this->assertSame('queued_preview', $batch->status);
-            $this->assertTrue($batch->hasSourceSnapshot());
-            $this->assertTrue(Storage::disk('local')->exists($batch->staging_path));
+            $this->assertNull($batch->source_snapshot_path, 'The HTTP upload must leave workbook parsing to the queued job.');
+            $this->assertTrue(Storage::disk('user_imports')->exists($batch->staging_path));
 
             $history = $this->actingAs($this->admin())
                 ->withSession($this->businessSession(7))
@@ -56,12 +57,12 @@ class AttendanceImportBatchLifecycleTest extends TestCase
                 ->assertJsonPath('draw', 3)
                 ->assertJsonPath('recordsTotal', 1)
                 ->assertJsonPath('data.0.file_name', 'attendance-import.xlsx')
-                ->assertJsonPath('data.0.has_snapshot', true);
+                ->assertJsonPath('data.0.has_snapshot', false);
 
             $this->actingAs($this->admin())
                 ->withSession($this->businessSession(7))
                 ->get(route('attendance.import.history.source', $batch->id))
-                ->assertOk();
+                ->assertNotFound();
         } finally {
             @unlink($path);
         }
@@ -117,16 +118,16 @@ class AttendanceImportBatchLifecycleTest extends TestCase
             $batch = UserImportBatch::findOrFail($response->json('batch_id'));
             $stagingPath = $batch->staging_path;
             $this->assertNotEmpty($stagingPath);
-            $this->assertTrue($batch->hasSourceSnapshot());
+            $this->assertNull($batch->source_snapshot_path, 'The HTTP upload must not parse the workbook.');
 
             (new ProcessAttendanceImportBatch((int) $batch->id, 7))->handle(app(UserImportBatchService::class));
 
             $batch->refresh();
             $this->assertSame('failed', $batch->status);
             $this->assertNull($batch->staging_path);
-            $this->assertFalse(Storage::disk('local')->exists($stagingPath));
+            $this->assertFalse(Storage::disk('user_imports')->exists($stagingPath));
             $this->assertTrue($batch->hasSourceSnapshot());
-            $this->assertTrue(Storage::disk('local')->exists($batch->source_snapshot_path));
+            $this->assertTrue(Storage::disk('user_imports')->exists($batch->source_snapshot_path));
             $this->actingAs($this->admin())
                 ->withSession($this->businessSession(7))
                 ->get(route('attendance.import.history.source', $batch->id))
@@ -145,11 +146,22 @@ class AttendanceImportBatchLifecycleTest extends TestCase
 
     private function upload(string $path)
     {
-        return $this->actingAs($this->admin())
+        $previousRemoteAddress = $_SERVER['REMOTE_ADDR'] ?? null;
+        $_SERVER['REMOTE_ADDR'] = '127.0.0.1';
+
+        try {
+            return $this->actingAs($this->admin())
             ->withSession($this->businessSession(7))
             ->postJson('/hrm/import-attendance', [
                 'attendance' => new UploadedFile($path, 'attendance-import.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', null, true),
             ]);
+        } finally {
+            if ($previousRemoteAddress === null) {
+                unset($_SERVER['REMOTE_ADDR']);
+            } else {
+                $_SERVER['REMOTE_ADDR'] = $previousRemoteAddress;
+            }
+        }
     }
 
     private function workbook(): string
@@ -228,6 +240,9 @@ class AttendanceImportBatchLifecycleTest extends TestCase
 
     private function businessSession(int $businessId): array
     {
-        return ['user' => ['business_id' => $businessId, 'id' => 999]];
+        return [
+            'user' => ['business_id' => $businessId, 'id' => 999],
+            'business' => ['time_zone' => 'UTC'],
+        ];
     }
 }

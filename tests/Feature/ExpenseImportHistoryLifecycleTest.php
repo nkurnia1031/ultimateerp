@@ -41,9 +41,11 @@ class ExpenseImportHistoryLifecycleTest extends TestCase
         DB::purge('expense_import_history_test');
         DB::setDefaultConnection('expense_import_history_test');
         Storage::fake('local');
+        Storage::fake('user_imports');
         $this->withoutMiddleware([
             \App\Http\Middleware\SetSessionData::class,
             \App\Http\Middleware\AdminSidebarMenu::class,
+            \App\Http\Middleware\Timezone::class,
         ]);
         $this->createSchemas();
     }
@@ -84,10 +86,10 @@ class ExpenseImportHistoryLifecycleTest extends TestCase
             $this->assertSame('expense', $sharedBatch->importer_key);
             $this->assertSame('domain:'.$firstBatchId, $sharedBatch->source_key);
             $this->assertSame('queued_preview', $sharedBatch->status);
-            $this->assertTrue(Storage::disk('local')->exists($sharedBatch->staging_path));
+            $this->assertTrue(Storage::disk('user_imports')->exists($sharedBatch->staging_path));
             app(UserImportBatchService::class)->captureWorkbook(
                 $sharedBatch,
-                Storage::disk('local')->path($sharedBatch->staging_path)
+                Storage::disk('user_imports')->path($sharedBatch->staging_path)
             );
             $reconstructedPath = app(UserImportBatchService::class)->restoredWorkbookPath($sharedBatch->fresh());
             $reconstructed = IOFactory::load($reconstructedPath);

@@ -46,9 +46,11 @@ class HeavyEquipmentRateImportLifecycleTest extends TestCase
         DB::purge('heavy_equipment_rate_test');
         DB::setDefaultConnection('heavy_equipment_rate_test');
         Storage::fake('local');
+        Storage::fake('user_imports');
         $this->withoutMiddleware([
             \App\Http\Middleware\SetSessionData::class,
             \App\Http\Middleware\AdminSidebarMenu::class,
+            \App\Http\Middleware\Timezone::class,
         ]);
         $this->createSchemas();
     }
@@ -77,7 +79,7 @@ class HeavyEquipmentRateImportLifecycleTest extends TestCase
             $stagingPath = $batch->staging_path;
             $this->assertSame('heavy_equipment_rate', $batch->importer_key);
             $this->assertSame('queued_preview', $batch->status);
-            $this->assertTrue(Storage::disk('local')->exists($stagingPath));
+            $this->assertTrue(Storage::disk('user_imports')->exists($stagingPath));
             Bus::assertDispatched(AnalyzeHeavyEquipmentRateImportJob::class);
 
             app(HeavyEquipmentRateImportHistoryService::class)->processPreview($batchId);
@@ -86,7 +88,7 @@ class HeavyEquipmentRateImportLifecycleTest extends TestCase
             $this->assertSame('preview_ready', $batch->status);
             $this->assertTrue($batch->hasSourceSnapshot());
             $this->assertNull($batch->staging_path);
-            Storage::disk('local')->assertMissing($stagingPath);
+            Storage::disk('user_imports')->assertMissing($stagingPath);
             $this->assertDatabaseHas('heavy_equipment_rate_batches', [
                 'user_import_batch_id' => $batchId,
                 'business_id' => 7,
@@ -157,7 +159,7 @@ class HeavyEquipmentRateImportLifecycleTest extends TestCase
             $this->assertSame('failed', $batch->status);
             $this->assertNull($batch->staging_path);
             $this->assertNotEmpty($batch->error_message);
-            Storage::disk('local')->assertMissing($stagingPath);
+            Storage::disk('user_imports')->assertMissing($stagingPath);
 
             $history = $this->actingAs($this->admin())
                 ->withSession($this->businessSession(7))

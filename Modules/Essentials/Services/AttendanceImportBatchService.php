@@ -25,7 +25,7 @@ class AttendanceImportBatchService
     public function history(Request $request, int $businessId, bool $canRevert): array
     {
         $table = $this->batches->dataTable($request, $businessId, self::IMPORTER_KEY);
-        $table['data'] = collect($table['data'])->map(function (array $row) {
+        $table['data'] = collect($table['data'])->map(function (array $row) use ($canRevert) {
             $cached = Cache::get(self::progressCacheKey((int) $row['id']), []);
             if (is_array($cached) && $cached !== [] && $row['active']) {
                 $row['stage'] = $cached['stage'] ?? $row['stage'];

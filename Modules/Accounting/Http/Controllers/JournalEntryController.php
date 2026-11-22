@@ -3427,6 +3427,10 @@ class JournalEntryController extends Controller
             if ($filename === '' || basename($filename) !== $filename) {
                 return null;
             }
+            $privatePath = Storage::disk('user_imports')->path('temp/journal_imports/'.$filename);
+            if (is_file($privatePath)) {
+                return $privatePath;
+            }
             $root = public_path('uploads/temp/journal_imports');
         } elseif (preg_match('/^[a-zA-Z]:\//', $path) === 1 || Str::startsWith($path, '/')) {
             // The legacy coordinator reads originals in place so its dry-run does not

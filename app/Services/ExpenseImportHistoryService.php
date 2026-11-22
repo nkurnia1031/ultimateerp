@@ -270,7 +270,7 @@ class ExpenseImportHistoryService
             $row['references_url'] = $row['can_view_references']
                 ? route('expenses.import.references', [$domain ? (string) $domain->id : 'legacy-'.$legacyBatchNumber])
                 : null;
-            $hasSnapshot = $shared->hasSourceSnapshot() && Storage::disk('local')->exists((string) $shared->source_snapshot_path);
+            $hasSnapshot = $shared->hasSourceSnapshot() && Storage::disk('user_imports')->exists((string) $shared->source_snapshot_path);
             $hasLegacyRows = $domain && in_array($domain->id, $domainIdsWithRawRows, true);
             $canRestore = in_array($status, ['imported', 'partial', 'reverted'], true);
             $row['restore_url'] = $canRestore && ($hasSnapshot || $hasLegacyRows)

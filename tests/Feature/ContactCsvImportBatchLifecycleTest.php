@@ -5,11 +5,13 @@ namespace Tests\Feature;
 use App\Contact;
 use App\Jobs\ProcessContactCsvImportBatch;
 use App\Services\ContactCsvImportBatchService;
+use App\Services\ContactImportDependencyChecker;
 use App\Services\UserImportBatchService;
 use App\UserImportBatch;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Modules\Crm\Services\SuratKontrakImportBatchService;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
@@ -26,7 +28,10 @@ class ContactCsvImportBatchLifecycleTest extends TestCase
         parent::setUp();
         Bus::fake();
         Storage::fake('local');
+        Storage::fake('user_imports');
         $this->withoutMiddleware([
+            \App\Http\Middleware\IsInstalled::class,
+            \App\Http\Middleware\Timezone::class,
             \App\Http\Middleware\SetSessionData::class,
             \App\Http\Middleware\AdminSidebarMenu::class,
         ]);
@@ -43,8 +48,7 @@ class ContactCsvImportBatchLifecycleTest extends TestCase
             $first = $this->upload($path)->assertStatus(202)->assertJsonPath('success', true);
             $this->upload($path)->assertStatus(202)->assertJsonPath('batch_id', $first->json('batch_id'));
             Bus::assertDispatchedTimes(ProcessContactCsvImportBatch::class, 1);
-            $batch = UserImportBatch::where('business_id', $this->businessId)
-                ->where('importer_key', ContactCsvImportBatchService::IMPORTER_KEY)->firstOrFail();
+            $batch = UserImportBatch::findOrFail($first->json('batch_id'));
             $this->assertTrue($batch->hasSourceSnapshot());
 
             $this->actingAs($this->admin())->withSession($this->businessSession($this->businessId))
@@ -91,6 +95,97 @@ class ContactCsvImportBatchLifecycleTest extends TestCase
             $this->assertDatabaseHas('contacts', ['id' => $contact->id, 'name' => 'Nama berubah setelah import']);
         } finally {
             @unlink($path);
+        }
+    }
+
+    public function test_contact_batch_revert_blocks_contacts_used_by_a_crm_proposal(): void
+    {
+        $path = $this->workbook([$this->row('CUS-CRM-DEPENDENCY', 'CRM contact', 'customer')]);
+        try {
+            $batch = UserImportBatch::findOrFail($this->upload($path)->assertStatus(202)->json('batch_id'));
+            app(ContactCsvImportBatchService::class)->process($batch);
+            $contact = Contact::where('business_id', $this->businessId)->where('contact_id', 'CUS-CRM-DEPENDENCY')->firstOrFail();
+            DB::table('crm_proposals')->insert([
+                'business_id' => $this->businessId,
+                'contact_id' => $contact->id,
+                'subject' => 'Proposal dependency',
+                'body' => 'This proposal depends on the imported contact.',
+                'sent_by' => $this->userId,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+            $this->actingAs($this->admin())->withSession($this->businessSession($this->businessId))
+                ->postJson(route('contacts.import.revert', $batch->id))->assertStatus(422);
+            $this->assertDatabaseHas('contacts', ['id' => $contact->id, 'deleted_at' => null]);
+            $this->assertDatabaseHas('crm_proposals', ['contact_id' => $contact->id]);
+        } finally {
+            @unlink($path);
+        }
+    }
+
+    public function test_contact_batch_revert_blocks_contacts_used_by_an_advance_payment(): void
+    {
+        $path = $this->workbook([$this->row('CUS-ADVANCE-DEPENDENCY', 'Advance payment contact', 'customer')]);
+        try {
+            $batch = UserImportBatch::findOrFail($this->upload($path)->assertStatus(202)->json('batch_id'));
+            app(ContactCsvImportBatchService::class)->process($batch);
+            $contact = Contact::where('business_id', $this->businessId)->where('contact_id', 'CUS-ADVANCE-DEPENDENCY')->firstOrFail();
+            $paymentId = DB::table('transaction_payments')->insertGetId([
+                'transaction_id' => null,
+                'business_id' => $this->businessId,
+                'amount' => 500,
+                'method' => 'cash',
+                'paid_on' => now(),
+                'created_by' => $this->userId,
+                'payment_for' => $contact->id,
+                'is_advance' => 1,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+            $this->actingAs($this->admin())->withSession($this->businessSession($this->businessId))
+                ->postJson(route('contacts.import.revert', $batch->id))->assertStatus(422);
+            $this->assertDatabaseHas('contacts', ['id' => $contact->id, 'deleted_at' => null]);
+            $this->assertDatabaseHas('transaction_payments', ['id' => $paymentId, 'payment_for' => $contact->id]);
+        } finally {
+            @unlink($path);
+        }
+    }
+
+    public function test_dependency_checker_detects_project_commission_and_vendor_contact_references(): void
+    {
+        $dependencies = app(ContactImportDependencyChecker::class);
+        $runSuffix = strtoupper(bin2hex(random_bytes(3)));
+        $cases = [
+            ['pjt_projects', 'contact_id', [
+                'business_id' => $this->businessId, 'name' => 'Project contact dependency',
+                'status' => 'not_started', 'lead_id' => 0,
+            ]],
+            ['crm_contact_person_commissions', 'contact_person_id', [
+                'transaction_id' => null, 'commission_amount' => 0,
+            ]],
+            ['heavy_equipment_vendor_loading_documents', 'supplier_id', [
+                'business_id' => $this->businessId, 'document_no' => 'DOC-SUPPLIER-'.$runSuffix,
+            ]],
+            ['heavy_equipment_vendor_loading_documents', 'customer_id', [
+                'business_id' => $this->businessId, 'document_no' => 'DOC-CUSTOMER-'.$runSuffix,
+            ]],
+        ];
+
+        foreach ($cases as $index => [$table, $column, $attributes]) {
+            $contact = $this->createContactForDependency('CUS-DEPENDENCY-'.$runSuffix.'-'.$index);
+            $record = array_merge($attributes, [
+                'created_at' => now(),
+                'updated_at' => now(),
+                $column => $contact->id,
+            ]);
+            if (Schema::hasColumn($table, 'created_by')) {
+                $record['created_by'] = $this->userId;
+            }
+            DB::table($table)->insert($record);
+
+            $this->assertTrue($dependencies->hasReferences([(int) $contact->id]), $table.'.'.$column.' must block contact revert.');
         }
     }
 
@@ -142,7 +237,10 @@ class ContactCsvImportBatchLifecycleTest extends TestCase
 
     private function businessSession(int $businessId): array
     {
-        return ['user' => ['business_id' => $businessId, 'id' => $this->userId]];
+        return [
+            'user' => ['business_id' => $businessId, 'id' => $this->userId],
+            'business' => DB::table('business')->where('id', $businessId)->first(),
+        ];
     }
 
     private function createBusinessFixture(): void
@@ -164,5 +262,20 @@ class ContactCsvImportBatchLifecycleTest extends TestCase
             'owner_id' => $this->userId, 'time_zone' => 'UTC', 'created_at' => now(), 'updated_at' => now(),
         ]);
         DB::table('users')->where('id', $this->userId)->update(['business_id' => $this->businessId]);
+    }
+
+    private function createContactForDependency(string $contactId): Contact
+    {
+        return Contact::create([
+            'business_id' => $this->businessId,
+            'type' => 'customer',
+            'name' => 'Dependency contact '.$contactId,
+            'mobile' => '08'.random_int(100000000, 999999999),
+            'created_by' => $this->userId,
+            'contact_id' => $contactId,
+            'is_default' => 0,
+            'balance' => 0,
+            'is_advance' => 0,
+        ]);
     }
 }

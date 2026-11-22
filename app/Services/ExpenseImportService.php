@@ -59,7 +59,7 @@ class ExpenseImportService
     {
         $token = (string) \Illuminate\Support\Str::uuid();
         $extension = strtolower($file->getClientOriginalExtension() ?: 'xlsx');
-        $path = $file->storeAs("expense-imports/{$businessId}", "{$token}.{$extension}", 'local');
+        $path = $file->storeAs("expense-imports/{$businessId}", "{$token}.{$extension}", 'user_imports');
 
         try {
             DB::transaction(function () use ($token, $path, $file, $businessId, $userId) {
@@ -70,7 +70,7 @@ class ExpenseImportService
                     'created_by' => $userId,
                     'file_name' => $file->getClientOriginalName(),
                     'file_path' => $path,
-                    'file_hash' => hash_file('sha256', Storage::disk('local')->path($path)),
+                    'file_hash' => hash_file('sha256', Storage::disk('user_imports')->path($path)),
                     'status' => 'preview',
                     'operation' => 'preview',
                     'process_state' => 'queued',
@@ -102,7 +102,7 @@ class ExpenseImportService
                 ]);
             });
         } catch (\Throwable $exception) {
-            Storage::disk('local')->delete($path);
+            Storage::disk('user_imports')->delete($path);
             throw $exception;
         }
 
@@ -118,19 +118,19 @@ class ExpenseImportService
         }
 
         $shared = app(ExpenseImportHistoryService::class)->ensureDomainEnvelope($batchId, $businessId);
-        $useStagingFile = $batch->file_path && Storage::disk('local')->exists($batch->file_path);
+        $useStagingFile = $batch->file_path && Storage::disk('user_imports')->exists($batch->file_path);
         if (! $shared->hasSourceSnapshot()) {
-            if (! $batch->file_path || ! Storage::disk('local')->exists($batch->file_path)) {
+            if (! $batch->file_path || ! Storage::disk('user_imports')->exists($batch->file_path)) {
                 throw new RuntimeException('File sumber preview sudah tidak tersedia.');
             }
-            $this->importBatchService->captureWorkbook($shared, Storage::disk('local')->path($batch->file_path));
+            $this->importBatchService->captureWorkbook($shared, Storage::disk('user_imports')->path($batch->file_path));
             $shared->refresh();
         }
 
         $reconstructedPath = $useStagingFile ? null : $this->importBatchService->restoredWorkbookPath($shared);
         try {
             $sourcePath = $useStagingFile
-                ? Storage::disk('local')->path($batch->file_path)
+                ? Storage::disk('user_imports')->path($batch->file_path)
                 : $reconstructedPath;
             return $this->preview($batchId, $businessId, (string) $sourcePath, $overrides, $progress);
         } finally {
@@ -153,8 +153,8 @@ class ExpenseImportService
 
         if ($batch->file_path) {
             try {
-                $deleted = Storage::disk('local')->delete($batch->file_path);
-                if (! $deleted && Storage::disk('local')->exists($batch->file_path)) {
+                $deleted = Storage::disk('user_imports')->delete($batch->file_path);
+                if (! $deleted && Storage::disk('user_imports')->exists($batch->file_path)) {
                     \Log::warning('Expense import staging file could not be removed.', ['batch_id' => $batchId]);
                     return;
                 }
@@ -642,7 +642,7 @@ class ExpenseImportService
 
         if ($sourceFilePath) {
             try {
-                if (! Storage::disk('local')->delete($sourceFilePath) && Storage::disk('local')->exists($sourceFilePath)) {
+                if (! Storage::disk('user_imports')->delete($sourceFilePath) && Storage::disk('user_imports')->exists($sourceFilePath)) {
                     \Log::warning('Completed Expense import source file could not be removed.', ['batch_id' => $batchId]);
                 }
             } catch (\Throwable $exception) {

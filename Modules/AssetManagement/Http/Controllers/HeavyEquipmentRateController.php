@@ -475,7 +475,7 @@ class HeavyEquipmentRateController extends Controller
             $this->businessId(),
             HeavyEquipmentRateImportHistoryService::IMPORTER_KEY
         );
-        abort_if(! $batch->hasSourceSnapshot() || ! Storage::disk('local')->exists($batch->source_snapshot_path), 404, 'Snapshot workbook belum tersedia untuk batch lama ini.');
+        abort_if(! $batch->hasSourceSnapshot() || ! Storage::disk('user_imports')->exists($batch->source_snapshot_path), 404, 'Snapshot workbook belum tersedia untuk batch lama ini.');
 
         return app(UserImportBatchService::class)->workbookDownload($batch);
     }
@@ -497,8 +497,8 @@ class HeavyEquipmentRateController extends Controller
         );
         $domain = $this->importHistoryService->domainBatchForSharedBatch($id, $this->businessId());
         if ($batch->status !== 'failed' || $domain->status !== 'draft'
-            || ! $batch->preview_path || ! Storage::disk('local')->exists($batch->preview_path)
-            || ! $batch->hasSourceSnapshot() || ! Storage::disk('local')->exists($batch->source_snapshot_path)) {
+            || ! $batch->preview_path || ! Storage::disk('user_imports')->exists($batch->preview_path)
+            || ! $batch->hasSourceSnapshot() || ! Storage::disk('user_imports')->exists($batch->source_snapshot_path)) {
             return response()->json(['success' => false, 'msg' => 'Retry hanya tersedia untuk aktivasi batch gagal yang masih berstatus draft dan memiliki preview serta snapshot.'], 409);
         }
 
@@ -510,8 +510,8 @@ class HeavyEquipmentRateController extends Controller
                 $domain = HeavyEquipmentRateBatch::where('business_id', $this->businessId())
                     ->where('user_import_batch_id', $id)->lockForUpdate()->first();
                 if (! $locked || $locked->status !== 'failed' || ! $domain || $domain->status !== 'draft'
-                    || ! $locked->preview_path || ! Storage::disk('local')->exists($locked->preview_path)
-                    || ! $locked->source_snapshot_path || ! Storage::disk('local')->exists($locked->source_snapshot_path)) {
+                    || ! $locked->preview_path || ! Storage::disk('user_imports')->exists($locked->preview_path)
+                    || ! $locked->source_snapshot_path || ! Storage::disk('user_imports')->exists($locked->source_snapshot_path)) {
                     throw new \InvalidArgumentException('Batch sudah berubah status atau tidak lagi memenuhi syarat retry.');
                 }
                 $locked->forceFill([

@@ -39,6 +39,7 @@ class SellingPriceGroupImportBatchLifecycleTest extends TestCase
         DB::purge('selling_price_group_import_test');
         DB::setDefaultConnection('selling_price_group_import_test');
         Storage::fake('local');
+        Storage::fake('user_imports');
         $this->withoutMiddleware([
             \App\Http\Middleware\IsInstalled::class,
             \App\Http\Middleware\SetSessionData::class,

@@ -17,7 +17,10 @@ class HeavyEquipmentSpbImportPreviewEditTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->withoutMiddleware(\App\Http\Middleware\AdminSidebarMenu::class);
+        $this->withoutMiddleware([
+            \App\Http\Middleware\AdminSidebarMenu::class,
+            \App\Http\Middleware\Timezone::class,
+        ]);
 
         if (! in_array('sqlite', \PDO::getAvailableDrivers(), true)) {
             $this->markTestSkipped('PDO SQLite is required for isolated SPB import preview tests.');

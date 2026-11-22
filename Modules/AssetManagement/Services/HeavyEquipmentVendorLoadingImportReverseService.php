@@ -107,12 +107,12 @@ class HeavyEquipmentVendorLoadingImportReverseService
      */
     private function resolveUnambiguousLegacyDocuments(object $batch, int $businessId)
     {
-        if (! $batch->preview_path || ! Storage::disk('local')->exists($batch->preview_path)) {
+        if (! $batch->preview_path || ! Storage::disk('user_imports')->exists($batch->preview_path)) {
             return collect();
         }
 
         try {
-            $preview = json_decode(Storage::disk('local')->get($batch->preview_path), true, 512, JSON_THROW_ON_ERROR);
+            $preview = json_decode(Storage::disk('user_imports')->get($batch->preview_path), true, 512, JSON_THROW_ON_ERROR);
             $results = json_decode($batch->results_json ?: '{}', true, 512, JSON_THROW_ON_ERROR);
         } catch (\Throwable $exception) {
             return collect();
@@ -184,7 +184,7 @@ class HeavyEquipmentVendorLoadingImportReverseService
             ->get(['file_name', 'preview_path']);
 
         foreach ($otherBatches as $other) {
-            if (! $other->preview_path || ! Storage::disk('local')->exists($other->preview_path)) {
+            if (! $other->preview_path || ! Storage::disk('user_imports')->exists($other->preview_path)) {
                 if ((string) $other->file_name === (string) $batch->file_name) {
                     return true;
                 }
@@ -192,7 +192,7 @@ class HeavyEquipmentVendorLoadingImportReverseService
             }
 
             try {
-                $preview = json_decode(Storage::disk('local')->get($other->preview_path), true, 512, JSON_THROW_ON_ERROR);
+                $preview = json_decode(Storage::disk('user_imports')->get($other->preview_path), true, 512, JSON_THROW_ON_ERROR);
             } catch (\Throwable $exception) {
                 if ((string) $other->file_name === (string) $batch->file_name) {
                     return true;
