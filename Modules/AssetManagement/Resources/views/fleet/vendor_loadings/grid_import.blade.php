@@ -6,12 +6,17 @@
 @includeIf('assetmanagement::layouts.nav')
 @include('layouts.partials.fleet-datatables')
 <section class="content-header">
-    <a href="{{ route('asset.fleet.vendor-loadings.index') }}" class="btn btn-default pull-right">Kembali</a>
+    @if (!empty($resumeBatchId))
+        <a href="{{ route('asset.fleet.vendor-loadings.import.form') }}" class="btn btn-default pull-right"><i class="fas fa-arrow-left"></i> Kembali ke daftar import</a>
+    @else
+        <a href="{{ route('asset.fleet.vendor-loadings.index') }}" class="btn btn-default pull-right">Kembali</a>
+    @endif
     <h1><i class="fas fa-file-import"></i> Import Loading Vendor</h1>
     <p class="text-muted">Setiap sheet menjadi satu dokumen. Periksa bendera/customer pada header sheet dan koreksi tanggal langsung pada grid sebelum konfirmasi.</p>
 </section>
 <section class="content" id="vendor-import-app">
     <div id="vendor-import-feedback" class="alert" role="alert" hidden></div>
+    @if (empty($resumeBatchId))
     <div class="box box-primary">
         <div class="box-header with-border"><h3 class="box-title">Upload Workbook</h3></div>
         <div class="box-body">
@@ -28,7 +33,9 @@
             </div>
         </div>
     </div>
+    @endif
 
+    @if (!empty($resumeBatchId))
     <div id="vendor-import-batch-progress" class="box box-info vendor-import-progress" hidden>
         <div class="box-header with-border"><h3 class="box-title"><i class="fas fa-tasks"></i> Status Batch Import</h3></div>
         <div class="box-body">
@@ -39,7 +46,9 @@
             <div id="vendor-import-batch-errors" class="alert alert-warning" hidden></div>
         </div>
     </div>
+    @endif
 
+    @if (empty($resumeBatchId))
     <div class="box box-default" id="vendor-import-history">
         <div class="box-header with-border"><h3 class="box-title"><i class="fas fa-history"></i> Riwayat Import Vendor</h3></div>
         <div class="box-body">
@@ -81,6 +90,8 @@
             <div class="modal-footer"><button type="button" class="btn btn-default" data-dismiss="modal">Tutup</button></div>
         </div></div>
     </div>
+    @endif
+    @if (!empty($resumeBatchId))
     <div id="vendor-import-preview-box" class="box box-info" hidden>
         <div class="box-header with-border"><h3 class="box-title">Preview per Sheet</h3></div>
         <div class="box-body">
@@ -111,6 +122,7 @@
             <div id="vendor-import-confirm-errors" class="alert alert-warning" hidden></div>
         </div>
     </div>
+    @endif
 </section>
 <style>
     .vendor-import-stat { padding: 10px 14px; border: 1px solid #dce7ea; border-radius: 4px; margin-bottom: 12px; background: #f8fbfc; min-height: 64px; }

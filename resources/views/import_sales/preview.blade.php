@@ -5,7 +5,7 @@
 
     <!-- Content Header (Page header) -->
     <section class="content-header">
-
+        <a href="{{ url($link) }}" class="btn btn-default pull-right"><i class="fa fa-arrow-left"></i> Kembali ke daftar import</a>
         <h1 class="tw-text-xl md:tw-text-3xl tw-font-bold tw-text-black">{{ $judul }}</h1>
 
 

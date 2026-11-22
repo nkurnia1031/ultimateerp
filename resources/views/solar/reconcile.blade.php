@@ -3,7 +3,10 @@
 @section('title', 'Preview Import Solar')
 
 @section('content')
-<section class="content-header"><h1>Preview Import Solar <small>batch {{ $token }}</small></h1></section>
+<section class="content-header">
+    <a href="{{ route('solar.imports') }}" class="btn btn-default pull-right"><i class="fa fa-arrow-left"></i> Kembali ke daftar import</a>
+    <h1>Preview Import Solar <small>batch {{ $token }}</small></h1>
+</section>
 @include('solar._preview-workspace', ['token' => $token, 'summary' => $summary, 'assets' => $assets, 'customers' => $customers])
 
 <div class="modal fade" id="solar-process-modal" tabindex="-1" data-backdrop="static" data-keyboard="false">

@@ -4,6 +4,7 @@
     var config = window.vendorLoadingImportConfig || {};
     var preview = null;
     var batchId = null;
+    var readOnlyPreview = false;
     var watchTimer = null;
     var activeSheetKey = null;
     var gridApi = null;
@@ -136,7 +137,7 @@
                 gridApi.refreshCells({ force: true });
             }
         }
-        $('#vendor-import-confirm').prop('disabled', allReady === 0);
+        $('#vendor-import-confirm').prop('disabled', allReady === 0 || readOnlyPreview);
     }
 
     function getSheet(key) {
@@ -145,19 +146,20 @@
 
     function renderMetadata(sheet) {
         var meta = sheet.metadata || {};
+        var disabledAttribute = readOnlyPreview ? ' disabled' : '';
         var html = '<div class="row"><div class="col-md-6"><dl class="vendor-import-metadata">' +
             '<dt>Barang</dt><dd>' + escapeHtml(meta.goods_name || '—') + '</dd>' +
             '<dt>Jenis barang</dt><dd>' + escapeHtml(meta.goods_type || '—') + '</dd>' +
             '<dt>Nama kapal</dt><dd>' + escapeHtml(meta.vessel_name || '—') + '</dd>' +
             '<dt>Tujuan</dt><dd>' + escapeHtml(meta.destination || '—') + '</dd>' +
             '</dl></div><div class="col-md-3"><label>Bendera / Supplier</label>' +
-            '<select id="vendor-import-supplier" class="form-control"><option value="">Pilih supplier</option>' +
+            '<select id="vendor-import-supplier" class="form-control"' + disabledAttribute + '><option value="">Pilih supplier</option>' +
             (selectedSupplier(sheet) ? '<option selected value="' + escapeHtml(selectedSupplier(sheet)) + '">' + escapeHtml(meta.supplier_label || 'Supplier terpilih') + '</option>' : '') +
             '</select>';
         if (config.canCreateSupplier && meta.supplier_label) {
-            html += '<label class="vendor-import-create-supplier"><input id="vendor-import-create-supplier" type="checkbox" ' + (creatingSupplier(sheet) ? 'checked' : '') + '> Buat supplier baru dari label “' + escapeHtml(meta.supplier_label) + '”</label>';
+            html += '<label class="vendor-import-create-supplier"><input id="vendor-import-create-supplier" type="checkbox"' + disabledAttribute + ' ' + (creatingSupplier(sheet) ? 'checked' : '') + '> Buat supplier baru dari label “' + escapeHtml(meta.supplier_label) + '”</label>';
         }
-        html += '</div><div class="col-md-3"><label>Customer</label><select id="vendor-import-customer" class="form-control"><option value="">Pilih customer</option>' +
+        html += '</div><div class="col-md-3"><label>Customer</label><select id="vendor-import-customer" class="form-control"' + disabledAttribute + '><option value="">Pilih customer</option>' +
             (selectedCustomer(sheet) ? '<option selected value="' + escapeHtml(selectedCustomer(sheet)) + '">' + escapeHtml(meta.customer_label || 'Customer terpilih') + '</option>' : '') +
             '</select>';
         if (meta.customer_match_status === 'will_create' && config.canCreateCustomer) {
@@ -165,7 +167,7 @@
         } else if (meta.customer_match_status === 'permission_required') {
             html += '<small class="text-warning">Customer belum terdaftar. Pilih customer aktif atau minta izin customer.create.</small>';
         }
-        html += '</div><div class="col-md-12" style="margin-top:12px"><label>Rute Dokumen untuk seluruh sheet</label><select id="vendor-import-route" class="form-control" style="max-width:520px">';
+        html += '</div><div class="col-md-12" style="margin-top:12px"><label>Rute Dokumen untuk seluruh sheet</label><select id="vendor-import-route" class="form-control" style="max-width:520px"' + disabledAttribute + '>';
         var routeValue = selectedRoute(sheet);
         html += '<option value="" ' + (!routeValue ? 'selected' : '') + '>Pilih rute atau keputusan</option>';
         html += '<option value="none" ' + (routeValue === 'none' ? 'selected' : '') + '>Tanpa rute</option>';
@@ -274,7 +276,7 @@
             columnDefs: [
                 { headerName: 'Baris', field: 'source_row', width: 82, pinned: 'left' },
                 { headerName: 'No. Tiket', field: 'ticket_no', width: 138, pinned: 'left' },
-                { headerName: 'Tanggal ✎', field: 'loading_date', width: 145, editable: true, cellClass: 'vendor-import-editable-cell', cellEditor: 'agDateStringCellEditor', cellEditorParams: { min: '1900-01-01', max: '2100-12-31' }, valueFormatter: function (p) { return p.value && dateIsValid(p.value) ? new Date(p.value + 'T00:00:00').toLocaleDateString('id-ID') : (p.value || 'Isi tanggal'); },
+                { headerName: 'Tanggal ✎', field: 'loading_date', width: 145, editable: !readOnlyPreview, cellClass: 'vendor-import-editable-cell', cellEditor: 'agDateStringCellEditor', cellEditorParams: { min: '1900-01-01', max: '2100-12-31' }, valueFormatter: function (p) { return p.value && dateIsValid(p.value) ? new Date(p.value + 'T00:00:00').toLocaleDateString('id-ID') : (p.value || 'Isi tanggal'); },
                     valueSetter: function (p) {
                         var rawValue = p.newValue;
                         var value = rawValue instanceof Date && !Number.isNaN(rawValue.getTime())
@@ -300,6 +302,7 @@
         };
         gridApi = window.agGrid.createGrid(gridElement, options);
         $('#vendor-import-missing-date').val(sheetMissingDates[sheet.sheet_key] || '');
+        $('#vendor-import-missing-date, #vendor-import-apply-date').prop('disabled', readOnlyPreview);
         var missing = (sheet.rows || []).filter(function (row) { return !!row.date_missing && !row.loading_date; }).length;
         $('#vendor-import-missing-date').closest('.vendor-import-bulk-date').toggle(missing > 0);
         refreshCounts();
@@ -479,10 +482,15 @@
                 var batch = response.batch || {};
                 renderBatchStatus(batch);
                 if (batch.status === 'preview_ready') {
+                    readOnlyPreview = false;
                     $('#vendor-import-upload-title').text('Workbook sudah dianalisis.');
                     message(true, 'Preview import Loading Vendor sudah siap diperiksa.');
                     fetchPreview(id);
                     return;
+                }
+                if (batch.status === 'queued_import' || batch.status === 'importing') {
+                    readOnlyPreview = true;
+                    if (!preview) fetchPreview(id);
                 }
                 if (['imported', 'partial', 'failed', 'expired', 'reversed'].indexOf(batch.status) !== -1) {
                     if (batch.status === 'imported') {
@@ -540,10 +548,7 @@
                 updateProgressBar($('#vendor-import-upload-bar'), 100, false);
                 $('#vendor-import-upload-title').text('Upload selesai');
                 $('#vendor-import-upload-message').text(response.msg || 'Menunggu analisis workbook.');
-                message(true, response.msg || 'Upload diterima. Analisis berjalan di latar belakang.');
-                if (historyTable) historyTable.ajax.reload();
-                document.getElementById('vendor-import-history').scrollIntoView({ behavior: 'smooth', block: 'start' });
-                watchBatch(batchId);
+                window.location.href = config.formUrl + '?batch_id=' + encodeURIComponent(batchId);
             })
             .fail(function (xhr) { var body = xhr.responseJSON || {}; message(false, body.msg || body.message || 'File belum dapat dipreview.'); })
             .always(function () { button.prop('disabled', false); });

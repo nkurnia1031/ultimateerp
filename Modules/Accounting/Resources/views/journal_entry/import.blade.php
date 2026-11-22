@@ -7,10 +7,14 @@
 @include('accounting::layouts.nav')
 
 <section class="content-header">
+    @if (!empty($analysis))
+        <a href="{{ url('accounting/journal-entry/import') }}" class="btn btn-default pull-right"><i class="fas fa-arrow-left"></i> Kembali ke daftar import</a>
+    @endif
     <h1>Impor Jurnal dari Workbook</h1>
 </section>
 
 <section id="journal_import_page" class="content no-print" data-status-url-base="{{ url('accounting/journal-entry/import') }}" data-terminate-url-base="{{ url('accounting/journal-entry/import') }}" data-history-url="{{ url('accounting/journal-entry/import/history') }}" data-history-detail-url-base="{{ url('accounting/journal-entry/import/history') }}" data-csrf-token="{{ csrf_token() }}" data-active-statuses="{{ implode(',', \Modules\Accounting\Entities\JournalImportBatchStatus::activeStatuses()) }}" data-waiting-statuses="{{ implode(',', \Modules\Accounting\Entities\JournalImportBatchStatus::waitingStatuses()) }}" data-queued-statuses="{{ implode(',', \Modules\Accounting\Entities\JournalImportBatchStatus::queuedStatuses()) }}">
+    @if (empty($analysis))
     @component('components.widget', ['class' => 'box-primary', 'title' => 'Upload & Analisa XLSX'])
         {!! Form::open([
             'url' => action([\Modules\Accounting\Http\Controllers\JournalEntryController::class, 'analyzeImport']),
@@ -35,6 +39,7 @@
             <p id="journal_import_upload_feedback" class="help-block" role="status" aria-live="polite"></p>
         {!! Form::close() !!}
     @endcomponent
+    @endif
 
     @if(!empty($analysis))
         @component('components.widget', ['class' => 'box-solid', 'title' => 'Hasil Analisa'])
@@ -647,6 +652,7 @@
         @endcomponent
     @endif
 
+    @if (empty($analysis))
     @component('components.widget', ['class' => 'box-solid', 'title' => 'Riwayat Import'])
         <style>
             #journal_import_history_table th,
@@ -755,6 +761,7 @@
                 <p class="help-block">Menampilkan maksimal 50 rekonsiliasi terbaru yang perlu ditinjau.</p>
             @endif
         @endcomponent
+    @endif
     @endif
 </section>
 

@@ -183,7 +183,7 @@
         </div>
         <div class="box-body table-responsive fleet-datatable-wrap">
             <table id="fleet-rate-batches-table" class="table table-bordered table-striped fleet-datatable"
-                data-details-template="{{ route('asset.fleet.rates.import.batches.details', ['id' => '__ID__']) }}"
+                data-preview-template="{{ route('asset.fleet.rates.import.batches.preview', ['id' => '__ID__']) }}"
                 data-download-template="{{ route('asset.fleet.rates.import.batches.download', ['id' => '__ID__']) }}"
                 data-confirm-template="{{ route('asset.fleet.rates.import.batches.confirm', ['id' => '__ID__']) }}"
                 data-retry-template="{{ route('asset.fleet.rates.import.batches.retry', ['id' => '__ID__']) }}"
@@ -193,14 +193,6 @@
                 <tbody></tbody>
             </table>
         </div>
-    </div>
-
-    <div class="modal fade" id="fleet-rate-batch-details-modal" tabindex="-1" role="dialog" aria-labelledby="fleet-rate-batch-details-title" aria-hidden="true">
-        <div class="modal-dialog modal-lg" role="document"><div class="modal-content">
-            <div class="modal-header"><button type="button" class="close" data-dismiss="modal" aria-label="Tutup"><span aria-hidden="true">&times;</span></button><h4 class="modal-title" id="fleet-rate-batch-details-title">Detail batch tarif</h4></div>
-            <div class="modal-body" id="fleet-rate-batch-details-body"><p class="text-muted">Memuat detail...</p></div>
-            <div class="modal-footer"><button type="button" class="btn btn-default" data-dismiss="modal">Tutup</button></div>
-        </div></div>
     </div>
 
     @if($hasPreviewIssues)
@@ -344,7 +336,7 @@ $(function () {
     function renderBatchActions(row) {
         const id = Number(row.id) || 0;
         const actions = [];
-        if (row.can_details) actions.push('<button type="button" class="btn btn-default btn-xs rate-history-action" data-action="details" data-id="' + id + '"><i class="fas fa-eye"></i> Detail</button>');
+        if (row.can_details) actions.push('<a class="btn btn-default btn-xs" href="' + escapeRateHtml(historyUrl('preview', id)) + '"><i class="fas fa-eye"></i> ' + (row.can_preview ? 'Tinjau preview' : 'Detail') + '</a>');
         if (row.can_download) actions.push('<button type="button" class="btn btn-success btn-xs rate-history-action" data-action="download" data-id="' + id + '"><i class="fas fa-file-excel"></i> Unduh ulang</button>');
         if (row.can_confirm) actions.push('<button type="button" class="btn btn-primary btn-xs rate-history-action" data-action="confirm" data-id="' + id + '">Konfirmasi</button>');
         if (row.can_retry) actions.push('<button type="button" class="btn btn-warning btn-xs rate-history-action" data-action="retry" data-id="' + id + '">Coba lagi</button>');
@@ -577,30 +569,6 @@ $(function () {
         });
     }
 
-    function renderRateBatchDetails(payload) {
-        const batch = payload.batch || {};
-        const rows = Array.isArray(payload.rows) ? payload.rows : [];
-        let html = '<div class="row"><div class="col-sm-6"><strong>File:</strong> ' + escapeRateHtml(batch.file_name || '—') + '</div><div class="col-sm-3"><strong>Status:</strong> ' + escapeRateHtml(batch.status || '—') + '</div><div class="col-sm-3"><strong>Batch tarif:</strong> #' + escapeRateHtml(batch.domain_batch_id || '—') + '</div></div>';
-        html += '<p style="margin-top:10px">' + escapeRateHtml(batch.message || '') + '</p>';
-        if (batch.error) html += '<div class="alert alert-danger">' + escapeRateHtml(batch.error) + '</div>';
-        html += '<div class="table-responsive"><table class="table table-bordered table-condensed"><thead><tr><th>Baris</th><th>Rute / Unit</th><th>Tarif</th><th>Status / Masalah</th></tr></thead><tbody>';
-        if (!rows.length) {
-            html += '<tr><td colspan="4" class="text-muted">Tidak ada rincian baris untuk batch ini.</td></tr>';
-        }
-        rows.forEach(function (row) {
-            const units = (row.units || []).map(function (unit) {
-                return escapeRateHtml(unit.label || 'Unit') + (unit.asset ? ' → ' + escapeRateHtml(unit.asset) : ' <span class="text-danger">(belum dicocokkan)</span>');
-            }).join('<br>');
-            const rates = 'Supir/ton: ' + escapeRateHtml(row.driver_rate_per_ton == null ? '—' : row.driver_rate_per_ton)
-                + '<br>Uang jalan: ' + escapeRateHtml(row.travel_allowance == null ? '—' : row.travel_allowance)
-                + '<br>Harga/ton: ' + escapeRateHtml(row.sale_rate_per_ton == null ? '—' : row.sale_rate_per_ton);
-            const errors = (row.errors || []).map(function (error) { return escapeRateHtml(error.message || error); }).join('<br>');
-            html += '<tr><td>' + escapeRateHtml(row.source_row || '—') + '</td><td>' + escapeRateHtml(row.route || row.unit_source || '—') + (units ? '<br>' + units : '') + '</td><td>' + rates + '</td><td>' + escapeRateHtml(row.status || 'draft') + (errors ? '<br><span class="text-danger">' + errors + '</span>' : '') + '</td></tr>';
-        });
-        html += '</tbody></table></div>';
-        return html;
-    }
-
     $(document).on('click', '.rate-history-action', function () {
         const button = this;
         const action = button.getAttribute('data-action');
@@ -610,20 +578,15 @@ $(function () {
         if (action === 'cancel' && !window.confirm('Batalkan draft batch tarif ini?')) return;
         if (action === 'revert' && !window.confirm('Revert batch ini? Proses hanya berjalan jika tarif belum berubah dan belum dipakai SPB.')) return;
 
-        const urls = { details: historyUrl('details', id), download: historyUrl('download', id), confirm: historyUrl('confirm', id), retry: historyUrl('retry', id), cancel: historyUrl('cancel', id), revert: historyUrl('revert', id) };
+        const urls = { download: historyUrl('download', id), confirm: historyUrl('confirm', id), retry: historyUrl('retry', id), cancel: historyUrl('cancel', id), revert: historyUrl('revert', id) };
         if (action === 'download') {
             window.location.assign(urls.download);
             return;
         }
-        if (action === 'details') {
-            $('#fleet-rate-batch-details-title').text('Detail batch import #' + id);
-            $('#fleet-rate-batch-details-body').html('<p class="text-muted">Memuat detail...</p>');
-            $('#fleet-rate-batch-details-modal').modal('show');
-        }
 
         button.disabled = true;
         fetch(urls[action], {
-            method: action === 'details' ? 'GET' : 'POST',
+            method: 'POST',
             headers: {
                 'Accept': 'application/json',
                 'X-Requested-With': 'XMLHttpRequest',
@@ -635,15 +598,10 @@ $(function () {
         }).then(function (result) {
             const data = result.data || {};
             if (!result.response.ok || data.success === false) throw new Error(data.msg || 'Permintaan batch belum berhasil.');
-            if (action === 'details') {
-                $('#fleet-rate-batch-details-body').html(renderRateBatchDetails(data));
-                return;
-            }
             notifyRateAction(data.msg || 'Aksi batch berhasil diproses.', true);
             reloadRateTables();
         }).catch(function (error) {
             notifyRateAction(error.message || 'Permintaan batch belum berhasil.', false);
-            if (action === 'details') $('#fleet-rate-batch-details-body').html('<div class="alert alert-danger">' + escapeRateHtml(error.message) + '</div>');
         }).finally(function () {
             button.disabled = false;
         });

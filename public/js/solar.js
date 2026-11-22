@@ -115,23 +115,14 @@
         $('#solar-process-elapsed').text(formatElapsed(processStartedAt || processCreatedAt));
     }
 
-    function loadPreviewWorkspace(batchId) {
+    function openPreviewPage(batchId) {
         var template = $('#solar-import-form').attr('data-reconcile-url-template')
             || (reconcileApp && $(reconcileApp).attr('data-reconcile-url-template'));
         if (!template) {
             $('#solar-process-message').text('Preview selesai. Buka batch dari Riwayat Import untuk meninjaunya.');
             return;
         }
-        var url = template.replace('__BATCH__', encodeURIComponent(batchId));
-        $.get(url, { fragment: 1 }).done(function (html) {
-            $('#solar-preview-workspace-container').html(html);
-            reconcileApp = document.getElementById('solar-reconcile-app');
-            initReconcile();
-            processModal.one('hidden.bs.modal', function () { $('#solar-preview-modal').modal('show'); });
-            processModal.modal('hide');
-        }).fail(function () {
-            $('#solar-process-message').text('Preview selesai, tetapi panel preview tidak dapat dimuat. Batch tersedia di Riwayat Import.');
-        });
+        window.location.href = template.replace('__BATCH__', encodeURIComponent(batchId));
     }
 
     function refreshSolarTables() {
@@ -165,7 +156,7 @@
         if (data.state === 'completed') {
             window.localStorage.removeItem('solar.activeBatch');
             if (data.operation === 'preview') {
-                loadPreviewWorkspace(data.batch_id || processBatchId);
+                openPreviewPage(data.batch_id || processBatchId);
             } else if (data.operation === 'import') {
                 $('#solar-process-message').text('Import selesai. Data Solar sedang diperbarui pada halaman ini.');
                 refreshSolarTables();
@@ -1128,7 +1119,6 @@
                 method: 'POST', data: { _token: token }, headers: { Accept: 'application/json' }
             }).done(function (response) {
                 processModal.length && startProcess(response.batch_id, response.status_url, 'Mengimpor Solar');
-                $('#solar-preview-modal').modal('hide');
             }).fail(function (xhr) {
                 var message = xhr.responseJSON && xhr.responseJSON.message ? xhr.responseJSON.message : 'Import tidak dapat diantrekan.';
                 showPreviewFeedback(message, false);

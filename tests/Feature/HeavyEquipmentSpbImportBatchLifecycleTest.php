@@ -213,6 +213,70 @@ class HeavyEquipmentSpbImportBatchLifecycleTest extends TestCase
         Bus::assertDispatched(ProcessHeavyEquipmentSpbImportJob::class);
     }
 
+    public function test_confirm_rejects_rows_without_a_route_until_a_default_route_is_selected(): void
+    {
+        Bus::fake();
+        $batch = $this->batch(['business_id' => 7, 'status' => 'preview_ready']);
+        $preview = [
+            'rows' => [[
+                'source_sheet' => 'BMT',
+                'source_row' => 64,
+                'asset_id' => 1,
+                'driver_id' => 1,
+                'route_id' => null,
+                'route_name' => null,
+                'row_errors' => [],
+            ]],
+            'summary' => ['source_rows' => 1, 'ready_rows' => 1, 'error_rows' => 0],
+        ];
+        app(UserImportBatchService::class)->storePayload($batch, 'preview', $preview);
+        $token = '00000000-0000-4000-8000-000000000059';
+        \Illuminate\Support\Facades\Cache::put('heavy_equipment_spb_import:999:'.$token, [
+            'business_id' => 7,
+            'user_id' => 999,
+            'batch_id' => $batch->id,
+            'preview' => $preview,
+        ], now()->addHour());
+
+        $this->withHeader('Accept', 'application/json')
+            ->actingAs($this->admin())
+            ->withSession($this->businessSession(7))
+            ->post(route('asset.fleet.trips.import.confirm'), ['token' => $token])
+            ->assertUnprocessable()
+            ->assertJsonPath('message', 'Workbook tidak mencantumkan rute. Pilih rute default sebelum memulai import.');
+
+        $this->assertSame('preview_ready', $batch->fresh()->status);
+        Bus::assertNotDispatched(ProcessHeavyEquipmentSpbImportJob::class);
+    }
+
+    public function test_retry_rejects_a_failed_batch_that_still_has_rows_without_a_route(): void
+    {
+        Bus::fake();
+        $preview = [
+            'rows' => [[
+                'source_sheet' => 'BMT',
+                'source_row' => 64,
+                'route_id' => null,
+                'route_name' => null,
+            ]],
+        ];
+        $batch = $this->batch([
+            'status' => 'failed',
+            'summary_json' => json_encode(['source_rows' => 1, 'error_rows' => 1]),
+        ]);
+        app(UserImportBatchService::class)->storePayload($batch, 'preview', $preview);
+
+        $this->withHeader('Accept', 'application/json')
+            ->actingAs($this->admin())
+            ->withSession($this->businessSession(7))
+            ->post(route('asset.fleet.trips.import.batches.retry', $batch->id))
+            ->assertUnprocessable()
+            ->assertJsonPath('message', 'Batch ini menyimpan baris tanpa rute default. Unggah ulang workbook, pilih rute default pada preview, lalu konfirmasi import.');
+
+        $this->assertSame('failed', $batch->fresh()->status);
+        Bus::assertNotDispatched(ProcessHeavyEquipmentSpbImportJob::class);
+    }
+
     public function test_source_snapshot_download_rebuilds_a_logical_xlsx_without_staging_binary(): void
     {
         $batch = $this->batch(['business_id' => 7, 'file_name' => 'rekap-spb.xls', 'status' => 'preview_ready']);

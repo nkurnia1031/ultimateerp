@@ -438,12 +438,26 @@ class HeavyEquipmentTripController extends Controller
             abort(422, 'Preview import SPB sudah kedaluwarsa atau tidak valid.');
         }
 
+        $defaultRouteId = $request->integer('default_route_id') ?: null;
+        $rowsMissingRoute = collect($payload['preview']['rows'] ?? [])->filter(function ($row) {
+            return is_array($row)
+                && empty($row['route_id'])
+                && trim((string) ($row['route_name'] ?? '')) === '';
+        })->count();
+        if ($rowsMissingRoute > 0 && ! $defaultRouteId) {
+            $message = 'Workbook tidak mencantumkan rute. Pilih rute default sebelum memulai import.';
+
+            return $request->expectsJson()
+                ? response()->json(['success' => false, 'message' => $message], 422)
+                : redirect()->route('asset.fleet.trips.import.form', ['token' => $request->input('token')])
+                    ->with('status', ['success' => false, 'msg' => $message]);
+        }
+
         if (! empty($payload['batch_id'])) {
             $batch = $this->userImportBatchService->findForBusiness((int) $payload['batch_id'], $this->businessId(), 'spb');
             if ($batch->status !== 'preview_ready' || ! $batch->preview_path) {
                 abort(422, 'Batch SPB tidak berada pada status preview siap.');
             }
-            $defaultRouteId = $request->integer('default_route_id') ?: null;
             if ($defaultRouteId) {
                 HeavyEquipmentRoute::where('business_id', $this->businessId())->where('is_active', true)->findOrFail($defaultRouteId);
             }
@@ -485,7 +499,6 @@ class HeavyEquipmentTripController extends Controller
         }
 
         $rows = $payload['preview']['rows'] ?? [];
-        $defaultRouteId = $request->integer('default_route_id') ?: null;
         if ($defaultRouteId) {
             HeavyEquipmentRoute::where('business_id', $this->businessId())->findOrFail($defaultRouteId);
         }
@@ -628,6 +641,28 @@ class HeavyEquipmentTripController extends Controller
         $summary = json_decode((string) $batch->summary_json, true) ?: [];
         if (! in_array($batch->status, ['failed', 'partial'], true) || ! $batch->preview_path || (int) ($summary['source_rows'] ?? 0) < 1) {
             return response()->json(['success' => false, 'message' => 'Batch ini tidak memiliki baris import yang dapat dicoba ulang.'], 422);
+        }
+
+        $options = json_decode((string) $batch->options_json, true) ?: [];
+        if (empty($options['default_route_id'])) {
+            try {
+                $preview = $this->userImportBatchService->readPayload($batch, 'preview');
+            } catch (\Throwable $exception) {
+                report($exception);
+
+                return response()->json(['success' => false, 'message' => 'Preview batch tidak tersedia. Unggah ulang workbook untuk membuat preview baru.'], 422);
+            }
+            $rowsMissingRoute = collect($preview['rows'] ?? [])->contains(function ($row) {
+                return is_array($row)
+                    && empty($row['route_id'])
+                    && trim((string) ($row['route_name'] ?? '')) === '';
+            });
+            if ($rowsMissingRoute) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Batch ini menyimpan baris tanpa rute default. Unggah ulang workbook, pilih rute default pada preview, lalu konfirmasi import.',
+                ], 422);
+            }
         }
 
         $batch->forceFill([

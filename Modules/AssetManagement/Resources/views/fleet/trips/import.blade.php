@@ -5,13 +5,19 @@
 @section('content')
 @includeIf('assetmanagement::layouts.nav')
 @include('layouts.partials.fleet-datatables')
-<section class="content-header"><h1><i class="fas fa-file-import"></i> Import SPB Angkutan</h1></section>
+<section class="content-header">
+    @if (!empty($preview))
+        <a href="{{ route('asset.fleet.trips.import.form') }}" class="btn btn-default pull-right"><i class="fas fa-arrow-left"></i> Kembali ke daftar import</a>
+    @endif
+    <h1><i class="fas fa-file-import"></i> Import SPB Angkutan</h1>
+</section>
 <section class="content spb-import-page">
     @if (session('status'))
         @php($status = session('status'))
         <div class="alert {{ !empty($status['success']) ? 'alert-success' : 'alert-danger' }}">{{ $status['msg'] ?? '' }}</div>
     @endif
 
+    @if (empty($preview))
     <div class="box box-primary">
         <div class="box-header with-border"><h3 class="box-title">Pilih workbook</h3></div>
         <div class="box-body">
@@ -75,6 +81,7 @@
             </div>
         </div>
     </div>
+    @endif
 
     @if (!empty($preview))
         <div class="box box-info" id="spb-import-preview">
@@ -93,6 +100,8 @@
                         <ul id="spb-import-error-list">@foreach(array_slice($preview['errors'], 0, 15) as $error)<li>{{ $error }}</li>@endforeach</ul>
                         @if (count($preview['errors']) > 15)<p class="text-muted">Daftar lengkap tersedia melalui kolom Catatan pada tiap baris.</p>@endif
                     </div>
+                @elseif (!empty($preview['summary']['route_required_rows']))
+                    <div class="alert alert-warning" id="spb-import-error-summary">Data lain valid, tetapi rute default harus dipilih sebelum import.</div>
                 @else
                     <div class="alert alert-success" id="spb-import-error-summary">Semua baris valid dan siap diimpor.</div>
                 @endif
@@ -102,6 +111,10 @@
                     <input type="hidden" name="token" value="{{ $token }}">
                     <div class="form-group spb-default-route">
                         <label for="spb-default-route">Rute default</label>
+                        <div class="alert alert-warning" id="spb-route-required-warning" role="status" @if (empty($preview['summary']['route_required_rows'])) style="display:none" @endif>
+                            <strong>Rute diperlukan.</strong>
+                            <span id="spb-route-required-count">{{ $preview['summary']['route_required_rows'] ?? 0 }}</span> baris belum memiliki rute. Pilih rute default sebelum memulai import.
+                        </div>
                         <select id="spb-default-route" name="default_route_id" class="form-control">
                             <option value="">Jangan isi otomatis</option>
                             @foreach($routes as $id => $name)<option value="{{ $id }}">{{ $name }}</option>@endforeach
@@ -124,7 +137,7 @@
                             <tbody></tbody>
                         </table>
                     </div>
-                    <button id="spb-import-submit" type="submit" class="btn btn-success" {{ $preview['summary']['ready_rows'] === 0 ? 'disabled' : '' }}>
+                    <button id="spb-import-submit" type="submit" class="btn btn-success" {{ $preview['summary']['ready_rows'] === 0 || !empty($preview['summary']['route_required_rows']) ? 'disabled' : '' }}>
                         <i class="fas fa-check"></i> Import <span id="spb-import-submit-count">{{ $preview['summary']['ready_rows'] }}</span> baris siap
                     </button>
                 </form>
@@ -732,11 +745,14 @@ $(function () {
     }
 
     function updateSummary(summary, errors) {
+        var routeRequiredRows = Number(summary.route_required_rows || 0);
         $('#spb-summary-sheets').text(summary.sheets || 0);
         $('#spb-summary-source').text(summary.source_rows || 0);
         $('#spb-summary-ready, #spb-import-submit-count').text(summary.ready_rows || 0);
         $('#spb-summary-errors').text(summary.error_rows || 0);
-        $('#spb-import-submit').prop('disabled', Number(summary.ready_rows || 0) < 1);
+        $('#spb-route-required-count').text(routeRequiredRows);
+        $('#spb-route-required-warning').toggle(routeRequiredRows > 0);
+        updateSubmitState(Number(summary.ready_rows || 0), routeRequiredRows);
         var $box = $('#spb-import-error-summary').removeClass('alert-warning alert-success').empty();
         if (errors && errors.length) {
             $box.addClass('alert-warning').append($('<strong>').text('Baris yang memerlukan perhatian'));
@@ -744,10 +760,23 @@ $(function () {
             errors.slice(0, 15).forEach(function (error) { $list.append($('<li>').text(error)); });
             $box.append($list);
             if (errors.length > 15) $box.append($('<p class="text-muted">').text('Daftar lengkap tersedia melalui kolom Catatan pada tiap baris.'));
+        } else if (routeRequiredRows > 0) {
+            $box.addClass('alert-warning').text('Data lain valid, tetapi rute default harus dipilih sebelum import.');
         } else {
             $box.addClass('alert-success').text('Semua baris valid dan siap diimpor.');
         }
     }
+
+    var currentReadyRows = Number(@json($preview['summary']['ready_rows'] ?? 0));
+    var currentRouteRequiredRows = Number(@json($preview['summary']['route_required_rows'] ?? 0));
+    function updateSubmitState(readyRows, routeRequiredRows) {
+        currentReadyRows = readyRows;
+        currentRouteRequiredRows = routeRequiredRows;
+        $('#spb-import-submit').prop('disabled', currentReadyRows < 1 || (currentRouteRequiredRows > 0 && !$('#spb-default-route').val()));
+    }
+    $('#spb-default-route').on('change', function () {
+        updateSubmitState(currentReadyRows, currentRouteRequiredRows);
+    });
 
     $table.on('click', '.spb-edit-row', function () { openEditor(Number($(this).data('row-index'))); });
     $('.spb-mode-select').on('change', function () { syncModePanels($(this).attr('id').indexOf('asset') !== -1 ? 'asset' : 'driver'); });

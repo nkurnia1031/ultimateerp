@@ -183,6 +183,15 @@ class HeavyEquipmentSpbImportPreviewEditTest extends TestCase
         $this->assertSame(100, $uniqueExactPreview['rows'][0]['driver_match']['confidence_percent']);
     }
 
+    public function test_preview_reports_rows_that_need_a_default_route(): void
+    {
+        $preview = app(HeavyEquipmentSpbImportService::class)->preview($this->workbook('Sopir Lama'), 7);
+
+        $this->assertSame(1, $preview['summary']['ready_rows']);
+        $this->assertSame(0, $preview['summary']['error_rows']);
+        $this->assertSame(1, $preview['summary']['route_required_rows']);
+    }
+
     private function rowsWithRepeatedLabels(): array
     {
         return [

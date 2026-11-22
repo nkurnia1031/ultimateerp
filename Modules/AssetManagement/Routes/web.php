@@ -29,6 +29,7 @@ Route::middleware('web', 'authh', 'auth', 'SetSessionData', 'language', 'timezon
         Route::delete('rates/{id}', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentRateController::class, 'destroy'])->name('rates.destroy');
         Route::post('rates/upload', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentRateController::class, 'upload'])->name('rates.upload');
         Route::get('rates/import/batches', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentRateController::class, 'importBatchHistory'])->name('rates.import.batches.index');
+        Route::get('rates/import/batches/{id}/preview', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentRateController::class, 'importBatchPreview'])->name('rates.import.batches.preview');
         Route::get('rates/import/batches/{id}/details', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentRateController::class, 'importBatchDetails'])->name('rates.import.batches.details');
         Route::get('rates/import/batches/{id}/download', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentRateController::class, 'downloadImportBatch'])->name('rates.import.batches.download');
         Route::post('rates/import/batches/{id}/confirm', [Modules\AssetManagement\Http\Controllers\HeavyEquipmentRateController::class, 'confirmImportBatch'])->name('rates.import.batches.confirm');

@@ -43,7 +43,7 @@
             <h1 id="bonus-import-preview-title"><i class="fa fa-search me-2" aria-hidden="true"></i>Preview Import Bonus Ayak</h1>
             <p>File <strong>{{ $preview['original_name'] ?? 'upload' }}</strong> belum mengubah data. Centang baris valid yang ingin disimpan.</p>
         </div>
-        <a href="{{ route('bonus-ayak.index') }}" class="btn bonus-btn-secondary" aria-label="Kembali ke Bonus Ayak"><i class="fa fa-arrow-left me-1" aria-hidden="true"></i>Kembali ke Bonus Ayak</a>
+        <a href="{{ route('bonus-ayak.index') }}" class="btn bonus-btn-secondary" aria-label="Kembali ke daftar import"><i class="fa fa-arrow-left me-1" aria-hidden="true"></i>Kembali ke daftar import</a>
     </header>
 
     @if(session('success'))

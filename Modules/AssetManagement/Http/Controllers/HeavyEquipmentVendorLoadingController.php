@@ -548,16 +548,22 @@ class HeavyEquipmentVendorLoadingController extends Controller
         }
     }
 
-    public function importForm()
+    public function importForm(Request $request)
     {
         $this->authorizeImport();
+        $request->validate(['batch_id' => 'nullable|integer|min:1']);
+        $resumeBatchId = $request->integer('batch_id') ?: null;
+        if ($resumeBatchId) {
+            $batch = $this->ownedImportBatch($resumeBatchId);
+            abort_unless(in_array($batch->status, ['preview_ready', 'queued_import', 'importing'], true), 404, 'Preview batch tidak tersedia.');
+        }
 
         return view('assetmanagement::fleet.vendor_loadings.grid_import', [
             'canCreateSupplier' => $this->canCreateMinimalSupplier(),
             'canCreateCustomer' => $this->canCreateMinimalCustomer(),
             'canReverseImports' => $this->canManage(),
             'routes' => HeavyEquipmentRoute::where('business_id', $this->businessId())->where('is_active', true)->orderBy('name')->pluck('name', 'id'),
-            'resumeBatchId' => request()->query('batch_id'),
+            'resumeBatchId' => $resumeBatchId,
         ]);
     }
 

@@ -585,16 +585,6 @@
         </div>
     </div>
 
-    <div class="modal fade" id="solar-preview-modal" tabindex="-1">
-        <div class="modal-dialog solar-preview-modal-dialog"><div class="modal-content">
-            <div class="modal-header">
-                <button type="button" class="close" data-dismiss="modal" aria-label="Tutup">&times;</button>
-                <h4 class="modal-title">Preview per Sheet</h4>
-            </div>
-            <div class="modal-body" id="solar-preview-workspace-container"><div class="text-center text-muted"><i class="fa fa-refresh fa-spin"></i> Memuat preview...</div></div>
-        </div></div>
-    </div>
-
     <form method="post" id="solar-delete-form" class="hide">
         @csrf
         @method('DELETE')

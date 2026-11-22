@@ -24,7 +24,6 @@
             <h3>Preview Import Solar</h3>
             <p class="text-muted">Periksa per sheet. Nilai saldo/subtotal dari Excel hanya untuk pembanding dan akan dihitung ulang aplikasi.</p>
         </div>
-        <a href="{{ route('solar.imports') }}" class="btn btn-default"><i class="fa fa-history"></i> Riwayat import</a>
     </div>
     <div id="solar-preview-summary" class="row solar-preview-summary"></div>
     <input type="hidden" id="solar-preview-csrf" value="{{ csrf_token() }}">
@@ -109,8 +108,6 @@
     .solar-preview-row-warning { background:#fffbea !important; }
     .solar-preview-footer { display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
     .solar-preview-footer span { margin-right:auto; }
-    #solar-preview-modal .solar-preview-modal-dialog { width:96vw; max-width:1500px; margin:2vh auto; }
-    #solar-preview-modal .modal-body { padding:12px 18px 18px; }
     @media(max-width:767px) {
         .solar-preview-header { flex-direction:column; }
         .solar-preview-header .btn,.solar-preview-footer .btn { width:100%; }
@@ -120,6 +117,5 @@
         .solar-reference-mapping-tools input { min-width:0; width:100%; }
         .solar-reference-map-item { grid-template-columns:1fr; }
         .solar-preview-grid { height:60vh; min-height:350px; }
-        #solar-preview-modal .solar-preview-modal-dialog { width:auto; margin:8px; }
     }
 </style>

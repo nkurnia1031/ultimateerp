@@ -467,6 +467,15 @@ class HeavyEquipmentRateController extends Controller
         return response()->json($this->importHistoryService->details($id, $this->businessId()));
     }
 
+    public function importBatchPreview(int $id)
+    {
+        $this->authorizeView();
+        $details = $this->importHistoryService->details($id, $this->businessId());
+        $canManageRates = $this->canManageRates();
+
+        return view('assetmanagement::fleet.rates.import_batch_preview', compact('details', 'canManageRates'));
+    }
+
     public function downloadImportBatch(int $id)
     {
         $this->authorizeView();

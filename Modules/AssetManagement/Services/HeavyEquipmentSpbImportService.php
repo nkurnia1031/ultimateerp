@@ -227,6 +227,7 @@ class HeavyEquipmentSpbImportService
                 'source_rows' => count($rows),
                 'ready_rows' => count(array_filter($rows, fn ($row) => $row['row_errors'] === [])),
                 'error_rows' => count(array_filter($rows, fn ($row) => $row['row_errors'] !== [])),
+                'route_required_rows' => count(array_filter($rows, fn ($row) => empty($row['route_id']) && trim((string) ($row['route_name'] ?? '')) === '')),
             ],
         ];
     }
