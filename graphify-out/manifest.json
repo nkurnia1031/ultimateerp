@@ -13938,9 +13938,9 @@
     "semantic_hash": ""
   },
   "Modules/AssetManagement/Resources/views/fleet/trips/import.blade.php": {
-    "mtime": 1795363662.542318,
-    "seen": 1795364844.9656715,
-    "ast_hash": "507332ab79b94651df154b2c48389519",
+    "mtime": 1795366478.2496192,
+    "seen": 1795366672.2753594,
+    "ast_hash": "eefeeea052ae9dab5cff863c480249ad",
     "semantic_hash": ""
   },
   "Modules/AssetManagement/Services/HeavyEquipmentSpbImportService.php": {

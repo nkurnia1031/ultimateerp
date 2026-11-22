@@ -57,7 +57,7 @@ test('SPB upload flows through preview, queued import, restore, details, and rev
         await expect(page.locator('#spb-import-preview')).toBeVisible();
 
         await page.locator('#spb-import-submit').click();
-        await page.waitForURL('**/asset/fleet/trips/import#fleet-spb-import-history');
+        await page.waitForURL(url => url.pathname === '/asset/fleet/trips/import' && !url.searchParams.has('batch_id'));
         await expect(page.locator('#fleet-spb-import-history-table')).toBeVisible();
         await expect.poll(async () => {
             const currentRow = page.locator('#fleet-spb-import-history-table tbody tr').filter({ hasText: fileName });

@@ -104,6 +104,7 @@ test('Heavy Equipment rate upload shows queued progress, standalone preview, fil
                 domain_status: 'draft',
                 effective_from: '2026-11-01',
                 can_download: ready,
+                can_preview: ready,
                 can_confirm: ready,
                 can_cancel: ready,
                 can_details: ready,
