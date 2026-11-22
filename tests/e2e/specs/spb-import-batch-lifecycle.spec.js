@@ -47,10 +47,18 @@ test('SPB upload flows through preview, queued import, restore, details, and rev
             intervals: [500, 1000, 2000],
         }).toContain('Preview siap');
         await historyRow.getByRole('link', { name: 'Preview' }).click();
+        await expect(page).toHaveURL(new RegExp(`/asset/fleet/trips/import\\?batch_id=${uploadPayload.batch.id}$`));
         await expect(page.locator('#spb-import-preview')).toBeVisible();
         await expect(page.locator('#fleet-spb-import-preview-table tbody tr')).toContainText('Siap');
+        await page.getByRole('link', { name: 'Kembali ke daftar import' }).click();
+        await expect(page).toHaveURL(/\/asset\/fleet\/trips\/import$/);
+        await expect(historyRow).toBeVisible();
+        await historyRow.getByRole('link', { name: 'Preview' }).click();
+        await expect(page.locator('#spb-import-preview')).toBeVisible();
 
         await page.locator('#spb-import-submit').click();
+        await page.waitForURL('**/asset/fleet/trips/import#fleet-spb-import-history');
+        await expect(page.locator('#fleet-spb-import-history-table')).toBeVisible();
         await expect.poll(async () => {
             const currentRow = page.locator('#fleet-spb-import-history-table tbody tr').filter({ hasText: fileName });
             return currentRow.locator('td').nth(2).innerText();

@@ -34,7 +34,7 @@ function historyRow(id, overrides = {}) {
     };
 }
 
-test('Heavy Equipment rate upload shows queued progress, filtered history, detail, and restored workbook', async ({ page }) => {
+test('Heavy Equipment rate upload shows queued progress, standalone preview, filtered history, and restored workbook', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.goto('/login');
     await page.locator('#username').fill(username);
@@ -54,6 +54,14 @@ test('Heavy Equipment rate upload shows queued progress, filtered history, detai
     }));
     await page.route('**/asset/fleet/rates/import/batches**', async route => {
         const url = new URL(route.request().url());
+        if (url.pathname.endsWith('/preview')) {
+            await route.fulfill({
+                status: 200,
+                contentType: 'text/html',
+                body: '<!doctype html><html lang="id"><head><title>Preview Import Tarif</title></head><body><main><a href="/asset/fleet/rates#fleet-rate-batches-table">Kembali ke daftar import</a><h1>Preview Import Tarif</h1><p>Rute Cikande</p><p>BM 9133</p></main></body></html>',
+            });
+            return;
+        }
         if (url.pathname.endsWith('/details')) {
             await route.fulfill({
                 status: 200,
@@ -149,12 +157,14 @@ test('Heavy Equipment rate upload shows queued progress, filtered history, detai
     })).toBe(true);
     await expect(batchRow.locator('td').nth(5)).toContainText('Preview siap', { timeout: 15_000 });
 
-    await batchRow.getByRole('button', { name: 'Detail' }).click();
-    const detailsModal = page.locator('#fleet-rate-batch-details-modal');
-    await expect(detailsModal).toBeVisible();
-    await expect(detailsModal).toContainText('Rute Cikande');
-    await expect(detailsModal).toContainText('BM 9133');
-    await detailsModal.locator('[data-dismiss="modal"]').first().click();
+    await batchRow.getByRole('link', { name: 'Tinjau preview' }).click();
+    await expect(page).toHaveURL(/\/asset\/fleet\/rates\/import\/batches\/76001\/preview$/);
+    await expect(page.getByRole('heading', { name: 'Preview Import Tarif' })).toBeVisible();
+    await expect(page.getByRole('main')).toContainText('Rute Cikande');
+    await expect(page.getByRole('main')).toContainText('BM 9133');
+    await page.getByRole('link', { name: 'Kembali ke daftar import' }).click();
+    await expect(page).toHaveURL(/\/asset\/fleet\/rates(?:#fleet-rate-batches-table)?$/);
+    await expect(table).toBeVisible();
 
     const downloadPromise = page.waitForEvent('download');
     await batchRow.getByRole('button', { name: 'Unduh ulang' }).click();

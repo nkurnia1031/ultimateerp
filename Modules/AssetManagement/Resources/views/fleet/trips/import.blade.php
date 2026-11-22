@@ -518,6 +518,10 @@ $(function () {
         $button.html('<i class="fas fa-spinner fa-spin"></i> Mengirim ke queue…');
         $.ajax({ url: form.action, method: 'POST', data: $(form).serialize(), dataType: 'json' })
             .done(function (response) {
+                if (durablePreview) {
+                    window.location.assign(previewUrl + '#fleet-spb-import-history');
+                    return;
+                }
                 scrollToHistory(response.message || 'Import masuk queue; progres tampil pada riwayat batch.');
                 if (historyTable) historyTable.ajax.reload(null, false);
                 $('#spb-import-submit').prop('disabled', true);
