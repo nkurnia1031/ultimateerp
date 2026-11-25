@@ -27,6 +27,9 @@
     # User import files contain private workbook rows and business data.
     RewriteRule ^uploads/(user-imports|user-import-staging|expense-imports|solar-imports|bonus-ayak-import-previews|vendor-loading-imports|heavy-equipment-rate-imports|temp)(/|$) - [NC,F,L]
 
+    # Keep per-directory PHP settings private when this directory is the document root.
+    RewriteRule (^|/)\.user\.ini$ - [NC,F,L]
+
     # Send Requests To Front Controller...
     RewriteCond %{REQUEST_FILENAME} !-d
     RewriteCond %{REQUEST_FILENAME} !-f

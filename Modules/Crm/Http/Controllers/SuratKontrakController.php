@@ -205,7 +205,7 @@ class SuratKontrakController extends Controller
         }
 
         $request->validate([
-            'import_file' => 'required|file|mimes:xlsx,xls'
+            'import_file' => 'required|file|mimes:xlsx,xls|max:15000'
         ]);
 
         $file = $request->file('import_file');

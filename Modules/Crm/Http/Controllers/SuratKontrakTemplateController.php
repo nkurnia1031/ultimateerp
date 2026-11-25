@@ -240,9 +240,9 @@ class SuratKontrakTemplateController extends Controller
             'letterhead_mode' => 'required|in:components,image',
             'components' => 'required|json',
             'body_html' => 'nullable|string|max:50000',
-            'logo_1' => 'nullable|file|mimes:jpg,jpeg,png,webp|max:2048',
-            'logo_2' => 'nullable|file|mimes:jpg,jpeg,png,webp|max:2048',
-            'letterhead_image' => 'nullable|file|mimes:jpg,jpeg,png,webp|max:4096',
+            'logo_1' => 'nullable|file|mimes:jpg,jpeg,png,webp|max:15000',
+            'logo_2' => 'nullable|file|mimes:jpg,jpeg,png,webp|max:15000',
+            'letterhead_image' => 'nullable|file|mimes:jpg,jpeg,png,webp|max:15000',
         ]);
 
         $data['components'] = $this->templateService->normalizeComponents($data['components']);

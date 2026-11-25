@@ -69,7 +69,7 @@ public function store(Request $request)
             'km_awal' => 'nullable|integer',
             'km_akhir' => 'nullable|integer',
             'kondisi_cabut' => 'nullable|string|max:50',
-            'foto_ban' => 'nullable|image|max:2048',
+            'foto_ban' => 'nullable|image|max:15000',
             'keterangan' => 'nullable|string'
         ]);
 

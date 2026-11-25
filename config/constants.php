@@ -30,8 +30,8 @@ return [
     'langs_rtl' => ['ar'],
     'non_utf8_languages' => ['ar', 'hi', 'ps'],
 
-    'document_size_limit' => '5000000', //in Bytes,
-    'image_size_limit' => '5000000', //in Bytes
+    'document_size_limit' => '15000000', // 15 MB in bytes
+    'image_size_limit' => '15000000', // 15 MB in bytes
 
     // Optional deployment override. The runtime JS modification timestamp is
     // appended automatically by asset_cache_version().

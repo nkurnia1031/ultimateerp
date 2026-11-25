@@ -172,7 +172,7 @@ class JournalEntryController extends Controller
         }
 
         $request->validate([
-            'journal_file' => 'required|file|mimes:xlsx,xls,csv',
+            'journal_file' => 'required|file|mimes:xlsx,xls,csv|max:15000',
         ]);
 
         $file = $request->file('journal_file');

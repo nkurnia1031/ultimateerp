@@ -59,7 +59,7 @@ class InvoiceLayoutController extends Controller
 
         try {
             $validator = Validator::make($request->all(), [
-                'logo' => 'mimes:jpeg,gif,png|1000',
+                'logo' => 'nullable|file|mimes:jpeg,gif,png|max:15000',
             ]);
 
             $input = $request->only(['name', 'header_text',
@@ -177,7 +177,7 @@ class InvoiceLayoutController extends Controller
 
         try {
             $validator = Validator::make($request->all(), [
-                'logo' => 'mimes:jpeg,gif,png|1000',
+                'logo' => 'nullable|file|mimes:jpeg,gif,png|max:15000',
             ]);
 
             $input = $request->only(['name', 'header_text',

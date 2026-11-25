@@ -85,7 +85,7 @@ class ProjectImportController extends Controller
     {
         $businessId = $this->authorizeImport($request);
         $request->validate([
-            'project_file' => 'required|file|mimes:xlsx,xls|max:5120',
+            'project_file' => 'required|file|mimes:xlsx,xls|max:15000',
             'confirm_import' => 'accepted',
         ]);
 

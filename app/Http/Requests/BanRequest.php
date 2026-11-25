@@ -23,7 +23,7 @@ return [
 'ukuran' => 'nullable|string|max:50',
 'status' => 'required|in:baru,terpasang,rusak,dibuang',
 'tanggal_masuk' => 'nullable|date',
-'gambar' => 'nullable|image|max:2048',
+'gambar' => 'nullable|image|max:15000',
 'keterangan' => 'nullable|string',
 ];
 }

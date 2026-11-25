@@ -257,7 +257,7 @@ class ModulesController extends Controller
 
         try {
             $request->validate([
-                'module' => 'required|file|mimes:zip|max:10240', // 10MB max
+                'module' => 'required|file|mimes:zip|max:15000', // 15 MB max
             ]);
 
             //get zipped file
